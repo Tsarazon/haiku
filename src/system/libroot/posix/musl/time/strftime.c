@@ -236,12 +236,7 @@ size_t __strftime_l(char *restrict s, size_t n, const char *restrict f, const st
 		pad = 0;
 		if (*f == '-' || *f == '_' || *f == '0') pad = *f++;
 		if ((plus = (*f == '+'))) f++;
-		if (isdigit(*f)) {
-			width = strtoul(f, &p, 10);
-		} else {
-			width = 0;
-			p = (void *)f;
-		}
+		width = isdigit(*f) ? strtoul(f, &p, 10) : 0;
 		if (*p == 'C' || *p == 'F' || *p == 'G' || *p == 'Y') {
 			if (!width && p!=f) width = 1;
 		} else {
