@@ -54,6 +54,12 @@ DEBUG on <src!bin!gdb!gdb!>haiku-nat.o = 1 ;
 # feature.
 HAIKU_BUILD_FEATURE_SSL = 1 ;
 
+# ARM64 cross compilation example: use an alternate GNU triplet and
+# enable ARMv8.6-A CPU features with crypto and LSE2 extensions.
+HAIKU_GNU_MACHINE_TRIPLET_arm64 = aarch64-none-haiku ;
+AppendToConfigVar HAIKU_CCFLAGS_arm64 : -march=armv8.6-a+crypto+lse2 ;
+AppendToConfigVar HAIKU_C++FLAGS_arm64 : -march=armv8.6-a+crypto+lse2 ;
+
 
 # Haiku Image Related Modifications
 
