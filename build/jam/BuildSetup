@@ -14,6 +14,10 @@
 # attached.
 HAIKU_VERSION = r1~beta5 ;
 
+# Default GNU triplet for ARM64 cross builds. This can be overridden in
+# UserBuildConfig when using a custom toolchain.
+HAIKU_GNU_MACHINE_TRIPLET_arm64 ?= aarch64-none-haiku ;
+
 
 #pragma mark - container settings
 
