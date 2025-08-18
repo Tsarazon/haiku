@@ -7,11 +7,8 @@
 #define _BINARY_COMPATIBILITY_GLOBAL_H_
 
 
-#if __GNUC__ == 2
-#	define B_IF_GCC_2(ifBlock, elseBlock)	ifBlock
-#else
-#	define B_IF_GCC_2(ifBlock, elseBlock)	elseBlock
-#endif
+// GCC2 support removed - always use modern compiler path
+#define B_IF_GCC_2(ifBlock, elseBlock)	elseBlock
 
 
 // method codes

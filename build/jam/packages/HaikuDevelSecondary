@@ -42,12 +42,9 @@ AddFilesToPackage develop lib $(architecture) :
 	<$(architecture)>libpthread.a
 	<$(architecture)>libshared.a ;
 
-# libnetservices2.a
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 0 {
-	# Modern C++ only; skip on gcc2
-	AddFilesToPackage develop lib $(architecture) :
-		<$(architecture)>libnetservices2.a ;
-}
+# libnetservices2.a - Modern C++ library
+AddFilesToPackage develop lib $(architecture) :
+	<$(architecture)>libnetservices2.a ;
 
 # the POSIX error code mapper library
 AddFilesToPackage develop lib $(architecture)
@@ -55,12 +52,7 @@ AddFilesToPackage develop lib $(architecture)
 
 # ABI independent stuff
 
-# cpp headers
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-	# GCC 2 only -- for GCC 4 they come with the gcc package
-	CopyDirectoryToPackage develop headers c++
-		: [ FDirName $(HAIKU_TOP) headers cpp ] : 2.95.3 ;
-}
+# cpp headers now come with the gcc package
 
 
 BuildHaikuPackage $(haikuDevelPackage) : haiku_devel_secondary ;

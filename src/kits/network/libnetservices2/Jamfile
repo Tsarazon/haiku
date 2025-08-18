@@ -10,10 +10,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 
-		# Only build on modern GCC
-		if $(TARGET_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-			continue ;
-		}
+		# Building with modern GCC
 
 		SubDirC++Flags -std=gnu++17 ;
 

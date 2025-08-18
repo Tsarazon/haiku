@@ -13,23 +13,20 @@ rule ArchitectureSetup architecture
 		ccBaseFlags = -pipe ;
 	}
 
-	if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) != 1 {
-		# disable strict aliasing on anything newer than gcc 2 as it may lead to
-		# unexpected results.
-		# TODO: remove the -fno-strict-aliasing option when all code has been
-		#		analyzed/fixed with regard to aliasing.
-		ccBaseFlags += -fno-strict-aliasing ;
+	# disable strict aliasing as it may lead to unexpected results.
+	# TODO: remove the -fno-strict-aliasing option when all code has been
+	#		analyzed/fixed with regard to aliasing.
+	ccBaseFlags += -fno-strict-aliasing ;
 
-		# Without this flag, GCC deletes many null-pointer checks that are
-		# technically undefined behavior (e.g. checking for NULL in strdup, or
-		# for `this` in member functions), which breaks the kernel and various
-		# applications. (Linux does the same.)
-		ccBaseFlags += -fno-delete-null-pointer-checks ;
+	# Without this flag, GCC deletes many null-pointer checks that are
+	# technically undefined behavior (e.g. checking for NULL in strdup, or
+	# for `this` in member functions), which breaks the kernel and various
+	# applications. (Linux does the same.)
+	ccBaseFlags += -fno-delete-null-pointer-checks ;
 
-		if $(architecture) = x86 {
-			# disable some builtins that are incompatible with our definitions
-			ccBaseFlags += -fno-builtin-fork -fno-builtin-vfork ;
-		}
+	if $(architecture) = x86 {
+		# disable some builtins that are incompatible with our definitions
+		ccBaseFlags += -fno-builtin-fork -fno-builtin-vfork ;
 	}
 
 	# default architecture tuning
@@ -119,19 +116,15 @@ rule ArchitectureSetup architecture
 
 	HAIKU_WERROR_FLAGS_$(architecture) = ;
 
-	if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) != 1 {
-		# TODO: Remove all these.
-		HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=unused-but-set-variable
-			-Wno-error=cpp -Wno-error=register ;
-		# These currently generate too many "false positives."
-		HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=address-of-packed-member
-			-Wno-error=stringop-overread -Wno-error=array-bounds ;
-		# But these can stay.
-		HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=cast-align
-			-Wno-error=format-truncation ;
-	} else {
-		HAIKU_WERROR_FLAGS_$(architecture) += -Wno-unknown-pragmas ;
-	}
+	# TODO: Remove all these.
+	HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=unused-but-set-variable
+		-Wno-error=cpp -Wno-error=register ;
+	# These currently generate too many "false positives."
+	HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=address-of-packed-member
+		-Wno-error=stringop-overread -Wno-error=array-bounds ;
+	# But these can stay.
+	HAIKU_WERROR_FLAGS_$(architecture) += -Wno-error=cast-align
+		-Wno-error=format-truncation ;
 
 	# debug flags
 	local debugFlags = -ggdb ;
@@ -227,15 +220,7 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_PLATFORM ?= openfirmware ;
 			HAIKU_BOOT_TARGETS += openfirmware ;
 
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
-			# offset in floppy image (>= sizeof(haiku_loader))
-			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 384 ; # in kB
-
-		case sparc :
-			HAIKU_KERNEL_PLATFORM ?= openfirmware ;
-			HAIKU_BOOT_TARGETS += openfirmware ;
-
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+			# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued # in kB
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 384 ; # in kB
 
@@ -246,7 +231,7 @@ rule KernelArchitectureSetup architecture
 			# SOC's like allwinner need an offset to skip the hardcoded initial loader
 			HAIKU_BOOT_SDIMAGE_BEGIN = 20475 ; # in KiB
 
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ;
+			# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 192 ; # in kB - unused yet
 			HAIKU_BOOT_LOADER_BASE ?= 0x1000000 ;
@@ -257,16 +242,16 @@ rule KernelArchitectureSetup architecture
 
 			HAIKU_BOOT_SDIMAGE_BEGIN = 2 ; # in KiB
 
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ;
+			# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 192 ; # in kB - unused yet
 			HAIKU_BOOT_LOADER_BASE ?= 0x1000000 ;
 
 		case x86 :
 			HAIKU_KERNEL_PLATFORM ?= bios_ia32 ;
-			HAIKU_BOOT_TARGETS += bios_ia32 efi pxe_ia32 ;
+			HAIKU_BOOT_TARGETS += bios_ia32 efi ;
 
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 2880 ; # in kB
+			# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 2880 ; # in kB - floppy support discontinued
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 384 ; # in kB
 
@@ -281,15 +266,15 @@ rule KernelArchitectureSetup architecture
 
 			HAIKU_BOOT_SDIMAGE_BEGIN = 2 ; # KiB
 
-			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ;
+			# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 192 ; # in kB - unused yet
 			HAIKU_BOOT_LOADER_BASE ?= 0x1000000 ;
 
 		case x86_64 :
-			# x86_64 completely shares the x86 bootloader for MBR.
-			HAIKU_KERNEL_PLATFORM ?= bios_ia32 ;
-			HAIKU_BOOT_TARGETS += bios_ia32 efi pxe_ia32 ;
+			# x86_64 uses EFI boot loader only.
+			HAIKU_KERNEL_PLATFORM ?= efi ;
+			HAIKU_BOOT_TARGETS += efi ;
 
 			HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 2880 ; # in kB
 			# offset in floppy image (>= sizeof(haiku_loader))
@@ -309,22 +294,22 @@ rule KernelArchitectureSetup architecture
 			switch $(HAIKU_KERNEL_PLATFORM) {
 				case atari_m68k :
 				{
-					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+					# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued # in kB
 				}
 				case amiga_m68k :
 				{
 					# for now we have trouble reading from double-sided images
-					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 880 ; # in kB
+					# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 880 ; # in kB - floppy support discontinued
 				}
 				case next_m68k :
 				{
-					HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # in kB
+					# HAIKU_BOOT_FLOPPY_IMAGE_SIZE = 1440 ; # floppy support discontinued # in kB
 				}
 			}
 			# offset in floppy image (>= sizeof(haiku_loader))
 			HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET = 260 ; # in kB
-			HAIKU_CONTAINER_STRIP_EXECUTABLES on
-				$(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME) = 1 ;
+			# HAIKU_CONTAINER_STRIP_EXECUTABLES on
+				# $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME) = 1 ; # floppy support discontinued
 
 		case * :
 			Exit "Currently unsupported target CPU:" $(cpu) ;
@@ -411,19 +396,6 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_C++FLAGS += -mcmodel=medany -fpic ;
 			HAIKU_KERNEL_PIC_LINKFLAGS = -shared ;
 
-		case sparc :
-			# The medlow code model is enough (64-bit addresses, programs must
-			# be linked in the low 32 bits of memory. Programs can be
-			# statically or dynamically linked.)
-			HAIKU_KERNEL_CCFLAGS += -mcmodel=medlow ;
-			HAIKU_KERNEL_C++FLAGS += -mcmodel=medlow ;
-
-			# Unfortunately it's not easy to make the kernel be
-			# position-independant, on sparc, that requires relocation support
-			# in the ELF loader to fill in the plt section.
-			HAIKU_KERNEL_PIC_CCFLAGS = -fPIE ;
-			HAIKU_KERNEL_PIC_LINKFLAGS = -shared -fPIE ;
-
 		case x86 :
 			HAIKU_KERNEL_PIC_CCFLAGS = -fno-pic ;
 			HAIKU_KERNEL_CCFLAGS += -march=pentium ;
@@ -442,7 +414,7 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_PIC_LINKFLAGS += -z max-page-size=0x1000 ;
 			HAIKU_KERNEL_ADDON_LINKFLAGS += -z max-page-size=0x1000 ;
 
-			if x86 in $(HAIKU_ARCHS[2-]) || x86_gcc2 in $(HAIKU_ARCHS[2-]) {
+			if x86 in $(HAIKU_ARCHS[2-]) {
 				Echo "Enable kernel ia32 compatibility" ;
 				HAIKU_KERNEL_DEFINES += _COMPAT_MODE ;
 				HAIKU_KERNEL_COMPAT_MODE = 1 ;
@@ -501,32 +473,18 @@ rule KernelArchitectureSetup architecture
 				}
 				HAIKU_BOOT_$(bootTarget:U)_LDFLAGS = -Bstatic -Bsymbolic
 					-nostdlib -znocombreloc -no-undefined ;
+
 			case bios_ia32 :
-				# bios_ia32 is non-PIC
-				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -march=pentium ;
-				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -march=pentium ;
-				if $(HAIKU_CC_IS_CLANG_$(architecture)) = 1 {
-					HAIKU_BOOT_$(bootTarget:U)_LDFLAGS += -m elf_i386 ;
-				} else {
-					HAIKU_BOOT_$(bootTarget:U)_LDFLAGS += -m elf_i386_haiku ;
-				}
-				if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) != 1 {
-					HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -Wno-error=main -m32 ;
-					HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -Wno-error=main -m32 ;
-				}
+				# Traditional BIOS boot loader
+				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -fno-stack-protector ;
+				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -fno-stack-protector ;
+				HAIKU_BOOT_$(bootTarget:U)_LDFLAGS = -Bstatic -nostdlib ;
+
 			case pxe_ia32 :
-				# pxe_ia32 is non-PIC
-				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -march=pentium ;
-				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -march=pentium ;
-				if $(HAIKU_CC_IS_CLANG_$(architecture)) = 1 {
-					HAIKU_BOOT_$(bootTarget:U)_LDFLAGS += -m elf_i386 ;
-				} else {
-					HAIKU_BOOT_$(bootTarget:U)_LDFLAGS += -m elf_i386_haiku ;
-				}
-				if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) != 1 {
-					HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -Wno-error=main -m32 ;
-					HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -Wno-error=main -m32 ;
-				}
+				# PXE network boot loader
+				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -fno-stack-protector ;
+				HAIKU_BOOT_$(bootTarget:U)_C++FLAGS += -fno-pic -fno-stack-protector ;
+				HAIKU_BOOT_$(bootTarget:U)_LDFLAGS = -Bstatic -nostdlib ;
 			case *_m68k :
 				# TODO: make sure all m68k bootloaders are non-PIC
 				HAIKU_BOOT_$(bootTarget:U)_CCFLAGS += -fno-pic -Wno-error=main ;
@@ -624,13 +582,7 @@ rule ArchitectureSetupWarnings architecture
 		}
 	}
 
-	# Work-around for GCC 2 problem -- despite -Wno-multichar it reports
-	# multichar warnings in headers/private/kernel/debugger_keymaps.h included
-	# by src/system/kernel/arch/x86/arch_debug_console.cpp.
-	if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-		local file = <src!system!kernel!arch!x86>arch_debug_console.o ;
-		WARNINGS on $(file) = $(WARNINGS) ;
-	}
+	# GCC 2 multichar warning workaround removed
 
 	# Enable -Werror for as much of Haiku as possible. Ideally, all of the code would compile
 	# without errors, but that is difficult to achieve due to using multiple compiler versions,

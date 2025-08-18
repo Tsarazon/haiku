@@ -1431,161 +1431,14 @@ actions BuildNetBootArchive1
 }
 
 
-#pragma mark - Floppy Boot Archive rules
-
-
-rule AddDirectoryToFloppyBootArchive directoryTokens
-{
-	# AddDirectoryToFloppyBootArchive <directoryTokens>
-
-	return [ AddDirectoryToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(directoryTokens) ] ;
-}
-
-rule AddFilesToFloppyBootArchive directory : targets : destName
-{
-	# AddFilesToFloppyBootArchive <directory> : <targets> [ : dest name ]
-
-	AddFilesToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME) : $(directory)
-		: $(targets) : $(destName) ;
-}
-
-rule AddSymlinkToFloppyBootArchive directoryTokens : linkTarget : linkName
-{
-	# AddSymlinkToFloppyBootArchive <directory> : <link target>
-	#	[ : <link name> ] ;
-
-	AddSymlinkToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(directoryTokens) : $(linkTarget) : $(linkName) ;
-}
-
-rule AddDriversToFloppyBootArchive relativeDirectoryTokens : targets
-{
-	# AddDriversToFloppyBootArchive <relative directory> : <targets> ;
-
-	AddDriversToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(relativeDirectoryTokens) : $(targets) ;
-}
-
-rule AddNewDriversToFloppyBootArchive relativeDirectoryTokens : targets
-{
-	# AddNewDriversToFloppyBootArchive <relative directory> : <targets> ;
-
-	AddNewDriversToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(relativeDirectoryTokens) : $(targets) ;
-}
-
-rule AddDriverRegistrationToFloppyBootArchive relativeDirectoryTokens : target
-	: links
-{
-	# AddDriverRegistrationToFloppyBootArchive <directory> : <link target>
-	#	: <link names> ] ;
-
-	AddDriverRegistrationToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(relativeDirectoryTokens) : $(target) : $(links) ;
-}
-
-rule AddBootModuleSymlinksToFloppyBootArchive targets
-{
-	# AddBootModuleSymlinksToFloppyBootArchive <targets> ;
-
-	AddBootModuleSymlinksToContainer $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(targets) ;
-}
-
-rule CreateFloppyBootArchiveMakeDirectoriesScript script
-{
-	CreateContainerMakeDirectoriesScript
-		$(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME) : $(script) ;
-}
-
-rule CreateFloppyBootArchiveCopyFilesScript script
-{
-	CreateContainerCopyFilesScript $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-		: $(script) ;
-}
-
-rule BuildFloppyBootArchive archive : scripts
-{
-	# BuildHFloppyBootArchive <archive> : <scripts> ;
-
-	local mainScript = build_archive ;
-	SEARCH on $(mainScript) = [ FDirName $(HAIKU_TOP) build scripts ] ;
-
-	Depends $(archive) : $(mainScript) $(scripts) ;
-	BuildFloppyBootArchive1 $(archive) : $(mainScript)
-		$(scripts:R=$(HAIKU_ABSOLUTE_OUTPUT_DIR)) ;
-}
-
-actions BuildFloppyBootArchive1
-{
-	$(2[1]) $(1) $(2[2-])
-}
-
-# warning: that is quite x86 dependant...
-
-rule BuildFloppyBootImage image : haikuLoader : archive
-{
-	Depends $(image) : $(haikuLoader) ;
-	Depends $(image) : $(archive) ;
-	#MakeLocateDebug $(image) ;
-	FLOPPY_IMAGE_SIZE on $(image) = $(HAIKU_BOOT_FLOPPY_IMAGE_SIZE) ;
-	ARCHIVE_IMAGE_OFFSET on $(image) = $(HAIKU_BOOT_ARCHIVE_IMAGE_OFFSET) ;
-
-	# FreeBSD's stat command doesn't support -c/--format option
-	# and use %z specifier for file size
-	if $(HOST_PLATFORM) = freebsd || $(HOST_PLATFORM) = darwin
-		|| $(HOST_PLATFORM) = openbsd {
-		STAT_GET_SIZE = "stat -f %z" ;
-	} else {
-		STAT_GET_SIZE = "stat -c %s" ;
-	}
-
-	BuildFloppyBootImage1 $(image) : $(haikuLoader) $(archive) ;
-	if $(HAIKU_KERNEL_PLATFORM) = atari_m68k {
-		Depends $(image) : <build>fixup_tos_boot_checksum ;
-		BuildFloppyBootImageFixupM68K $(image)
-			: <build>fixup_tos_boot_checksum ;
-	}
-	if $(HAIKU_KERNEL_PLATFORM) = amiga_m68k {
-		Depends $(image) : <build>fixup_amiga_boot_checksum ;
-		BuildFloppyBootImageFixupM68K $(image)
-			: <build>fixup_amiga_boot_checksum ;
-	}
-}
-
-actions BuildFloppyBootImage1
-{
-	haiku_loader_size=`$(STAT_GET_SIZE) "$(>[1])"`
-	drivers_tgz_size=`$(STAT_GET_SIZE) "$(>[2])"`
-
-	archive_image_offset=`echo "$(ARCHIVE_IMAGE_OFFSET) * 1024" | bc`
-	floppy_tgz_size=\
-		`echo "($(FLOPPY_IMAGE_SIZE) - $(ARCHIVE_IMAGE_OFFSET)) * 1024" | bc`
-	if [ $haiku_loader_size -gt $archive_image_offset ] ; then
-		echo "Error: $(>[1]) is too big ($haiku_loader_size) to fit "
-		echo "       before the boot archive starting at $archive_image_offset!"
-		exit 1
-	fi
-	if [ $drivers_tgz_size -gt $floppy_tgz_size ] ; then
-		echo "Error: $(>[2]) is too big ($drivers_tgz_size) to fit "
-		echo "       in the boot floppy ($floppy_tgz_size)!"
-		exit 1
-	fi
-	$(RM) $(<)
-	# make an empty image
-	dd if=/dev/zero of=$(<) bs=1024 count=$(FLOPPY_IMAGE_SIZE)
-	# add haiku_loader
-	dd if=$(>[1]) of=$(<) conv=notrunc
-	# add the boot drivers tgz archive
-	dd if=$(>[2]) of=$(<) bs=$(ARCHIVE_IMAGE_OFFSET)k seek=1 conv=notrunc
-}
-
-actions BuildFloppyBootImageFixupM68K
-{
-	# fixup the boot sector checksum
-	$(>[1]) $(<)
-}
+# Floppy Boot Archive rules removed - floppy disk support discontinued
+# The following rules were removed to eliminate floppy disk support:
+# - AddDirectoryToFloppyBootArchive, AddFilesToFloppyBootArchive
+# - AddSymlinkToFloppyBootArchive, AddDriversToFloppyBootArchive  
+# - AddNewDriversToFloppyBootArchive, AddDriverRegistrationToFloppyBootArchive
+# - AddBootModuleSymlinksToFloppyBootArchive
+# - CreateFloppyBootArchiveMakeDirectoriesScript, CreateFloppyBootArchiveCopyFilesScript
+# - BuildFloppyBootArchive, BuildFloppyBootImage, BuildFloppyBootImageFixupM68K
 
 #pragma mark - CD Boot Image rules
 
@@ -1606,11 +1459,36 @@ rule BuildCDBootImageEFI image : bootfloppy : bootefi : extrafiles
 	BuildCDBootImageEFI1 $(image) : $(bootfloppy) $(bootefi) $(extrafiles) ;
 }
 
+rule BuildCDBootImageEFIOnly image : bootefi : extrafiles
+{
+	# BuildCDBootImageEFIOnly <image> : <bootefi> : <extrafiles>
+	# Creates EFI-only bootable ISO without legacy floppy boot support
+	
+	Depends $(image) : $(bootefi) ;
+	Depends $(image) : $(extrafiles) ;
+
+	if $(HAIKU_NIGHTLY_BUILD) = 1 {
+		VOLID on $(image) = haiku-nightly-$(TARGET_ARCH) ;
+	} else {
+		VOLID on $(image) = haiku-$(HAIKU_VERSION)-$(TARGET_ARCH) ;
+	}
+
+	BOOTEFI on $(image) = $(bootefi) ;
+	BuildCDBootImageEFIOnly1 $(image) : $(bootefi) $(extrafiles) ;
+}
+
 actions BuildCDBootImageEFI1
 {
 	$(RM) $(<)
-	xorriso -as mkisofs -b $(BOOTIMG) -eltorito-alt-boot -no-emul-boot -e $(BOOTEFI) \
+	xorriso -as mkisofs -b $(BOOTIMG) -no-emul-boot -eltorito-alt-boot -no-emul-boot -e $(BOOTEFI) \
 		-r -J -V $(VOLID) -o $(<) $(>[1]) $(>[2]) $(>[3-])
+}
+
+actions BuildCDBootImageEFIOnly1
+{
+	$(RM) $(<)
+	xorriso -as mkisofs -no-emul-boot -e $(BOOTEFI) \
+		-r -J -V $(VOLID) -o $(<) $(>[1]) $(>[2-])
 }
 
 
@@ -1658,6 +1536,48 @@ actions BuildCDBootPPCImage1 bind MAPS
 		-hfs-parms MAX_XTCSIZE=2656248 -hfs-volid Haiku \
 		--prep-boot boot/haikuloader.elf \
 		--chrp-boot -r -J -o $(<) $(HAIKU_OUTPUT_DIR)/cd
+
+	$(RM) -r $(HAIKU_OUTPUT_DIR)/cd
+}
+
+#pragma mark - BIOS Boot Image rules
+
+rule BuildCDBootImageBIOS image : bootMBR : biosLoader : extrafiles
+{
+	# BuildCDBootImageBIOS <image> : <bootMBR> : <biosLoader> : <extrafiles>
+	# 
+	# Builds a bootable CD image for BIOS systems using El Torito standard.
+
+	Depends $(image) : $(bootMBR) ;
+	Depends $(image) : $(biosLoader) ;
+	Depends $(image) : $(extrafiles) ;
+
+	if $(HAIKU_NIGHTLY_BUILD) = 1 {
+		VOLID on $(image) = haiku-nightly-$(TARGET_ARCH) ;
+	} else {
+		VOLID on $(image) = haiku-$(HAIKU_VERSION)-$(TARGET_ARCH) ;
+	}
+
+	BuildCDBootImageBIOS1 $(image) : $(bootMBR) $(biosLoader) $(extrafiles) ;
+}
+
+actions BuildCDBootImageBIOS1
+{
+	$(RM) $(<)
+
+	mkdir -p $(HAIKU_OUTPUT_DIR)/cd/boot
+	# Copy BIOS boot loader
+	cp $(>[2]) $(HAIKU_OUTPUT_DIR)/cd/boot/haiku_loader
+	
+	# Create the ISO image with El Torito boot support
+	mkisofs -R -V "$(VOLID)" \
+		-b boot/haiku_loader \
+		-no-emul-boot \
+		-boot-load-size 4 \
+		-boot-info-table \
+		-o $(<) \
+		$(HAIKU_OUTPUT_DIR)/cd \
+		$(>[3-])
 
 	$(RM) -r $(HAIKU_OUTPUT_DIR)/cd
 }

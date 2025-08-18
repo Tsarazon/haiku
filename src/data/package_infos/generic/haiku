@@ -19,8 +19,6 @@ flags			system_package
 provides {
 #if defined(HAIKU_PACKAGING_ARCH_x86_64)
 	haiku=%HAIKU_VERSION% compat>=R1~alpha4_pm_hrev51198
-#elif defined(HAIKU_PACKAGING_ARCH_x86_gcc2)
-	haiku=%HAIKU_VERSION% compat>=R1~alpha1
 #else
 	haiku=%HAIKU_VERSION% compat>=R1~beta1
 #endif

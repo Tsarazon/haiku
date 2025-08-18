@@ -147,16 +147,7 @@ AddFilesToPackage : <revisioned>kernel_$(TARGET_ARCH) ;
 AddLibrariesToPackage lib
 	: [ HaikuImageGetSystemLibs ] [ HaikuImageGetPrivateSystemLibs ] ;
 
-# libnetwork.so replaces quite a few libraries
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-	local libNetworkAliases = libsocket.so libbind.so libnet.so ;
-	local lib ;
-	for lib in $(libNetworkAliases) {
-		AddSymlinkToPackage lib : libnetwork.so : $(lib) ;
-	}
-
-	AddSymlinkToPackage lib : libbnetapi.so : libnetapi.so ;
-}
+# Legacy network library symlinks removed (gcc2-only)
 
 
 # servers

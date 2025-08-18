@@ -41,38 +41,25 @@ if $(HAIKU_BUILD_FEATURE_SSL) {
 
 # gcc_syslibs
 
-if $(TARGET_PACKAGING_ARCH) != x86_gcc2 {
-	if [ IsPackageAvailable gcc_syslibs ] {
-		ExtractBuildFeatureArchives gcc_syslibs :
-			file: base gcc_syslibs
-				libgcc_s.so.1: $(libDir)/libgcc_s.so.1
-				libstdc++.so: $(libDir)/libstdc++.so
-				libsupc++.so: $(libDir)/libsupc++.so
+if [ IsPackageAvailable gcc_syslibs ] {
+	ExtractBuildFeatureArchives gcc_syslibs :
+		file: base gcc_syslibs
+			libgcc_s.so.1: $(libDir)/libgcc_s.so.1
+			libstdc++.so: $(libDir)/libstdc++.so
+			libsupc++.so: $(libDir)/libsupc++.so
 			;
 
-		EnableBuildFeatures gcc_syslibs ;
-	} else {
-		unavailableBuildFeatures += gcc_syslibs ;
-	}
+	EnableBuildFeatures gcc_syslibs ;
+} else {
+	unavailableBuildFeatures += gcc_syslibs ;
 }
 
 
 # gcc_syslibs_devel
 
 if [ IsPackageAvailable gcc_syslibs_devel ] {
-	if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-		ExtractBuildFeatureArchives gcc_syslibs_devel :
-			file: base gcc_syslibs_devel
-				libgcc.a: $(developLibDir)/libgcc.a
-				libgcc_eh.a:
-				libgcc-kernel.a: $(developLibDir)/libgcc.a
-				libgcc_eh-kernel.a:
-				libstdc++.a:
-				libsupc++.a:
-				libsupc++-kernel.a:
-			;
-	} else {
-		ExtractBuildFeatureArchives gcc_syslibs_devel :
+	# GCC2 architecture support removed - using modern GCC configuration
+	ExtractBuildFeatureArchives gcc_syslibs_devel :
 			file: base gcc_syslibs_devel
 				libgcc.a: $(developLibDir)/libgcc.a
 				libgcc_eh.a: $(developLibDir)/libgcc_eh.a
@@ -87,7 +74,6 @@ if [ IsPackageAvailable gcc_syslibs_devel ] {
 				c++-headers: $(developHeadersDir)/c++
 				gcc-headers: $(developHeadersDir)/gcc
 			;
-	}
 
 	EnableBuildFeatures gcc_syslibs_devel ;
 } else {
@@ -346,7 +332,7 @@ if [ IsHaikuImagePackageAdded taglib ] {
 	HAIKU_BUILD_FEATURE_TAGLIB = 1 ;
 }
 
-HAIKU_TAGLIB_PACKAGE = taglib-1.6.3-r1a4-x86-gcc2-2012-09-03.zip ;
+# Legacy GCC2 taglib package reference removed
 HAIKU_TAGLIB_URL = $(baseURL)/$(HAIKU_TAGLIB_PACKAGE) ;
 
 if $(HAIKU_BUILD_FEATURE_TAGLIB) {
@@ -594,7 +580,8 @@ if [ IsPackageAvailable libraw_devel ] {
 
 # libwebp
 if [ IsPackageAvailable libwebp_devel ] {
-	if $(HAIKU_PACKAGING_ARCH) = x86 && $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
+	# GCC2 architecture condition removed - webp available for all architectures
+	if $(HAIKU_PACKAGING_ARCH) = x86 {
 		ExtractBuildFeatureArchives libwebp :
 			file: base libwebp
 				runtime: lib

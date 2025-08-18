@@ -12,10 +12,7 @@ DEFINES += HAIKU_BUILD_COMPATIBILITY_H __STRICT_ANSI__ ;
 		FS_SHELL
 		;
 
-	if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-		# GCC2 doesn't compile BFS correctly with -O2 or more
-		OPTIM = -O1 ;
-	}
+	# Modern GCC - using default optimization
 
 	defines = [ FDefines $(defines) ] ;
 	SubDirCcFlags $(defines) -Wno-multichar ;

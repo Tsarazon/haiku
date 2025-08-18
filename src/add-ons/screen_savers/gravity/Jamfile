@@ -3,10 +3,7 @@ UseBuildFeatureHeaders glu ;
 UseBuildFeatureHeaders mesa ;
 UsePrivateHeaders shared ;
 
-# For GCC2
-if $(TARGET_CC_IS_LEGACY_GCC_$(TARGET_PACKAGING_ARCH)) = 1 {
-	SubDirC++Flags --no-warnings ;
-}
+# Using modern GCC compiler
 
 AddResources Gravity : Gravity.rdef ;
 

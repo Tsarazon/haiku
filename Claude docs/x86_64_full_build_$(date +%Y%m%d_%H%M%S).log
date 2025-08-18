@@ -1,0 +1,3 @@
+warning: Invalid jamfile cache: Failed to read file info.
+Starting build of type regular ... 
+Build profile x86_64 not defined. 

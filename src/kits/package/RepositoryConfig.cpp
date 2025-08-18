@@ -44,9 +44,8 @@ namespace BPackageKit {
 // being the legacy URL and the next being the replacement.  This can
 // be phased out over time.
 
+// GCC2 repository URLs removed from legacy mappings
 static const char* kLegacyUrlMappings[] = {
-	"https://eu.hpkg.haiku-os.org/haikuports/master/x86_gcc2/current",
-	"https://hpkg.haiku-os.org/haikuports/master/x86_gcc2/current",
 	"https://eu.hpkg.haiku-os.org/haikuports/master/x86_64/current",
 	"https://hpkg.haiku-os.org/haikuports/master/x86_64/current",
 	NULL,

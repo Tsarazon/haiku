@@ -92,12 +92,7 @@ for stage in _stage0 _stage1 "" {
 	}
 
 	if $(stage) != _stage0 {
-		# cpp headers
-		if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-			# GCC 2 only -- for GCC 4 they come with the DevelopmentBase package
-			CopyDirectoryToPackage $(developCrossHeadersDirTokens) c++
-				: [ FDirName $(HAIKU_TOP) headers cpp ] : 2.95.3 ;
-		}
+		# cpp headers now come with the DevelopmentBase package
 	}
 
 	BuildHaikuPackage $(haikuCrossDevelSysrootPackage)

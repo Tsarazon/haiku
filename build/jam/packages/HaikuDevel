@@ -45,12 +45,9 @@ AddFilesToPackage develop lib :
 	libpthread.a libprint.a libprintutils.a
 	<$(architecture)>libshared.a ;
 
-# libnetservices2.a
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 0 {
-	# Modern C++ only; skip on gcc2
-	AddFilesToPackage develop lib :
-		<$(architecture)>libnetservices2.a ;
-}
+# libnetservices2.a - Modern C++ library
+AddFilesToPackage develop lib :
+	<$(architecture)>libnetservices2.a ;
 
 # the POSIX error code mapper library
 AddFilesToPackage develop lib : libposix_error_mapper.a ;
@@ -86,12 +83,7 @@ AddSymlinkToPackage develop headers : os : be ;
 AddHeaderDirectoryToPackage compatibility bsd : bsd ;
 AddHeaderDirectoryToPackage compatibility gnu : gnu ;
 
-# cpp headers
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-	# GCC 2 only -- for GCC 4 they come with the gcc package
-	CopyDirectoryToPackage develop headers c++
-		: [ FDirName $(HAIKU_TOP) headers cpp ] : 2.95.3 ;
-}
+# cpp headers now come with the gcc package
 
 
 # Deskbar menu symlinks

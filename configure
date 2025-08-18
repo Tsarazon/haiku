@@ -31,8 +31,8 @@ options:
                               output directory under "cross-tools". The
                               HAIKU_* tools variables will be set accordingly.
                               <arch> specifies the target architecture, either
-                              "x86_gcc2", "x86", "x86_64", "ppc", "m68k",
-                              "arm", "arm64", "riscv64", "sparc"
+                              "x86", "x86_64",
+                              "arm", "arm64", "riscv64"
                               This option and --cross-tools-prefix can be
                               specified multiple times. The first cross tools
                               specify the primary tools, the subsequent ones the
@@ -245,17 +245,7 @@ valid_toolchain()
 }
 
 # is_legacy_gcc
-#
-# Determines if the specified GCC version is a "legacy" (i.e. GCC < 4) one.
-#
-is_legacy_gcc()
-{
-	if [ `echo $1 | cut -d'.' -f1` -lt 4 ]; then
-		echo 1
-	else
-		echo 0
-	fi
-}
+# Legacy GCC detection function removed - supporting modern GCC only
 
 # standard_gcc_settings
 #
@@ -287,10 +277,7 @@ standard_gcc_settings()
 		arm-*)		targetCpu=arm;;
 		aarch64-*)	targetCpu=arm64;;
 		i?86-*)		targetCpu=x86;;
-		m68k-*)		targetCpu=m68k;;
-		powerpc-*)	targetCpu=ppc;;
 		riscv64-*)	targetCpu=riscv64;;
-		sparc64-*)	targetCpu=sparc;;
 		x86_64-*)	targetCpu=x86_64;;
 		*)
 			echo "Unsupported gcc target machine: $gccMachine" >&2
@@ -300,19 +287,7 @@ standard_gcc_settings()
 
 	local targetArch=$targetCpu
 
-	case $gccRawVersion in
-		2.9*)
-			# check for correct (most up-to-date) legacy compiler and complain
-			# if an older one is installed
-			if [ $gccRawVersion != $haikuRequiredLegacyGCCVersion ]; then
-				echo "GCC version $haikuRequiredLegacyGCCVersion is required!";
-				echo "Please download it from www.haiku-os.org...";
-				exit 1;
-			fi
-
-			targetArch=x86_gcc2
-			;;
-	esac
+	# Legacy GCC 2.x support removed
 
 	local bootLibgcc
 	local bootLibSupCxx
@@ -355,8 +330,8 @@ standard_gcc_settings()
 	set_variable HAIKU_CPU_$targetArch $targetCpu
 
 	get_build_tool_path CC_$targetArch "$gcc"
-	set_variable HAIKU_CC_IS_LEGACY_GCC_$targetArch \
-		`is_legacy_gcc $gccRawVersion`
+	# Legacy GCC detection removed - all modern compilers
+	set_variable HAIKU_CC_IS_LEGACY_GCC_$targetArch 0
 	set_variable HAIKU_CC_IS_CLANG_$targetArch $useClang
 	set_variable HAIKU_GCC_MACHINE_$targetArch $gccMachine
 	set_variable HAIKU_GCC_LIB_DIR_$targetArch $gccdir
@@ -602,15 +577,7 @@ gdbSources=
 if [ -z "$CC" ]; then
 	CC=gcc
 fi
-if [ $(is_legacy_gcc $($CC -dumpversion)) -ne 0 ]; then
-	if [ $platform == "Haiku" ] && [ $platformMachine == "BePC" ]; then
-		CC=gcc-x86
-	else
-		echo The host tools cannot be built with a legacy version of GCC.
-		echo Please specify a more modern compiler in the "CC" environ.
-		exit 1
-	fi
-fi
+# Legacy GCC host check removed - using modern compilers only
 
 # detect the build platform
 case "${platform}" in
@@ -680,19 +647,13 @@ else
 	exit 1
 fi
 
-haikuRequiredLegacyGCCVersion="2.95.3-haiku-2017_07_20"
-export haikuRequiredLegacyGCCVersion
-	# version of legacy gcc required to build haiku
+# Legacy GCC version requirement removed - modern GCC only
 supportedTargetArchs="
 	arm
 	arm64
-	m68k
-	ppc
 	riscv64
-	sparc
 	x86
 	x86_64
-	x86_gcc2
 	"
 
 # parse parameters
@@ -735,15 +696,11 @@ while [ $# -gt 0 ] ; do
 			targetArch=$2
 			shift 2
 			case "$targetArch" in
-				x86_gcc2)	targetMachine=i586-pc-haiku;;
 				x86)		targetMachine=i586-pc-haiku;;
 				x86_64)		targetMachine=x86_64-unknown-haiku;;
-				ppc)		targetMachine=powerpc-apple-haiku;;
-				m68k)		targetMachine=m68k-unknown-haiku;;
 				arm)		targetMachine=arm-unknown-haiku;;
 				arm64)		targetMachine=aarch64-unknown-haiku;;
 				riscv64)	targetMachine=riscv64-unknown-haiku;;
-				sparc)		targetMachine=sparc64-unknown-haiku;;
 				*)
 					echo "Unsupported target architecture: $targetArch" >&2
 					exit 1
@@ -799,11 +756,9 @@ while [ $# -gt 0 ] ; do
 			case "$targetArch" in
 				x86)		targetMachine=i586-pc-haiku;;
 				x86_64)		targetMachine=x86_64-unknown-haiku;;
-				ppc)		targetMachine=powerpc-apple-haiku;;
 				arm)		targetMachine=arm-unknown-haiku;;
 				arm64)		targetMachine=aarch64-unknown-haiku;;
 				riscv64)	targetMachine=riscv64-unknown-haiku;;
-				sparc)		targetMachine=sparc64-unknown-haiku;;
 				*)
 					echo "Unsupported target architecture: $2" >&2
 					exit 1
@@ -995,11 +950,7 @@ else
 		fi
 	fi
 
-	if [ "$targetArchs" = " x86_gcc2" ]; then
-		echo "Building a GCC2-only Haiku is no longer supported."
-		echo "Please configure the secondary architecture."
-		exit 1
-	fi
+	# GCC2-only builds removed - no longer applicable
 
 	isPrimaryArch=1
 	for targetArch in $targetArchs; do
@@ -1026,12 +977,10 @@ else
 			targetMachine=`get_variable buildCrossToolsMachine_$targetArch`
 			script="$buildCrossToolsScript"
 			scriptArgs=
-			if [ $targetArch != x86_gcc2 ]; then
-				script="${script}_gcc4"
-				scriptArgs="$targetMachine"
-				set_default_value HAIKU_USE_GCC_GRAPHITE_$targetArch	\
-					$useGccGraphiteDefault
-			fi
+			script="${script}_gcc4"
+			scriptArgs="$targetMachine"
+			set_default_value HAIKU_USE_GCC_GRAPHITE_$targetArch	\
+				$useGccGraphiteDefault
 			secondaryArch=
 			if [ -z "$isPrimaryArch" ]; then
 				secondaryArch=$targetArch
@@ -1071,7 +1020,6 @@ else
 			clangHeadersDir=`$gcc -print-resource-dir`/include/
 			case $targetArch in
 				x86*) cp $clangHeadersDir/*intrin* $clangHeadersDir/mm3* "$outputDir/clang_headers" || exit 1 ;;
-				ppc*) cp $clangHeadersDir/*altivec* "$outputDir/clang_headers" || exit 1 ;;
 				arm*) cp $clangHeadersDir/*arm* "$outputDir/clang_headers" || exit 1 ;;
 			esac
 		elif [ -z "${crossToolsPrefix}" ]; then
@@ -1107,9 +1055,8 @@ else
 			get_build_tool_path STRIP_$targetArch ${crossToolsPrefix}strip
 
 			get_build_tool_path LD_$targetArch ${crossToolsPrefix}ld
-			if [ `get_variable HAIKU_CC_IS_LEGACY_GCC_$targetArch` -eq 0 ]; then
-				get_build_tool_path ELFEDIT_$targetArch ${crossToolsPrefix}elfedit
-			fi
+			# Modern GCC - always has elfedit
+			get_build_tool_path ELFEDIT_$targetArch ${crossToolsPrefix}elfedit
 		fi
 
 		# check whether the Haiku compiler really targets Haiku

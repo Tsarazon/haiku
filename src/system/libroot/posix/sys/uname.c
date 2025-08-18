@@ -59,15 +59,6 @@ uname(struct utsname *info)
 			case B_CPU_x86_64:
 				platform = "x86_64";
 				break;
-			case B_CPU_PPC:
-				platform = "ppc";
-				break;
-			case B_CPU_PPC_64:
-				platform = "ppc64";
-				break;
-			case B_CPU_M68K:
-				platform = "m68k";
-				break;
 			case B_CPU_ARM:
 				platform = "arm";
 				break;

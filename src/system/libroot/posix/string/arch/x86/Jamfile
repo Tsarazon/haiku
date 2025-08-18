@@ -4,7 +4,7 @@ SubDir HAIKU_TOP src system libroot posix string arch x86 ;
 SubDirCcFlags -fno-builtin ;
 
 local architectureObject ;
-for architectureObject in [ MultiArchSubDirSetup x86 x86_gcc2 ] {
+for architectureObject in [ MultiArchSubDirSetup x86 ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 

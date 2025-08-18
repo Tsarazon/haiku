@@ -37,15 +37,8 @@ HAIKU_INSTALL_TARGETS_VAR on $(HAIKU_NET_BOOT_ARCHIVE_CONTAINER_NAME)
 HAIKU_CONTAINER_SYSTEM_DIR_TOKENS on $(HAIKU_NET_BOOT_ARCHIVE_CONTAINER_NAME)
 	= system ;
 
-# boot floppy
-HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME = haiku-boot-floppy-container ;
-HAIKU_CONTAINER_GRIST on $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-	= FloppyBootImage ;
-# HAIKU_INCLUDE_IN_CONTAINER_VAR -- update only mode not supported
-HAIKU_INSTALL_TARGETS_VAR on $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-	= HAIKU_FLOPPY_BOOT_IMAGE_INSTALL_TARGETS ;
-HAIKU_CONTAINER_SYSTEM_DIR_TOKENS on $(HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME)
-	= system ;
+# boot floppy - removed, floppy disk support discontinued
+# HAIKU_FLOPPY_BOOT_IMAGE_CONTAINER_NAME and related variables removed
 
 # boot CD image
 HAIKU_CD_BOOT_IMAGE_CONTAINER_NAME = haiku-boot-cd-container ;
@@ -70,7 +63,7 @@ HAIKU_DEFAULT_IMAGE_NAME = haiku.image ;
 HAIKU_DEFAULT_IMAGE_DIR = $(HAIKU_OUTPUT_DIR) ;
 HAIKU_DEFAULT_VMWARE_IMAGE_NAME = haiku.vmdk ;
 HAIKU_DEFAULT_INSTALL_DIR = /Haiku ;
-HAIKU_DEFAULT_IMAGE_SIZE ?= 300 ; # 300 MB
+HAIKU_DEFAULT_IMAGE_SIZE ?= 4000 ; # 4000 MB
 HAIKU_DEFAULT_IMAGE_LABEL ?= Haiku ;
 
 # Haiku CD defaults
@@ -115,10 +108,7 @@ for architecture in $(HAIKU_PACKAGING_ARCHS) {
 
 if $(HAIKU_PACKAGING_ARCH) {
 	local kernelArch = $(HAIKU_PACKAGING_ARCH) ;
-	# Always use the non-legacy GCC for the kernel.
-	if $(kernelArch) = x86_gcc2 {
-		kernelArch = x86 ;
-	}
+	# GCC2 legacy support removed
 	KernelArchitectureSetup $(kernelArch) ;
 }
 

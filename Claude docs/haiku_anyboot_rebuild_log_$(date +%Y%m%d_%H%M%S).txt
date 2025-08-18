@@ -1,0 +1,1135 @@
+Starting build of type regular ... 
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...patience...
+...found 154033 target(s)...
+...using 1 temp target(s)...
+...updating 1017 target(s)...
+InitScript1 generated/haiku.image-init-vars 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-init-vars 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-make-dirs 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-copy-files 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-extract-files 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-init-vars 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-make-dirs 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-copy-files 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-extract-files 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_791 
+AddTargetVariableToScript1 <unique!target>_target_26 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-make-dirs 
+AppendToContainerCopyFilesScript <hpkg_-haiku_loader.hpkg>haiku.package-copy-files-dummy-. 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-make-dirs 
+AddTargetVariableToScript1 <unique!target>_target_701 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-make-dirs 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/firmware/iprowifi2100 
+AddTargetVariableToScript1 <unique!target>_target_891 
+AddTargetVariableToScript1 <unique!target>_target_36 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-copy-files 
+C++ generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator.o 
+AddExtractFileToContainerExtractFilesScript <hpkg_-haiku.hpkg>haiku.package-extract-files-dummy-data/firmware/marvell88w8363-data/system/data/firmware/marvell88w8363/88w8363-fw-3.6.2.2.zip 
+AddTargetVariableToScript1 <unique!target>_target_44 
+AddTargetVariableToScript1 <unique!target>_target_801 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-apps 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/firmware/iprowifi2200 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-make-dirs 
+AddTargetVariableToScript1 <unique!target>_target_991 
+AddTargetVariableToScript1 <unique!target>_target_46 
+C++ generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFView.o 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-extract-files 
+AddTargetVariableToScript1 <unique!target>_target_54 
+AddTargetVariableToScript1 <unique!target>_target_901 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-preferences 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/platform_loaders 
+InitScript1 generated/objects/haiku/x86_64/packaging/repositories/Haiku-repository-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_002 
+AddTargetVariableToScript1 <unique!target>_target_56 
+AddTargetVariableToScript1 <unique!target>_target_64 
+AddTargetVariableToScript1 <unique!target>_target_011 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-data/deskbar/menu/Applications 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/bus_managers 
+AddTargetVariableToScript1 <unique!target>_target_102 
+AddTargetVariableToScript1 <unique!target>_target_66 
+AddTargetVariableToScript1 <unique!target>_target_74 
+AddTargetVariableToScript1 <unique!target>_target_111 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-data/deskbar/menu/Desktop applets 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->usb_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_202 
+AddTargetVariableToScript1 <unique!target>_target_76 
+AddTargetVariableToScript1 <unique!target>_target_84 
+AddTargetVariableToScript1 <unique!target>_target_211 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-data/deskbar/menu/Preferences 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<usb>uhci_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_302 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_86 
+AddTargetVariableToScript1 <unique!target>_target_94 
+AddTargetVariableToScript1 <unique!target>_target_311 
+AddTargetVariableToScript1 <unique!target>_target_33 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku.hpkg>haiku.package-make-dirs-attributes-dummy-data/deskbar/menu/Demos 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<usb>ohci_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_402 
+AddTargetVariableToScript1 <unique!target>_target_96 
+AddTargetVariableToScript1 <unique!target>_target_05 
+AddTargetVariableToScript1 <unique!target>_target_411 
+AddTargetVariableToScript1 <unique!target>_target_43 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<usb>ehci_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_502 
+AddTargetVariableToScript1 <unique!target>_target_07 
+AddTargetVariableToScript1 <unique!target>_target_15 
+AddTargetVariableToScript1 <unique!target>_target_511 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/repositories/Haiku-repository-init-vars 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<usb>xhci_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_602 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_loader.hpkg/scripts/haiku.package-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_25 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku.hpkg/scripts/haiku.package-init-vars 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-copy-files 
+AddTargetVariableToScript1 <unique!target>_target_53 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libbe.so_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_702 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/haiku_loader.hpkg 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_datatranslators.hpkg/scripts/haiku.package-init-vars 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-extract-files 
+AddTargetVariableToScript1 <unique!target>_target_63 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libmail.so_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_802 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_73 
+AppendToContainerMakeDirectoriesScriptAttributes <hpkg_-haiku_devel.hpkg>haiku.package-make-dirs-attributes-dummy-develop 
+AddTargetVariableToScript1 <unique!target>_target_902 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libmedia.so_mimedb 
+haiku_loader.hpkg: Removing and re-creating package contents dir ...
+AddTargetVariableToScript1 <unique!target>_target_83 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-make-dirs 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-copy-files 
+...on 100th target...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libpackage.so_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_93 
+AppendToContainerCopyFilesScriptSingleFile <hpkg_-haiku_devel.hpkg>haiku.package-copy-files-dummy-develop/lib-kernel.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libtextencoding.so_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_04 
+AppendToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>haiku.package-copy-files-dummy-develop/lib 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-extract-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->libtracker.so_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_35 
+haiku_loader.hpkg: Collecting package contents ...
+AddTargetVariableToScript1 <unique!target>_target_14 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libroot.so 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-make-dirs 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-bin 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->app_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_45 
+AddTargetVariableToScript1 <unique!target>_target_24 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libalm.so 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-init-vars 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-apps 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->debug_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_55 
+AddTargetVariableToScript1 <unique!target>_target_34 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libbe.so 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku.TV 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->dns_resolver_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_65 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_devel.hpkg/scripts/haiku.package-init-vars 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libbsd.so 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-make-dirs 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->input_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_75 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-copy-files 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libbnetapi.so 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libmedia 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->keystore_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_85 
+haiku_loader.hpkg: mimeset'ing package contents ...
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libbluetooth.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/mime_db/-/<mimedb-app->TV_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->launch_daemon_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_95 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libdebug.so 
+AddTargetVariableToScript1 <unique!target>_target_08 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/mime_db/-/<mimedb-app->BeControlLook_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mount_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_06 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libdebugger.so 
+AddTargetVariableToScript1 <unique!target>_target_18 
+AppendToContainerCopyFilesScript <hpkg_-makefile_engine.hpkg>haiku.package-copy-files-dummy-develop/etc 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/mime_db/-/<mimedb-app->FlatControlLook_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->net_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_16 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libdevice.so 
+AddTargetVariableToScript1 <unique!target>_target_28 
+AppendToContainerCopyFilesScript <hpkg_-makefile_engine.hpkg>haiku.package-copy-files-dummy-develop/documentation 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-extract-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/mime_db/-/<mimedb-app->BeDecorator_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->notification_server_mimedb 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-haiku_extras.hpkg/scripts/haiku.package-init-vars 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libgame.so 
+AddTargetVariableToScript1 <unique!target>_target_38 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-init-vars 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/mime_db/-/<mimedb-app->FlatDecorator_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->package_daemon_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-make-dirs 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libglut.so 
+AddTargetVariableToScript1 <unique!target>_target_48 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>data/deskbar/menu/Applications/TV 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->power_daemon_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_58 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libgnu.so 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/partitioning_systems 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->registrar_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_68 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libmail.so 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-add-ons/control_look 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->syslog_daemon_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-copy-files 
+AddTargetVariableToScript1 <unique!target>_target_78 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libmedia.so 
+AppendToContainerCopyFilesScript <hpkg_-haiku_extras.hpkg>haiku.package-copy-files-dummy-add-ons/decorators 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mail_daemon_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_98 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libmidi.so 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/haiku_extras.hpkg 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->media_addon_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_09 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-make-dirs 
+AddTargetVariableToScript1 <unique!target>_target_88 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libmidi2.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->media_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_19 
+haiku_extras.hpkg: Removing and re-creating package contents dir ...
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-extract-files 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-add-ons/userlandfs 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-makefile_engine.hpkg/scripts/haiku.package-init-vars 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libnetwork.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->midi_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_29 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+...on 200th target...
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/makefile_engine.hpkg 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libpackage.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->nfs4_idmapper_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_39 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-servers 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libscreensaver.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->bluetooth_server_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_49 
+AddDirectoryToContainerCopyFilesScript <hpkg_-netfs.hpkg>data/mime_db/-/<mimedb-app->netfs_server_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libtextencoding.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->print_server_mimedb 
+makefile_engine.hpkg: Removing and re-creating package contents dir ...
+AddTargetVariableToScript1 <unique!target>_target_59 
+AddDirectoryToContainerCopyFilesScript <hpkg_-netfs.hpkg>data/mime_db/-/<mimedb-app->authentication_server_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libtracker.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->print_addon_server_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-init-vars 
+AddTargetVariableToScript1 <unique!target>_target_69 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-bin 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libtranslation.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Deskbar_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_79 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-data/userlandfs/file_systems 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/lib/libroot_debug.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Tracker_mimedb 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-netfs.hpkg/scripts/haiku.package-init-vars 
+AppendToContainerCopyFilesScript <hpkg_-netfs.hpkg>haiku.package-copy-files-dummy-documentation/add-ons 
+AppendToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>haiku.package-copy-files-dummy-lib 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->alert_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-make-dirs 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/netfs.hpkg 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/config/-/<copy-directory-to-container>headers/config 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->autologin_mimedb 
+makefile_engine.hpkg: Collecting package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/glibc/-/<copy-directory-to-container>headers/glibc 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->beep_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_89 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/alm/-/<copy-directory-to-container>headers/libs/alm 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->bfsinfo_mimedb 
+netfs.hpkg: Removing and re-creating package contents dir ...
+AddTargetVariableToScript1 <unique!target>_target_99 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/GL/-/<copy-directory-to-container>headers/libs/glut/GL 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->catattr_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_001 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/linprog/-/<copy-directory-to-container>headers/libs/linprog 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->checkfs_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_101 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/os/-/<copy-directory-to-container>headers/os 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->checkitout_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_201 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-copy-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/posix/-/<copy-directory-to-container>headers/posix 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->chop_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_301 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/private/-/<copy-directory-to-container>headers/private 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->clear_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_401 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/private/libs/compat/freebsd_network/-/<copy-directory-to-container>src/libs/compat/freebsd_network 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->copyattr_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_501 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/private/libs/compat/freebsd_wlan/-/<copy-directory-to-container>src/libs/compat/freebsd_wlan 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->desklink_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_601 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/be 
+makefile_engine.hpkg: mimeset'ing package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->df_mimedb 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-init-vars 
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/file_systems 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/bsd/-/<copy-directory-to-container>headers/compatibility/bsd 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->diskimage_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-userland_fs.hpkg/scripts/haiku.package-extract-files 
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-servers 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>develop/headers/gnu/-/<copy-directory-to-container>headers/compatibility/gnu 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->draggers_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>data/deskbar/menu/Applications/Debugger 
+haiku_extras.hpkg: Collecting package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->driveinfo_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>data/mime_db/-/<mimedb-app->userlandfs_server_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku_devel.hpkg>haiku.package-copy-files-dummy-bin 
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-lib 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->dstcheck_mimedb 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/haiku_devel.hpkg 
+AddSymlinkToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>develop/lib/libuserlandfs_beos_kernel.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->eject_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>develop/lib/libuserlandfs_haiku_kernel.so 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->error_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>develop/lib/libuserlandfs_fuse.so 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-init-vars 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->fdinfo_mimedb 
+haiku_devel.hpkg: Removing and re-creating package contents dir ...
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-develop/headers/userlandfs/fuse 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ffm_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-userland_fs.hpkg>haiku.package-copy-files-dummy-develop/lib/pkgconfig 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->filepanel_mimedb 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/userland_fs.hpkg 
+haiku_loader.hpkg: Creating the package ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->finddir_mimedb 
+netfs.hpkg: Collecting package contents ...
+AddTargetVariableToScript1 <unique!target>_target_071 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->findpaths_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_171 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->fortune_mimedb 
+userland_fs.hpkg: Removing and re-creating package contents dir ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->fstrim_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_271 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->getarch_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_371 
+...on 300th target...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->hd_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_471 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->hey_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_571 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->iroster_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_671 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->isvolume_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-make-dirs 
+AddTargetVariableToScript1 <unique!target>_target_771 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->keymap_mimedb 
+AddTargetVariableToScript1 <unique!target>_target_871 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->keystore_mimedb 
+AddVariableToScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-init-vars 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->launch_roster_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-copy-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listarea_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listattr_mimedb 
+CreateContainerMakeDirectoriesScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listimage_mimedb 
+InitScript1 generated/objects/haiku/x86_64/packaging/packages_build/regular/hpkg_-webpositive.hpkg/scripts/haiku.package-extract-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listfont_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listport_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-webpositive.hpkg>haiku.package-copy-files-dummy-apps 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listres_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-webpositive.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-WebPositive 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->listsem_mimedb 
+makefile_engine.hpkg: Creating the package ...
+AppendToContainerCopyFilesScript <hpkg_-webpositive.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->logger_mimedb 
+InitScript1 generated/haiku.image-make-dirs 
+AppendToContainerCopyFilesScript <hpkg_-webpositive.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libtracker 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->lsindex_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-webpositive.hpkg>data/mime_db/-/<mimedb-app->WebPositive_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->message_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-webpositive.hpkg>data/deskbar/menu/Applications/WebPositive 
+userland_fs.hpkg: Collecting package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mimeset_mimedb 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/webpositive.hpkg 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mkindex_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->modifiers_mimedb 
+CreateContainerMakeDirectoriesScript1 generated/haiku.image-make-dirs 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mount_mimedb 
+webpositive.hpkg: Removing and re-creating package contents dir ...
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/Desktop 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mountvolume_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->notify_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/draft 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->open_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/in 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->prio_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/out 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ps_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/queries 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->query_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/sent 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->quit_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/mail/spam 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ramdisk_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/config/settings/Tracker/Tracker New Templates 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->reindex_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/config/settings/printers/Preview 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->release_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/config/settings/printers/Save as PDF 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->renice_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->resattr_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-home/config 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->resizefs_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-system 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->rmattr_mimedb 
+AppendToContainerMakeDirectoriesScriptAttributes <HaikuImage>haiku.image-make-dirs-attributes-dummy-trash 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->rmindex_mimedb 
+InitScript1 generated/haiku.image-copy-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->roster_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->safemode_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->screen_blanker_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->screeninfo_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->screenmode_mimedb 
+BuildHaikuImageUserGroupFile generated/objects/common/passwd 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setarch_mimedb 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/packages-haiku_loader.hpkg 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setmime_mimedb 
+BuildHaikuImageUserGroupFile generated/objects/common/group 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->settype_mimedb 
+InitScript1 generated/haiku.image-extract-files 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setversion_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setvolume_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->shutdown_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->sysinfo_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->system_time_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->top_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->trash_mimedb 
+AddExtractFileToContainerExtractFilesScript <HaikuImage>haiku.image-extract-files-dummy-home/config/settings/WebPositive-src/apps/webpositive/bookmarks/WebPositiveBookmarks.zip 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->unchop_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->unmount_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->urlwrapper_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->version_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->vmstat_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->waitfor_mimedb 
+webpositive.hpkg: Collecting package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->watch_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->xres_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->cddb_lookup_mimedb 
+...on 400th target...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->clipboard_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->CortexAddOnHost_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->dpms_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->FirstBootPrompt_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->installsound_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mail_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mail2mbox_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mbox2mail_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->pidof_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->recover_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->screenshot_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setcontrollook_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->setdecor_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->spamdbm_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->translate_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->WindowShade_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->AboutSystem_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->BootManager_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->CharacterMap_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Debugger_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DeskCalc_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Devices_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DiskProbe_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DiskUsage_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DriveSetup_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Expander_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Installer_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->NetworkStatus_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ProcessController_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ShowImage_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->StyledEdit_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Terminal_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->TextSearch_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Workspaces_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ActivityMonitor_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->AutoRaise_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->CodyCam_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->GLInfo_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->HaikuDepot_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Icon-O-Matic_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->LaunchBox_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->LegacyPackageInstaller_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Magnify_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Mail_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->MediaConverter_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->MediaPlayer_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->MidiPlayer_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->People_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->PoorMan_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->PowerStatus_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->RemoteDesktop_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Screenshot_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SerialConnect_mimedb 
+userland_fs.hpkg: mimeset'ing package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SoftwareUpdater_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SoundRecorder_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Appearance_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Backgrounds_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<preference>Deskbar_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->FileTypes_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Input_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Keymap_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Locale_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Network_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Notifications_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Screen_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Shortcuts_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Time_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<preference>Tracker_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->VirtualMemory_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Bluetooth_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DataTranslations_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->E-mail_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Media_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Printers_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Repositories_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ScreenSaver_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Sounds_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Chart_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Clock_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Cortex_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->FontDemo_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->GLTeapot_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Mandelbrot_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->OverlayImage_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Pairs_mimedb 
+netfs.hpkg: mimeset'ing package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->PatchBay_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Playground_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Pulse_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Sudoku_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->POP3_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->IMAP_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SMTP_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->MatchHeader_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SpamFilter_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->NewMailNotification_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Fortune_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->cortex_flanger.media_addon_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->equalizer.media_addon_mimedb 
+webpositive.hpkg: mimeset'ing package contents ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->hmulti_audio.media_addon_mimedb 
+userland_fs.hpkg: Creating the package ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->mixer.media_addon_mimedb 
+...on 500th target...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->vst_host.media_addon_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->IPv4Interface_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->IPv6Interface_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DNSClientService_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Hostname_mimedb 
+netfs.hpkg: Creating the package ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->FTPService_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->SSHService_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->TelnetService_mimedb 
+webpositive.hpkg: Creating the package ...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->FileType_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Mark as…_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Mark as Read_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Open Target Folder_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Open Terminal_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->ZipOMatic_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<input>keyboard_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Butterfly_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->DebugNow_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Flurry_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->GLife_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Gravity_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Icons_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->IFS_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Leaves_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Message_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Nebula_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Shelf_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app->Spider_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<disk_system>fat_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<disk_system>intel_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<disk_system>gpt_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<disk_system>bfs_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb-app-<disk_system>ntfs_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/mime_db/-/<mimedb>mime_db 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/agp_gart 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/ata 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/i2c 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/mmc 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/pci 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/random 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/scsi 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/usb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/busses/virtio 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/console 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/debugger 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/file_systems 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/generic 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/partitioning_systems 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/power/cpufreq 
+haiku_extras.hpkg: mimeset'ing package contents ...
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/power/cpuidle 
+haiku_devel.hpkg: Collecting package contents ...
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/cpu 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/disk 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/disk/mmc 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/disk/scsi 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/disk/virtual 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/graphics 
+haiku_extras.hpkg: Creating the package ...
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/power 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/sensor 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/network 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/input 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/drivers/bin 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/console 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/dprintf 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/null 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/tty 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/usb_modeswitch 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/zero 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/auich 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/auvia 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/echo3g 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/emuxki 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/es1370 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/hda 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/ice1712 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/usb_audio 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/audio/hmulti/sis7018 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/bluetooth/h2/h2generic 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/midi/emuxki 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/midi/ice1712 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/midi/usb_midi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/bus/usb_raw 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/disk/virtual/nbd 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/dvb/cx23882 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/framebuffer 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/vesa 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/ati 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/intel_810 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/intel_extreme 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/matrox 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/nvidia 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/radeon 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/radeon_hd 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/graphics/via 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/input/ps2_hid 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/input/usb_hid 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/input/wacom 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/misc/poke 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/misc/mem 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/3com 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/atheros813x 
+...on 600th target...
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/atheros81xx 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/attansic_l1 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/attansic_l2 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/broadcom440x 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/broadcom570x 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/dec21xxx 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/ipro100 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/ipro1000 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/intel22x 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/jmicron2x0 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/marvell_yukon 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/nforce 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/pcnet 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/rtl8125 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/rtl8139 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/rtl81xx 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/sis19x 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/sis900 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/syskonnect 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/via_rhine 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/vmxnet 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/vt612x 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/etherpci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/pegasus 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/usb_asix 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/usb_davicom 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/usb_rndis 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/wb840 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/aironetwifi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/atheroswifi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/broadcom43xx 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/iaxwifi200 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/idualwifi7260 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/iprowifi2100 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/iprowifi2200 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/iprowifi3945 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/iprowifi4965 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/marvell88w8363 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/marvell88w8335 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/ralinkwifi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/net/realtekwifi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/ports/pc_serial 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/drivers/dev/ports/usb_serial 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-. 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-lib 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Bluetooth 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libpackage 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libtextencoding 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libmedia 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libmail 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libtracker 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/trust_db 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-servers 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-debug_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-keystore_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-mount_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-notification_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-package_daemon 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-registrar 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SystemLogger 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-POST 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-midi_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-bluetooth_server 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-PSRV 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-TSKB 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-TRAK 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-bin 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>bin/untrash 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>bin/more 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-desklink 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-cmd-dstconfig 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.mmu_man.filepanel 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku.screenblanker 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.AddOnHost 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.support 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FirstBootPrompt 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-screenshot-cli 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-apps 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-About 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-BootManager 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-CharacterMap 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DeskCalc 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Devices 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DiskProbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DiskUsage 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DriveSetup 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Expander 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Installer 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-NetworkStatus 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ProcessController 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ShowImage 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-StyledEdit 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Terminal 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku.TextSearch 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-WORK 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ActivityMonitor 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.mmu.AutoRaise 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-CodyCam 
+haiku_devel.hpkg: mimeset'ing package contents ...
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-GLInfo 
+...on 700th target...
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-HaikuDepot 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-icon_o_matic 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-LaunchBox 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PackageInstaller 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Magnify 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-MAIL 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-MediaConverter 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-MediaPlayer 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-MidiPlayer 
+Link generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-PEPL 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PoorMan 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PowerStatus 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-screenshot 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku.SerialConnect 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku-softwareupdater 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SoundRecorder 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-preferences 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Appearance 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Backgrounds 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DeskbarPreferences 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FileTypes 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Input 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Keymap 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Locale 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Network 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Notifications 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Screen 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Shortcuts 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Time 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-TrackerPreferences 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-VirtualMemory 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-BluetoothPrefs 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DataTranslations 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Mail 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Media 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be-PRNT 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Repositories 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ScreenSaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Sounds 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-demos 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ChartDemo 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Clock 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.Route 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.DormantNodeView 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.InfoView 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.MediaRoutingView 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.NodeManager 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.ParameterView 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.TipManager 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Cortex.TransportView 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FontDemo 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-GLTeapot 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Mandelbrot 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-OverlayImage 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Pairs 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku.PatchBay 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Playground 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Pulse 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Sudoku 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-boot 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/launch 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/user_launch 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-boot/first-login 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/spell_check/word_dictionary 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/fortunes 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/fonts/psfonts 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/Keymaps 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/Keymaps/Finnish 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/Keymaps/Croatian 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/Keymaps/Brazilian 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/KeyboardLayouts 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/KeyboardLayouts/Apple Aluminum 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/KeyboardLayouts/ThinkPad 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/Terminal/Themes 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/acpi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/ahci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/ata 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/ata_adapter 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/bfs 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/dpc 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/efi_gpt 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/generic_ide_pci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/isa 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/intel 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/it8211 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/legacy_sata 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/mmc 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/mmc_disk 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/nvme_disk 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/packagefs 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/pci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/x86 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/scsi 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/scsi_cd 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/scsi_disk 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/scsi_periph 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/silicon_image_3112 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/highpoint_ide_pci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/sdhci 
+...on 800th target...
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/usb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/usb_disk 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/ehci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/ohci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/uhci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/xhci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/virtio 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/virtio_block 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/virtio_pci 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/kernel/boot/virtio_scsi 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/accelerants 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/locale/catalogs 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/mail_daemon/inbound_protocols 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-POP3 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IMAP 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/mail_daemon/outbound_protocols 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SMTP 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/mail_daemon/inbound_filters 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-MatchHeader 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SpamFilter 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-NewMailNotification 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/mail_daemon/outbound_filters 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Fortune 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/media 
+XRes1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.moon-AudioAdapter.media_addon 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.moon-Flanger.media_addon 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Be.LoggingConsumerApp 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-hmulti_audio.media_addon 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-mixer.media_addon 
+SetType1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/Network Settings 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IPv4Interface 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IPv6Interface 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DNSClientService 
+MimeSet1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-Hostname 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FTPService 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SSHService 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-TelnetService 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/Tracker 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/Tracker/Background 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/Tracker/TextSearch 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>add-ons/Tracker/DiskUsage 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.haiku.zip-o-matic 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/input_server/devices 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-KeyboardInputServerDevice 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/input_server/filters 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/network 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/network/devices 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/network/datalink_protocols 
+SetVersion1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/network/protocols 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/Screen Savers 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ButterflyScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-DebugNowScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FlurryScreensaver 
+Chmod1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-GLifeScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-GravityScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-add-ons/Translators 
+CreateAppMimeDBEntries1 generated/objects/haiku/x86_64/release/add-ons/translators/tiff/TIFFTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IconsScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-STXTTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IFSScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libbe 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-LeavesScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libtextencoding 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-MessageScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-pseudo.libtranslatorsutils 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-NebulaScreensaver 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ShelfScreensaver 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->STXTTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SpiderScreensaver 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->AVIFTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/disk_systems 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-FATAddOn 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->BMPTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-IntelDiskAddOn 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->GIFTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-BFSAddOn 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->HVIFTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-NTFSDiskAddOn 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->ICOTranslator_mimedb 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-add-ons/kernel/bluetooth 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->ICNSTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/CharacterMap 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/DeskCalc 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->JPEGTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Devices 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->JPEG2000Translator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/DiskProbe 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PCXTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/DiskUsage 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/DriveSetup 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PNGTranslator_mimedb 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PPMTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Expander 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PSDTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Installer 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/StyledEdit 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->RAWTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Terminal 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->RTFTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/ActivityMonitor 
+...on 900th target...
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->SGITranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/CodyCam 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->TGATranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/HaikuDepot 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->TIFFTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Icon-O-Matic 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->WebPTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Magnify 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->WonderBrushTranslator_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/Mail 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->Canon LIPS3 Compatible_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/MediaConverter 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->Canon LIPS4 Compatible_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/MediaPlayer 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->Gutenprint_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/MidiPlayer 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PCL5 Compatible_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/People 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/PoorMan 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PCL6 Compatible_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/SerialConnect 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->PS Compatible_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/SoftwareUpdater 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>data/mime_db/-/<mimedb-app->Preview_mimedb 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Applications/SoundRecorder 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-AVIFTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/NetworkStatus 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-BMPTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/ProcessController 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-GIFTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/Workspaces 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-HVIFTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/AutoRaise 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/LaunchBox 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ICOTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Desktop applets/PowerStatus 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-ICNSTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Appearance 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-JPEGTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Backgrounds 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-JPEG2000Translator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Deskbar 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PCXTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/FileTypes 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PNGTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Input 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PPMTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Keymap 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-PSDTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Locale 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-RAWTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Network 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-RTFTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Notifications 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-SGITranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Screen 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Shortcuts 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-TGATranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Time 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Tracker 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/VirtualMemory 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-TIFFTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Bluetooth 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-WebPTranslator 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/DataTranslations 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-WonderBrushTranslator 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-add-ons/media/plugins 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/E-mail 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libmedia 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Media 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Printers 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-add-ons/Print 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Repositories 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-add-ons/Print/transport 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/ScreenSaver 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Preferences/Sounds 
+AppendToContainerCopyFilesScript <hpkg_-haiku_datatranslators.hpkg>haiku.package-copy-files-dummy-data/locale/catalogs/x-vnd.Haiku-libtracker 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Chart 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/haiku_datatranslators.hpkg 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Clock 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Cortex 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/FontDemo 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/GLTeapot 
+haiku_datatranslators.hpkg: Removing and re-creating package contents dir ...
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Mandelbrot 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/OverlayImage 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Pairs 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/PatchBay 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Playground 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Pulse 
+AddSymlinkToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/deskbar/menu/Demos/Sudoku 
+AppendToContainerCopyFilesScript <hpkg_-haiku.hpkg>haiku.package-copy-files-dummy-data/deskbar 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/licenses/-/<copy-directory-to-container>data/system/data/licenses 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>data/network/-/<copy-directory-to-container>data/system/data/network 
+AddDirectoryToContainerCopyFilesScript <hpkg_-haiku.hpkg>documentation/diskusage/-/<copy-directory-to-container>docs/apps/diskusage 
+BuildHaikuPackage1 generated/objects/haiku/x86_64/packaging/packages/haiku.hpkg 
+haiku.hpkg: Removing and re-creating package contents dir ...
+haiku_datatranslators.hpkg: Collecting package contents ...
+haiku.hpkg: Collecting package contents ...
+haiku_datatranslators.hpkg: mimeset'ing package contents ...
+haiku_datatranslators.hpkg: Creating the package ...
+haiku_devel.hpkg: Creating the package ...
+haiku.hpkg: mimeset'ing package contents ...
+haiku.hpkg: Creating the package ...
+AddTargetVariableToScript1 <unique!target>_target_012 
+HaikuRepository1 generated/objects/haiku/x86_64/packaging/repositories/Haiku 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/packages-haiku.hpkg 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/packages-haiku_datatranslators.hpkg 
+AddTargetVariableToScript1 <unique!target>_target_112 
+...on 1000th target...
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-system/packages 
+AddSymlinkToContainerCopyFilesScript <HaikuImage>home/Desktop/Home 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-home/config/settings/boot 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-home/config/settings 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-system/settings/etc 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-system/settings/etc/profile.d 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-home/config/settings/kernel/drivers 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-system/settings/network 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/settings/package-repositories-<repository-config>HaikuPorts-config 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/settings/package-repositories-<repository-config>Haiku-config 
+haiku (r1~beta5_hrev58000-1)
+	checksum: 729f5118d79fefb884d8101a5d7e99d858a1512a60f78e29661740c90b4a0d65
+haiku_datatranslators (r1~beta5_hrev58000-1)
+	checksum: 376291d06c69de1a9e32ad16d8bcde0a2ed63d6adb7f746c20c0d856028db038
+haiku_devel (r1~beta5_hrev58000-1)
+	checksum: fd6326c5b16b264584e3e5554b196ed876af0e22138ca10ad963f6e67e03a891
+haiku_extras (r1~beta5_hrev58000-1)
+	checksum: de40eddcfeb52354bae09662fab588c5a09801005ea44c798b44cbeef7c797af
+haiku_loader (r1~beta5_hrev58000-1)
+	checksum: 406baf6b24177f08c36e6538fba98232b014d754eeb5d97ac099073bc7bf2758
+makefile_engine (r1~beta5_hrev58000-1)
+	checksum: d160c123c9c42bbaee7a3b837827ff8d4139b100b2b34029dc44244f08c988cd
+netfs (r1~beta5_hrev58000-1)
+	checksum: ca14e42bf49bf6ce98a8eb96f3c00db46a7f456349591b64fc644de16937960b
+userland_fs (r1~beta5_hrev58000-1)
+	checksum: 9c0e758fa1fb5bdee09c690afcdb045903422ee1007a7e3898bf658b85c8486f
+webpositive (r1~beta5_hrev58000-1)
+	checksum: 58013378c8f2a616285673b604c8a0a1c85933a362337501a431c412a6d01025
+----- Package Repository Info -----
+package count                     9
+-----------------------------------
+header size:                     72
+repository header size:         625
+package attributes size:       4308
+total size:                    2465
+-----------------------------------
+AddTargetVariableToScript1 <unique!target>_target_212 
+AppendToContainerCopyFilesScriptSingleFile <HaikuImage>haiku.image-copy-files-dummy-system/cache/package-repositories-<repository-cache>repo 
+AddVariableToScript1 generated/haiku.image-init-vars 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-system/cache/package-repositories 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-home/config/settings/Mail/ProviderInfo 
+AppendToContainerCopyFilesScript <HaikuImage>haiku.image-copy-files-dummy-home/config/settings/Tracker/Tracker New Templates 
+warning: using independent target <HaikuImage>/home/ruslan/haiku/generated/haiku.image-init-vars
+warning: using independent target <HaikuImage>/home/ruslan/haiku/generated/haiku.image-make-dirs
+warning: using independent target <HaikuImage>/home/ruslan/haiku/generated/haiku.image-copy-files
+warning: using independent target <HaikuImage>/home/ruslan/haiku/generated/haiku.image-extract-files
+BuildHaikuImage1 generated/haiku.image 
+
+Creating image ...
+Creating filesystem indices...
+Populating image ...
+Extracting src/apps/webpositive/bookmarks/WebPositiveBookmarks.zip ...
+Resolving package dependencies ...
+Extracting generated/download/bash-5.2.032-1-x86_64.hpkg ...
+Extracting generated/download/wget-1.24.5-2-x86_64.hpkg ...
+Extracting generated/download/less-643-1-x86_64.hpkg ...
+Extracting generated/download/gawk-5.3.0-1-x86_64.hpkg ...
+Extracting generated/download/fontconfig-2.13.96-2-x86_64.hpkg ...
+Unmounting ...
+BuildAnybootImageEfi1 generated/haiku-anyboot.iso 
+...updated 1017 target(s)...

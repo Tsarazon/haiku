@@ -96,9 +96,8 @@ __init_heap(void)
 	if (status != B_OK)
 		sHeapBase = NULL;
 
+	// GCC2 ABI heap protection removed - using modern protection only
 	uint32 protection = B_READ_AREA | B_WRITE_AREA;
-	if (__gABIVersion < B_HAIKU_ABI_GCC_2_HAIKU)
-		protection |= B_EXECUTE_AREA;
 	sHeapArea = create_area("heap", (void **)&sHeapBase,
 		status == B_OK ? B_EXACT_ADDRESS : B_RANDOMIZED_BASE_ADDRESS,
 		kInitialHeapSize, B_NO_LOCK, protection);
@@ -154,9 +153,8 @@ hoardSbrk(long size)
 	size = (size + hoardHeap::ALIGNMENT - 1) & ~(hoardHeap::ALIGNMENT - 1);
 
 	// choose correct protection flags
+	// GCC2 ABI heap protection removed - using modern protection only
 	uint32 protection = B_READ_AREA | B_WRITE_AREA;
-	if (__gABIVersion < B_HAIKU_ABI_GCC_2_HAIKU)
-		protection |= B_EXECUTE_AREA;
 
 	hoardLock(sHeapLock);
 

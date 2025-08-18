@@ -1,0 +1,4 @@
+SubDir HAIKU_TOP src bin debug ltrace arch arm64 ;
+
+# ARM64 ltrace support placeholder
+# ltrace is a library call tracing tool - not essential for basic GUI functionality

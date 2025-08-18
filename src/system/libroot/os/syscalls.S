@@ -11,18 +11,10 @@
 #	include "arch/alpha/syscalls.inc"
 #elif defined(ARCH_sh4)
 #	include "arch/sh4/syscalls.inc"
-#elif defined(ARCH_sparc)
-#	include "arch/sparc/syscalls.inc"
-#elif defined(ARCH_sparc64)
-#	include "arch/sparc64/syscalls.inc"
-#elif defined(ARCH_ppc)
-#	include "arch/ppc/syscalls.inc"
 #elif defined(ARCH_arm)
 #	include "arch/arm/syscalls.inc"
 #elif defined(ARCH_arm64)
 #	include "arch/arm64/syscalls.inc"
-#elif defined(ARCH_m68k)
-#	include "arch/m68k/syscalls.inc"
 #elif defined(ARCH_riscv64)
 #	include "arch/riscv64/syscalls.inc"
 #else

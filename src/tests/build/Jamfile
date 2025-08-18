@@ -1,0 +1,18 @@
+SubDir HAIKU_TOP src tests build ;
+
+AddSubDirSupportedPlatforms libbe_test ;
+
+# Build Configuration Test Suite
+UnitTestLib libbuildtest.so
+	: BuildTestAddon.cpp
+		ARM64ConfigTest.cpp
+	: be [ TargetLibstdc++ ]
+	:
+;
+
+# Standalone ARM64 configuration test runner
+UnitTest ARM64ConfigTestRunner
+	: ARM64ConfigTest.cpp
+	: be [ TargetLibstdc++ ]
+	:
+;

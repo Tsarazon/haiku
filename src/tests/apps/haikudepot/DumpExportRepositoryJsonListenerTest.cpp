@@ -39,10 +39,6 @@
 	"      \"code\": \"haikuports_x86_64\",\n" \
 	"      \"identifier\": \"haiku:hpkr:haikuports_x86_64\",\n" \
 	"      \"extraIdentifiers\":[\"zing\"]\n" \
-	"    },\n" \
-	"    {\n" \
-	"      \"code\": \"haikuports_x86_gcc2\",\n" \
-	"      \"identifier\": \"haiku:hpkr:haikuports_x86_gcc2\"\n" \
 	"    }\n" \
 	"  ]\n" \
 	"}\n"
@@ -67,7 +63,7 @@
    "      \"informationUrl\": \"http://fatelk.com/\",\n" \
    "      \"repositorySources\": [\n" \
    "        {\n" \
-   "          \"code\": \"fatelk_x86_gcc2\",\n" \
+   "          \"code\": \"fatelk_x86_64\",\n" \
    "          \"identifier\": \"can-be-anything\",\n" \
    "          \"extraIdentifiers\":[\"zing\"]\n" \
    "        }\n" \
@@ -79,7 +75,7 @@
    "      \"informationUrl\": \"http://www.software.besly.de/\",\n" \
    "      \"repositorySources\": [\n" \
    "        {\n" \
-   "          \"code\": \"besly_x86_gcc2\",\n" \
+   "          \"code\": \"besly_x86_64\",\n" \
    "          \"identifier\": \"haiku:hpkr:wojfqdi23e\"\n" \
    "        }\n" \
    "      ]\n" \
@@ -92,10 +88,6 @@
    "        {\n" \
    "          \"code\": \"clasqm_x86_64\",\n" \
    "          \"identifier\": \"haiku:hpkr:23r829rro\"\n" \
-   "        },\n" \
-   "        {\n" \
-   "          \"code\": \"clasqm_x86_gcc2\",\n" \
-   "          \"identifier\": \"haiku:hpkr:joihir32r\"\n" \
    "        }\n" \
    "      ]\n" \
    "    },\n" \
@@ -108,10 +100,6 @@
    "        {\n" \
    "          \"code\": \"haikuports_x86_64\",\n" \
    "          \"identifier\": \"haiku:hpkr:jqod2333r3r\"\n" \
-   "        },\n" \
-   "        {\n" \
-   "          \"code\": \"haikuports_x86_gcc2\",\n" \
-   "          \"identifier\": \"haiku:hpkr:wyeuhfwiewe\"\n" \
    "        }\n" \
    "      ]\n" \
    "    }\n" \
@@ -215,19 +203,16 @@ DumpExportRepositoryJsonListenerTest::TestSingle()
 	CPPUNIT_ASSERT_EQUAL(
 		BString("https://example.com"),
 		*(repository->InformationUrl()));
-	CPPUNIT_ASSERT_EQUAL(2, repository->CountRepositorySources());
+	CPPUNIT_ASSERT_EQUAL(1, repository->CountRepositorySources());
 
 	DumpExportRepositorySource *source0 =
 		repository->RepositorySourcesItemAt(0);
-	DumpExportRepositorySource *source1 =
-		repository->RepositorySourcesItemAt(1);
 
 	CPPUNIT_ASSERT_EQUAL(BString("haikuports_x86_64"), *(source0->Code()));
 	CPPUNIT_ASSERT_EQUAL(BString("haiku:hpkr:haikuports_x86_64"), *(source0->Identifier()));
 	CPPUNIT_ASSERT_EQUAL(BString("zing"), *(source0->ExtraIdentifiersItemAt(0)));
 
-	CPPUNIT_ASSERT_EQUAL(BString("haikuports_x86_gcc2"), *(source1->Code()));
-	CPPUNIT_ASSERT_EQUAL(BString("haiku:hpkr:haikuports_x86_gcc2"), *(source1->Identifier()));
+	// GCC2 repository source removed from test data
 }
 
 

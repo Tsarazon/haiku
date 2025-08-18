@@ -203,8 +203,8 @@ const ExplodeTest	kTestExplode[] =
 			{ "",   "",            "", "",             0,  "/boot/home/Desktop/index.html","",""} },
 		{ "//remote.host/boot/home/Desktop",
 			{ "",   "",            "", "remote.host",  0,  "/boot/home/Desktop","",""} },
-		{ "tag:haiku-os.org,2020:repositories/haiku/r1beta2/x86_gcc2",
-			{ "tag", "", "", "", 0, "haiku-os.org,2020:repositories/haiku/r1beta2/x86_gcc2" } }
+		{ "tag:haiku-os.org,2020:repositories/haiku/r1beta2/x86_64",
+			{ "tag", "", "", "", 0, "haiku-os.org,2020:repositories/haiku/r1beta2/x86_64" } }
 	};
 
 void UrlTest::ExplodeImplodeTest()

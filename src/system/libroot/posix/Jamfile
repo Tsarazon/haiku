@@ -21,10 +21,6 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 
 		local threadsLib = call_once.c cnd.c mtx.c thrd.c tss.c ;
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) libstdthreads ] ;
-		if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-			# the threads library is not available on gcc2
-			threadsLib = ;
-		}
 
 		MergeObject <$(architecture)>posix_main.o :
 			assert.cpp

@@ -1,0 +1,66 @@
+SubDir HAIKU_TOP src system boot platform efi_arm64 ;
+
+UsePrivateHeaders [ FDirName graphics common ] ;
+UsePrivateHeaders [ FDirName kernel boot ] ;
+UsePrivateHeaders [ FDirName kernel platform ] ;
+UsePrivateHeaders [ FDirName kernel boot platform efi ] ;
+UsePrivateHeaders [ FDirName kernel boot arch $(TARGET_KERNEL_ARCH_DIR) ] ;
+
+# ARM64 always uses FDT support
+UseLibraryHeaders [ FDirName libfdt ] ;
+
+SubDirHdrs $(HAIKU_TOP) src add-ons kernel partitioning_systems gpt ;
+
+{
+	local defines = _BOOT_PLATFORM_EFI_ARM64 _BOOT_FDT_SUPPORT ;
+
+	defines = [ FDefines $(defines) ] ;
+	SubDirCcFlags $(defines) ;
+	SubDirC++Flags $(defines) -fno-rtti ;
+}
+
+local platform_src =
+	start.cpp
+	start.S
+	console.cpp
+	cpu.cpp
+	video.cpp
+	debug.cpp
+	mmu.cpp
+	memory.cpp
+	heap.cpp
+	acpi.cpp
+	timer.cpp
+	menu.cpp
+	devices.cpp
+	quirks.cpp
+	smp.cpp
+	serial.cpp
+	dtb.cpp
+
+	decode_edid.c
+	;
+
+local support_libs = boot_fdt.a ;
+
+local platform ;
+for platform in [ MultiBootSubDirSetup efi_arm64 ] {
+	on $(platform) {
+		SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src add-ons accelerants common ] ;
+
+		BootMergeObject boot_platform_efi_arm64_common.o :
+			$(platform_src)
+			: :
+			[ MultiBootGristFiles $(support_libs) ]
+			boot_platform_generic_efi_arm64.a
+		;
+
+		BootMergeObject boot_platform_efi_arm64.o :
+			: :
+			boot_platform_efi_arm64_arch.o
+			boot_platform_efi_arm64_common.o
+		;
+	}
+}
+
+SubInclude HAIKU_TOP src system boot platform efi_arm64 arch ;

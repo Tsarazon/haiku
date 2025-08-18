@@ -147,16 +147,7 @@ mangle_class_name(const char* name, BString& out)
 	//			(for __GNUC__ == 2)
 
 	out = "";
-#if __GNUC__ == 2
-	if (count > 1) {
-		out += 'Q';
-		if (count > 10)
-			out += '_';
-		out << count;
-		if (count > 10)
-			out += '_';
-	}
-#endif
+	// GCC2 symbol mangling support removed
 
 	for (unsigned int i = 0; i < spacenames.size(); ++i) {
 		out << (int)spacenames[i].length();
@@ -816,35 +807,7 @@ find_instantiation_func(BMessage* archive)
 //	#pragma mark - BArchivable binary compatibility
 
 
-#if __GNUC__ == 2
-
-extern "C" status_t
-_ReservedArchivable1__11BArchivable(BArchivable* archivable,
-	const BMessage* archive)
-{
-	// AllUnarchived
-	perform_data_all_unarchived performData;
-	performData.archive = archive;
-
-	archivable->Perform(PERFORM_CODE_ALL_UNARCHIVED, &performData);
-	return performData.return_value;
-}
-
-
-extern "C" status_t
-_ReservedArchivable2__11BArchivable(BArchivable* archivable,
-	BMessage* archive)
-{
-	// AllArchived
-	perform_data_all_archived performData;
-	performData.archive = archive;
-
-	archivable->Perform(PERFORM_CODE_ALL_ARCHIVED, &performData);
-	return performData.return_value;
-}
-
-
-#elif __GNUC__ > 2
+// Binary compatibility support - modern GCC symbol names only
 
 extern "C" status_t
 _ZN11BArchivable20_ReservedArchivable1Ev(BArchivable* archivable,
@@ -870,8 +833,6 @@ _ZN11BArchivable20_ReservedArchivable2Ev(BArchivable* archivable,
 	archivable->Perform(PERFORM_CODE_ALL_ARCHIVED, &performData);
 	return performData.return_value;
 }
-
-#endif // _GNUC__ > 2
 
 
 void BArchivable::_ReservedArchivable3() {}

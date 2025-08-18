@@ -1,0 +1,32 @@
+SubDir HAIKU_TOP src tests system kernel arch arm64 ;
+
+UsePrivateKernelHeaders ;
+UsePrivateHeaders [ FDirName kernel arch arm64 ] ;
+UsePrivateHeaders [ FDirName system arch aarch64 ] ;
+
+# ARM64 architecture test program
+UnitTestLib arm64_arch_test :
+	arch_test.cpp
+	arch_start_test.cpp
+	stack_setup_test.cpp
+	exceptions_test.cpp
+	:
+	be $(TARGET_LIBSTDC++)
+;
+
+# Add test-specific compile flags for ARM64
+ObjectC++Flags arch_test.cpp : -std=c++17 ;
+ObjectC++Flags arch_start_test.cpp : -std=c++17 ;
+ObjectC++Flags stack_setup_test.cpp : -std=c++17 ;
+ObjectC++Flags exceptions_test.cpp : -std=c++17 ;
+
+# Add dependencies for ARM64 headers
+Includes arch_test.cpp : 
+	[ FDirName $(HAIKU_TOP) headers private kernel arch arm64 ]
+	[ FDirName $(HAIKU_TOP) headers private system arch aarch64 ]
+;
+
+Includes arch_start_test.cpp : 
+	[ FDirName $(HAIKU_TOP) headers private kernel arch aarch64 ]
+	[ FDirName $(HAIKU_TOP) headers private kernel arch arm64 ]
+;

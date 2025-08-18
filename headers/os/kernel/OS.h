@@ -491,15 +491,10 @@ enum cpu_platform {
 	B_CPU_UNKNOWN,
 	B_CPU_x86,
 	B_CPU_x86_64,
-	B_CPU_PPC,
-	B_CPU_PPC_64,
-	B_CPU_M68K,
 	B_CPU_ARM,
 	B_CPU_ARM_64,
 	B_CPU_ALPHA,
-	B_CPU_MIPS,
 	B_CPU_SH,
-	B_CPU_SPARC,
 	B_CPU_RISC_V
 };
 

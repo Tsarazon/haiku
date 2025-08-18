@@ -1,0 +1,131 @@
+package-attributes:
+	name: fontconfig
+	summary: A library for font customization and configuration
+	description: Fontconfig is a library for font customization and configuration.
+	vendor: Haiku Project
+	packager: Builder mmlr_x86_64 <hpkg-builder@haiku-os.org>
+	architecture: riscv64
+	version: 2.13.96-2
+	copyright: 2000-2005, 2006-2007 Keith Packard
+	copyright: 2005 Patrick Lam
+	copyright: 2009 Roozbeh Pournader
+	copyright: 2008-2009 Red Hat, Inc.
+	copyright: 2008 Danilo Segan
+	copyright: 2012 Google, Inc.
+	license: MIT
+	URL: https://www.freedesktop.org/wiki/Software/fontconfig
+	source URL: https://www.freedesktop.org/software/fontconfig/release/fontconfig-2.13.96.tar.xz
+	source URL: https://ports-mirror.haiku-os.org/fontconfig/fontconfig-2.13.96.tar.xz
+	provides: fontconfig = 2.13.96 (compatible >= 2)
+	provides: cmd:fc_cache
+	provides: cmd:fc_cat
+	provides: cmd:fc_conflist
+	provides: cmd:fc_list
+	provides: cmd:fc_match
+	provides: cmd:fc_pattern
+	provides: cmd:fc_query
+	provides: cmd:fc_scan
+	provides: cmd:fc_validate
+	provides: lib:libfontconfig = 1.12.0 (compatible >= 1)
+	requires: haiku>=r1~beta4_hrev56578_69-1
+	requires: lib:libbz2>=1.0.8
+	requires: lib:libfreetype>=6.18.3
+	requires: lib:libiconv>=2.6.1
+	requires: lib:libintl>=8.2.0
+	requires: lib:libxml2>=2.9.13
+	requires: lib:libz>=1.2.13
+	global writable file: settings/fonts/conf.d directory keep-old
+	global writable file: settings/fonts/fonts.conf auto-merge
+bin                                      0  2023-04-04 17:28:39  drwxr-xr-x
+  fc-cache                           32640  2023-04-04 17:28:36  -rwxr-xr-x
+  fc-cat                             27504  2023-04-04 17:28:37  -rwxr-xr-x
+  fc-conflist                        14408  2023-04-04 17:28:37  -rwxr-xr-x
+  fc-list                            19464  2023-04-04 17:28:37  -rwxr-xr-x
+  fc-match                           23712  2023-04-04 17:28:38  -rwxr-xr-x
+  fc-pattern                         18224  2023-04-04 17:28:38  -rwxr-xr-x
+  fc-query                           17512  2023-04-04 17:28:38  -rwxr-xr-x
+  fc-scan                            19448  2023-04-04 17:28:39  -rwxr-xr-x
+  fc-validate                        26416  2023-04-04 17:28:39  -rwxr-xr-x
+data                                     0  2023-04-04 17:28:45  drwxr-xr-x
+  fontconfig                             0  2023-04-04 17:28:39  drwxr-xr-x
+    conf.avail                           0  2023-04-04 17:28:39  drwxr-xr-x
+      05-reset-dirs-sample.conf        213  2023-04-04 17:28:39  -rw-r--r--
+      09-autohint-if-no-hinting.conf       717  2023-04-04 17:28:39  -rw-r--r--
+      10-autohint.conf                 630  2023-04-04 17:28:39  -rw-r--r--
+      10-hinting-full.conf             616  2023-04-04 17:28:39  -rw-r--r--
+      10-hinting-medium.conf           620  2023-04-04 17:28:39  -rw-r--r--
+      10-hinting-none.conf             616  2023-04-04 17:28:39  -rw-r--r--
+      10-hinting-slight.conf           620  2023-04-04 17:28:39  -rw-r--r--
+      10-no-sub-pixel.conf             647  2023-04-04 17:28:39  -rw-r--r--
+      10-scale-bitmap-fonts.conf      2068  2023-04-04 17:28:39  -rw-r--r--
+      10-sub-pixel-bgr.conf            672  2023-04-04 17:28:39  -rw-r--r--
+      10-sub-pixel-rgb.conf            672  2023-04-04 17:28:39  -rw-r--r--
+      10-sub-pixel-vbgr.conf           682  2023-04-04 17:28:39  -rw-r--r--
+      10-sub-pixel-vrgb.conf           682  2023-04-04 17:28:39  -rw-r--r--
+      10-unhinted.conf                 625  2023-04-04 17:28:39  -rw-r--r--
+      11-lcdfilter-default.conf        695  2023-04-04 17:28:39  -rw-r--r--
+      11-lcdfilter-legacy.conf         692  2023-04-04 17:28:39  -rw-r--r--
+      11-lcdfilter-light.conf          689  2023-04-04 17:28:39  -rw-r--r--
+      20-unhint-small-vera.conf       1377  2023-04-04 17:28:39  -rw-r--r--
+      25-unhint-nonlatin.conf         3329  2023-04-04 17:28:39  -rw-r--r--
+      30-metric-aliases.conf         13234  2023-04-04 17:28:39  -rw-r--r--
+      35-lang-normalize.conf         42037  2023-04-04 17:28:39  -rw-r--r--
+      40-nonlatin.conf                7775  2023-04-04 17:28:39  -rw-r--r--
+      45-generic.conf                 3490  2023-04-04 17:28:39  -rw-r--r--
+      45-latin.conf                   7055  2023-04-04 17:28:39  -rw-r--r--
+      48-spacing.conf                  441  2023-04-04 17:28:39  -rw-r--r--
+      49-sansserif.conf                639  2023-04-04 17:28:39  -rw-r--r--
+      50-user.conf                     751  2023-04-04 17:28:39  -rw-r--r--
+      51-local.conf                    263  2023-04-04 17:28:39  -rw-r--r--
+      60-generic.conf                 1911  2023-04-04 17:28:39  -rw-r--r--
+      60-latin.conf                   2136  2023-04-04 17:28:39  -rw-r--r--
+      65-fonts-persian.conf          10132  2023-04-04 17:28:39  -rw-r--r--
+      65-khmer.conf                    304  2023-04-04 17:28:39  -rw-r--r--
+      65-nonlatin.conf                9291  2023-04-04 17:28:39  -rw-r--r--
+      69-unifont.conf                  687  2023-04-04 17:28:39  -rw-r--r--
+      70-no-bitmaps.conf               327  2023-04-04 17:28:39  -rw-r--r--
+      70-yes-bitmaps.conf              327  2023-04-04 17:28:39  -rw-r--r--
+      80-delicious.conf                437  2023-04-04 17:28:39  -rw-r--r--
+      90-synthetic.conf               1757  2023-04-04 17:28:39  -rw-r--r--
+  gettext                                0  2023-04-04 17:28:40  drwxr-xr-x
+    its                                  0  2023-04-04 17:28:40  drwxr-xr-x
+      fontconfig.its                  1293  2023-04-04 17:28:40  -rw-r--r--
+      fontconfig.loc                  1293  2023-04-04 17:28:40  -rw-r--r--
+  locale                                 0  2023-04-04 17:28:40  drwxr-xr-x
+    zh_CN                                0  2023-04-04 17:28:40  drwxr-xr-x
+      LC_MESSAGES                        0  2023-04-04 17:28:40  drwxr-xr-x
+        fontconfig-conf.mo            3270  2023-04-04 17:28:40  -rw-r--r--
+        fontconfig.mo                14208  2023-04-04 17:28:40  -rw-r--r--
+  xml                                    0  2023-04-04 17:28:43  drwxr-xr-x
+    fontconfig                           0  2023-04-04 17:28:43  drwxr-xr-x
+      fonts.dtd                       8254  2023-04-04 17:28:43  -rw-r--r--
+documentation                            0  2023-04-04 17:28:44  drwxr-xr-x
+  packages                               0  2023-04-04 17:28:44  drwxr-xr-x
+lib                                      0  2023-04-04 17:28:44  drwxr-xr-x
+  libfontconfig.so.1                     0  2023-04-04 17:28:36  lrwxrwxrwx  -> libfontconfig.so.1.12.0
+  libfontconfig.so.1.12.0           330792  2023-04-04 17:28:44  -rwxr-xr-x
+settings                                 0  2023-04-04 17:28:39  drwxr-xr-x
+  fonts                                  0  2023-04-04 17:28:43  drwxr-xr-x
+    conf.d                               0  2023-04-04 17:28:44  drwxr-xr-x
+      10-hinting-slight.conf             0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/10-hinting-slight.conf
+      10-scale-bitmap-fonts.conf         0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/10-scale-bitmap-fonts.conf
+      11-lcdfilter-default.conf          0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/11-lcdfilter-default.conf
+      20-unhint-small-vera.conf          0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/20-unhint-small-vera.conf
+      30-metric-aliases.conf             0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/30-metric-aliases.conf
+      40-nonlatin.conf                   0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/40-nonlatin.conf
+      45-generic.conf                    0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/45-generic.conf
+      45-latin.conf                      0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/45-latin.conf
+      48-spacing.conf                    0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/48-spacing.conf
+      49-sansserif.conf                  0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/49-sansserif.conf
+      50-user.conf                       0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/50-user.conf
+      51-local.conf                      0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/51-local.conf
+      60-generic.conf                    0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/60-generic.conf
+      60-latin.conf                      0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/60-latin.conf
+      65-fonts-persian.conf              0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/65-fonts-persian.conf
+      65-nonlatin.conf                   0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/65-nonlatin.conf
+      69-unifont.conf                    0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/69-unifont.conf
+      80-delicious.conf                  0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/80-delicious.conf
+      90-synthetic.conf                  0  2023-04-04 17:28:44  lrwxrwxrwx  -> ../../../data/fontconfig/conf.avail/90-synthetic.conf
+      README                           979  2023-04-04 17:28:39  -rw-r--r--
+    fonts.conf                        2813  2023-04-04 17:28:43  -rw-r--r--
+.PackageInfo                          1250  2023-04-04 17:28:45  -rw-r--r--

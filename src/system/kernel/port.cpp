@@ -47,14 +47,8 @@
 #endif
 
 
-#if __GNUC__ >= 3
-#	define GCC_2_NRV(x)
-	// GCC >= 3.1 doesn't need it anymore
-#else
-#	define GCC_2_NRV(x) return x;
-	// GCC 2 named return value syntax
-	// see http://gcc.gnu.org/onlinedocs/gcc-2.95.2/gcc_5.html#SEC106
-#endif
+// GCC2 named return value syntax removed - using modern GCC only
+#define GCC_2_NRV(x)
 
 
 // Locking:
@@ -625,11 +619,10 @@ notify_port_select_events(Port* port, uint16 events)
 
 
 static BReference<Port>
-get_locked_port(port_id id) GCC_2_NRV(portRef)
+get_locked_port(port_id id)
 {
-#if __GNUC__ >= 3
+	// GCC2 conditional removed - using modern GCC only
 	BReference<Port> portRef;
-#endif
 	{
 		ReadLocker portsLocker(sPortsLock);
 		portRef.SetTo(sPorts.Lookup(id));
@@ -646,11 +639,10 @@ get_locked_port(port_id id) GCC_2_NRV(portRef)
 
 
 static BReference<Port>
-get_port(port_id id) GCC_2_NRV(portRef)
+get_port(port_id id)
 {
-#if __GNUC__ >= 3
+	// GCC2 conditional removed - using modern GCC only
 	BReference<Port> portRef;
-#endif
 	ReadLocker portsLocker(sPortsLock);
 	portRef.SetTo(sPorts.Lookup(id));
 

@@ -52,17 +52,13 @@ local generics =
 	;
 
 local architectureObject ;
-for architectureObject in [ MultiArchSubDirSetup x86 x86_gcc2 ] {
+for architectureObject in [ MultiArchSubDirSetup x86 ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 
 		UseHeaders [ FDirName $(SUBDIR) .. .. arch $(architecture) ] ;
 
-		if $(architecture) = x86_gcc2 {
-			# GCC 2 miscompiles some of the files in here, so use the newer GCC.
-			original_TARGET_CC_x86_gcc2 = $(TARGET_CC_x86_gcc2) ;
-			TARGET_CC_x86_gcc2 = $(TARGET_CC_x86) -Wa,-mrelax-relocations=no -Wno-unused-but-set-variable ;
-		}
+		# GCC2 compilation workarounds removed - using modern GCC only
 
 		MergeObject <$(architecture)>posix_musl_math.o :
 			__invtrigl.s
@@ -88,9 +84,7 @@ for architectureObject in [ MultiArchSubDirSetup x86 x86_gcc2 ] {
 			$(generics)
 			;
 
-		if $(architecture) = x86_gcc2 {
-			TARGET_CC_x86_gcc2 = $(original_TARGET_CC_x86_gcc2) ;
-		}
+		# GCC2 compiler restoration removed
 
 		SEARCH on [ FGristFiles $(generics) ] = [ FDirName $(SUBDIR) .. ] ;
 	}

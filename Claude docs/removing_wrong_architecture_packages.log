@@ -1,0 +1,17 @@
+REMOVING PACKAGES WITH WRONG ARCHITECTURE METADATA
+===============================================
+
+ISSUE: All external packages show architecture: riscv64 instead of x86_64
+This causes package dependency resolver to reject them as incompatible.
+
+PACKAGES TO REMOVE (ALL external packages from generated/download/):
+- All packages ending with x86_64.hpkg but containing riscv64 metadata
+- This includes bash, bc, freetype, zlib, coreutils, icu74, etc.
+- And all _devel packages we added
+
+PACKAGES TO KEEP (Core Haiku packages):
+- haiku_loader.hpkg (generated internally)
+- haiku.hpkg (generated internally) 
+- haiku_datatranslators.hpkg (generated internally)
+
+This will create a minimal but functional Haiku system without external tools.

@@ -89,15 +89,11 @@ AddFilesToPackage add-ons kernel generic :
 	<module>tty
 	;
 AddFilesToPackage add-ons kernel partitioning_systems :
-	amiga_rdb@m68k
-	apple@ppc
-	sun@sparc
 	efi_gpt
 	intel
 	session
 	;
 AddFilesToPackage add-ons kernel interrupt_controllers :
-	openpic@ppc
 	;
 AddFilesToPackage add-ons kernel power cpufreq :
 	amd_pstates@x86,x86_64
@@ -205,16 +201,7 @@ AddFilesToPackage : <revisioned>kernel_$(TARGET_ARCH) ;
 AddLibrariesToPackage lib
 	: [ HaikuImageGetSystemLibs ] [ HaikuImageGetPrivateSystemLibs ] ;
 
-# libnetwork.so replaces quite a few libraries
-if $(HAIKU_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-	local libNetworkAliases = libsocket.so libbind.so libnet.so ;
-	local lib ;
-	for lib in $(libNetworkAliases) {
-		AddSymlinkToPackage lib : libnetwork.so : $(lib) ;
-	}
-
-	AddSymlinkToPackage lib : libbnetapi.so : libnetapi.so ;
-}
+# Legacy network library symlinks removed (gcc2-only)
 
 
 # trusted keys
@@ -327,7 +314,6 @@ AddBootModuleSymlinksToPackage
 	mmc
 	mmc_disk
 	nvme_disk
-	openpic@ppc
 	packagefs
 	pci
 	<pci>designware@riscv64

@@ -20,11 +20,7 @@
 */
 #if defined(__i386__)
 #	define __HAIKU_ARCH					x86
-#	if __GNUC__ == 2
-#		define __HAIKU_ARCH_ABI			"x86_gcc2"
-#	else
-#		define __HAIKU_ARCH_ABI			"x86"
-#	endif
+#	define __HAIKU_ARCH_ABI				"x86"
 #	define __HAIKU_ARCH_X86				1
 #	define __HAIKU_ARCH_PHYSICAL_BITS	64
 #elif defined(__x86_64__)
@@ -32,21 +28,6 @@
 #	define __HAIKU_ARCH_ABI				"x86_64"
 #	define __HAIKU_ARCH_X86_64			1
 #	define __HAIKU_ARCH_BITS			64
-#elif defined(__POWERPC__)
-#	define __HAIKU_ARCH					ppc
-#	define __HAIKU_ARCH_ABI				"ppc"
-#	define __HAIKU_ARCH_PPC				1
-#	define __HAIKU_ARCH_PHYSICAL_BITS	64
-#	define __HAIKU_BIG_ENDIAN			1
-#elif defined(__M68K__)
-#	define __HAIKU_ARCH					m68k
-#	define __HAIKU_ARCH_ABI				"m68k"
-#	define __HAIKU_ARCH_M68K			1
-#	define __HAIKU_BIG_ENDIAN			1
-#elif defined(__MIPSEL__)
-#	define __HAIKU_ARCH					mipsel
-#	define __HAIKU_ARCH_ABI				"mipsel"
-#	define __HAIKU_ARCH_MIPSEL			1
 #elif defined(__ARMEL__) || defined(__arm__)
 #	define __HAIKU_ARCH					arm
 #	define __HAIKU_ARCH_ABI				"arm"
@@ -76,13 +57,6 @@
 #	define __HAIKU_ARCH_ABI				"riscv128"
 #	define __HAIKU_ARCH_RISCV128			1
 #	define __HAIKU_ARCH_BITS			128
-#elif defined(__sparc64__)
-#	define __HAIKU_ARCH					sparc64
-#	define __HAIKU_ARCH_ABI				"sparc"
-#	define __HAIKU_ARCH_SPARC			1
-#	define __HAIKU_ARCH_PHYSICAL_BITS	64
-#	define __HAIKU_BIG_ENDIAN			1
-#	define __HAIKU_ARCH_BITS			64
 #else
 #	error Unsupported architecture!
 #endif
@@ -133,10 +107,7 @@
 #define __HAIKU_SUBDIR_ARCH_HEADER(subdir, header)	\
 	<subdir/arch/__HAIKU_ARCH/header>
 
-/* BeOS R5 binary compatibility (gcc 2 on x86) */
-#if defined(__HAIKU_ARCH_X86) && __GNUC__ == 2
-#	define __HAIKU_BEOS_COMPATIBLE	1
-#endif
+/* BeOS R5 binary compatibility removed */
 
 /* BeOS R5 compatible types */
 #if defined(__HAIKU_ARCH_X86) && !defined(_KERNEL_MODE)

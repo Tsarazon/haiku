@@ -31,11 +31,7 @@
 #endif	// RUNTIME_LOADER_TRACING
 
 #if defined(_COMPAT_MODE) && !defined(__x86_64__)
-	#if __GNUC__ == 2
-		#define RLD_PREFIX "runtime_loader_x86_gcc2: "
-	#else
-		#define RLD_PREFIX "runtime_loader_x86: "
-	#endif
+	#define RLD_PREFIX "runtime_loader_x86: "
 #endif
 #ifndef RLD_PREFIX
 #define RLD_PREFIX "runtime_loader: "

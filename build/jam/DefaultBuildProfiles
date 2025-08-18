@@ -91,11 +91,8 @@ rule DefineDefaultBuildProfiles
 				vision
 				wonderbrush
 				wpa_supplicant
-				# Some packages can't be built with gcc2, so we install the gcc13
-				# secondary architecture package instead in this case
-				!gcc2 @{ nano p7zip python3.10 xz_utils }@
-				gcc2 @{ nano_x86@secondary_x86 p7zip_x86@secondary_x86
-					python3.10_x86@secondary_x86 xz_utils_x86@secondary_x86 }@
+				# GCC2 package conditionals removed - using modern packages only
+				nano p7zip python3.10 xz_utils
 				;
 			AddHaikuImageSourcePackages
 				bepdf
@@ -112,8 +109,8 @@ rule DefineDefaultBuildProfiles
 
 			AddOptionalHaikuImagePackages BeBook Development Git Welcome ;
 
-			# WebPositive can only built for x86_gcc2, x86 and x86_64
-			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 {
+			# WebPositive can only built for x86 and x86_64 (GCC2 support removed)
+			if $(HAIKU_PACKAGING_ARCHS) in x86 x86_64 {
 				AddOptionalHaikuImagePackages WebPositive ;
 			} else {
 				Echo "WebPositive not available on $(HAIKU_PACKAGING_ARCHS)" ;
@@ -140,14 +137,8 @@ rule DefineDefaultBuildProfiles
 				pe
 				vision
 				wpa_supplicant
-				# xz_utils can't be built with gcc2, so we install it for
-				# primary gcc 8 architectures or gcc 2 hybrids.
-				!gcc2 @{ nano p7zip xz_utils }@
-				gcc2 @{
-					nano_x86@secondary_x86
-					p7zip_x86@secondary_x86
-					xz_utils_x86@secondary_x86
-				}@
+				# GCC2 package conditionals removed - using modern packages only
+				nano p7zip xz_utils
 				;
 			AddHaikuImageSourcePackages
 				nano
@@ -156,8 +147,8 @@ rule DefineDefaultBuildProfiles
 
 			AddOptionalHaikuImagePackages Development Git ;
 
-			# WebPositive can only built for x86_gcc2, x86 and x86_64
-			if $(HAIKU_PACKAGING_ARCHS) in x86_gcc2 x86 x86_64 {
+			# WebPositive can only built for x86 and x86_64 (GCC2 support removed)
+			if $(HAIKU_PACKAGING_ARCHS) in x86 x86_64 {
 				AddOptionalHaikuImagePackages WebPositive ;
 			} else {
 				Echo "WebPositive not available on $(HAIKU_PACKAGING_ARCHS)" ;
@@ -197,8 +188,8 @@ rule DefineDefaultBuildProfiles
 				python
 				sed
 				texinfo
-				!gcc2 @{ gawk grep }@
-				gcc2 @{ grep_x86@secondary_x86 mawk }@
+				# GCC2 package conditionals removed - using modern packages only
+				gawk grep
 				;
 
 			AddHaikuImageDisabledPackages
@@ -218,7 +209,7 @@ rule DefineDefaultBuildProfiles
 						expat
 						freetype
 						gcc
-						icu@gcc2 icu74@!gcc2
+						icu74
 						libedit
 						ncurses6
 						zlib

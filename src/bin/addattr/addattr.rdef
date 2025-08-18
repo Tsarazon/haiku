@@ -1,0 +1,43 @@
+/*
+ * addattr Application Resources
+ * Demonstrates resource compilation for Haiku command-line applications
+ */
+
+resource app_signature "application/x-vnd.Haiku-addattr";
+
+resource app_flags B_SINGLE_LAUNCH | B_ARGV_ONLY;
+
+resource app_version {
+	major  = 1,
+	middle = 0,
+	minor  = 0,
+
+	variety = B_APPV_FINAL,
+	internal = 0,
+
+	short_info = "addattr",
+	long_info = "addattr - Add file attributes ©2025 Haiku Inc."
+};
+
+// Application help text
+resource(1000, "Usage") "Usage: addattr [-t type] attr value file1 [file2...]";
+resource(1001, "HelpText") "Add attributes to files using Haiku's extended file system features";
+
+// Supported attribute types
+resource(1100, "SupportedTypes") array {
+	"string", "int", "int8", "int16", "int32", "int64",
+	"uint", "uint8", "uint16", "uint32", "uint64", 
+	"float", "double", "bool", "raw"
+};
+
+// Error messages (for consistency)
+resource(2000, "ErrorFileNotFound") "Error: File not found";
+resource(2001, "ErrorInvalidType") "Error: Invalid attribute type";
+resource(2002, "ErrorPermissionDenied") "Error: Permission denied";
+
+#ifdef HAIKU_TARGET_PLATFORM_HAIKU
+// Haiku-specific icon (simplified)
+resource vector_icon array {
+	$"6E6369660203FFFFFF00FFFFFF00FFFFFF00"
+};
+#endif

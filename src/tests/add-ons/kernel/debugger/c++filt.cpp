@@ -36,7 +36,7 @@ static void print_help(FILE* out)
 		"  -m         only print mangled names that were demangled,"
 			"omit other output\n"
 		"  -u         use unbuffered output\n"
-		"  --no-gcc2	ignore GCC 2-style symbols\n");
+		"  --no-gcc2	(deprecated - GCC2 support removed)\n");
 }
 
 
@@ -83,42 +83,14 @@ static bool look_for_itanium_prefix(char** str, char* end)
 }
 
 
-static bool look_for_gcc2_symbol(char** str, char* end)
-{
-	// search '__' starting from the end, don't accept them at the start
-	char* s = *str;
-	size_t pos = (end - s) - 1;
-	char* mangled = NULL;
-
-	while (pos > 1) {
-		if (s[pos] == '_') {
-			if (s[pos - 1] == '_') {
-				mangled = s + pos + 1;
-				break;
-			} else
-				pos--;
-		}
-		pos--;
-	}
-
-	// if we've found a symbol, go backwards to its beginning
-	while (mangled != NULL && mangled > (s + 1)
-			&& is_mangle_char_posix(mangled[-1])) {
-		mangled--;
-	}
-
-	if (mangled != NULL)
-		*str = mangled;
-
-	return mangled != NULL;
-}
+// GCC2 symbol demangling function removed - supporting modern GCC only
 
 
 static char buf[8192];
 int main(int argc, char* argv[])
 {
 	enum { kPrintAll, kPrintMatching } print_mode = kPrintAll;
-	bool noGCC2 = false;
+	// GCC2 option removed - supporting modern GCC only
 
 	while (argc > 1 && argv[1][0] == '-') {
 		if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
@@ -127,7 +99,7 @@ int main(int argc, char* argv[])
 		} else if (strcmp(argv[1], "-m") == 0) {
 			print_mode = kPrintMatching;
 		} else if (strcmp(argv[1], "--no-gcc2") == 0) {
-			noGCC2 = true;
+			// GCC2 option deprecated - ignored
 		} else if (strcmp(argv[1], "-u") == 0) {
 			setbuf(stdout, NULL);
 		} else if (strcmp(argv[1], "--") == 0) {
@@ -166,8 +138,8 @@ int main(int argc, char* argv[])
 			// Check if we have a symbol, and then for how long it is.
 			size_t n_sym = 0;
 			char* real_cur = cur;
-			if (look_for_itanium_prefix(&real_cur, end) ||
-					(!noGCC2 && look_for_gcc2_symbol(&real_cur, end))) {
+			if (look_for_itanium_prefix(&real_cur, end)) {
+				// GCC2 symbol lookup removed - supporting modern Itanium ABI only
 				// Print all the stuff before the symbol.
 				if (print_mode == kPrintAll)
 					printf("%.*s", static_cast<int>(real_cur - cur), cur);

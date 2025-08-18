@@ -37,11 +37,19 @@ if $(TARGET_ARCH) = ppc {
 			if $(TARGET_BOOT_PLATFORM) = efi {
 				local efiLoader = haiku_loader.efi ;
 				local efiPartition = esp.image ;
+				local bootMBR = base_mbr.bin ;
 				MakeLocateDebug $(efiPartition) : system boot ;
 				BuildEfiSystemPartition $(efiPartition) : $(efiLoader) ;
 
-				BuildCDBootImageEFI $(HAIKU_CD_BOOT_IMAGE) : $(HAIKU_BOOT_FLOPPY)
+				BuildCDBootImageEFI $(HAIKU_CD_BOOT_IMAGE) : $(bootMBR)
 					: $(efiPartition) : $(extras) ;
+			}
+			if $(TARGET_BOOT_PLATFORM) = bios_ia32 {
+				local biosLoader = haiku_loader.bios_ia32 ;
+				local bootMBR = base_mbr.bin ;
+
+				BuildCDBootImageBIOS $(HAIKU_CD_BOOT_IMAGE) : $(bootMBR)
+					: $(biosLoader) : $(extras) ;
 			}
 		}
 	}

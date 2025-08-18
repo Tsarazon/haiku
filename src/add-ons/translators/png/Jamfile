@@ -4,9 +4,7 @@ SubDirHdrs [ FDirName $(SUBDIR) $(DOTDOT) shared ] ;
 
 AddResources PNGTranslator : PNGTranslator.rdef ;
 
-if $(TARGET_CC_IS_LEGACY_GCC_$(TARGET_PACKAGING_ARCH)) = 1 {
-	SubDirCcFlags -DPNG_NO_PEDANTIC_WARNINGS ;
-}
+# Using modern GCC compiler
 
 local architectureObject ;
 for architectureObject in [ MultiArchSubDirSetup ] {

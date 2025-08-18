@@ -4,13 +4,8 @@ rule Libstdc++ForImage
 	#
 	# Returns the c++-standard-library to be put onto the image.
 
-	if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-		# the libstdc++.so for our legacy compiler (needs to be built)
-		return libstdc++.r4.so ;
-	}
-
-	# libstdc++.so for other architectures comes with the gcc_syslibs
-	# package, so there's no library to put onto the image directly.
+	# libstdc++.so comes with the gcc_syslibs package, 
+	# so there's no library to put onto the image directly.
 	return ;
 }
 
@@ -23,10 +18,6 @@ rule TargetLibstdc++ asPath
 	# Invoking with <asPath> = true will return the full library path.
 
 	if $(TARGET_PLATFORM) = haiku || $(TARGET_PLATFORM) = libbe_test {
-		if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-			# the libstdc++.so for our legacy compiler (needs to be built)
-			return libstdc++.r4.so ;
-		}
 		# return libstdc++.so from the gcc_syslibs build feature.
 		local flags ;
 		if $(asPath) = true {
@@ -48,10 +39,6 @@ rule TargetLibsupc++ asPath
 	# Invoking with <asPath> = true will return the full library path.
 
 	if $(TARGET_PLATFORM) = haiku {
-		if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-			# there is no libsupc++.so for the legacy compiler
-			return ;
-		}
 		# return libstdc++.so (which includes libsupc++) from the gcc_syslibs
 		# build feature.
 		local flags ;
@@ -158,8 +145,7 @@ rule TargetLibgcc asPath
 {
 	# TargetLibgcc [ <asPath> ]
 	#
-	# Returns the default libgcc(s) for the target. On x86_gcc2, this is the
-	# static libgcc, on everything else this will return the shared libgcc_s
+	# Returns the default libgcc(s) for the target. This returns the shared libgcc_s
 	# followed by the static libgcc (both are needed as they do not contain
 	# the same set of symbols).
 	# Invoking with <asPath> = true will return the full library path.
@@ -169,20 +155,13 @@ rule TargetLibgcc asPath
 		if $(asPath) = true {
 			flags += path ;
 		}
-		if $(TARGET_PACKAGING_ARCH) = x86_gcc2 {
-			# return libgcc.a from the gcc_syslibs_devel build feature.
-			return [
-				BuildFeatureAttribute gcc_syslibs_devel : libgcc.a : $(flags)
-			] ;
-		} else {
-			# return libgcc_s.so from the gcc_syslibs build feature and libgcc.a
-			# from the gcc_syslibs_devel build feature.
-			return [
-				BuildFeatureAttribute gcc_syslibs : libgcc_s.so.1 : $(flags)
-			] [
-				BuildFeatureAttribute gcc_syslibs_devel : libgcc.a : $(flags)
-			] ;
-		}
+		# return libgcc_s.so from the gcc_syslibs build feature and libgcc.a
+		# from the gcc_syslibs_devel build feature.
+		return [
+			BuildFeatureAttribute gcc_syslibs : libgcc_s.so.1 : $(flags)
+		] [
+			BuildFeatureAttribute gcc_syslibs_devel : libgcc.a : $(flags)
+		] ;
 	} else {
 		# TODO: return libgcc for non-Haiku target platform if needed
 	}
@@ -328,9 +307,7 @@ rule C++HeaderDirectories architecture
 	# Returns the c++ header directories to use for the given architecture.
 
 	local c++HeaderDirs ;
-	if $(architecture) = x86_gcc2 {
-		c++HeaderDirs = [ FDirName $(HAIKU_TOP) headers cpp ] ;
-	} else if $(PLATFORM) = bootstrap_stage0 {
+	if $(PLATFORM) = bootstrap_stage0 {
 		# Currently, no c++-headers are needed for stage0 of the boostrap.
 	} else {
 		local baseDir = [
@@ -356,9 +333,7 @@ rule GccHeaderDirectories architecture
 	# Returns the gcc header directories to use for the given architecture.
 
 	local gccHeaderDirs ;
-	if $(architecture) = x86_gcc2 {
-		gccHeaderDirs = [ FDirName $(HAIKU_TOP) headers build gcc-2.95.3 ] ;
-	} else if $(PLATFORM) = bootstrap_stage0 {
+	if $(PLATFORM) = bootstrap_stage0 {
 		gccHeaderDirs =
 			[ FDirName $(HAIKU_GCC_LIB_DIR_$(architecture)) include ]
 			[ FDirName $(HAIKU_GCC_LIB_DIR_$(architecture)) include-fixed ]

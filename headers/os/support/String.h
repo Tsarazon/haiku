@@ -310,9 +310,7 @@ public:
 			// Unchecked char access
 			char			operator[](int32 index) const;
 
-#if __GNUC__ == 2
-			char&			operator[](int32 index);
-#endif
+			// GCC2 non-const operator[] removed
 
 			// Checked char access
 			char			ByteAt(int32 index) const;

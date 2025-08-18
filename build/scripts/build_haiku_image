@@ -385,13 +385,20 @@ if [ $isCD ]; then
 	echo "Generating attribute stores ..."
 	$generate_attribute_stores "$tPrefix"
 
-	echo "Copying boot image ..."
-	$cp "$cdBootFloppy" "$outputDir"
+	# Copy boot image if provided (for legacy BIOS boot support)
+	if [ -n "$cdBootFloppy" ] && [ -f "$cdBootFloppy" ]; then
+		echo "Copying boot image ..."
+		$cp "$cdBootFloppy" "$outputDir"
+		BOOT_OPTIONS="-b `basename $cdBootFloppy`"
+	else
+		echo "Creating EFI-only CD (no legacy BIOS boot support) ..."
+		BOOT_OPTIONS=""
+	fi
 
 	if command -v xorriso; then
 		# build the iso image using xorriso
 		echo "Building CD image..."
-		xorriso -as mkisofs -r -b `basename $cdBootFloppy` \
+		xorriso -as mkisofs -r $BOOT_OPTIONS \
 			-V "$cdLabel" -o "$cdImagePath" "$tPrefix"
 	else
 		echo "you need xorriso to create a CD image."

@@ -20,7 +20,6 @@ AddSymlinkToPackage data deskbar menu Applications : ../../../../apps/TV : TV ;
 AddFilesToPackage add-ons kernel partitioning_systems :
 	amiga_rdb@!m68k
 	apple@!ppc
-	sun@!sparc
 	;
 
 

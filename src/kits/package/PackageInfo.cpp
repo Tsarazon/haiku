@@ -64,13 +64,9 @@ const char* const
 BPackageInfo::kArchitectureNames[B_PACKAGE_ARCHITECTURE_ENUM_COUNT] = {
 	"any",
 	"x86",
-	"x86_gcc2",
 	"source",
 	"x86_64",
-	"ppc",
 	"arm",
-	"m68k",
-	"sparc",
 	"arm64",
 	"riscv64"
 };

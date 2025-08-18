@@ -65,10 +65,8 @@ static const char*
 guess_architecture(const char* name)
 {
 	if (strstr(name, "x86") != NULL) {
-		if (strstr(name, "gcc4") != NULL)
-			return "x86";
-
-		return "x86_gcc2";
+		// GCC2 architecture detection removed - using modern x86 only
+		return "x86";
 	}
 
 	return NULL;

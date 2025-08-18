@@ -1218,105 +1218,6 @@ RemotePackageRepository HaikuPorts
 	zstd_bin-1.3.1-1
 	zstd_devel-1.3.1-1
 
-	# secondary architecture (x86_gcc2)
-	binutils_x86_gcc2-2.17_2013_04_21-2
-	bzip2_x86_gcc2-1.0.6-5
-	bzip2_x86_gcc2_devel-1.0.6-5
-	curl_x86_gcc2-7.45.0-2
-	curl_x86_gcc2_devel-7.45.0-2
-	expat_x86_gcc2-2.2.0-1
-	expat_x86_gcc2_devel-2.2.0-1
-	ffmpeg_x86_gcc2-0.10.16-1
-	ffmpeg_x86_gcc2_devel-0.10.16-1
-	flac_x86_gcc2-1.3.1-1
-	flac_x86_gcc2_devel-1.3.1-1
-	fluidlite_x86_gcc2_devel-1.0.0-1
-	freetype_x86_gcc2-2.7-1
-	freetype_x86_gcc2_devel-2.7-1
-	gcc_x86_gcc2-2.95.3_2014_07_26-1
-	gcc_x86_gcc2_syslibs_devel-2.95.3_2014_07_26-1
-	gettext_x86_gcc2-0.19.6-2
-	gettext_x86_gcc2_libintl-0.19.6-2
-	giflib_x86_gcc2-5.1.2-1
-	giflib_x86_gcc2_devel-5.1.2-1
-	glew_x86_gcc2-1.11.0-1
-	glew_x86_gcc2_devel-1.11.0-1
-	glew_x86_gcc2_util-1.11.0-1
-	glib2_x86_gcc2-2.38.1-4
-	glib2_x86_gcc2_devel-2.38.1-4
-	glu_x86_gcc2-9.0.0-2
-	glu_x86_gcc2_devel-9.0.0-2
-	icu_x86_gcc2-57.1-1
-	icu_x86_gcc2_devel-57.1-1
-	icu54_x86_gcc2-54.1-1
-	icu54_x86_gcc2_devel-54.1-1
-	icu55_x86_gcc2-55.1-1
-	icu55_x86_gcc2_devel-55.1-1
-	icu56_x86_gcc2-56.1-1
-	icu56_x86_gcc2_devel-56.1-1
-	jasper_x86_gcc2-1.900.1-4
-	jasper_x86_gcc2_devel-1.900.1-4
-	jpeg_x86_gcc2-9-3
-	jpeg_x86_gcc2_devel-9-3
-	libao_x86_gcc2-1.2.0-1
-	libao_x86_gcc2_devel-1.2.0-1
-	libffi_x86_gcc2-3.0.13-1
-	libffi_x86_gcc2_devel-3.0.13-1
-	libicns_x86_gcc2-0.8.1-3
-	libicns_x86_gcc2_devel-0.8.1-3
-	libiconv_x86_gcc2-1.13.1-6
-	libiconv_x86_gcc2_devel-1.13.1-6
-	libmodplug_x86_gcc2-0.8.8.5-4
-	libmodplug_x86_gcc2_devel-0.8.8.5-4
-	libogg_x86_gcc2-1.3.2-2
-	libogg_x86_gcc2_devel-1.3.2-2
-	libpng_x86_gcc2-1.5.25-1
-	libpng_x86_gcc2_devel-1.5.25-1
-	libpng16_x86_gcc2-1.6.20-1
-	libpng16_x86_gcc2_devel-1.6.20-1
-	libsolv_x86_gcc2-0.3.0_haiku_2014_12_22-1
-	libsolv_x86_gcc2_devel-0.3.0_haiku_2014_12_22-1
-	libtheora_x86_gcc2-1.1.1-2
-	libtheora_x86_gcc2_devel-1.1.1-2
-	libtool_x86_gcc2-2.4.2-2
-	libtool_x86_gcc2_libltdl-2.4.2-2
-	libvorbis_x86_gcc2-1.3.5-2
-	libvorbis_x86_gcc2_devel-1.3.5-2
-	libvpx_x86_gcc2-1.0.0-2
-	libvpx_x86_gcc2_devel-1.0.0-2
-	libwebp_x86_gcc2-0.5.1-1
-	libwebp_x86_gcc2_devel-0.5.1-1
-	libwebp5_x86_gcc2-0.4.4-1
-	libwebp5_x86_gcc2_devel-0.4.4-1
-	libxml2_x86_gcc2-2.9.2-1
-	libxml2_x86_gcc2_devel-2.9.2-1
-	live555_x86_gcc2-2016.01.29-3
-	live555_x86_gcc2_devel-2016.01.29-3
-	mesa_x86_gcc2-7.9.2-5
-	mesa_x86_gcc2_devel-7.9.2-5
-	mesa_x86_gcc2_swrast-7.9.2-5
-	ncurses_x86_gcc2-5.9-10
-	ncurses_x86_gcc2_devel-5.9-10
-	ncurses6_x86_gcc2-6.0-1
-	ncurses6_x86_gcc2_devel-6.0-1
-	openssl_x86_gcc2-1.0.2g-1
-	openssl_x86_gcc2_devel-1.0.2g-1
-	opus_x86_gcc2-1.1.3-1
-	opus_x86_gcc2_devel-1.1.3-1
-	pkgconfig_x86_gcc2-0.27.1-2
-	speex_x86_gcc2-1.2~rc1-2
-	speex_x86_gcc2_devel-1.2~rc1-2
-	sqlite_x86_gcc2-3.8.11.1-1
-	sqlite_x86_gcc2_devel-3.8.11.1-1
-	tiff_x86_gcc2-3.9.6-2
-	tiff_x86_gcc2_devel-3.9.6-2
-	tiff4_x86_gcc2-4.0.6-1
-	tiff4_x86_gcc2_devel-4.0.6-1
-	tinyxml_x86_gcc2-2.6.2-3
-	tinyxml_x86_gcc2_devel-2.6.2-3
-	wonderbrush_x86_gcc2-2.1.2-4
-	zlib_x86_gcc2-1.2.8-4
-	zlib_x86_gcc2_devel-1.2.8-4
 	:
 	# source packages
 	2048
@@ -1395,7 +1296,6 @@ RemotePackageRepository HaikuPorts
 	bigreqsproto
 	bin86
 	binutils
-	binutils_x86_gcc2
 	bison
 	blogpositive
 	bmake
@@ -1495,7 +1395,6 @@ RemotePackageRepository HaikuPorts
 	festival
 	ffmpeg
 	ffmpeg2
-	ffmpeg_x86_gcc2
 	ffsb
 	fftw
 	fife
@@ -1524,7 +1423,6 @@ RemotePackageRepository HaikuPorts
 	gawk
 	gcal
 	gcc
-	gcc_x86_gcc2
 	gdal
 	gdata
 	gdk_pixbuf
@@ -1547,7 +1445,6 @@ RemotePackageRepository HaikuPorts
 	glew
 	glib
 	glib2
-	glib2_x86_gcc2
 	glm
 	globe
 	gloox
@@ -1696,7 +1593,6 @@ RemotePackageRepository HaikuPorts
 	libmkv
 	libmng
 	libmodplug
-	libmodplug_x86_gcc2
 	libmp4v2
 	libmpeg2
 	libmspack
@@ -1747,7 +1643,6 @@ RemotePackageRepository HaikuPorts
 	libtheora
 	libtimidity
 	libtool
-	libtool_x86_gcc2
 	libunistring
 	libupnp
 	libusb
@@ -1798,7 +1693,6 @@ RemotePackageRepository HaikuPorts
 	mdocml
 	mercurial
 	mesa
-	mesa_x86_gcc2
 	microbe
 	milkytracker
 	mimetic
@@ -1871,7 +1765,6 @@ RemotePackageRepository HaikuPorts
 	pipepanic
 	pixman
 	pkgconfig
-	pkgconfig_x86_gcc2
 	png2ico
 	pngcrush
 	pnglite

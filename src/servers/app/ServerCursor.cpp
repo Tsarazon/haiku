@@ -73,7 +73,7 @@ ServerCursor::ServerCursor(const uint8* data)
 	// Now that we have all the setup, we're going to map (for now) the cursor
 	// to RGBA32 (little endian). Eventually, there will be support for 16 and
 	// 8-bit depths
-	// NOTE: review this once we have working PPC graphics cards (big endian).
+	// NOTE: review this once we have working big endian graphics cards.
 	if (data) {
 		AllocateBuffer();
 		uint8* buffer = Bits();

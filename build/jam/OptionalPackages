@@ -41,8 +41,7 @@ if [ IsOptionalHaikuImagePackageAdded BeBook ] {
 
 # BeOSCompatibility
 if [ IsOptionalHaikuImagePackageAdded BeOSCompatibility ] {
-	if $(TARGET_ARCH) != x86
-			|| $(TARGET_CC_IS_LEGACY_GCC_$(TARGET_PACKAGING_ARCH)) != 1 {
+	if $(TARGET_ARCH) != x86 {
 		Echo "No optional package BeOSCompatibility available for"
 			"$(TARGET_ARCH)" ;
 	} else {
@@ -89,17 +88,19 @@ if [ IsOptionalHaikuImagePackageAdded DevelopmentBase ] {
 	local architectureObject ;
 	for architectureObject in [ MultiArchSubDirSetup ] {
 		on $(architectureObject) {
-			AddHaikuImageDisabledPackages binutils gcc !gcc2 @{ mpc mpfr }@ ;
-			AddHaikuImageSystemPackages gmp@!gcc2 ;
-			AddHaikuImageSourcePackages binutils gcc !gcc2 @{ gmp mpc mpfr }@ ;
+			AddHaikuImageDisabledPackages binutils gcc @{ mpc mpfr }@ ;
+			# GCC2 package conditional removed - using modern packages only
+			AddHaikuImageSystemPackages gmp ;
+			AddHaikuImageSourcePackages binutils gcc @{ gmp mpc mpfr }@ ;
 		}
 	}
 
 	# other commonly used tools
 	AddHaikuImageDisabledPackages bison cdrtools flex jam make mawk mkdepend
-		m4@!gcc2 m4_x86@secondary_x86 nasm@!gcc2 nasm_x86@secondary_x86 patch ;
+		m4 m4_x86@secondary_x86 nasm nasm_x86@secondary_x86 patch ;
+	# GCC2 package conditionals removed - using modern packages only
 	AddHaikuImageSourcePackages bison cdrtools make patch
-		m4@!gcc2 m4_x86@secondary_x86 ;
+		m4 m4_x86@secondary_x86 ;
 }
 
 
@@ -129,8 +130,9 @@ if [ IsOptionalHaikuImagePackageAdded DevelopmentMin ]
 
 # Git
 if [ IsOptionalHaikuImagePackageAdded Git ] {
-	AddHaikuImageSystemPackages git@!gcc2 git_x86@secondary_x86 perl@!gcc2 perl_x86@secondary_x86 ;
-	AddHaikuImageSourcePackages git@!gcc2 git_x86@secondary_x86 perl@!gcc2 perl_x86@secondary_x86 ;
+	# GCC2 package conditionals removed - using modern packages only
+	AddHaikuImageSystemPackages git git_x86@secondary_x86 perl perl_x86@secondary_x86 ;
+	AddHaikuImageSourcePackages git git_x86@secondary_x86 perl perl_x86@secondary_x86 ;
 }
 
 

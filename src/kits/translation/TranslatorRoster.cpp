@@ -151,22 +151,8 @@ BTranslatorRoster::Private::Private()
 			fSafeMode = true;
 	}
 
-	// We might run in compatibility mode on a system with a different ABI. The
-	// translators matching our ABI can usually be found in respective
-	// subdirectories of the translator directories.
-	system_info info;
-	if (get_system_info(&info) == B_OK
-		&& (info.abi & B_HAIKU_ABI_MAJOR)
-			!= (B_HAIKU_ABI & B_HAIKU_ABI_MAJOR)) {
-			switch (B_HAIKU_ABI & B_HAIKU_ABI_MAJOR) {
-				case B_HAIKU_ABI_GCC_2:
-					fABISubDirectory = "gcc2";
-					break;
-				case B_HAIKU_ABI_GCC_4:
-					fABISubDirectory = "gcc4";
-					break;
-			}
-	}
+	// Modern GCC only - use gcc4 subdirectory for translators
+	fABISubDirectory = "gcc4";
 
 	// we're sneaking ourselves into the BApplication, if it's running
 	if (be_app != NULL && !be_app->IsLaunching() && be_app->Lock()) {

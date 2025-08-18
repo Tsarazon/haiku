@@ -29,8 +29,6 @@
  * $FreeBSD$
  */
 
-#if __GNUC__ > 2 /* not available on gcc2 */
-
 #ifndef _THREADS_H_
 #define _THREADS_H_
 
@@ -104,5 +102,3 @@ int	tss_set(tss_t, void *);
 #endif
 
 #endif /* _THREADS_H_ */
-
-#endif /* __GNUC__ > 2 */

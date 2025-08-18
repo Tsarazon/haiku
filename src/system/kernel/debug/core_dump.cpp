@@ -1133,8 +1133,6 @@ private:
 		header.e_machine = EM_ARM;
 #elif defined(__HAIKU_ARCH_ARM64)
 		header.e_machine = EM_AARCH64;
-#elif defined(__HAIKU_ARCH_SPARC)
-		header.e_machine = EM_SPARCV9;
 #elif defined(__HAIKU_ARCH_RISCV64)
 		header.e_machine = EM_RISCV;
 #else

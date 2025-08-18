@@ -37,15 +37,15 @@ AddPackagesAndRepositoryVariablesToContainerScript $(script)
 	: $(HAIKU_IMAGE_CONTAINER_NAME) ;
 
 # Convenience wrapper rule around BuildHaikuCD.
-rule _BuildHaikuCD haikuCD : bootFloppy
+rule _BuildHaikuCD haikuCD : bootFile
 {
-	# _BuildHaikuCD <cd target> : <bootFloppy> ;
-	#
+	# _BuildHaikuCD <cd target> : <bootFile> ;
+	# bootFile can be empty for EFI-only CDs
 
 	# build the cd
 	# HAIKU_IMAGE_EARLY_USER_SCRIPTS, HAIKU_IMAGE_LATE_USER_SCRIPTS can be
 	# specified by the user.
-	BuildHaikuCD $(haikuCD) : $(bootFloppy) :
+	BuildHaikuCD $(haikuCD) : $(bootFile) :
 		$(HAIKU_CD_INIT_VARIABLES_SCRIPT)
 		$(HAIKU_IMAGE_EARLY_USER_SCRIPTS)
 		$(HAIKU_IMAGE_MAKE_DIRS_SCRIPT)
@@ -63,12 +63,10 @@ rule _BuildHaikuCD haikuCD : bootFloppy
 	;
 }
 
-# build the cd
-_BuildHaikuCD $(HAIKU_CD) : $(HAIKU_BOOT_FLOPPY) ;
+# build the cd - no longer needs floppy boot file
+_BuildHaikuCD $(HAIKU_CD) : ;
 NotFile haiku-cd ;
 Depends haiku-cd : $(HAIKU_CD) ;
-
-RmTemps $(HAIKU_CD) : $(HAIKU_BOOT_FLOPPY) ;
 
 # Execute post-image user config rules.
 UserBuildConfigRulePostImage ;

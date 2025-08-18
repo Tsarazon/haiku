@@ -184,8 +184,7 @@ rule KernelStaticLibrary
 
 	TARGET_PACKAGING_ARCH on $(1) = $(TARGET_KERNEL_ARCH) ;
 
-	if $(TARGET_CC_IS_LEGACY_GCC_$(TARGET_KERNEL_ARCH)) = 0
-			&& [ on $(1) return $(NO_HIDDEN_VISIBILITY) ] != 1 {
+	if [ on $(1) return $(NO_HIDDEN_VISIBILITY) ] != 1 {
 		extraFlags += -fvisibility=hidden ;
 	}
 

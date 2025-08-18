@@ -118,7 +118,7 @@ include [ FDirName $(HAIKU_BUILD_RULES_DIR) images HaikuImage ] ;
 
 # specify the additional image contents one for each boot type
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images NetBootArchive ] ;
-include [ FDirName $(HAIKU_BUILD_RULES_DIR) images FloppyBootImage ] ;
+# include [ FDirName $(HAIKU_BUILD_RULES_DIR) images FloppyBootImage ] ; # Removed - floppy support discontinued
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images CDBootImage ] ;
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images HaikuCD ] ;
 include [ FDirName $(HAIKU_BUILD_RULES_DIR) images AnybootImage ] ;

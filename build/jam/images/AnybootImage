@@ -41,6 +41,13 @@ for platform in [ MultiBootSubDirSetup ] {
 				: $(efiPartition) : $(HAIKU_CD_BOOT_IMAGE)
 				: $(HAIKU_IMAGE_NAME) ;
 		}
+		if $(TARGET_BOOT_PLATFORM) = bios_ia32 {
+			# For BIOS-only systems, the anyboot is essentially the CD image
+			# with the raw disk image appended
+			BuildAnybootImageEfi $(HAIKU_ANYBOOT) : $(baseMBR)
+				: : $(HAIKU_CD_BOOT_IMAGE)
+				: $(HAIKU_IMAGE_NAME) ;
+		}
 	}
 }
 
@@ -48,7 +55,7 @@ for platform in [ MultiBootSubDirSetup ] {
 #RmTemps $(HAIKU_ANYBOOT) : $(baseMBR) ;
 RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_CD_BOOT_IMAGE) ;
 RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_IMAGE_NAME) ;
-RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_BOOT_FLOPPY) ;
+# RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_BOOT_FLOPPY) ; # No longer depends on floppy
 
 NotFile haiku-anyboot-image ;
 Depends haiku-anyboot-image : $(HAIKU_ANYBOOT) ;
