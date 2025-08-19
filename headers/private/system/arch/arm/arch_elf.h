@@ -52,4 +52,4 @@
 #define TLS_DTV_OFFSET 0
 
 
-#endif	/* _KERNEL_ARCH_M68K_ELF_H */
+#endif	/* _KERNEL_ARCH_ARM_ELF_H */

@@ -7,4 +7,4 @@
 
 /* nothing to be seen here yet */
 
-#endif	/* _KRENEL_ARCH_M68K_SYSTEM_INFO_H */
+#endif	/* _KERNEL_ARCH_ARM_SYSTEM_INFO_H */

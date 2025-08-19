@@ -1492,53 +1492,8 @@ actions BuildCDBootImageEFIOnly1
 }
 
 
-#pragma mark - CD Boot PPC Image rules
 
-rule BuildCDBootPPCImage image : hfsmaps : elfloader : coffloader : chrpscript
-	: extrafiles
-{
-	Depends $(image) : $(elfloader) ;
-	Depends $(image) : $(coffloader) ;
-	Depends $(image) : $(chrpscript) ;
-	Depends $(image) : $(extrafiles) ;
-	Depends $(image) : $(hfsmaps) ;
-	MAPS on $(image) = $(hfsmaps) ;
 
-	if $(HAIKU_NIGHTLY_BUILD) = 1 {
-		VOLID on $(image) = haiku-nightly-$(TARGET_ARCH) ;
-	} else {
-		VOLID on $(image) = haiku-$(HAIKU_VERSION)-$(TARGET_ARCH) ;
-	}
-
-	BuildCDBootPPCImage1 $(image) : $(elfloader) $(coffloader) $(chrpscript)
-		$(extrafiles) ;
-}
-
-actions BuildCDBootPPCImage1 bind MAPS
-{
-	$(RM) $(<)
-
-	mkdir -p $(HAIKU_OUTPUT_DIR)/cd/ppc
-	mkdir -p $(HAIKU_OUTPUT_DIR)/cd/boot
-	# CHRP Boot script
-	cp $(>[3]) $(HAIKU_OUTPUT_DIR)/cd/ppc/bootinfo.txt
-	cp $(>[3]) $(HAIKU_OUTPUT_DIR)/cd/boot/boot.chrp
-	# Haiku Bootloaders
-	cp $(>[2]) $(HAIKU_OUTPUT_DIR)/cd/boot/haikuloader.xcf
-	cp $(>[1]) $(HAIKU_OUTPUT_DIR)/cd/boot/haikuloader.elf
-	# Extras (readme files, etc)
-	cp $(>[4]) $(HAIKU_OUTPUT_DIR)/cd/
-
-	# Xorriso doesn't have map and some other required tools
-	# to make bootable PowerPC images
-	genisoimage -v -hfs -map $(MAPS) \
-		-hfs-bless $(HAIKU_OUTPUT_DIR)/cd/boot -part -no-desktop \
-		-hfs-parms MAX_XTCSIZE=2656248 -hfs-volid Haiku \
-		--prep-boot boot/haikuloader.elf \
-		--chrp-boot -r -J -o $(<) $(HAIKU_OUTPUT_DIR)/cd
-
-	$(RM) -r $(HAIKU_OUTPUT_DIR)/cd
-}
 
 #pragma mark - BIOS Boot Image rules
 

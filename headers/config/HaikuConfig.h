@@ -20,7 +20,11 @@
 */
 #if defined(__i386__)
 #	define __HAIKU_ARCH					x86
-#	define __HAIKU_ARCH_ABI				"x86"
+#	if __GNUC__ == 2
+#		define __HAIKU_ARCH_ABI			"x86_gcc2"
+#	else
+#		define __HAIKU_ARCH_ABI			"x86"
+#	endif
 #	define __HAIKU_ARCH_X86				1
 #	define __HAIKU_ARCH_PHYSICAL_BITS	64
 #elif defined(__x86_64__)
@@ -107,7 +111,10 @@
 #define __HAIKU_SUBDIR_ARCH_HEADER(subdir, header)	\
 	<subdir/arch/__HAIKU_ARCH/header>
 
-/* BeOS R5 binary compatibility removed */
+/* BeOS R5 binary compatibility */
+#if defined(__HAIKU_ARCH_X86) && __GNUC__ == 2
+#	define __HAIKU_BEOS_COMPATIBLE		1
+#endif
 
 /* BeOS R5 compatible types */
 #if defined(__HAIKU_ARCH_X86) && !defined(_KERNEL_MODE)

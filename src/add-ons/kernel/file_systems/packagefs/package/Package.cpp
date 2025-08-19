@@ -52,6 +52,7 @@ typedef BPackageKit::BHPKG::BPrivate::PackageReaderImpl PackageReaderImpl;
 const char* const kArchitectureNames[B_PACKAGE_ARCHITECTURE_ENUM_COUNT] = {
 	"any",
 	"x86",
+	"x86_gcc2",
 	"source",
 	"x86_64",
 	"arm",

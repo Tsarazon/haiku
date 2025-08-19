@@ -1,0 +1,795 @@
+Starting build of type regular ... 
+...patience...
+...found 8448 target(s)...
+...updating 619 target(s)...
+C++ generated/objects/linux/x86_64/release/build/libroot/atomic.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/byteorder.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/find_directory.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/fs.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/fs_attr.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/fs_descriptors.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/misc.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/sem.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/thread.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/SHA256.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/driver_settings.o 
+C++ generated/objects/linux/x86_64/release/build/libroot/KMessage.o 
+C++ generated/objects/linux/x86_64/release/tools/copyattr.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/Application.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/AppMisc.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/Looper.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/Message.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/MessageAdapter.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/Messenger.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/app/MessageUtils.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/FlatIconFormat.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/FlatIconImporter.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/LittleEndianBuffer.o 
+src/kits/app/MessageAdapter.cpp: In static member function ‘static status_t BPrivate::MessageAdapter::_UnflattenR5Message(uint32, BMessage*, BDataIO*)’:
+src/kits/app/MessageAdapter.cpp:567:24: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  567 |                 reader(&header->target, sizeof(header->target));
+      |                        ^~~~~~~~~~~~~~~
+src/kits/app/MessageAdapter.cpp:571:24: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  571 |                 reader(&header->reply_port, sizeof(header->reply_port));
+      |                        ^~~~~~~~~~~~~~~~~~~
+src/kits/app/MessageAdapter.cpp:572:24: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  572 |                 reader(&header->reply_target, sizeof(header->reply_target));
+      |                        ^~~~~~~~~~~~~~~~~~~~~
+src/kits/app/MessageAdapter.cpp:573:24: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  573 |                 reader(&header->reply_team, sizeof(header->reply_team));
+      |                        ^~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::Rename(const char*, const char*)’:
+src/build/libbe/app/Message.cpp:652:28: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  652 |         int32 *nextField = &fHeader->hash_table[hash];
+      |                            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:665:37: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  665 |                         nextField = &fHeader->hash_table[hash];
+      |                                     ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:667:45: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  667 |                                 nextField = &fFields[*nextField].next_field;
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:681:29: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  681 |                 nextField = &field->next_field;
+      |                             ^~~~~~~~~~~~~~~~~~
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/PathCommandQueue.o 
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::_AddField(const char*, type_code, bool, field_header**)’:
+src/build/libbe/app/Message.cpp:1292:28: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1292 |         int32 *nextField = &fHeader->hash_table[hash];
+      |                            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1294:29: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1294 |                 nextField = &fFields[*nextField].next_field;
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::_RemoveField(field_header*)’:
+src/build/libbe/app/Message.cpp:1333:33: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1333 |         int32 *value = fHeader->hash_table;
+      |                        ~~~~~~~~~^~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindPoint(const char*, BPoint*) const’:
+src/build/libbe/app/Message.cpp:1644:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BPoint’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1644 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1683:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1683 | DEFINE_FUNCTIONS(BPoint, Point, B_POINT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+In file included from headers/build/os/interface/Point.h:1,
+                 from headers/build/../os/interface/Rect.h:11,
+                 from headers/build/os/interface/Rect.h:1,
+                 from headers/build/os/app/Message.h:16,
+                 from src/build/libbe/app/Message.cpp:10:
+headers/build/../os/interface/Point.h:15:7: note: ‘class BPoint’ declared here
+   15 | class BPoint {
+      |       ^~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindPoint(const char*, int32, BPoint*) const’:
+src/build/libbe/app/Message.cpp:1660:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BPoint’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1660 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1683:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1683 | DEFINE_FUNCTIONS(BPoint, Point, B_POINT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Point.h:15:7: note: ‘class BPoint’ declared here
+   15 | class BPoint {
+      |       ^~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindRect(const char*, BRect*) const’:
+src/build/libbe/app/Message.cpp:1644:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BRect’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1644 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1684:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1684 | DEFINE_FUNCTIONS(BRect, Rect, B_RECT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Rect.h:15:7: note: ‘class BRect’ declared here
+   15 | class BRect {
+      |       ^~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindRect(const char*, int32, BRect*) const’:
+src/build/libbe/app/Message.cpp:1660:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BRect’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1660 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1684:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1684 | DEFINE_FUNCTIONS(BRect, Rect, B_RECT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Rect.h:15:7: note: ‘class BRect’ declared here
+   15 | class BRect {
+      |       ^~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindMessenger(const char*, int32, BMessenger*) const’:
+src/build/libbe/app/Message.cpp:1970:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BMessenger’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1970 |                 memcpy(messenger, data, sizeof(BMessenger));
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from headers/build/private/app/MessagePrivate.h:13,
+                 from src/build/libbe/app/Message.cpp:12:
+headers/build/os/app/Messenger.h:20:7: note: ‘class BMessenger’ declared here
+   20 | class BMessenger {
+      |       ^~~~~~~~~~
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/Defines.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/MessageImporter.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/PathSourceShape.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/ReferenceImage.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/Shape.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/VectorPath.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/GradientTransformable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/Style.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/Transformable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/AffineTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/CompoundStyleTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/ContourTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/PathSource.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/PerspectiveTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/StrokeTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/StyleTransformer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/TransformerFactory.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/Icon.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/IconRenderer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/icon/IconUtils.o 
+Link generated/objects/linux/x86_64/release/build/libroot/libroot_build.so 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/Bitmap.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/ColorConversion.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/Gradient.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GradientLinear.o 
+Chmod1 generated/objects/linux/x86_64/release/build/libroot/libroot_build.so 
+File /home/ruslan/haiku/generated/objects/linux/lib/libroot_build.so 
+Chmod1 /home/ruslan/haiku/generated/objects/linux/lib/libroot_build.so 
+Chmod1 /home/ruslan/haiku/generated/objects/linux/lib/libroot_build.so 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GradientRadial.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GradientRadialFocus.o 
+MergeObjectFromObjects1 generated/objects/linux/x86_64/release/build/libbe/app/app_kit.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GradientDiamond.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GradientConic.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/GraphicsDefs.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/Point.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/Rect.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/Region.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/RegionSupport.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/interface/SystemPalette.o 
+src/build/libbe/interface/SystemPalette.cpp: In function ‘void FillColorMap(const rgb_color*, color_map*)’:
+src/build/libbe/interface/SystemPalette.cpp:95:15: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘rgb_color’ {aka ‘struct rgb_color’} with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+   95 |         memcpy(map->color_list, palette, sizeof(map->color_list));
+      |         ~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from headers/build/os/interface/GraphicsDefs.h:1,
+                 from src/build/libbe/interface/SystemPalette.cpp:13:
+headers/build/../os/interface/GraphicsDefs.h:42:16: note: ‘rgb_color’ {aka ‘struct rgb_color’} declared here
+   42 | typedef struct rgb_color {
+      |                ^~~~~~~~~
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/AppFileInfo.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Directory.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/DriverSettings.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Entry.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/EntryList.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/FdIO.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/File.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/FileIO.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/FindDirectory.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MergedDirectory.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Mime.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeType.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Node.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/NodeInfo.o 
+MergeObjectFromObjects1 generated/objects/linux/x86_64/release/build/libbe/interface/interface_kit.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/OffsetFile.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Path.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/ResourceFile.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/ResourceItem.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Resources.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/ResourcesContainer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/ResourceStrings.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Statable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/SymLink.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Volume.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/storage_support.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/AppMetaMimeCreator.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/AssociatedTypes.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Database.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/DatabaseDirectory.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/DatabaseLocation.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/database_support.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/InstalledTypes.o 
+MergeObjectFromObjects1 generated/objects/linux/x86_64/release/build/libbe/icon/icon_kit.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeEntryProcessor.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeInfoUpdater.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeSniffer.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeSnifferAddon.o 
+...on 100th target...
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/MimeSnifferAddonManager.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/SnifferRules.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Supertype.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/SupportingApps.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/TextSnifferAddon.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/CharStream.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Err.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Pattern.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/PatternList.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Parser.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Range.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/RPattern.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/RPatternList.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/storage/Rule.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Archivable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/BlockCache.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/BufferIO.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/ByteOrder.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/CompressionAlgorithm.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/DataIO.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/DataPositionIOWrapper.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Flattenable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Job.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/JobQueue.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/List.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Locker.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/PointerList.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Referenceable.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/String.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/StringList.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/Url.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/ZlibCompressionAlgorithm.o 
+C++ generated/objects/linux/x86_64/release/build/libbe/support/ZstdCompressionAlgorithm.o 
+C++ generated/objects/linux/x86_64/release/build/libshared/Keymap.o 
+C++ generated/objects/linux/x86_64/release/build/libshared/NaturalCompare.o 
+C++ generated/objects/linux/x86_64/release/build/libshared/RegExp.o 
+C++ generated/objects/linux/x86_64/release/tools/set_haiku_revision.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_add.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_checksum.o 
+MergeObjectFromObjects1 generated/objects/linux/x86_64/release/build/libbe/storage/storage_kit.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_create.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_dump.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_extract.o 
+Archive generated/objects/linux/x86_64/release/build/libshared/libshared_build.a 
+ar: создаётся generated/objects/linux/x86_64/release/build/libshared/libshared_build.a
+Ranlib generated/objects/linux/x86_64/release/build/libshared/libshared_build.a 
+C++ generated/objects/linux/x86_64/release/tools/package/command_info.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_list.o 
+C++ generated/objects/linux/x86_64/release/tools/package/command_recompress.o 
+C++ generated/objects/linux/x86_64/release/tools/package/package.o 
+C++ generated/objects/linux/x86_64/release/tools/package/PackageWriterListener.o 
+C++ generated/objects/linux/x86_64/release/tools/package/PackageWritingUtils.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ActivateRepositoryCacheJob.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ActivateRepositoryConfigJob.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ActivationTransaction.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/AddRepositoryRequest.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ChecksumAccessors.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/CommitTransactionResult.o 
+Link generated/objects/linux/x86_64/release/tools/set_haiku_revision 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Context.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/DownloadFileRequest.o 
+Chmod1 generated/objects/linux/x86_64/release/tools/set_haiku_revision 
+C++ generated/objects/linux/x86_64/release/build/libpackage/DropRepositoryRequest.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/FetchFileJob.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/InstallationLocationInfo.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Job.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageInfo.o 
+MergeObjectFromObjects1 generated/objects/linux/x86_64/release/build/libbe/support/support_kit.o 
+Link /home/ruslan/haiku/generated/objects/linux/lib/libbe_build.so 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageInfoContentHandler.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageInfoParser.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageInfoSet.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageResolvable.o 
+Chmod1 /home/ruslan/haiku/generated/objects/linux/lib/libbe_build.so 
+Link generated/objects/linux/x86_64/release/tools/copyattr 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageResolvableExpression.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageRoster.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageVersion.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RefreshRepositoryRequest.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RemoveRepositoryJob.o 
+Chmod1 generated/objects/linux/x86_64/release/tools/copyattr 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryCache.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryConfig.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryInfo.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Request.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/TempfileManager.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/User.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ValidateChecksumJob.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/AttributeDataReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/BlockBufferPool.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/BlockBufferPoolImpl.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/BlockBufferPoolNoLock.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PoolBuffer.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/DataReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ErrorOutput.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/FDDataReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/FetchUtils.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/GlobalWritableFileInfo.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/HPKGDefs.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageContentHandler.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageData.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageDataReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageEntry.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageEntryAttribute.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageFileHeapAccessorBase.o 
+...on 200th target...
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageFileHeapReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageFileHeapWriter.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageReaderImpl.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageWriter.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageWriterImpl.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ReaderImplBase.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryContentHandler.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryReader.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryReaderImpl.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryWriter.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryWriterImpl.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Strings.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/UserSettingsFileInfo.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/WriterImplBase.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/HPKGDefsV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageContentHandlerV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageDataReaderV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageDataV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageEntryAttributeV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageEntryV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageInfoContentHandlerV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageReaderImplV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/PackageReaderV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/ReaderImplBaseV1.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/NoErrorOutput.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/StandardErrorOutput.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Exceptions.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/RepositoryBuilder.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/Solver.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverPackage.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverPackageSpecifier.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverPackageSpecifierList.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverProblem.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverProblemSolution.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverRepository.o 
+C++ generated/objects/linux/x86_64/release/build/libpackage/SolverResult.o 
+C++ generated/objects/linux/x86_64/release/tools/settype.o 
+C++ generated/objects/linux/x86_64/release/tools/mimeset.o 
+C++ generated/objects/linux/x86_64/release/tools/resattr/resattr.o 
+C++ generated/objects/linux/x86_64/release/tools/rc/rc.o 
+Yacc1 generated/objects/linux/x86_64/common/tools/rc/parser.cpp generated/objects/linux/x86_64/common/tools/rc/parser.hpp 
+C++ generated/objects/linux/x86_64/release/tools/rc/decompile.o 
+C++ generated/objects/linux/x86_64/release/tools/rc/rdef.o 
+C++ generated/objects/linux/x86_64/release/tools/setversion.o 
+DetermineHaikuRevision1 generated/build/haiku-revision 
+Link generated/objects/linux/x86_64/release/tools/resattr/resattr 
+C++ generated/objects/linux/x86_64/release/tools/rc/compile.o 
+fatal: No names found, cannot describe anything.
+Error: you are using a Haiku clone without tags, please set
+       the revision tag to use (e.g. HAIKU_REVISION=hrev43210)
+
+./build/scripts/determine_haiku_revision . generated/build/haiku-revision
+
+...failed DetermineHaikuRevision1 generated/build/haiku-revision ...
+...removing generated/build/haiku-revision
+C++ generated/objects/linux/x86_64/release/tools/rc/parser.o 
+Chmod1 generated/objects/linux/x86_64/release/tools/resattr/resattr 
+Lex generated/objects/linux/x86_64/common/tools/rc/lexer.cpp 
+C++ generated/objects/linux/x86_64/release/tools/rc/lexer.o 
+Link generated/objects/linux/x86_64/release/tools/settype 
+Link /home/ruslan/haiku/generated/objects/linux/lib/libpackage_build.so 
+Link generated/objects/linux/x86_64/release/tools/setversion 
+Link generated/objects/linux/x86_64/release/tools/mimeset 
+Chmod1 generated/objects/linux/x86_64/release/tools/settype 
+Chmod1 generated/objects/linux/x86_64/release/tools/setversion 
+Chmod1 /home/ruslan/haiku/generated/objects/linux/lib/libpackage_build.so 
+Link generated/objects/linux/x86_64/release/tools/package/package 
+Chmod1 generated/objects/linux/x86_64/release/tools/mimeset 
+Chmod1 generated/objects/linux/x86_64/release/tools/package/package 
+As generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/entry.o 
+As generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/long_smp_trampoline.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/relocation_func.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/arch_start.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/arch_smp.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/arch_smp_64.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/arch_mmu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/arch_timer.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/start.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/console.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/cpu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/video.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/debug.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/mmu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/heap.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/acpi.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/timer.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/menu.o 
+src/system/boot/platform/efi/arch/x86_64/arch_mmu.cpp: In function 'uint64_t arch_mmu_generate_post_efi_page_tables(size_t, efi_memory_descriptor*, size_t, uint32_t)':
+src/system/boot/platform/efi/arch/x86_64/arch_mmu.cpp:210:17: warning: taking address of packed member of 'arch_kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  210 |                 &gKernelArgs.arch_args.vir_pgdir);
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/devices.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/quirks.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/smp.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/serial.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/decode_edid.o 
+MergeObjectFromObjects1 generated/objects/haiku/x86_64/release/system/boot/platform/efi/arch/x86_64/efi/boot_platform_efi_x86_64.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/generic/efi/text_console.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/generic/efi/text_menu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/arch_elf.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/cpuid.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/debug_uart.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/debug_uart_8250.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/arch_cpu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/arch_hpet.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/PathBlocklist.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/elf.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/heap.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/kernel_args.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/load_driver_settings.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/loader.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/main.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/menu.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/package_support.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/pager.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/partitions.o 
+src/system/boot/loader/kernel_args.cpp: In function 'status_t add_kernel_args_range(void*, size_t)':
+src/system/boot/loader/kernel_args.cpp:33:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+   33 |                 &gKernelArgs.num_kernel_args_ranges, MAX_KERNEL_ARGS_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+...on 300th target...
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/RootFileSystem.o 
+src/system/boot/loader/kernel_args.cpp: In function 'status_t insert_physical_memory_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:289:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  289 |                 &gKernelArgs.num_physical_memory_ranges, MAX_PHYSICAL_MEMORY_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/system/boot/loader/kernel_args.cpp: In function 'status_t remove_physical_memory_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:298:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  298 |                 &gKernelArgs.num_physical_memory_ranges, MAX_PHYSICAL_MEMORY_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/system/boot/loader/kernel_args.cpp: In function 'status_t insert_physical_allocated_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:315:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  315 |                 &gKernelArgs.num_physical_allocated_ranges,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/system/boot/loader/kernel_args.cpp: In function 'status_t remove_physical_allocated_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:324:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  324 |                 &gKernelArgs.num_physical_allocated_ranges, MAX_PHYSICAL_ALLOCATED_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/system/boot/loader/kernel_args.cpp: In function 'status_t insert_virtual_allocated_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:333:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  333 |                 &gKernelArgs.num_virtual_allocated_ranges, MAX_VIRTUAL_ALLOCATED_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/system/boot/loader/kernel_args.cpp: In function 'status_t remove_virtual_allocated_range(uint64, uint64)':
+src/system/boot/loader/kernel_args.cpp:342:17: warning: taking address of packed member of 'kernel_args' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  342 |                 &gKernelArgs.num_virtual_allocated_ranges, MAX_VIRTUAL_ALLOCATED_RANGE,
+      |                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/stdio.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/vfs.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/misc.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/driver_settings.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/kernel_cpp.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/KMessage.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/list.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/ring_buffer.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/safemode_settings.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/StringHash.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/DataIO.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/Referenceable.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/ARP.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/ChainBuffer.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/Ethernet.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/IP.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/NetDefs.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/NetStack.o 
+Archive generated/objects/linux/x86_64/release/tools/rc/librdef.a 
+ar: создаётся generated/objects/linux/x86_64/release/tools/rc/librdef.a
+Ranlib generated/objects/linux/x86_64/release/tools/rc/librdef.a 
+Link generated/objects/linux/x86_64/release/tools/rc/rc 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/RemoteDisk.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/TCP.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/UDP.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/FileMapDisk.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/amiga_rdb.o 
+MergeObjectFromObjects1 generated/objects/haiku/x86_64/release/system/boot/arch/x86/efi/boot_arch_x86_64.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/apple.o 
+Chmod1 generated/objects/linux/x86_64/release/tools/rc/rc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/message.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/image.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/multipart.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/video.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/text.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/application.rsrc 
+ResComp1 generated/objects/haiku/x86_64/common/data/mime_db/audio.rsrc 
+ResComp1 generated/objects/common/data/mime_db/message/rfc822.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/jp2.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/tiff.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/jpeg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/vnd.microsoft.icon.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-portable-graymap.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/vnd.adobe.photoshop.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-portable-bitmap.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-wonderbrush.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-exr.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-pcx.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-targa.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/sgi.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/bmp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/avif.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-hvif.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-wpg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/vnd.djvu.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/vnd.haiku.picture.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/svg+xml.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/icns.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/png.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/x-portable-pixmap.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/webp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/image/gif.rsrc 
+ResComp1 generated/objects/common/data/mime_db/multipart/related.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/ogg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/x-matroska.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/x-msvideo.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/hevc.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/quicktime.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/dv.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/mp2t.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/3gpp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/mpeg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/x-rmvb.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/mp4.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/x-ms-asf.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/x-flv.rsrc 
+ResComp1 generated/objects/common/data/mime_db/video/3gpp2.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/html.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-source-code.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-makefile.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/vcard.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-email.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/csv.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/css.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/xml.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-webloc.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/markdown.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-jamfile.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-patch.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-url.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/calendar.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-vnd.be.resourcedef.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-vnd.Be-MailDraft.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/x-partial-email.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/plain.rsrc 
+ResComp1 generated/objects/common/data/mime_db/text/rtf.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.https.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.ssh.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.apple.mpegurl.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-scode-upkg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.text.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-xar.rsrc 
+...on 400th target...
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.news.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.rsync.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-person.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-bittorrent.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.spreadsheet-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/msword.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.rtp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.presentation.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.base.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.image.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-7z-compressed.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-bfs-image.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.sftp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-gzip.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-tar.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-core-file.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.mailto.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.finger.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-package.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-msaccess.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/xhtml+xml.rsrc 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/efi/boot_loader.a 
+ResComp1 generated/objects/common/data/mime_db/application/ogg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-volume.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-rar.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.formula-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-cd-image.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-directory.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-bookmark.rsrc 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/efi/boot_loader.a 
+ResComp1 generated/objects/common/data/mime_db/application/x-xz.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.file.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.ftp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.gobe.productive-document.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-playlist.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.text-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-intel-image.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/pdf.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.beshare.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.ms-works.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.ms-xpsdocument.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-bzip2.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.database.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.image-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.telnet.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.formula.rsrc 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/boot_net.a 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.ms-excel.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.query.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.chart.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.mms.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-symlink.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/font-woff.rsrc 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/net/efi/boot_net.a 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-elfexecutable.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.spreadsheet.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/postscript.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.text-web.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.gopher.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.presentation-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/java-archive.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.nfs.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-lharc.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-ntfs-image.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-query.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.graphics.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.graphics-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-font-ttf.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-lzip.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.rtsp.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-icon.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be-querytemplate.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.chart-template.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.ms-powerpoint.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/zip.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-bmessage.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.be.url.http.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/vnd.oasis.opendocument.text-master.rsrc 
+ResComp1 generated/objects/common/data/mime_db/application/x-vnd.haiku-virtual-directory.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-ape.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/mid.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-soundfont.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-wavpack.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/ogg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-musepack.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-flac.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-matroska.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-aiff.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-mod.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-mptm.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-mdx.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/basic.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-wav.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/midi.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/ac3.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-med.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/mpeg.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-scpls.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/x-mo3.rsrc 
+ResComp1 generated/objects/common/data/mime_db/audio/mp4.rsrc 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/gpt.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/Header.o 
+...on 500th target...
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/crc32.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/utility.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/intel.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/PartitionMapParser.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/efi/PartitionMap.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/bfs.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/Directory.o 
+BuildMimeDBSuperTypes generated/objects/common/data/mime_db/mime_db 
+src/add-ons/kernel/partitioning_systems/gpt/gpt.cpp: In function 'status_t efi_gpt_scan_partition(int, partition_data*, void*)':
+src/add-ons/kernel/partitioning_systems/gpt/gpt.cpp:145:31: warning: taking address of packed member of 'gpt_partition_entry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  145 |                 to_utf8(entry.name, EFI_PARTITION_NAME_LENGTH, name, sizeof(name));
+      |                         ~~~~~~^~~~
+src/add-ons/kernel/partitioning_systems/gpt/Header.cpp: In member function 'void EFI::Header::_DumpPartitions()':
+src/add-ons/kernel/partitioning_systems/gpt/Header.cpp:425:31: warning: taking address of packed member of 'gpt_partition_entry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  425 |                 to_utf8(entry.name, EFI_PARTITION_NAME_LENGTH, name, sizeof(name));
+      |                         ~~~~~~^~~~
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/File.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/Link.o 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/Stream.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/BPlusTree.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/QueryParserUtils.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/amiga_ffs.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/Volume.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/Directory.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/File.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/fatfs.o 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/Volume.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/CachedBlock.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/Directory.o 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/File.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/Stream.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/packagefs.o 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/boot_amiga_ffs.a 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/efi/boot_partitions.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/amiga_ffs/efi/boot_amiga_ffs.a 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageSettingsItem.o 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/efi/boot_partitions.a 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/DataReader.o 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/ErrorOutput.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/FDDataReader.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageContentHandler.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageData.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageDataReader.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageEntry.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageEntryAttribute.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageFileHeapAccessorBase.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageFileHeapReader.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/PackageReaderImpl.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/ReaderImplBase.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/FdIO.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/CompressionAlgorithm.o 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/boot_fatfs.a 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/boot_bfs.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/fat/efi/boot_fatfs.a 
+C++ generated/objects/haiku/x86_64/release/system/boot/efi/ctype_l.o 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/bfs/efi/boot_bfs.a 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/generic_memcpy.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/generic_memset.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/efi/LocaleData.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/qsort.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/efi/kernel_vsprintf.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/memchr.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/memcmp.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/memmove.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/efi/strdup.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/efi/strndup.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strlen.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strnlen.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strcmp.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strcasecmp.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strncmp.o 
+BuildMimeDBSubTypes generated/objects/common/data/mime_db/mime_db 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strcat.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strcpy.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strerror.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strlcat.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strlcpy.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strchr.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strrchr.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strtol.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/efi/strtoul.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/platform/generic/efi/video_splash.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/tarfs/efi/tarfs.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/ZlibCompressionAlgorithm.o 
+C++ generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/ZstdCompressionAlgorithm.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/adler32.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/crc32.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/inffast.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/inflate.o 
+MergeObjectFromObjects1 generated/objects/haiku/x86_64/release/system/boot/efi/boot_libroot_efi.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/inftrees.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/uncompr.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/zutil.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/error_private.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/entropy_common.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/fse_decompress.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/zstd_common.o 
+Archive generated/objects/haiku/x86_64/release/system/boot/platform/generic/efi/boot_platform_generic_efi.a 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/xxhash.o 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/platform/generic/efi/boot_platform_generic_efi.a 
+MergeObjectFromObjects1 generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/boot_platform_efi_common.o 
+MergeObjectFromObjects1 generated/objects/haiku/x86_64/release/system/boot/platform/efi/efi/boot_platform_efi.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/huf_decompress.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/zstd_ddict.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/zstd_decompress.o 
+Cc generated/objects/haiku/x86_64/release/system/boot/libs/efi/zstd_decompress_block.o 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/tarfs/efi/boot_tarfs.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/tarfs/efi/boot_tarfs.a 
+Archive generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/boot_packagefs.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/loader/file_systems/packagefs/efi/boot_packagefs.a 
+Archive generated/objects/haiku/x86_64/release/system/boot/libs/efi/boot_zlib.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/libs/efi/boot_zlib.a 
+Archive generated/objects/haiku/x86_64/release/system/boot/libs/efi/boot_zstd.a 
+Ranlib generated/objects/haiku/x86_64/release/system/boot/libs/efi/boot_zstd.a 
+BootLd generated/objects/haiku/x86_64/release/system/boot/efi/boot_loader_efi 
+SetType1 generated/objects/haiku/x86_64/release/system/boot/efi/boot_loader_efi 
+MimeSet1 generated/objects/haiku/x86_64/release/system/boot/efi/boot_loader_efi 
+SetVersion1 generated/objects/haiku/x86_64/release/system/boot/efi/boot_loader_efi 
+
+BUILD FAILURE:
+...failed updating 1 target(s)...
+...skipped 4 target(s)...
+...updated 595 target(s)...

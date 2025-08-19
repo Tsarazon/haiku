@@ -108,7 +108,9 @@ for architecture in $(HAIKU_PACKAGING_ARCHS) {
 
 if $(HAIKU_PACKAGING_ARCH) {
 	local kernelArch = $(HAIKU_PACKAGING_ARCH) ;
-	# GCC2 legacy support removed
+	if $(kernelArch) = x86_gcc2 {
+		kernelArch = x86 ;
+	}
 	KernelArchitectureSetup $(kernelArch) ;
 }
 

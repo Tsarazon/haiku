@@ -638,11 +638,26 @@ load_image(char const* name, image_type type, const char* rpath, const char* run
 	analyze_image_haiku_version_and_abi(fd, image, eheader, sheaderSize,
 		pheaderBuffer, sizeof(pheaderBuffer));
 
-	// sSearchPathSubDir remains NULL - no special ABI-specific paths needed
+	// If sSearchPathSubDir is unset (meaning, this is the first image we're
+	// loading) we init the search path subdir if the compiler version doesn't
+	// match ours.
+	if (sSearchPathSubDir == NULL) {
+		#if __GNUC__ == 2 || (defined(_COMPAT_MODE) && !defined(__x86_64__))
+			if ((image->abi & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_4)
+				sSearchPathSubDir = "x86";
+		#endif
+		#if __GNUC__ >= 4 || (defined(_COMPAT_MODE) && !defined(__x86_64__))
+			if ((image->abi & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_2)
+				sSearchPathSubDir = "x86_gcc2";
+		#endif
+	}
 
 	set_abi_api_version(image->abi, image->api_version);
 
-	// GCC2 symbol resolution strategy removed - using modern GCC only
+	// init gcc version dependent image flags
+	// symbol resolution strategy
+	if (image->abi == B_HAIKU_ABI_GCC_2_ANCIENT)
+		image->find_undefined_symbol = find_undefined_symbol_dependencies_only;
 
 	// init version infos
 	status = init_image_version_infos(image);

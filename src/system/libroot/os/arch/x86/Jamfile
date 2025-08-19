@@ -1,7 +1,7 @@
 SubDir HAIKU_TOP src system libroot os arch x86 ;
 
 local architectureObject ;
-for architectureObject in [ MultiArchSubDirSetup x86 ] {
+for architectureObject in [ MultiArchSubDirSetup x86 x86_gcc2 ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 
@@ -12,8 +12,12 @@ for architectureObject in [ MultiArchSubDirSetup x86 ] {
 
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) $(DOTDOT) generic ] ;
 
-		# GCC2 compatibility sources removed - using modern GCC only
 		local compatibilitySources ;
+		if $(TARGET_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
+			compatibilitySources =
+				compatibility.c
+			;
+		}
 
 		MergeObject <$(architecture)>os_arch_$(TARGET_ARCH).o :
 			atomic.S

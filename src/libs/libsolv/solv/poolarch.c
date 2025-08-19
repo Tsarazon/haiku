@@ -29,8 +29,6 @@ static const char *archpolicies[] = {
   "s390x",	"s390x:s390",
   "s390",	"s390",
   "ia64",	"ia64:i686:i586:i486:i386",
-  "ppc64",	"ppc64:ppc",
-  "ppc",	"ppc",
   "aarch64",   "aarch64",
   "armv7tnhl",	"arvm7tnhl:armv7thl:armv7nhl:armv7hl",
   "armv7thl",	"armv7thl:armv7hl",
@@ -47,12 +45,6 @@ static const char *archpolicies[] = {
   "sh3",	"sh3",
   "sh4",	"sh4",
   "sh4a",	"sh4a:sh4",
-  "sparc64v",	"sparc64v:sparc64:sparcv9v:sparcv9:sparcv8:sparc",
-  "sparc64",	"sparc64:sparcv9:sparcv8:sparc",
-  "sparcv9v",	"sparcv9v:sparcv9:sparcv8:sparc",
-  "sparcv9",	"sparcv9:sparcv8:sparc",
-  "sparcv8",	"sparcv8:sparc",
-  "sparc",	"sparc",
   0
 };
 

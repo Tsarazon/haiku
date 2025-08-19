@@ -1,0 +1,2 @@
+Please specify the build tools to use or build (via --cross-tools-prefix or --build-cross-tools).
+For more info, invoke ./configure --help

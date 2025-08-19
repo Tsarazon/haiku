@@ -245,7 +245,16 @@ valid_toolchain()
 }
 
 # is_legacy_gcc
-# Legacy GCC detection function removed - supporting modern GCC only
+#
+# Determines whether the given gcc version is a "legacy" version (< 4.0).
+is_legacy_gcc()
+{
+	if [ `echo $1 | cut -d'.' -f1` -lt 4 ]; then
+		echo 1
+	else
+		echo 0
+	fi
+}
 
 # standard_gcc_settings
 #
@@ -330,8 +339,9 @@ standard_gcc_settings()
 	set_variable HAIKU_CPU_$targetArch $targetCpu
 
 	get_build_tool_path CC_$targetArch "$gcc"
-	# Legacy GCC detection removed - all modern compilers
-	set_variable HAIKU_CC_IS_LEGACY_GCC_$targetArch 0
+	local gccRawVersion=`$gcc -dumpversion`
+	set_variable HAIKU_CC_IS_LEGACY_GCC_$targetArch \
+		`is_legacy_gcc $gccRawVersion`
 	set_variable HAIKU_CC_IS_CLANG_$targetArch $useClang
 	set_variable HAIKU_GCC_MACHINE_$targetArch $gccMachine
 	set_variable HAIKU_GCC_LIB_DIR_$targetArch $gccdir
@@ -647,13 +657,15 @@ else
 	exit 1
 fi
 
-# Legacy GCC version requirement removed - modern GCC only
+haikuRequiredLegacyGCCVersion="2.95.3-haiku-2017_07_20"
+
 supportedTargetArchs="
 	arm
 	arm64
 	riscv64
 	x86
 	x86_64
+	x86_gcc2
 	"
 
 # parse parameters
@@ -697,6 +709,7 @@ while [ $# -gt 0 ] ; do
 			shift 2
 			case "$targetArch" in
 				x86)		targetMachine=i586-pc-haiku;;
+				x86_gcc2)	targetMachine=i586-pc-haiku;;
 				x86_64)		targetMachine=x86_64-unknown-haiku;;
 				arm)		targetMachine=arm-unknown-haiku;;
 				arm64)		targetMachine=aarch64-unknown-haiku;;
@@ -755,6 +768,7 @@ while [ $# -gt 0 ] ; do
 			useClang=1
 			case "$targetArch" in
 				x86)		targetMachine=i586-pc-haiku;;
+				x86_gcc2)	targetMachine=i586-pc-haiku;;
 				x86_64)		targetMachine=x86_64-unknown-haiku;;
 				arm)		targetMachine=arm-unknown-haiku;;
 				arm64)		targetMachine=aarch64-unknown-haiku;;

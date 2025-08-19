@@ -1123,10 +1123,6 @@ private:
 		header.e_machine = EM_386;
 #elif defined(__HAIKU_ARCH_X86_64)
 		header.e_machine = EM_X86_64;
-#elif defined(__HAIKU_ARCH_PPC)
-		header.e_machine = EM_PPC64;
-#elif defined(__HAIKU_ARCH_M68K)
-		header.e_machine = EM_68K;
 #elif defined(__HAIKU_ARCH_MIPSEL)
 		header.e_machine = EM_MIPS;
 #elif defined(__HAIKU_ARCH_ARM)

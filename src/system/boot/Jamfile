@@ -2,20 +2,6 @@ SubDir HAIKU_TOP src system boot ;
 
 UsePrivateHeaders [ FDirName libroot locale ] ;
 
-rule BuildOpenFirmwareLoader {
-	local haikuLoader = $(1) ;
-	local bootLoader = $(2) ;
-
-	Depends $(haikuLoader) : $(bootLoader) ;
-	MakeLocateDebug $(haikuLoader) ;
-
-	switch $(TARGET_ARCH) {
-		case ppc :
-			BuildCoffLoader $(haikuLoader) : $(bootLoader) ;
-		case * :
-			Exit "Currently unsupported arch:" $(TARGET_ARCH) ;
-	}
-}
 
 
 #
@@ -42,32 +28,6 @@ actions BuildAoutLoader bind ELF2AOUT {
 #
 # Coff haiku_loader creation
 #
-rule BuildCoffLoader {
-	local coffLoader = $(1) ;
-	local bootLoader = $(2) ;
-	switch $(TARGET_ARCH) {
-		case ppc :
-			COFF_FORMAT on $(coffLoader) = xcoff-powermac ;
-		case * :
-			Exit "Currently unsupported coff arch:" $(TARGET_ARCH) ;
-	}
-	HACK_COFF on $(coffLoader) = <build>hack-coff ;
-
-	Depends $(coffLoader) : <build>hack-coff ;
-}
-
-actions BuildCoffLoader bind HACK_COFF {
-	$(RM) -f $(1)
-	# get the address of the COFF entry
-	$(TARGET_OBJCOPY_$(TARGET_KERNEL_ARCH)) -O symbolsrec $(2) $(2).syms
-	EP=`grep _coff_start $(2).syms | tr -d '\r' | cut -d'$' -f2`
-	$(RM) -f $(2).syms
-	# copy to XCOFF format and patch the entry point
-	$(TARGET_OBJCOPY_$(TARGET_KERNEL_ARCH)) -O $(COFF_FORMAT) --set-start="0x${EP}" $(2) $(1)
-	#$(CP) $(2) $(1)
-	# fill-in some fields objcopy missed
-	$(HACK_COFF) $(1)
-}
 
 
 #
@@ -216,70 +176,9 @@ actions BuildUImageScript1
 		-d $(2) $(1)
 }
 
-# the bootsector on haiku_loader.amiga_m68k must be checksummed
-rule ChecksumAmigaLoader
-{
-	local haikuLoader = $(1) ;
-	local checksummer = <build>fixup_amiga_boot_checksum ;
-
-	Depends $(haikuLoader) : $(checksummer) ;
-
-	TARGET_CHECKSUM on $(haikuLoader) = $(checksummer) ;
-}
-
-actions ChecksumAmigaLoader bind TARGET_CHECKSUM
-{
-	$(TARGET_CHECKSUM) $(1)
-}
-
-# the bootsector on haiku_loader.atari_m68k must be checksummed
-rule ChecksumAtariLoader
-{
-	local haikuLoader = $(1) ;
-	local checksummer = <build>fixup_tos_boot_checksum ;
-
-	Depends $(haikuLoader) : $(checksummer) ;
-
-	TARGET_CHECKSUM on $(haikuLoader) = $(checksummer) ;
-}
-
-actions ChecksumAtariLoader bind TARGET_CHECKSUM {
-	$(TARGET_CHECKSUM) $(1)
-}
 
 
 
-# atari_m68k: AUTO folder PRG target
-# based on KernelLd
-rule AtariBootPrgLd
-{
-	# AtariBootPrgLd <name> : <objs> : <linkerscript> : <args> ;
-
-	LINK on $(1) = $(TARGET_LD_$(TARGET_KERNEL_ARCH)) ;
-
-	LINKFLAGS on $(1) = $(4) ;
-	if $(3) { LINKFLAGS on $(1) += --script=$(3) ; }
-
-	# Remove any preset LINKLIBS
-	LINKLIBS on $(1) = ;
-
-	# TODO: Do we really want to invoke SetupKernel here? The objects should
-	# have been compiled with KernelObjects anyway, so we're doing that twice.
-	SetupKernel $(2) ;
-
-	# Show that we depend on the libraries we need
-	LocalClean clean : $(1) ;
-	LocalDepends all : $(1) ;
-	Depends $(1) : $(2) ;
-
-	MakeLocateDebug $(1) ;
-
-}
-
-actions AtariBootPrgLd
-{
-	$(LINK) $(LINKFLAGS) -o "$(1)" "$(2)" $(LINKLIBS) ;
-}
 
 
 local extraSources = ;
@@ -416,8 +315,6 @@ for platform in [ MultiBootSubDirSetup ] {
 			case pxe_ia32 :
 				BuildBiosLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
 
-			case openfirmware :
-				BuildOpenFirmwareLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
 
 			case u-boot :
 				local loader_entry = `printf \"obase=16;ibase=16;10 + %x\\n\" $(HAIKU_BOOT_LOADER_BASE)|bc` ;
@@ -432,25 +329,10 @@ for platform in [ MultiBootSubDirSetup ] {
 				BuildUImageScript boot.scr
 					: [ FDirName $(HAIKU_TOP) data boot u-boot boot-$(TARGET_ARCH).scr.txt ] ;
 
-			case amiga_m68k :
-				BuildBiosLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
-				ChecksumAmigaLoader haiku_loader.$(TARGET_BOOT_PLATFORM) ;
-
-			case atari_m68k :
-				BuildBiosLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
-				ChecksumAtariLoader haiku_loader.$(TARGET_BOOT_PLATFORM) ;
-
-				AtariBootPrgLd haiku.prg :
-					<revisioned>boot_loader_$(TARGET_BOOT_PLATFORM)
-					: $(HAIKU_TOP)/src/system/ldscripts/$(TARGET_ARCH)/boot_prg_$(TARGET_BOOT_PLATFORM).ld
-					: -Bstatic
-				;
 
 			case riscv :
 				BuildBiosLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
 
-			case next_m68k :
-				BuildAoutLoader haiku_loader.$(TARGET_BOOT_PLATFORM) : <revisioned>boot_loader_$(TARGET_BOOT_PLATFORM) ;
 
 			case * :
 				Exit "Currently unsupported haiku_loader:" $(TARGET_BOOT_PLATFORM) ;

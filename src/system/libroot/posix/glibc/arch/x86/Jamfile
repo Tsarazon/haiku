@@ -38,7 +38,7 @@ local genericSources =
 	;
 
 local architectureObject ;
-for architectureObject in [ MultiArchSubDirSetup x86 ] {
+for architectureObject in [ MultiArchSubDirSetup x86 x86_gcc2 ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 

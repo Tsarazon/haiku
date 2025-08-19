@@ -15,21 +15,7 @@ NotFile $(HAIKU_CD_BOOT_IMAGE_CONTAINER_NAME) ;
 local extras = README.html ;
 SEARCH on $(extras) = [ FDirName $(HAIKU_TOP) data boot extras ] ;
 
-if $(TARGET_ARCH) = ppc {
-	local elfloader = boot_loader_openfirmware ;
-	local coffloader = haiku_loader.openfirmware ;
-
-	# OpenFirmware / Mac boot support files:
-	# CHRP script
-	local chrpscript = ofboot.chrp ;
-	# HFS creator and application type mapping for mkisofs
-	local hfsmaps = hfs.map ;
-	SEARCH on $(chrpscript) = [ FDirName $(HAIKU_TOP) data boot openfirmware ] ;
-	SEARCH on $(hfsmaps) = [ FDirName $(HAIKU_TOP) data boot openfirmware ] ;
-
-	BuildCDBootPPCImage $(HAIKU_CD_BOOT_IMAGE) : $(hfsmaps)
-		: $(elfloader) : $(coffloader) : $(chrpscript) : $(extras) ;
-} else {
+{
 	# For other platforms, we have to check which bootloader is used. There
 	# can be multiple ones, making this a bit confusing.
 	for platform in [ MultiBootSubDirSetup ] {

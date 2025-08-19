@@ -613,8 +613,11 @@ LibsolvSolver::_InitPool()
 		const char* arch;
 		#ifdef HAIKU_TARGET_PLATFORM_HAIKU
 			#ifdef __HAIKU_ARCH_X86
-				// GCC2 ABI detection removed - using modern x86 only
-				arch = "x86";
+				#if (B_HAIKU_ABI & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_2
+					arch = "x86_gcc2";
+				#else
+					arch = "x86";
+				#endif
 			#else
 				struct utsname info;
 				if (uname(&info) != 0)

@@ -410,7 +410,11 @@ BString::SetToFormatVarArgs(const char* format, va_list args)
 	char buffer[bufferSize];
 
 	va_list clonedArgs;
+#if __GNUC__ == 2
+	__va_copy(clonedArgs, args);
+#else
 	va_copy(clonedArgs, args);
+#endif
 	int32 bytes = vsnprintf(buffer, bufferSize, format, clonedArgs);
 	va_end(clonedArgs);
 
@@ -1883,7 +1887,21 @@ BString::ReplaceCharsSet(const char* setOfChars, const char* with)
 //	#pragma mark - Unchecked char access
 
 
-// GCC2 non-const operator[] removed
+#if __GNUC__ == 2
+char&
+BString::operator[](int32 index)
+{
+	if (_MakeWritable() != B_OK) {
+		static char invalid;
+		return invalid;
+	}
+
+	_ReferenceCount() = -1;
+		// mark string as unshareable
+
+	return fPrivateData[index];
+}
+#endif
 
 
 const char*

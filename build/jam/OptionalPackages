@@ -89,18 +89,16 @@ if [ IsOptionalHaikuImagePackageAdded DevelopmentBase ] {
 	for architectureObject in [ MultiArchSubDirSetup ] {
 		on $(architectureObject) {
 			AddHaikuImageDisabledPackages binutils gcc @{ mpc mpfr }@ ;
-			# GCC2 package conditional removed - using modern packages only
-			AddHaikuImageSystemPackages gmp ;
-			AddHaikuImageSourcePackages binutils gcc @{ gmp mpc mpfr }@ ;
+			AddHaikuImageSystemPackages gmp@!gcc2 ;
+			AddHaikuImageSourcePackages binutils gcc @{ gmp@!gcc2 mpc mpfr }@ ;
 		}
 	}
 
 	# other commonly used tools
 	AddHaikuImageDisabledPackages bison cdrtools flex jam make mawk mkdepend
-		m4 m4_x86@secondary_x86 nasm nasm_x86@secondary_x86 patch ;
-	# GCC2 package conditionals removed - using modern packages only
+		m4@!gcc2 m4_x86@secondary_x86 nasm nasm_x86@secondary_x86 patch ;
 	AddHaikuImageSourcePackages bison cdrtools make patch
-		m4 m4_x86@secondary_x86 ;
+		m4@!gcc2 m4_x86@secondary_x86 ;
 }
 
 

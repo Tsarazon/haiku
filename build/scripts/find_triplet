@@ -16,9 +16,6 @@ case "$1" in
 	"arm64")
 		echo "aarch64-unknown-haiku"
 		;;
-	"ppc")
-		echo "powerpc-apple-haiku"
-		;;
 	"x86")
 		echo "i586-pc-haiku"
 		;;
