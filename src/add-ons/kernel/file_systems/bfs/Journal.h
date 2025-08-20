@@ -15,6 +15,7 @@
 struct run_array;
 class Inode;
 class LogEntry;
+class RunArrays; // REFACTORED: Forward declaration for new helper class
 typedef DoublyLinkedList<LogEntry> LogEntryList;
 
 
@@ -55,6 +56,12 @@ private:
 			status_t		_CheckRunArray(const run_array* array);
 			status_t		_ReplayRunArray(int32* start);
 			status_t		_TransactionDone(bool success);
+
+			// REFACTORED: New helper methods for decomposed transaction writing
+			status_t		_PrepareTransaction(bool& detached);
+			status_t		_BuildRunArrays(RunArrays& runArrays, bool detached);
+			status_t		_ValidateLogSpace(const RunArrays& runArrays);
+			status_t		_WriteLogEntries(const RunArrays& runArrays, off_t& logPosition);
 
 	static	void			_TransactionWritten(int32 transactionID,
 								int32 event, void* _logEntry);

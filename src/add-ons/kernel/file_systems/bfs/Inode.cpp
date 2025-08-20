@@ -11,6 +11,7 @@
 #include "Inode.h"
 #include "BPlusTree.h"
 #include "Index.h"
+#include "SafeOperations.h"
 
 
 #if BFS_TRACING && !defined(FS_SHELL) && !defined(_BOOT_MODE)
@@ -239,7 +240,7 @@ InodeAllocator::CreateTree()
 
 	BPlusTree* tree = new(std::nothrow) BPlusTree(*fTransaction, fInode);
 	if (tree == NULL)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	status_t status = tree->InitCheck();
 	if (status != B_OK) {
@@ -253,7 +254,7 @@ InodeAllocator::CreateTree()
 		if (tree->Insert(*fTransaction, ".", fInode->ID()) < B_OK
 			|| tree->Insert(*fTransaction, "..",
 					volume->ToVnode(fInode->Parent())) < B_OK)
-			return B_ERROR;
+			RETURN_ERROR(B_ERROR);
 	}
 	return B_OK;
 }
@@ -308,7 +309,15 @@ InodeAllocator::_TransactionListener(int32 id, int32 event, void* _inode)
 status_t
 bfs_inode::InitCheck(Volume* volume) const
 {
-	if (Magic1() != INODE_MAGIC1
+#if defined(DEBUG) || defined(BFS_DEBUGGER_COMMANDS)
+	// Use centralized validation for better error reporting in debug builds
+	bool magicValid = validate_inode_magic(this);
+#else
+	// Inline validation for release builds (no error reporting overhead)
+	bool magicValid = (Magic1() == INODE_MAGIC1);
+#endif
+
+	if (!magicValid
 		|| !(Flags() & INODE_IN_USE)
 		|| inode_num.Length() != 1
 		// matches inode size?
@@ -458,7 +467,7 @@ Inode::InitCheck(bool checkNode) const
 	}
 
 	if (NeedsFileCache() && (fCache == NULL || fMap == NULL))
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	return B_OK;
 }
@@ -526,7 +535,7 @@ Inode::CheckPermissions(int accessMode) const
 {
 	// you never have write access to a read-only volume
 	if ((accessMode & W_OK) != 0 && fVolume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	return check_access_permissions(accessMode, Mode(), (gid_t)fNode.GroupID(),
 		(uid_t)fNode.UserID());
@@ -583,7 +592,7 @@ Inode::_MakeSpaceForSmallData(Transaction& transaction, bfs_inode* node,
 		}
 
 		if (item->IsLast(node) || (int32)item->Size() < bytes || max == NULL)
-			return B_ERROR;
+			RETURN_ERROR(B_ERROR);
 
 		bytes -= max->Size();
 
@@ -627,26 +636,102 @@ Inode::_RemoveSmallData(bfs_inode* node, small_data* item, int32 index)
 {
 	ASSERT_LOCKED_RECURSIVE(&fSmallDataLock);
 
+	// REFACTORED: Enhanced memory safety using SafeOperations utility
+	// Input validation
+	if (node == NULL || item == NULL || fVolume == NULL)
+		RETURN_ERROR(B_BAD_VALUE);
+
+	// Calculate memory boundaries for validation
+	const uint8* nodeStart = (const uint8*)node;
+	size_t nodeSize = fVolume->BlockSize();
+	const uint8* nodeEnd = nodeStart + nodeSize;
+	const uint8* itemPtr = (const uint8*)item;
+
+	// Validate item pointer using SafeOperations
+	if (!BFS::SafeOperations::IsValidPointer(item, nodeStart, nodeSize))
+		RETURN_ERROR(B_BAD_DATA);
+
+	// Validate item has minimum size for a small_data structure
+	if (!BFS::SafeOperations::IsValidRange(item, sizeof(small_data), nodeStart, nodeSize))
+		RETURN_ERROR(B_BAD_DATA);
+
 	small_data* next = item->Next();
+
+	// Validate next pointer using SafeOperations
+	if (!BFS::SafeOperations::IsValidPointer(next, nodeStart, nodeSize))
+		RETURN_ERROR(B_BAD_DATA);
+
+	// Validate next has minimum size
+	if (!BFS::SafeOperations::IsValidRange(next, sizeof(small_data), nodeStart, nodeSize))
+		RETURN_ERROR(B_BAD_DATA);
+
 	if (!next->IsLast(node)) {
-		// find the last attribute
+		// Find the last attribute using manual safe iteration
+		// (SafeSmallDataIterator starts from beginning, but we need to start from 'next')
 		small_data* last = next;
-		while (!last->IsLast(node))
-			last = last->Next();
+		int32 maxIterations = nodeSize / sizeof(small_data);
+		int32 iterations = 0;
+		
+		while (!last->IsLast(node) && iterations < maxIterations) {
+			small_data* nextLast = last->Next();
+			
+			// Validate next pointer using SafeOperations
+			if (!BFS::SafeOperations::IsValidPointer(nextLast, nodeStart, nodeSize))
+				RETURN_ERROR(B_BAD_DATA);
+				
+			// Validate has minimum size
+			if (!BFS::SafeOperations::IsValidRange(nextLast, sizeof(small_data), nodeStart, nodeSize))
+				RETURN_ERROR(B_BAD_DATA);
+				
+			// Prevent backwards movement - safety check
+			if ((const uint8*)nextLast <= (const uint8*)last)
+				RETURN_ERROR(B_BAD_DATA);
+			
+			last = nextLast;
+			iterations++;
+		}
+		
+		// Check if we hit iteration limit (potential corruption)
+		if (iterations >= maxIterations)
+			RETURN_ERROR(B_BAD_DATA);
 
-		int32 size = (uint8*)last - (uint8*)next;
-		if (size < 0
-			|| size > (uint8*)node + fVolume->BlockSize() - (uint8*)next)
-			return B_BAD_DATA;
-
+		// Calculate safe size using SafeOperations
+		const uint8* lastPtr = (const uint8*)last;
+		const uint8* nextPtr = (const uint8*)next;
+		
+		ptrdiff_t sizeDiff;
+		if (!BFS::SafeOperations::SafePointerDifference(lastPtr, nextPtr, nodeStart, nodeSize, sizeDiff))
+			RETURN_ERROR(B_BAD_DATA);
+			
+		if (sizeDiff < 0)
+			RETURN_ERROR(B_BAD_DATA);
+			
+		size_t size = (size_t)sizeDiff;
+		
+		// Move memory - use standard memmove for overlapping regions
 		memmove(item, next, size);
 
-		// Move the "last" one to its new location and
-		// correctly terminate the small_data section
-		last = (small_data*)((uint8*)last - ((uint8*)next - (uint8*)item));
-		memset(last, 0, (uint8*)node + fVolume->BlockSize() - (uint8*)last);
-	} else
-		memset(item, 0, item->Size());
+		// Move the "last" one to its new location and correctly terminate
+		ptrdiff_t offset = nextPtr - itemPtr;
+		last = (small_data*)(lastPtr - offset);
+		
+		// Validate new last pointer using SafeOperations
+		if (!BFS::SafeOperations::IsValidPointer(last, nodeStart, nodeSize))
+			RETURN_ERROR(B_BAD_DATA);
+
+		// Safe memory clear with bounds checking
+		size_t clearSize = nodeEnd - lastPtr;
+		if (clearSize > 0 && lastPtr + clearSize <= nodeEnd) {
+			memset(last, 0, clearSize);
+		}
+	} else {
+		// Simple case - validate item size before clearing
+		uint32 itemSize = item->Size();
+		if (itemSize == 0 || itemPtr + itemSize > nodeEnd)
+			RETURN_ERROR(B_BAD_DATA);
+
+		memset(item, 0, itemSize);
+	}
 
 	// update all current iterators
 	SinglyLinkedList<AttributeIterator>::ConstIterator iterator
@@ -665,7 +750,7 @@ Inode::_RemoveSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 	const char* name)
 {
 	if (name == NULL)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	bfs_inode* node = nodeGetter.WritableNode();
 	RecursiveLocker locker(fSmallDataLock);
@@ -717,7 +802,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 	bfs_inode* node = nodeGetter.WritableNode();
 
 	if (node == NULL || name == NULL || data == NULL)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	// reject any requests that can't fit into the small_data section
 	uint32 nameLength = strlen(name);
@@ -764,7 +849,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 
 				if (_MakeSpaceForSmallData(transaction, node, name, needed)
 						!= B_OK)
-					return B_ERROR;
+					RETURN_ERROR(B_ERROR);
 
 				// reset our pointers
 				item = node->SmallDataStart();
@@ -828,7 +913,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 
 		// make room for the new attribute
 		if (_MakeSpaceForSmallData(transaction, node, name, spaceNeeded) < B_OK)
-			return B_ERROR;
+			RETURN_ERROR(B_ERROR);
 
 		// get new last item!
 		item = node->SmallDataStart();
@@ -970,7 +1055,7 @@ status_t
 Inode::SetName(Transaction& transaction, const char* name)
 {
 	if (name == NULL || *name == '\0')
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	NodeGetter node(fVolume);
 	status_t status = node.SetToWritable(transaction, this);
@@ -1095,7 +1180,7 @@ Inode::WriteAttribute(Transaction& transaction, const char* name, int32 type,
 	off_t pos, const uint8* buffer, size_t* _length, bool* _created)
 {
 	if (pos < 0)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	// needed to maintain the index
 	uint8 oldBuffer[MAX_INDEX_KEY_LENGTH];
@@ -1317,12 +1402,12 @@ Inode::GetAttribute(const char* name, Inode** _attribute)
 	if (vnode.Get(&attributes) < B_OK) {
 		FATAL(("get_vnode() failed in Inode::GetAttribute(name = \"%s\")\n",
 			name));
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 	}
 
 	BPlusTree* tree = attributes->Tree();
 	if (tree == NULL)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	InodeReadLocker locker(attributes);
 
@@ -1333,7 +1418,7 @@ Inode::GetAttribute(const char* name, Inode** _attribute)
 		Inode* inode;
 		// Check if the attribute is really an attribute
 		if (vnode.Get(&inode) != B_OK || !inode->IsAttribute())
-			return B_ERROR;
+			RETURN_ERROR(B_ERROR);
 
 		*_attribute = inode;
 		vnode.Keep();
@@ -1368,7 +1453,7 @@ Inode::CreateAttribute(Transaction& transaction, const char* name, uint32 type,
 	Vnode vnode(fVolume, Attributes());
 	Inode* attributes;
 	if (vnode.Get(&attributes) < B_OK)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	// Inode::Create() locks the inode for us
 	return Inode::Create(transaction, attributes, name,
@@ -1597,7 +1682,7 @@ Inode::WriteAt(Transaction& transaction, off_t pos, const uint8* buffer,
 
 	// set/check boundaries for pos/length
 	if (pos < 0)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	locker.Unlock();
 
@@ -1695,7 +1780,7 @@ Inode::_AllocateBlockArray(Transaction& transaction, block_run& run,
 	size_t length, bool variableSize)
 {
 	if (!run.IsZero())
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	status_t status = fVolume->Allocate(transaction, this, length, run,
 		variableSize ? 1 : length);
@@ -1971,7 +2056,7 @@ Inode::_GrowStream(Transaction& transaction, off_t size)
 			get_double_indirect_sizes(data->double_indirect.Length(),
 				fVolume->BlockSize(), runsPerBlock, directSize, indirectSize);
 			if (directSize <= 0 || indirectSize <= 0)
-				return B_BAD_DATA;
+				RETURN_ERROR(B_BAD_DATA);
 
 			off_t start = data->MaxDoubleIndirectRange()
 				- data->MaxIndirectRange();
@@ -2088,7 +2173,7 @@ Inode::_FreeStaticStreamArray(Transaction& transaction, int32 level,
 			fVolume->BlockSize());
 	}
 	if (indirectSize <= 0)
-		return B_BAD_DATA;
+		RETURN_ERROR(B_BAD_DATA);
 
 	off_t start;
 	if (size > offset)
@@ -2196,7 +2281,7 @@ Inode::_FreeStreamArray(Transaction& transaction, block_run* array,
 		}
 
 		if (fVolume->Free(transaction, run) < B_OK)
-			return B_IO_ERROR;
+			RETURN_ERROR(B_IO_ERROR);
 	}
 	return B_OK;
 }
@@ -2241,7 +2326,7 @@ Inode::_ShrinkStream(Transaction& transaction, off_t size)
 				// 'data->data_stream::max_indirect_range' to 'off_t&'"
 			if (_FreeStreamArray(transaction, array, fVolume->BlockSize()
 					/ sizeof(block_run), size, offset, *maxIndirect) != B_OK)
-				return B_IO_ERROR;
+				RETURN_ERROR(B_IO_ERROR);
 		}
 		if (data->max_direct_range == data->max_indirect_range) {
 			fVolume->Free(transaction, data->indirect);
@@ -2270,7 +2355,7 @@ status_t
 Inode::SetFileSize(Transaction& transaction, off_t size)
 {
 	if (size < 0)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	off_t oldSize = Size();
 
@@ -2376,7 +2461,7 @@ Inode::Free(Transaction& transaction)
 	}
 
 	if (WriteBack(transaction) < B_OK)
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 
 	return fVolume->Free(transaction, BlockRun());
 }
@@ -2699,7 +2784,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 			return B_OK;
 		}
 	} else if (parent != NULL && (mode & S_ATTR_DIR) == 0) {
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 	} else if ((openMode & O_DIRECTORY) != 0) {
 		// TODO: we might need to return B_NOT_A_DIRECTORY here
 		return B_ENTRY_NOT_FOUND;
@@ -2748,7 +2833,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 	// don't add it to attributes, or indices
 	if (tree && inode->IsRegularNode()
 		&& inode->SetName(transaction, name) != B_OK)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	// Initialize b+tree if it's a directory (and add "." & ".." if it's
 	// a standard directory for files - not for attributes or indices)
@@ -2816,7 +2901,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 			inode->Size()));
 
 		if (inode->FileCache() == NULL || inode->Map() == NULL)
-			return B_NO_MEMORY;
+			RETURN_ERROR(B_NO_MEMORY);
 	}
 
 	// Everything worked well until this point, we have a fully

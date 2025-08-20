@@ -64,7 +64,7 @@ const char* const
 BPackageInfo::kArchitectureNames[B_PACKAGE_ARCHITECTURE_ENUM_COUNT] = {
 	"any",
 	"x86",
-	"x86_gcc2",
+	NULL,  // x86_gcc2 removed
 	"source",
 	"x86_64",
 	"arm",
@@ -611,8 +611,11 @@ BPackageInfo::CanonicalFileName() const
 	if (InitCheck() != B_OK)
 		return BString();
 
+	const char* arch = kArchitectureNames[fArchitecture];
+	if (arch == NULL)
+		arch = "unknown";
 	return BString().SetToFormat("%s-%s-%s.hpkg", fName.String(),
-		fVersion.ToString().String(), kArchitectureNames[fArchitecture]);
+		fVersion.ToString().String(), arch);
 }
 
 
@@ -1096,7 +1099,8 @@ BPackageInfo::GetConfigString(BString& _string) const
 		.Write("description", fDescription)
 		.Write("vendor", fVendor)
 		.Write("packager", fPackager)
-		.Write("architecture", kArchitectureNames[fArchitecture])
+		.Write("architecture", kArchitectureNames[fArchitecture] != NULL 
+			? kArchitectureNames[fArchitecture] : "unknown")
 		.Write("copyrights", fCopyrightList)
 		.Write("licenses", fLicenseList)
 		.Write("urls", fURLList)

@@ -14,6 +14,7 @@
 #include "Inode.h"
 #include "Journal.h"
 #include "Query.h"
+#include "SafeOperations.h"
 #include "Volume.h"
 
 
@@ -35,9 +36,15 @@ static const int32 kDesiredAllocationGroups = 56;
 bool
 disk_super_block::IsMagicValid() const
 {
+#if defined(DEBUG) || defined(BFS_DEBUGGER_COMMANDS)
+	// Use centralized validation for better error reporting in debug builds
+	return validate_superblock_magic(this);
+#else
+	// Inline validation for release builds (no error reporting overhead)
 	return Magic1() == (int32)SUPER_BLOCK_MAGIC1
 		&& Magic2() == (int32)SUPER_BLOCK_MAGIC2
 		&& Magic3() == (int32)SUPER_BLOCK_MAGIC3;
+#endif
 }
 
 
@@ -64,7 +71,17 @@ void
 disk_super_block::Initialize(const char* diskName, off_t numBlocks,
 	uint32 blockSize)
 {
-	memset(this, 0, sizeof(disk_super_block));
+	// REFACTORED: Safe structure initialization with validation
+	if (diskName == NULL || numBlocks <= 0 || blockSize == 0)
+		return; // Caller should check initialization success
+	
+	// Safe superblock initialization with bounds checking
+	status_t status = BFS::SafeOperations::SafeMemorySet(
+		this, 0, sizeof(disk_super_block), this, sizeof(disk_super_block));
+	if (status != B_OK) {
+		FATAL(("Safe superblock initialization failed: %s\n", strerror(status)));
+		return; // Caller must validate superblock after initialization
+	}
 
 	magic1 = HOST_ENDIAN_TO_BFS_INT32(SUPER_BLOCK_MAGIC1);
 	magic2 = HOST_ENDIAN_TO_BFS_INT32(SUPER_BLOCK_MAGIC2);
@@ -197,7 +214,7 @@ Volume::Mount(const char* deviceName, uint32 flags)
 	// read the superblock
 	if (Identify(fDevice, &fSuperBlock) != B_OK) {
 		FATAL(("invalid superblock!\n"));
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 	}
 
 	// initialize short hands to the superblock (to save byte swapping)
@@ -220,11 +237,11 @@ Volume::Mount(const char* deviceName, uint32 flags)
 	fLogEnd = fSuperBlock.LogEnd();
 
 	if ((fBlockCache = opener.InitCache(NumBlocks(), fBlockSize)) == NULL)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	fJournal = new(std::nothrow) Journal(this);
 	if (fJournal == NULL)
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	status_t status = fJournal->InitCheck();
 	if (status < B_OK) {
@@ -336,7 +353,7 @@ Volume::ValidateBlockRun(block_run run)
 		Panic();
 		FATAL(("*** invalid run(%d,%d,%d)\n", (int)run.AllocationGroup(),
 			run.Start(), run.Length()));
-		return B_BAD_DATA;
+		RETURN_ERROR(B_BAD_DATA);
 	}
 	return B_OK;
 }
@@ -408,7 +425,7 @@ Volume::WriteSuperBlock()
 {
 	if (write_pos(fDevice, 512, &fSuperBlock, sizeof(disk_super_block))
 			!= sizeof(disk_super_block))
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 
 	return B_OK;
 }
@@ -485,7 +502,7 @@ Volume::CreateCheckVisitor()
 
 	fCheckVisitor = new(std::nothrow) ::CheckVisitor(this);
 	if (fCheckVisitor == NULL)
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	return B_OK;
 }
@@ -526,7 +543,7 @@ Volume::CheckSuperBlock(const uint8* data, uint32* _offset)
 	}
 #endif
 
-	return B_BAD_VALUE;
+	RETURN_ERROR(B_BAD_VALUE);
 }
 
 
@@ -535,13 +552,20 @@ Volume::Identify(int fd, disk_super_block* superBlock)
 {
 	uint8 buffer[1024];
 	if (read_pos(fd, 0, buffer, sizeof(buffer)) != sizeof(buffer))
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 
 	uint32 offset;
 	if (CheckSuperBlock(buffer, &offset) != B_OK)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
-	memcpy(superBlock, buffer + offset, sizeof(disk_super_block));
+	// Safe superblock copy from disk buffer with bounds validation
+	status_t status = BFS::SafeOperations::SafeMemoryCopy(
+		superBlock, buffer + offset, sizeof(disk_super_block),
+		superBlock, sizeof(disk_super_block), buffer, sizeof(buffer));
+	if (status != B_OK) {
+		FATAL(("Safe superblock copy from disk failed: %s\n", strerror(status)));
+		RETURN_ERROR(B_BAD_DATA);
+	}
 	return B_OK;
 }
 
@@ -554,25 +578,25 @@ Volume::Initialize(int fd, const char* name, uint32 blockSize,
 	// accept '/' in disk names (mkbfs does this, too - and since
 	// Tracker names mounted volumes like their name)
 	if (strchr(name, '/') != NULL)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	if (blockSize != 1024 && blockSize != 2048 && blockSize != 4096
 		&& blockSize != 8192)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	DeviceOpener opener(fd, O_RDWR);
 	if (opener.Device() < B_OK)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	if (opener.IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	fDevice = opener.Device();
 
 	uint32 deviceBlockSize;
 	off_t deviceSize;
 	if (opener.GetSize(&deviceSize, &deviceBlockSize) < B_OK)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	off_t numBlocks = deviceSize / blockSize;
 
@@ -609,7 +633,7 @@ Volume::Initialize(int fd, const char* name, uint32 blockSize,
 		RETURN_ERROR(B_ERROR);
 
 	if ((fBlockCache = opener.InitCache(NumBlocks(), fBlockSize)) == NULL)
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 
 	fJournal = new(std::nothrow) Journal(this);
 	if (fJournal == NULL || fJournal->InitCheck() < B_OK)
@@ -684,10 +708,10 @@ Volume::_EraseUnusedBootBlock()
 	const char emptySector[blockSize] = { 0 };
 	// Erase boot block if any
 	if (write_pos(fDevice, 0, emptySector, blockSize) != blockSize)
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 	// Erase ext2 superblock if any
 	if (write_pos(fDevice, 1024, emptySector, blockSize) != blockSize)
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 
 	return B_OK;
 }

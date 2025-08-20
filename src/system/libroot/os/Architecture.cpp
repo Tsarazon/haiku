@@ -20,11 +20,8 @@
 static const char* const kArchitecture = B_HAIKU_ABI_NAME;
 static const char* const kPrimaryArchitecture = __HAIKU_PRIMARY_PACKAGING_ARCH;
 
-#ifdef __HAIKU_ARCH_X86
-	static const char* const kSiblingArchitectures[] = {"x86_gcc2", "x86"};
-#else
-	static const char* const kSiblingArchitectures[] = {};
-#endif
+// No sibling architectures - x86_gcc2 support removed
+static const char* const kSiblingArchitectures[] = {};
 
 static const size_t kSiblingArchitectureCount
 	= sizeof(kSiblingArchitectures) / sizeof(const char*);

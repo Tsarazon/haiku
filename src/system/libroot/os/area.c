@@ -15,10 +15,7 @@ area_id
 create_area(const char *name, void **address, uint32 addressSpec, size_t size,
 	uint32 lock, uint32 protection)
 {
-#ifdef __HAIKU_BEOS_COMPATIBLE
-	if (__gABIVersion < B_HAIKU_ABI_GCC_2_HAIKU)
-		protection |= B_EXECUTE_AREA | B_CLONEABLE_AREA;
-#endif
+// BeOS compatibility checks removed - using modern protection only
 
 	if (addressSpec == B_ANY_ADDRESS)
 		addressSpec = B_RANDOMIZED_ANY_ADDRESS;
@@ -33,10 +30,7 @@ area_id
 clone_area(const char *name, void **address, uint32 addressSpec,
 	uint32 protection, area_id sourceArea)
 {
-#ifdef __HAIKU_BEOS_COMPATIBLE
-	if (__gABIVersion < B_HAIKU_ABI_GCC_2_HAIKU)
-		protection |= B_EXECUTE_AREA | B_CLONEABLE_AREA;
-#endif
+// BeOS compatibility checks removed - using modern protection only
 
 	if (addressSpec == B_ANY_ADDRESS)
 		addressSpec = B_RANDOMIZED_ANY_ADDRESS;
@@ -78,10 +72,7 @@ resize_area(area_id id, size_t newSize)
 status_t
 set_area_protection(area_id id, uint32 protection)
 {
-#ifdef __HAIKU_BEOS_COMPATIBLE
-	if (__gABIVersion < B_HAIKU_ABI_GCC_2_HAIKU)
-		protection |= B_EXECUTE_AREA;
-#endif
+	// GCC2 BeOS compatibility removed - modern behavior only
 
 	return _kern_set_area_protection(id, protection);
 }

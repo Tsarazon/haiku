@@ -97,7 +97,7 @@ analyze_object_gcc_version(int fd, image_t* image, elf_ehdr& eheader,
 	int gccMajor = 0;
 	int gccMiddle = 0;
 	int gccMinor = 0;
-	bool isHaiku = true;
+	bool isHaiku __attribute__((unused)) = true;
 
 	// Read up to 10 comments. The first three or four are usually from the
 	// glue code.
@@ -188,14 +188,8 @@ analyze_object_gcc_version(int fd, image_t* image, elf_ehdr& eheader,
 	if (gccMajor == 0)
 		return false;
 
-	if (gccMajor == 2) {
-		if (gccMiddle < 95)
-			image->abi = B_HAIKU_ABI_GCC_2_ANCIENT;
-		else if (isHaiku)
-			image->abi = B_HAIKU_ABI_GCC_2_HAIKU;
-		else
-			image->abi = B_HAIKU_ABI_GCC_2_BEOS;
-	} else {
+	// GCC2 support removed - always use modern ABI
+	if (gccMajor >= 2) {
 		if (gccMajor >= 5) {
 			// The ABI changes in libstdc++ 5+ are optional, and currently we
 			// are using it in backwards compatible mode. So, it is still
@@ -247,14 +241,14 @@ analyze_image_haiku_version_and_abi(int fd, image_t* image, elf_ehdr& eheader,
 			FATAL("%s: Failed to get gcc version.\n", image->path);
 				// not really fatal, actually
 
-			// assume ancient BeOS
-			image->abi = B_HAIKU_ABI_GCC_2_ANCIENT;
+			// assume modern ABI for compatibility  
+			image->abi = B_HAIKU_ABI_GCC_4;
 		}
 	}
 
 	// guess the API version, if we couldn't figure it out yet
 	if (image->api_version == 0) {
-		image->api_version = image->abi > B_HAIKU_ABI_GCC_2_BEOS
-			? HAIKU_VERSION_PRE_GLUE_CODE : B_HAIKU_VERSION_BEOS;
+		// Always use modern API version
+		image->api_version = HAIKU_VERSION_PRE_GLUE_CODE;
 	}
 }

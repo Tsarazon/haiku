@@ -44,17 +44,11 @@
 
 /* Haiku ABI */
 #define B_HAIKU_ABI_MAJOR				0xffff0000
-#define B_HAIKU_ABI_GCC_2				0x00020000
-#define B_HAIKU_ABI_GCC_2_ANCIENT		0x00020000
-#define B_HAIKU_ABI_GCC_2_BEOS			0x00020001
-#define B_HAIKU_ABI_GCC_2_HAIKU			0x00020002
 #define B_HAIKU_ABI_GCC_4				0x00040000
 
 #define B_HAIKU_ABI_NAME				__HAIKU_ARCH_ABI
 
-#if __GNUC__ == 2
-#	define B_HAIKU_ABI					B_HAIKU_ABI_GCC_2_HAIKU
-#elif (__GNUC__ >= 4 && __GNUC__ <= 15) || defined(__TINYC__)
+#if (__GNUC__ >= 4 && __GNUC__ <= 15) || defined(__TINYC__)
 #	define B_HAIKU_ABI					B_HAIKU_ABI_GCC_4
 #else
 #	error Unsupported compiler!

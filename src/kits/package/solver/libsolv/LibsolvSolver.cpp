@@ -613,11 +613,8 @@ LibsolvSolver::_InitPool()
 		const char* arch;
 		#ifdef HAIKU_TARGET_PLATFORM_HAIKU
 			#ifdef __HAIKU_ARCH_X86
-				#if (B_HAIKU_ABI & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_2
-					arch = "x86_gcc2";
-				#else
-					arch = "x86";
-				#endif
+				// GCC2 support removed - always use modern x86 architecture
+				arch = "x86";
 			#else
 				struct utsname info;
 				if (uname(&info) != 0)

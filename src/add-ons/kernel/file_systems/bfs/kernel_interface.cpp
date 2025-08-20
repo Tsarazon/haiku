@@ -152,7 +152,7 @@ bfs_scan_partition(int fd, partition_data* partition, void* _cookie)
 	partition->block_size = cookie->super_block.BlockSize();
 	partition->content_name = strdup(cookie->super_block.name);
 	if (partition->content_name == NULL)
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	return B_OK;
 }
@@ -177,7 +177,7 @@ bfs_mount(fs_volume* _volume, const char* device, uint32 flags,
 
 	Volume* volume = new(std::nothrow) Volume(_volume);
 	if (volume == NULL)
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	status_t status = volume->Mount(device, flags);
 	if (status != B_OK) {
@@ -246,7 +246,7 @@ bfs_write_fs_stat(fs_volume* _volume, const struct fs_info* info, uint32 mask)
 
 	Volume* volume = (Volume*)_volume->private_volume;
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	MutexLocker locker(volume->Lock());
 
@@ -292,7 +292,7 @@ bfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _node, int* _type,
 	if (id < volume->ToBlock(volume->Log()) + volume->Log().Length()
 		|| id > volume->NumBlocks()) {
 		INFORM(("inode at %" B_PRIdINO " requested!\n", id));
-		return B_ERROR;
+		RETURN_ERROR(B_ERROR);
 	}
 
 	CachedBlock cached(volume);
@@ -317,7 +317,7 @@ bfs_get_vnode(fs_volume* _volume, ino_t id, fs_vnode* _node, int* _type,
 
 	Inode* inode = new(std::nothrow) Inode(volume, id);
 	if (inode == NULL)
-		return B_NO_MEMORY;
+		RETURN_ERROR(B_NO_MEMORY);
 
 	status = inode->InitCheck(false);
 	if (status != B_OK)
@@ -458,7 +458,7 @@ bfs_write_pages(fs_volume* _volume, fs_vnode* _node, void* _cookie,
 	Inode* inode = (Inode*)_node->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (inode->FileCache() == NULL)
 		RETURN_ERROR(B_BAD_VALUE);
@@ -500,7 +500,7 @@ bfs_io(fs_volume* _volume, fs_vnode* _node, void* _cookie, io_request* request)
 {
 #if KDEBUG_RW_LOCK_DEBUG
 	// bfs_io depends on read-locks being implicitly transferrable across threads.
-	return B_UNSUPPORTED;
+	RETURN_ERROR(B_UNSUPPORTED);
 #endif
 
 	Volume* volume = (Volume*)_volume->private_volume;
@@ -509,7 +509,7 @@ bfs_io(fs_volume* _volume, fs_vnode* _node, void* _cookie, io_request* request)
 #ifndef FS_SHELL
 	if (io_request_is_write(request) && volume->IsReadOnly()) {
 		notify_io_request(request, B_READ_ONLY_DEVICE);
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 	}
 #endif
 
@@ -584,7 +584,7 @@ bfs_get_file_map(fs_volume* _volume, fs_vnode* _node, off_t offset, size_t size,
 	}
 
 	// can never get here
-	return B_ERROR;
+	RETURN_ERROR(B_ERROR);
 }
 
 
@@ -764,7 +764,7 @@ bfs_ioctl(fs_volume* _volume, fs_vnode* _node, void* _cookie, uint32 cmd,
 			// while BFS is mounted
 			update_boot_block update;
 			if (bufferLength != sizeof(update_boot_block))
-				return B_BAD_VALUE;
+				RETURN_ERROR(B_BAD_VALUE);
 			if (user_memcpy(&update, buffer, sizeof(update_boot_block)) != B_OK)
 				return B_BAD_ADDRESS;
 
@@ -772,7 +772,7 @@ bfs_ioctl(fs_volume* _volume, fs_vnode* _node, void* _cookie, uint32 cmd,
 			if (update.offset < minOffset
 				|| update.offset >= 512 || update.length > 512 - minOffset
 				|| update.length + update.offset > 512) {
-				return B_BAD_VALUE;
+				RETURN_ERROR(B_BAD_VALUE);
 			}
 			if (user_memcpy((uint8*)&volume->SuperBlock() + update.offset,
 					update.data, update.length) != B_OK) {
@@ -784,7 +784,7 @@ bfs_ioctl(fs_volume* _volume, fs_vnode* _node, void* _cookie, uint32 cmd,
 		case BFS_IOCTL_RESIZE:
 		{
 			if (bufferLength != sizeof(uint64))
-				return B_BAD_VALUE;
+				RETURN_ERROR(B_BAD_VALUE);
 
 			uint64 size;
 			if (user_memcpy((uint8*)&size, buffer, sizeof(uint64)) != B_OK)
@@ -879,7 +879,7 @@ bfs_write_stat(fs_volume* _volume, fs_vnode* _node, const struct stat* stat,
 	Inode* inode = (Inode*)_node->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	// TODO: we should definitely check a bit more if the new stats are
 	//	valid - or even better, the VFS should check this before calling us
@@ -901,7 +901,7 @@ bfs_write_stat(fs_volume* _volume, fs_vnode* _node, const struct stat* stat,
 		if (inode->IsDirectory())
 			return B_IS_A_DIRECTORY;
 		if (!inode->IsFile())
-			return B_BAD_VALUE;
+			RETURN_ERROR(B_BAD_VALUE);
 
 		off_t oldSize = inode->Size();
 
@@ -993,7 +993,7 @@ bfs_create(fs_volume* _volume, fs_vnode* _directory, const char* name,
 	Inode* directory = (Inode*)_directory->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (!directory->IsDirectory())
 		RETURN_ERROR(B_BAD_TYPE);
@@ -1054,7 +1054,7 @@ bfs_create_symlink(fs_volume* _volume, fs_vnode* _directory, const char* name,
 	Inode* directory = (Inode*)_directory->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (!directory->IsDirectory())
 		RETURN_ERROR(B_BAD_TYPE);
@@ -1116,7 +1116,7 @@ bfs_link(fs_volume* _volume, fs_vnode* dir, const char* name, fs_vnode* node)
 	FUNCTION_START(("name = \"%s\"\n", name));
 
 	// This one won't be implemented in a binary compatible BFS
-	return B_UNSUPPORTED;
+	RETURN_ERROR(B_UNSUPPORTED);
 }
 
 
@@ -1194,7 +1194,7 @@ bfs_rename(fs_volume* _volume, fs_vnode* _oldDir, const char* oldName,
 	Vnode vnode(volume, id);
 	Inode* inode;
 	if (vnode.Get(&inode) != B_OK)
-		return B_IO_ERROR;
+		RETURN_ERROR(B_IO_ERROR);
 
 	// Don't move a directory into one of its children - we soar up
 	// from the newDirectory to either the root node or the old
@@ -1206,15 +1206,16 @@ bfs_rename(fs_volume* _volume, fs_vnode* _oldDir, const char* oldName,
 		ino_t root = volume->RootNode()->ID();
 
 		while (true) {
-			if (parent == id)
-				return B_BAD_VALUE;
-			else if (parent == root || parent == oldDirectory->ID())
+			if (parent == id) {
+				RETURN_ERROR(B_BAD_VALUE);
+			} else if (parent == root || parent == oldDirectory->ID()) {
 				break;
+			}
 
 			Vnode vnode(volume, parent);
 			Inode* parentNode;
 			if (vnode.Get(&parentNode) != B_OK)
-				return B_ERROR;
+				RETURN_ERROR(B_ERROR);
 
 			parent = volume->ToVnode(parentNode->Parent());
 		}
@@ -1242,7 +1243,7 @@ bfs_rename(fs_volume* _volume, fs_vnode* _oldDir, const char* oldName,
 				< B_OK)
 			return B_NAME_IN_USE;
 		if (clobber == id)
-			return B_BAD_VALUE;
+			RETURN_ERROR(B_BAD_VALUE);
 
 		Vnode vnode(volume, clobber);
 		Inode* other;
@@ -1421,7 +1422,7 @@ bfs_write(fs_volume* _volume, fs_vnode* _node, void* _cookie, off_t pos,
 	Inode* inode = (Inode*)_node->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (!inode->HasUserAccessableStream()) {
 		*_length = 0;
@@ -1620,7 +1621,7 @@ bfs_create_dir(fs_volume* _volume, fs_vnode* _directory, const char* name,
 	Inode* directory = (Inode*)_directory->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (!directory->IsDirectory())
 		RETURN_ERROR(B_BAD_TYPE);
@@ -1870,7 +1871,7 @@ bfs_create_attr(fs_volume* _volume, fs_vnode* _node, const char* name,
 
 	Volume* volume = (Volume*)_volume->private_volume;
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	Inode* inode = (Inode*)_node->private_node;
 	Attribute attribute(inode);
@@ -2027,7 +2028,7 @@ bfs_create_special_node(fs_volume* _volume, fs_vnode* _directory,
 {
 	// no need to support entry-less nodes
 	if (name == NULL)
-		return B_UNSUPPORTED;
+		RETURN_ERROR(B_UNSUPPORTED);
 
 	FUNCTION_START(("name = \"%s\", mode = %u, flags = 0x%" B_PRIx32
 		", subVnode: %p\n", name, (unsigned int)mode, flags, subVnode));
@@ -2036,7 +2037,7 @@ bfs_create_special_node(fs_volume* _volume, fs_vnode* _directory,
 	Inode* directory = (Inode*)_directory->private_node;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	if (!directory->IsDirectory())
 		RETURN_ERROR(B_BAD_TYPE);
@@ -2164,7 +2165,7 @@ bfs_create_index(fs_volume* _volume, const char* name, uint32 type,
 	Volume* volume = (Volume*)_volume->private_volume;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	// only root users are allowed to create indices
 	if (geteuid() != 0)
@@ -2190,7 +2191,7 @@ bfs_remove_index(fs_volume* _volume, const char* name)
 	Volume* volume = (Volume*)_volume->private_volume;
 
 	if (volume->IsReadOnly())
-		return B_READ_ONLY_DEVICE;
+		RETURN_ERROR(B_READ_ONLY_DEVICE);
 
 	// only root users are allowed to remove indices
 	if (geteuid() != 0)
@@ -2385,7 +2386,7 @@ bfs_uninitialize(int fd, partition_id partitionID, off_t partitionSize,
 	uint32 blockSize, disk_job_id job)
 {
 	if (blockSize == 0)
-		return B_BAD_VALUE;
+		RETURN_ERROR(B_BAD_VALUE);
 
 	update_disk_device_job_progress(job, 0.0);
 
@@ -2421,7 +2422,7 @@ bfs_std_ops(int32 op, ...)
 			return B_OK;
 
 		default:
-			return B_ERROR;
+			RETURN_ERROR(B_ERROR);
 	}
 }
 

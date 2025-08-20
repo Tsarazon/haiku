@@ -459,14 +459,11 @@ remap_images()
 				continue;
 
 			uint32 protection = B_READ_AREA;
-			if (image->abi < B_HAIKU_ABI_GCC_2_HAIKU) {
-				protection |= B_WRITE_AREA | B_EXECUTE_AREA;
-			} else {
-				if ((region.flags & RFLAG_WRITABLE) != 0)
-					protection |= B_WRITE_AREA;
-				if ((region.flags & RFLAG_EXECUTABLE) != 0)
-					protection |= B_EXECUTE_AREA;
-			}
+			// GCC2 compatibility removed - always use modern protection handling
+			if ((region.flags & RFLAG_WRITABLE) != 0)
+				protection |= B_WRITE_AREA;
+			if ((region.flags & RFLAG_EXECUTABLE) != 0)
+				protection |= B_EXECUTE_AREA;
 
 			status_t result = _kern_set_area_protection(region.id, protection);
 			if (result == B_OK)

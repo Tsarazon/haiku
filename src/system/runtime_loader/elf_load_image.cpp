@@ -639,25 +639,18 @@ load_image(char const* name, image_type type, const char* rpath, const char* run
 		pheaderBuffer, sizeof(pheaderBuffer));
 
 	// If sSearchPathSubDir is unset (meaning, this is the first image we're
-	// loading) we init the search path subdir if the compiler version doesn't
-	// match ours.
+	// loading) we init the search path subdir if needed.
+	// With x86_gcc2 support removed, we use the default search path.
 	if (sSearchPathSubDir == NULL) {
-		#if __GNUC__ == 2 || (defined(_COMPAT_MODE) && !defined(__x86_64__))
-			if ((image->abi & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_4)
-				sSearchPathSubDir = "x86";
-		#endif
-		#if __GNUC__ >= 4 || (defined(_COMPAT_MODE) && !defined(__x86_64__))
-			if ((image->abi & B_HAIKU_ABI_MAJOR) == B_HAIKU_ABI_GCC_2)
-				sSearchPathSubDir = "x86_gcc2";
-		#endif
+		// Always use modern search path
+		sSearchPathSubDir = "";
 	}
 
 	set_abi_api_version(image->abi, image->api_version);
 
 	// init gcc version dependent image flags
-	// symbol resolution strategy
-	if (image->abi == B_HAIKU_ABI_GCC_2_ANCIENT)
-		image->find_undefined_symbol = find_undefined_symbol_dependencies_only;
+	// symbol resolution strategy - use modern default for all images
+	// (GCC2 ancient compatibility removed)
 
 	// init version infos
 	status = init_image_version_infos(image);

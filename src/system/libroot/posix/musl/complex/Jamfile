@@ -10,11 +10,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 
-		if $(architecture) = x86_gcc2 {
-			# GCC 2 can't compile some of the files in here, so use the newer GCC.
-			original_TARGET_CC_x86_gcc2 = $(TARGET_CC_x86_gcc2) ;
-			TARGET_CC_x86_gcc2 = $(TARGET_CC_x86) -Wa,-mrelax-relocations=no -Wno-unused-but-set-variable ;
-		}
+		# x86_gcc2 support removed
 
 		MergeObject <$(architecture)>posix_musl_complex.o :
 			__cexp.c __cexpf.c
@@ -37,8 +33,6 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			ctanh.c ctanhf.c
 			;
 
-		if $(architecture) = x86_gcc2 {
-			TARGET_CC_x86_gcc2 = $(original_TARGET_CC_x86_gcc2) ;
-		}
+		# x86_gcc2 cleanup removed
 	}
 }

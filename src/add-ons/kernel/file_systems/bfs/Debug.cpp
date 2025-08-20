@@ -11,6 +11,7 @@
 #include "BPlusTree.h"
 #include "Inode.h"
 #include "Journal.h"
+#include "bfs_control.h"
 
 
 char*
@@ -267,6 +268,269 @@ dump_bplustree_node(const bplustree_node* node, const bplustree_header* header,
 }
 
 
+//	#pragma mark - Enhanced validation functions
+
+
+#if defined(DEBUG) || defined(BFS_DEBUGGER_COMMANDS)
+
+bool
+validate_inode_structure(const bfs_inode* inode)
+{
+	if (inode == NULL) {
+		kprintf("BFS: NULL inode pointer in validation\n");
+		return false;
+	}
+	
+	// Check magic number using centralized validation
+	if (!validate_inode_magic(inode)) {
+		return false;
+	}
+	
+	// Check inode size
+	if (inode->InodeSize() < (int32)sizeof(bfs_inode)) {
+		kprintf("BFS: Invalid inode size: %u (minimum %zu)\n",
+			(unsigned)inode->InodeSize(), sizeof(bfs_inode));
+		return false;
+	}
+	
+	// Check mode
+	if ((inode->Mode() & S_IFMT) == 0) {
+		kprintf("BFS: Invalid file mode: %#08x\n", (int)inode->Mode());
+		return false;
+	}
+	
+	// Validate timestamps (basic sanity check)
+	if (inode->CreateTime() == 0 || inode->LastModifiedTime() == 0) {
+		kprintf("BFS: Invalid timestamps: create=%" B_PRId64 ", modified=%" B_PRId64 "\n",
+			inode->CreateTime(), inode->LastModifiedTime());
+		return false;
+	}
+	
+	return true;
+}
+
+
+bool
+validate_btree_node_structure(const bplustree_node* node, const bplustree_header* header)
+{
+	if (node == NULL || header == NULL) {
+		kprintf("BFS: NULL pointer in B+tree node validation (node=%p, header=%p)\n",
+			node, header);
+		return false;
+	}
+	
+	// Check key count sanity
+	if (node->all_key_count > header->node_size / 8) {
+		kprintf("BFS: Too many keys: %u for node size %u\n",
+			node->all_key_count, (unsigned)header->node_size);
+		return false;
+	}
+	
+	// Check key length sanity
+	if (node->all_key_length > header->node_size) {
+		kprintf("BFS: Key length %u exceeds node size %u\n",
+			node->all_key_length, (unsigned)header->node_size);
+		return false;
+	}
+	
+	// Validate space usage
+	size_t requiredSpace = node->all_key_length + node->all_key_count * sizeof(off_t);
+	size_t availableSpace = header->node_size - sizeof(bplustree_node);
+	if (requiredSpace > availableSpace) {
+		kprintf("BFS: Required space %zu exceeds available %zu\n",
+			requiredSpace, availableSpace);
+		return false;
+	}
+	
+	return true;
+}
+
+
+void
+analyze_data_integrity(const void* data, size_t size, const char* description)
+{
+	if (data == NULL) {
+		kprintf("BFS: NULL data pointer in integrity check: %s\n", description);
+		return;
+	}
+	
+	// Simple checksum for basic integrity checking
+	uint32 checksum = 0;
+	const uint8* bytes = (const uint8*)data;
+	for (size_t i = 0; i < size; i++) {
+		checksum = (checksum << 1) ^ bytes[i];
+	}
+	
+	kprintf("BFS: Data integrity check for %s: size=%zu, checksum=%#08x\n",
+		description, size, checksum);
+}
+
+
+void
+print_hex_dump(const void* data, size_t size, const char* description)
+{
+	const uint8* bytes = (const uint8*)data;
+	kprintf("BFS HEX DUMP: %s (%zu bytes)\n", description, size);
+	
+	for (size_t i = 0; i < size; i += 16) {
+		kprintf("  %04zx: ", i);
+		
+		// Print hex bytes
+		for (size_t j = 0; j < 16; j++) {
+			if (i + j < size)
+				kprintf("%02x ", bytes[i + j]);
+			else
+				kprintf("   ");
+		}
+		
+		kprintf(" ");
+		
+		// Print ASCII representation
+		for (size_t j = 0; j < 16 && i + j < size; j++) {
+			uint8 c = bytes[i + j];
+			kprintf("%c", (c >= 32 && c < 127) ? c : '.');
+		}
+		
+		kprintf("\n");
+	}
+}
+
+
+//	#pragma mark - Centralized Magic Number Management
+
+
+bool
+validate_superblock_magic(const disk_super_block* superblock)
+{
+	if (superblock == NULL) {
+		kprintf("BFS: NULL superblock pointer in magic validation\n");
+		return false;
+	}
+	
+	bool magic1Valid = (superblock->magic1 == SUPER_BLOCK_MAGIC1);
+	bool magic2Valid = (superblock->magic2 == (int32)SUPER_BLOCK_MAGIC2);
+	bool magic3Valid = (superblock->magic3 == SUPER_BLOCK_MAGIC3);
+	
+	if (!magic1Valid) {
+		kprintf("BFS: Invalid superblock magic1: %#08x (%s), expected %#08x (%s)\n",
+			(int)superblock->magic1, get_tupel(superblock->magic1),
+			(int)SUPER_BLOCK_MAGIC1, get_tupel(SUPER_BLOCK_MAGIC1));
+	}
+	
+	if (!magic2Valid) {
+		kprintf("BFS: Invalid superblock magic2: %#08x (%s), expected %#08x (%s)\n",
+			(int)superblock->magic2, get_tupel(superblock->magic2),
+			(int)SUPER_BLOCK_MAGIC2, get_tupel(SUPER_BLOCK_MAGIC2));
+	}
+	
+	if (!magic3Valid) {
+		kprintf("BFS: Invalid superblock magic3: %#08x (%s), expected %#08x (%s)\n",
+			(int)superblock->magic3, get_tupel(superblock->magic3),
+			(int)SUPER_BLOCK_MAGIC3, get_tupel(SUPER_BLOCK_MAGIC3));
+	}
+	
+	return magic1Valid && magic2Valid && magic3Valid;
+}
+
+
+bool
+validate_inode_magic(const bfs_inode* inode)
+{
+	if (inode == NULL) {
+		kprintf("BFS: NULL inode pointer in magic validation\n");
+		return false;
+	}
+	
+	bool valid = (inode->magic1 == INODE_MAGIC1);
+	
+	if (!valid) {
+		kprintf("BFS: Invalid inode magic1: %#08x (%s), expected %#08x (%s)\n",
+			(int)inode->magic1, get_tupel(inode->magic1),
+			(int)INODE_MAGIC1, get_tupel(INODE_MAGIC1));
+	}
+	
+	return valid;
+}
+
+
+bool
+validate_btree_magic(const bplustree_header* header)
+{
+	if (header == NULL) {
+		kprintf("BFS: NULL B+tree header pointer in magic validation\n");
+		return false;
+	}
+	
+	bool valid = (header->magic == BPLUSTREE_MAGIC);
+	
+	if (!valid) {
+		kprintf("BFS: Invalid B+tree magic: %#08x (%s), expected %#08x (%s)\n",
+			(int)header->magic, get_tupel(header->magic),
+			(int)BPLUSTREE_MAGIC, get_tupel(BPLUSTREE_MAGIC));
+	}
+	
+	return valid;
+}
+
+
+const char*
+get_magic_string(uint32 magic)
+{
+	// Check against known BFS magic numbers
+	if (magic == SUPER_BLOCK_MAGIC1)
+		return "SUPER_BLOCK_MAGIC1 (BFS1)";
+	if (magic == SUPER_BLOCK_MAGIC2)
+		return "SUPER_BLOCK_MAGIC2";
+	if (magic == SUPER_BLOCK_MAGIC3)
+		return "SUPER_BLOCK_MAGIC3";
+	if (magic == INODE_MAGIC1)
+		return "INODE_MAGIC1";
+	if (magic == BPLUSTREE_MAGIC)
+		return "BPLUSTREE_MAGIC";
+	if (magic == SUPER_BLOCK_FS_LENDIAN)
+		return "SUPER_BLOCK_FS_LENDIAN (BIGE)";
+	if (magic == SUPER_BLOCK_DISK_CLEAN)
+		return "SUPER_BLOCK_DISK_CLEAN (CLEN)";
+	if (magic == SUPER_BLOCK_DISK_DIRTY)
+		return "SUPER_BLOCK_DISK_DIRTY (DIRT)";
+	if (magic == BFS_IOCTL_CHECK_MAGIC)
+		return "BFS_IOCTL_CHECK_MAGIC (BChk)";
+	
+	// Return tupel representation if not recognized
+	return get_tupel(magic);
+}
+
+
+void
+dump_all_magic_numbers(void)
+{
+	kprintf("BFS Magic Numbers Reference:\n");
+	kprintf("  Superblock:\n");
+	kprintf("    SUPER_BLOCK_MAGIC1      = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_MAGIC1, get_tupel(SUPER_BLOCK_MAGIC1));
+	kprintf("    SUPER_BLOCK_MAGIC2      = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_MAGIC2, get_tupel(SUPER_BLOCK_MAGIC2));
+	kprintf("    SUPER_BLOCK_MAGIC3      = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_MAGIC3, get_tupel(SUPER_BLOCK_MAGIC3));
+	kprintf("    SUPER_BLOCK_FS_LENDIAN  = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_FS_LENDIAN, get_tupel(SUPER_BLOCK_FS_LENDIAN));
+	kprintf("    SUPER_BLOCK_DISK_CLEAN  = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_DISK_CLEAN, get_tupel(SUPER_BLOCK_DISK_CLEAN));
+	kprintf("    SUPER_BLOCK_DISK_DIRTY  = %#08x (%s)\n", 
+		(int)SUPER_BLOCK_DISK_DIRTY, get_tupel(SUPER_BLOCK_DISK_DIRTY));
+	kprintf("  Structures:\n");
+	kprintf("    INODE_MAGIC1            = %#08x (%s)\n", 
+		(int)INODE_MAGIC1, get_tupel(INODE_MAGIC1));
+	kprintf("    BPLUSTREE_MAGIC         = %#08x (%s)\n", 
+		(int)BPLUSTREE_MAGIC, get_tupel(BPLUSTREE_MAGIC));
+	kprintf("  Control:\n");
+	kprintf("    BFS_IOCTL_CHECK_MAGIC   = %#08x (%s)\n", 
+		(int)BFS_IOCTL_CHECK_MAGIC, get_tupel(BFS_IOCTL_CHECK_MAGIC));
+}
+
+#endif // DEBUG || BFS_DEBUGGER_COMMANDS
+
+
 //	#pragma mark - debugger commands
 
 
@@ -456,9 +720,174 @@ dump_bplustree_header(int argc, char** argv)
 }
 
 
+static int
+validate_bfs_inode(int argc, char** argv)
+{
+	if (argc < 2 || !strcmp(argv[1], "--help")) {
+		kprintf("usage: %s <ptr-to-inode>\n"
+			"Performs comprehensive validation of a BFS inode structure.\n", argv[0]);
+		return 0;
+	}
+	
+	addr_t address = parse_expression(argv[1]);
+	bfs_inode* inode = (bfs_inode*)address;
+	
+	bool valid = validate_inode_structure(inode);
+	kprintf("Inode validation: %s\n", valid ? "PASSED" : "FAILED");
+	
+	if (valid) {
+		kprintf("Additional inode analysis:\n");
+		kprintf("  Type: %s\n", 
+			S_ISDIR(inode->Mode()) ? "directory" :
+			S_ISREG(inode->Mode()) ? "file" :
+			S_ISLNK(inode->Mode()) ? "symlink" : "other");
+		kprintf("  Size: %" B_PRIdOFF " bytes\n", inode->data.size);
+		kprintf("  Blocks used: estimated %" B_PRIdOFF "\n", 
+			(inode->data.size + 4095) / 4096);
+		
+		// Check for common issues
+		if (inode->data.size == 0 && S_ISREG(inode->Mode())) {
+			kprintf("  WARNING: Regular file with zero size\n");
+		}
+		if (inode->CreateTime() > inode->LastModifiedTime()) {
+			kprintf("  WARNING: Create time is after modification time\n");
+		}
+	}
+	
+	return 0;
+}
+
+
+static int
+validate_bfs_btree_node(int argc, char** argv)
+{
+	if (argc < 3 || !strcmp(argv[1], "--help")) {
+		kprintf("usage: %s <ptr-to-node> <ptr-to-header>\n"
+			"Performs comprehensive validation of a BFS B+tree node.\n", argv[0]);
+		return 0;
+	}
+	
+	addr_t nodeAddr = parse_expression(argv[1]);
+	addr_t headerAddr = parse_expression(argv[2]);
+	
+	bplustree_node* node = (bplustree_node*)nodeAddr;
+	bplustree_header* header = (bplustree_header*)headerAddr;
+	
+	bool valid = validate_btree_node_structure(node, header);
+	kprintf("B+tree node validation: %s\n", valid ? "PASSED" : "FAILED");
+	
+	if (valid) {
+		kprintf("Node analysis:\n");
+		kprintf("  Key count: %u\n", node->all_key_count);
+		kprintf("  Key length: %u bytes\n", node->all_key_length);
+		kprintf("  Space efficiency: %.1f%%\n", 
+			(float)(node->all_key_length + node->all_key_count * sizeof(off_t)) * 100.0f
+			/ (header->node_size - sizeof(bplustree_node)));
+		
+		if (node->left_link != BPLUSTREE_NULL)
+			kprintf("  Has left sibling: %" B_PRId64 "\n", node->left_link);
+		if (node->right_link != BPLUSTREE_NULL)
+			kprintf("  Has right sibling: %" B_PRId64 "\n", node->right_link);
+		if (node->overflow_link != BPLUSTREE_NULL)
+			kprintf("  Has overflow: %" B_PRId64 "\n", node->overflow_link);
+	}
+	
+	return 0;
+}
+
+
+static int
+analyze_bfs_data(int argc, char** argv)
+{
+	if (argc < 3 || !strcmp(argv[1], "--help")) {
+		kprintf("usage: %s <ptr> <size> [description]\n"
+			"Analyzes data integrity and prints hex dump.\n", argv[0]);
+		return 0;
+	}
+	
+	addr_t address = parse_expression(argv[1]);
+	size_t size = (size_t)parse_expression(argv[2]);
+	const char* description = argc > 3 ? argv[3] : "data";
+	
+	void* data = (void*)address;
+	
+	// Analyze integrity
+	analyze_data_integrity(data, size, description);
+	
+	// Print hex dump if size is reasonable
+	if (size <= 256) {
+		print_hex_dump(data, size, description);
+	} else {
+		kprintf("Size too large for hex dump, showing first 256 bytes:\n");
+		print_hex_dump(data, 256, description);
+	}
+	
+	return 0;
+}
+
+
+static int
+dump_bfs_magic_numbers(int argc, char** argv)
+{
+	if (argc > 1 && !strcmp(argv[1], "--help")) {
+		kprintf("usage: %s\n"
+			"Displays all BFS magic numbers and their meanings.\n", argv[0]);
+		return 0;
+	}
+	
+	dump_all_magic_numbers();
+	return 0;
+}
+
+
+static int
+validate_magic_number(int argc, char** argv)
+{
+	if (argc < 2 || !strcmp(argv[1], "--help")) {
+		kprintf("usage: %s <magic-number>\n"
+			"Validates and identifies a magic number.\n", argv[0]);
+		return 0;
+	}
+	
+	addr_t magic = parse_expression(argv[1]);
+	const char* description = get_magic_string((uint32)magic);
+	
+	kprintf("Magic Number Analysis:\n");
+	kprintf("  Value: %#08x (%s)\n", (int)magic, get_tupel((uint32)magic));
+	kprintf("  Identification: %s\n", description);
+	
+	// Additional validation if it's a known BFS magic
+	if (magic == SUPER_BLOCK_MAGIC1 || magic == SUPER_BLOCK_MAGIC2 || 
+		magic == SUPER_BLOCK_MAGIC3) {
+		kprintf("  Type: Superblock magic number\n");
+	} else if (magic == INODE_MAGIC1) {
+		kprintf("  Type: Inode magic number\n");
+	} else if (magic == BPLUSTREE_MAGIC) {
+		kprintf("  Type: B+tree magic number\n");
+	} else if (magic == BFS_IOCTL_CHECK_MAGIC) {
+		kprintf("  Type: IOCTL control magic\n");
+	} else if (magic == SUPER_BLOCK_FS_LENDIAN || magic == SUPER_BLOCK_DISK_CLEAN || 
+			   magic == SUPER_BLOCK_DISK_DIRTY) {
+		kprintf("  Type: Filesystem state magic\n");
+	} else {
+		kprintf("  Type: Unknown or non-BFS magic number\n");
+	}
+	
+	return 0;
+}
+
+
 void
 remove_debugger_commands()
 {
+	// Remove enhanced debugging commands
+	remove_debugger_command("bfs_validate_inode", validate_bfs_inode);
+	remove_debugger_command("bfs_validate_btree", validate_bfs_btree_node);
+	remove_debugger_command("bfs_analyze_data", analyze_bfs_data);
+	remove_debugger_command("bfs_magic_numbers", dump_bfs_magic_numbers);
+	remove_debugger_command("bfs_validate_magic", validate_magic_number);
+	
+	// Remove original BFS debugger commands
 	remove_debugger_command("bfs_inode", dump_inode);
 	remove_debugger_command("bfs_allocator", dump_block_allocator);
 #if BFS_TRACING
@@ -476,6 +905,7 @@ remove_debugger_commands()
 void
 add_debugger_commands()
 {
+	// Original BFS debugger commands
 	add_debugger_command("bfs_inode", dump_inode, "dump an Inode object");
 	add_debugger_command("bfs_allocator", dump_block_allocator,
 		"dump a BFS block allocator");
@@ -492,6 +922,18 @@ add_debugger_commands()
 	add_debugger_command("bfs", dump_volume, "dump a BFS volume");
 	add_debugger_command("bfs_block_runs", dump_block_run_array,
 		"dump a block run array");
+	
+	// Enhanced debugging commands
+	add_debugger_command("bfs_validate_inode", validate_bfs_inode,
+		"validate BFS inode structure");
+	add_debugger_command("bfs_validate_btree", validate_bfs_btree_node,
+		"validate BFS B+tree node structure");
+	add_debugger_command("bfs_analyze_data", analyze_bfs_data,
+		"analyze data integrity and print hex dump");
+	add_debugger_command("bfs_magic_numbers", dump_bfs_magic_numbers,
+		"display all BFS magic numbers and their meanings");
+	add_debugger_command("bfs_validate_magic", validate_magic_number,
+		"validate and identify a magic number");
 }
 
 

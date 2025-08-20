@@ -452,9 +452,7 @@ rule InitArchitectureBuildFeatures architecture
 	# Add all secondary architectures as build features (with prefix).
 	EnableBuildFeatures secondary_$(TARGET_PACKAGING_ARCHS[2-]) ;
 
-	if $(TARGET_CC_IS_LEGACY_GCC_$(architecture)) = 1 {
-		EnableBuildFeatures gcc2 ;
-	}
+	# Legacy GCC2 support removed
 
 	TARGET_PACKAGING_ARCH = $(savedArchitecture) ;
 }

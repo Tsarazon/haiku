@@ -4,15 +4,188 @@
  */
 
 
-//! Transaction and logging
+//! Transaction and logging - REFACTORED VERSION
 
-
-#include <StackOrHeapArray.h>
+#include <support/StackOrHeapArray.h>
 
 #include "Journal.h"
 
 #include "Debug.h"
 #include "Inode.h"
+#include "SafeOperations.h"
+
+
+// Internal helper classes for better code organization
+namespace {
+
+	// TransactionState - Encapsulates transaction state management
+	class TransactionState {
+	public:
+		TransactionState()
+		:
+		fOwner(NULL),
+		fTransactionID(-1),
+		fUnwrittenTransactions(0),
+		fHasSubtransaction(false),
+		fSeparateSubTransactions(false)
+		{
+		}
+
+		Transaction* Owner() const { return fOwner; }
+		void SetOwner(Transaction* owner) { fOwner = owner; }
+
+		int32 TransactionID() const { return fTransactionID; }
+		void SetTransactionID(int32 id) { fTransactionID = id; }
+
+		int32 UnwrittenCount() const { return fUnwrittenTransactions; }
+		void IncrementUnwritten() { fUnwrittenTransactions++; }
+		void ResetUnwritten() { fUnwrittenTransactions = 0; }
+
+		bool HasSubtransaction() const { return fHasSubtransaction; }
+		void SetHasSubtransaction(bool has) { fHasSubtransaction = has; }
+
+		bool SeparateSubTransactions() const { return fSeparateSubTransactions; }
+		void SetSeparateSubTransactions(bool separate) { fSeparateSubTransactions = separate; }
+
+		void Reset()
+		{
+			fOwner = NULL;
+			fTransactionID = -1;
+			fUnwrittenTransactions = 0;
+			fHasSubtransaction = false;
+			fSeparateSubTransactions = false;
+		}
+
+	private:
+		Transaction* fOwner;
+		int32 fTransactionID;
+		int32 fUnwrittenTransactions;
+		bool fHasSubtransaction;
+		bool fSeparateSubTransactions;
+	};
+
+
+	// JournalErrorHandler - Centralized error handling
+	class JournalErrorHandler {
+	public:
+		enum ErrorSeverity {
+			RECOVERABLE,
+			TRANSACTION_ABORT,
+			FILESYSTEM_PANIC
+		};
+
+		static ErrorSeverity ClassifyError(status_t error, const char* context)
+		{
+			switch (error) {
+				case B_NO_MEMORY:
+				case B_BUFFER_OVERFLOW:
+					return TRANSACTION_ABORT;
+
+				case B_IO_ERROR:
+				case B_BAD_DATA:
+				case B_ERROR:
+					if (strcmp(context, "log_replay") == 0
+						|| strcmp(context, "superblock_write") == 0) {
+						return FILESYSTEM_PANIC;
+						}
+						return TRANSACTION_ABORT;
+
+				case B_BUSY:
+				case B_WOULD_BLOCK:
+					return RECOVERABLE;
+
+				default:
+					return TRANSACTION_ABORT;
+			}
+		}
+
+		static void LogError(status_t error, const char* operation,
+							 const char* context, ErrorSeverity severity)
+		{
+			const char* severityStr = "INFO";
+			switch (severity) {
+				case RECOVERABLE:
+					severityStr = "WARN";
+					break;
+				case TRANSACTION_ABORT:
+					severityStr = "ERROR";
+					break;
+				case FILESYSTEM_PANIC:
+					severityStr = "FATAL";
+					break;
+			}
+
+			INFORM(("BFS Journal %s: %s failed in %s context: %s\n",
+					severityStr, operation, context, strerror(error)));
+		}
+
+		static status_t HandleError(status_t error, const char* operation,
+									const char* context, Volume* volume = NULL)
+		{
+			ErrorSeverity severity = ClassifyError(error, context);
+			LogError(error, operation, context, severity);
+
+			if (severity == FILESYSTEM_PANIC && volume != NULL) {
+				volume->Panic();
+			}
+
+			return error;
+		}
+	};
+
+
+	// IOVecBuilder - Optimized iovec building
+	class IOVecBuilder {
+	public:
+		IOVecBuilder(iovec* vecs, int32 maxVecs)
+		:
+		fVecs(vecs),
+		fMaxVecs(maxVecs),
+		fIndex(0)
+		{
+		}
+
+		status_t Add(const void* address, size_t size)
+		{
+			if (fIndex > 0 && _CanCombineWithPrevious(address)) {
+				// Combine with previous iovec
+				fVecs[fIndex - 1].iov_len += size;
+				return B_OK;
+			}
+
+			if (fIndex >= fMaxVecs) {
+				FATAL(("IOVecBuilder: no more space for iovecs!\n"));
+				return B_BUFFER_OVERFLOW;
+			}
+
+			// Start new iovec
+			fVecs[fIndex].iov_base = const_cast<void*>(address);
+			fVecs[fIndex].iov_len = size;
+			fIndex++;
+			return B_OK;
+		}
+
+		int32 Count() const { return fIndex; }
+		const iovec* Vectors() const { return fVecs; }
+
+		void Reset() { fIndex = 0; }
+
+	private:
+		bool _CanCombineWithPrevious(const void* address) const
+		{
+			if (fIndex == 0)
+				return false;
+
+			return (addr_t)fVecs[fIndex - 1].iov_base + fVecs[fIndex - 1].iov_len
+			== (addr_t)address;
+		}
+
+		iovec* fVecs;
+		int32 fMaxVecs;
+		int32 fIndex;
+	};
+
+}  // anonymous namespace
 
 
 struct run_array {
@@ -25,7 +198,7 @@ struct run_array {
 
 	int32 CountRuns() const { return BFS_ENDIAN_TO_HOST_INT32(count); }
 	int32 MaxRuns() const { return BFS_ENDIAN_TO_HOST_INT32(max_runs) - 1; }
-		// that -1 accounts for an off-by-one error in Be's BFS implementation
+	// that -1 accounts for an off-by-one error in Be's BFS implementation
 	const block_run& RunAt(int32 i) const { return runs[i]; }
 
 	static int32 MaxRuns(int32 blockSize);
@@ -37,100 +210,101 @@ private:
 
 class RunArrays {
 public:
-							RunArrays(Journal* journal);
-							~RunArrays();
+	RunArrays(Journal* journal);
+	~RunArrays();
 
-			status_t		Insert(off_t blockNumber);
+	status_t		Insert(off_t blockNumber);
 
-			run_array*		ArrayAt(int32 i) { return fArrays.Array()[i]; }
-			int32			CountArrays() const { return fArrays.CountItems(); }
+	run_array*		ArrayAt(int32 i) { return fArrays.Array()[i]; }
+	const run_array*	ArrayAt(int32 i) const { return const_cast<RunArrays*>(this)->fArrays.Array()[i]; }
+	int32			CountArrays() const { return fArrays.CountItems(); }
 
-			uint32			CountBlocks() const { return fBlockCount; }
-			uint32			LogEntryLength() const
-								{ return CountBlocks() + CountArrays(); }
+	uint32			CountBlocks() const { return fBlockCount; }
+	uint32			LogEntryLength() const
+	{ return CountBlocks() + CountArrays(); }
 
-			int32			MaxArrayLength();
+	int32			MaxArrayLength() const;
 
 private:
-			status_t		_AddArray();
-			bool			_ContainsRun(block_run& run);
-			bool			_AddRun(block_run& run);
+	status_t		_AddArray();
+	bool			_ContainsRun(block_run& run);
+	bool			_AddRun(block_run& run);
 
-			Journal*		fJournal;
-			uint32			fBlockCount;
-			Stack<run_array*> fArrays;
-			run_array*		fLastArray;
+	Journal*		fJournal;
+	uint32			fBlockCount;
+	Stack<run_array*> fArrays;
+	run_array*		fLastArray;
 };
 
 class LogEntry : public DoublyLinkedListLinkImpl<LogEntry> {
 public:
-							LogEntry(Journal* journal, uint32 logStart,
-								uint32 length);
-							~LogEntry();
+	LogEntry(Journal* journal, uint32 logStart,
+			 uint32 length);
+	~LogEntry();
 
-			uint32			Start() const { return fStart; }
-			uint32			Length() const { return fLength; }
+	uint32			Start() const { return fStart; }
+	uint32			Length() const { return fLength; }
 
-#ifdef BFS_DEBUGGER_COMMANDS
-			void			SetTransactionID(int32 id) { fTransactionID = id; }
-			int32			TransactionID() const { return fTransactionID; }
-#endif
+	#ifdef BFS_DEBUGGER_COMMANDS
+	void			SetTransactionID(int32 id) { fTransactionID = id; }
+	int32			TransactionID() const { return fTransactionID; }
+	#endif
 
-			Journal*		GetJournal() { return fJournal; }
+	Journal*		GetJournal() { return fJournal; }
 
 private:
-			Journal*		fJournal;
-			uint32			fStart;
-			uint32			fLength;
-#ifdef BFS_DEBUGGER_COMMANDS
-			int32			fTransactionID;
-#endif
+	Journal*		fJournal;
+	uint32			fStart;
+	uint32			fLength;
+	#ifdef BFS_DEBUGGER_COMMANDS
+	int32			fTransactionID;
+	#endif
 };
 
 
 #if BFS_TRACING && !defined(FS_SHELL) && !defined(_BOOT_MODE)
 namespace BFSJournalTracing {
 
-class LogEntry : public AbstractTraceEntry {
-public:
-	LogEntry(::LogEntry* entry, off_t logPosition, bool started)
+	class LogEntry : public AbstractTraceEntry {
+	public:
+		LogEntry(::LogEntry* entry, off_t logPosition, bool started)
 		:
 		fEntry(entry),
-#ifdef BFS_DEBUGGER_COMMANDS
+		#ifdef BFS_DEBUGGER_COMMANDS
 		fTransactionID(entry->TransactionID()),
-#endif
+		#endif
 		fStart(entry->Start()),
 		fLength(entry->Length()),
 		fLogPosition(logPosition),
 		fStarted(started)
-	{
-		Initialized();
-	}
+		{
+			Initialized();
+		}
 
-	virtual void AddDump(TraceOutput& out)
-	{
-#ifdef BFS_DEBUGGER_COMMANDS
-		out.Print("bfs:j:%s entry %p id %ld, start %lu, length %lu, log %s "
+		virtual void AddDump(TraceOutput& out)
+		{
+			#ifdef BFS_DEBUGGER_COMMANDS
+			out.Print("bfs:j:%s entry %p id %ld, start %lu, length %lu, log %s "
 			"%lu\n", fStarted ? "Started" : "Written", fEntry,
-			fTransactionID, fStart, fLength,
-			fStarted ? "end" : "start", fLogPosition);
-#else
-		out.Print("bfs:j:%s entry %p start %lu, length %lu, log %s %lu\n",
-			fStarted ? "Started" : "Written", fEntry, fStart, fLength,
-			fStarted ? "end" : "start", fLogPosition);
-#endif
-	}
+			 fTransactionID, fStart, fLength,
+			 fStarted ? "end" : "start", fLogPosition);
+			#else
+			out.Print("bfs:j:%s entry %p start %lu, length %lu, log %s %lu\n",
+					  fStarted ? "Started" : "Written", fEntry, fStart, fLength,
+			 fStarted ? "end" : "start", fLogPosition);
+			#endif
+		}
 
-private:
-	::LogEntry*	fEntry;
-#ifdef BFS_DEBUGGER_COMMANDS
-	int32		fTransactionID;
-#endif
-	uint32		fStart;
-	uint32		fLength;
-	uint32		fLogPosition;
-	bool		fStarted;
-};
+	private:
+		::LogEntry*	fEntry;
+		#ifdef BFS_DEBUGGER_COMMANDS
+		int32		fTransactionID;
+		#endif
+		uint32		fStart;
+		uint32		fLength;
+		uint32		fLogPosition;
+		bool		fStarted;
+	};
 
 }	// namespace BFSJournalTracing
 
@@ -143,35 +317,14 @@ private:
 //	#pragma mark -
 
 
-static void
-add_to_iovec(iovec* vecs, int32& index, int32 max, const void* address,
-	size_t size)
-{
-	if (index > 0 && (addr_t)vecs[index - 1].iov_base
-			+ vecs[index - 1].iov_len == (addr_t)address) {
-		// the iovec can be combined with the previous one
-		vecs[index - 1].iov_len += size;
-		return;
-	}
-
-	if (index == max)
-		panic("no more space for iovecs!");
-
-	// we need to start a new iovec
-	vecs[index].iov_base = const_cast<void*>(address);
-	vecs[index].iov_len = size;
-	index++;
-}
-
-
 //	#pragma mark - LogEntry
 
 
 LogEntry::LogEntry(Journal* journal, uint32 start, uint32 length)
-	:
-	fJournal(journal),
-	fStart(start),
-	fLength(length)
+:
+fJournal(journal),
+fStart(start),
+fLength(length)
 {
 }
 
@@ -185,12 +338,13 @@ LogEntry::~LogEntry()
 
 
 /*!	The run_array's size equals the block size of the BFS volume, so we
-	cannot use a (non-overridden) new.
-	This makes a freshly allocated run_array ready to run.
-*/
+ * cannot use a (non-overridden) new.
+ * This makes a freshly allocated run_array ready to run.
+ */
 void
 run_array::Init(int32 blockSize)
 {
+	// Initialize run_array structure
 	memset(this, 0, blockSize);
 	count = 0;
 	max_runs = HOST_ENDIAN_TO_BFS_INT32(MaxRuns(blockSize));
@@ -198,8 +352,8 @@ run_array::Init(int32 blockSize)
 
 
 /*!	Inserts the block_run into the array. You will have to make sure the
-	array is large enough to contain the entry before calling this function.
-*/
+ * array is large enough to contain the entry before calling this function.
+ */
 void
 run_array::Insert(block_run& run)
 {
@@ -208,9 +362,9 @@ run_array::Insert(block_run& run)
 		// add to the end
 		runs[CountRuns()] = run;
 	} else {
-		// insert at index
-		memmove(&runs[index + 1], &runs[index],
-			(CountRuns() - index) * sizeof(off_t));
+		// insert at index - use standard memmove for safety
+		size_t moveSize = (CountRuns() - index) * sizeof(block_run);
+		memmove(&runs[index + 1], &runs[index], moveSize);
 		runs[index] = run;
 	}
 
@@ -278,11 +432,11 @@ run_array::_FindInsertionIndex(block_run& run)
 
 
 RunArrays::RunArrays(Journal* journal)
-	:
-	fJournal(journal),
-	fBlockCount(0),
-	fArrays(),
-	fLastArray(NULL)
+:
+fJournal(journal),
+fBlockCount(0),
+fArrays(),
+fLastArray(NULL)
 {
 }
 
@@ -308,7 +462,7 @@ RunArrays::_ContainsRun(block_run& run)
 
 			if (run.Start() >= arrayRun.Start()
 				&& run.Start() + run.Length()
-					<= arrayRun.Start() + arrayRun.Length())
+				<= arrayRun.Start() + arrayRun.Length())
 				return true;
 		}
 	}
@@ -318,9 +472,9 @@ RunArrays::_ContainsRun(block_run& run)
 
 
 /*!	Adds the specified block_run into the array.
-	Note: it doesn't support overlapping - it must only be used
-	with block_runs of length 1!
-*/
+ * Note: it doesn't support overlapping - it must only be used
+ * with block_runs of length 1!
+ */
 bool
 RunArrays::_AddRun(block_run& run)
 {
@@ -383,7 +537,7 @@ RunArrays::Insert(off_t blockNumber)
 
 
 int32
-RunArrays::MaxArrayLength()
+RunArrays::MaxArrayLength() const
 {
 	int32 max = 0;
 	for (int32 i = 0; i < CountArrays(); i++) {
@@ -395,26 +549,26 @@ RunArrays::MaxArrayLength()
 }
 
 
-//	#pragma mark - Journal
+//	#pragma mark - Journal (PUBLIC INTERFACE - MUST REMAIN IDENTICAL)
 
 
 Journal::Journal(Volume* volume)
-	:
-	fVolume(volume),
-	fOwner(NULL),
-	fLogSize(volume->Log().Length()),
-	fMaxTransactionSize(fLogSize / 2 - 5),
-	fUsed(0),
-	fUnwrittenTransactions(0),
-	fHasSubtransaction(false),
-	fSeparateSubTransactions(false)
+:
+fVolume(volume),
+fOwner(NULL),
+fLogSize(volume->Log().Length()),
+fMaxTransactionSize(fLogSize / 2 - 5),
+fUsed(0),
+fUnwrittenTransactions(0),
+fHasSubtransaction(false),
+fSeparateSubTransactions(false)
 {
 	recursive_lock_init(&fLock, "bfs journal");
 	mutex_init(&fEntriesLock, "bfs journal entries");
 
 	fLogFlusherSem = create_sem(0, "bfs log flusher");
 	fLogFlusher = spawn_kernel_thread(&Journal::_LogFlusher, "bfs log flusher",
-		B_NORMAL_PRIORITY, this);
+									  B_NORMAL_PRIORITY, this);
 	if (fLogFlusher > 0)
 		resume_thread(fLogFlusher);
 }
@@ -442,20 +596,20 @@ Journal::InitCheck()
 
 
 /*!	\brief Does a very basic consistency check of the run array.
-	It will check the maximum run count as well as if all of the runs fall
-	within a the volume.
-*/
+ * It will check the maximum run count as well as if all of the runs fall
+ * within a the volume.
+ */
 status_t
 Journal::_CheckRunArray(const run_array* array)
 {
 	int32 maxRuns = run_array::MaxRuns(fVolume->BlockSize()) - 1;
-		// the -1 works around an off-by-one bug in Be's BFS implementation,
-		// same as in run_array::MaxRuns()
+	// the -1 works around an off-by-one bug in Be's BFS implementation,
+	// same as in run_array::MaxRuns()
 	if (array->MaxRuns() != maxRuns
 		|| array->CountRuns() > maxRuns
 		|| array->CountRuns() <= 0) {
 		dprintf("run count: %d, array max: %d, max runs: %d\n",
-			(int)array->CountRuns(), (int)array->MaxRuns(), (int)maxRuns);
+				(int)array->CountRuns(), (int)array->MaxRuns(), (int)maxRuns);
 		FATAL(("Log entry has broken header!\n"));
 		return B_ERROR;
 	}
@@ -471,9 +625,9 @@ Journal::_CheckRunArray(const run_array* array)
 
 
 /*!	Replays an entry in the log.
-	\a _start points to the entry in the log, and will be bumped to the next
-	one if replaying succeeded.
-*/
+ * \a _start points to the entry in the log, and will be bumped to the next
+ * one if replaying succeeded.
+ */
 status_t
 Journal::_ReplayRunArray(int32* _start)
 {
@@ -533,7 +687,7 @@ Journal::_ReplayRunArray(int32* _start)
 	for (int32 index = 0; index < array->CountRuns(); index++) {
 		const block_run& run = array->RunAt(index);
 		INFORM(("replay block run %u:%u:%u in log at %" B_PRIdOFF "!\n",
-			(int)run.AllocationGroup(), run.Start(), run.Length(), blockNumber));
+				(int)run.AllocationGroup(), run.Start(), run.Length(), blockNumber));
 
 		off_t offset = fVolume->ToOffset(run);
 		for (int32 i = 0; i < run.Length(); i++) {
@@ -542,7 +696,7 @@ Journal::_ReplayRunArray(int32* _start)
 				RETURN_ERROR(status);
 
 			ssize_t written = write_pos(fVolume->Device(), offset,
-				cached.Block(), blockSize);
+										cached.Block(), blockSize);
 			if (written != blockSize)
 				RETURN_ERROR(B_IO_ERROR);
 
@@ -558,11 +712,11 @@ Journal::_ReplayRunArray(int32* _start)
 
 
 /*!	Replays all log entries - this will put the disk into a
-	consistent and clean state, if it was not correctly unmounted
-	before.
-	This method is called by Journal::InitCheck() if the log start
-	and end pointer don't match.
-*/
+ * consistent and clean state, if it was not correctly unmounted
+ * before.
+ * This method is called by Journal::InitCheck() if the log start
+ * and end pointer don't match.
+ */
 status_t
 Journal::ReplayLog()
 {
@@ -575,7 +729,7 @@ Journal::ReplayLog()
 
 	if (fVolume->SuperBlock().flags != SUPER_BLOCK_DISK_DIRTY) {
 		INFORM(("log_start and log_end differ, but disk is marked clean - "
-			"trying to replay log...\n"));
+		"trying to replay log...\n"));
 	}
 
 	if (fVolume->IsReadOnly())
@@ -597,7 +751,7 @@ Journal::ReplayLog()
 		status_t status = _ReplayRunArray(&start);
 		if (status != B_OK) {
 			FATAL(("replaying log entry from %d failed: %s\n", (int)start,
-				strerror(status)));
+				   strerror(status)));
 			return B_ERROR;
 		}
 		start = start % fLogSize;
@@ -619,11 +773,11 @@ Journal::CurrentTransactionSize() const
 {
 	if (_HasSubTransaction()) {
 		return cache_blocks_in_sub_transaction(fVolume->BlockCache(),
-			fTransactionID);
+											   fTransactionID);
 	}
 
 	return cache_blocks_in_main_transaction(fVolume->BlockCache(),
-		fTransactionID);
+											fTransactionID);
 }
 
 
@@ -634,19 +788,275 @@ Journal::CurrentTransactionTooLarge() const
 }
 
 
+// REFACTORED: Decomposed transaction preparation
+status_t
+Journal::_PrepareTransaction(bool& detached)
+{
+	detached = false;
+
+	if (_TransactionSize() > fLogSize) {
+		// The current transaction won't fit into the log anymore
+		if (_HasSubTransaction() && cache_blocks_in_main_transaction(
+				fVolume->BlockCache(), fTransactionID) < (int32)fLogSize) {
+			detached = true;
+		} else {
+			// Transaction too large - no recovery possible
+			dprintf("transaction too large (%d blocks, log size %d)!\n",
+				(int)_TransactionSize(), (int)fLogSize);
+			return B_BUFFER_OVERFLOW;
+		}
+	}
+
+	fHasSubtransaction = false;
+	return B_OK;
+}
+
+
+// REFACTORED: Decomposed run array building
+status_t
+Journal::_BuildRunArrays(RunArrays& runArrays, bool detached)
+{
+	off_t blockNumber;
+	long cookie = 0;
+
+	while (cache_next_block_in_transaction(fVolume->BlockCache(),
+			fTransactionID, detached, &cookie, &blockNumber, NULL,
+			NULL) == B_OK) {
+		status_t status = runArrays.Insert(blockNumber);
+		if (status < B_OK) {
+			return JournalErrorHandler::HandleError(status,
+				"run_array_insert", "transaction_build", fVolume);
+		}
+	}
+
+	return B_OK;
+}
+
+
+// REFACTORED: Decomposed log space validation
+status_t
+Journal::_ValidateLogSpace(const RunArrays& runArrays)
+{
+	if (runArrays.CountBlocks() == 0) {
+		// Nothing changed - no validation needed
+		return B_OK;
+	}
+
+	// Ensure we have enough space in the log
+	if (runArrays.LogEntryLength() > FreeLogBlocks()) {
+		cache_sync_transaction(fVolume->BlockCache(), fTransactionID);
+		if (runArrays.LogEntryLength() > FreeLogBlocks()) {
+			panic("no space in log after sync (%ld for %ld blocks)!",
+				  (long)FreeLogBlocks(), (long)runArrays.LogEntryLength());
+			return B_BUFFER_OVERFLOW;
+		}
+	}
+
+	return B_OK;
+}
+
+
+// REFACTORED: Decomposed log writing
+status_t
+Journal::_WriteLogEntries(const RunArrays& runArrays, off_t& logPosition)
+{
+	int32 blockShift = fVolume->BlockShift();
+	off_t logOffset = fVolume->ToBlock(fVolume->Log()) << blockShift;
+	off_t logStart = fVolume->LogEnd() % fLogSize;
+	logPosition = logStart;
+
+	int32 maxVecs = runArrays.MaxArrayLength() + 1;
+	BStackOrHeapArray<iovec, 8> vecs(maxVecs);
+	if (!vecs.IsValid()) {
+		return B_NO_MEMORY;
+	}
+
+	for (int32 k = 0; k < runArrays.CountArrays(); k++) {
+		run_array* array = const_cast<RunArrays&>(runArrays).ArrayAt(k);
+		IOVecBuilder builder(vecs, maxVecs);
+		int32 count = 1;
+		int32 wrap = fLogSize - logStart;
+
+		// Add array header
+		status_t status = builder.Add(array, fVolume->BlockSize());
+		if (status != B_OK)
+			return status;
+
+		// Add block runs
+		for (int32 i = 0; i < array->CountRuns(); i++) {
+			const block_run& run = array->RunAt(i);
+			off_t blockNumber = fVolume->ToBlock(run);
+
+			for (int32 j = 0; j < run.Length(); j++) {
+				if (count >= wrap) {
+					// Write first half that wraps
+					if (writev_pos(fVolume->Device(),
+							logOffset + (logStart << blockShift),
+							builder.Vectors(), builder.Count()) < 0) {
+						return JournalErrorHandler::HandleError(B_IO_ERROR,
+							"log_write", "wrap_boundary", fVolume);
+					}
+
+					logPosition = logStart + count;
+					logStart = 0;
+					wrap = fLogSize;
+					count = 0;
+					builder.Reset();
+				}
+
+				// Get block from cache
+				const void* data = block_cache_get(fVolume->BlockCache(),
+												   blockNumber + j);
+				if (data == NULL)
+					return B_IO_ERROR;
+
+				status = builder.Add(data, fVolume->BlockSize());
+				if (status != B_OK) {
+					block_cache_put(fVolume->BlockCache(), blockNumber + j);
+					return status;
+				}
+				count++;
+			}
+		}
+
+		// Write remaining entries
+		if (count > 0) {
+			logPosition = logStart + count;
+			if (writev_pos(fVolume->Device(),
+					logOffset + (logStart << blockShift),
+					builder.Vectors(), builder.Count()) < 0) {
+				return JournalErrorHandler::HandleError(B_IO_ERROR,
+					"log_write", "final_block", fVolume);
+			}
+		}
+
+		// Release blocks
+		for (int32 i = 0; i < array->CountRuns(); i++) {
+			const block_run& run = array->RunAt(i);
+			off_t blockNumber = fVolume->ToBlock(run);
+
+			for (int32 j = 0; j < run.Length(); j++) {
+				block_cache_put(fVolume->BlockCache(), blockNumber + j);
+			}
+		}
+
+		logStart = logPosition % fLogSize;
+	}
+
+	return B_OK;
+}
+
+
+// REFACTORED: Main transaction writing method - now decomposed
+/*!	Writes the blocks that are part of current transaction into the log,
+ * and ends the current transaction.
+ * If the current transaction is too large to fit into the log, it will
+ * try to detach an existing sub-transaction.
+ */
+status_t
+Journal::_WriteTransactionToLog()
+{
+	// Phase 1: Prepare transaction
+	bool detached = false;
+	status_t status = _PrepareTransaction(detached);
+	if (status != B_OK)
+		return status;
+
+	// Phase 2: Build run arrays
+	RunArrays runArrays(this);
+	status = _BuildRunArrays(runArrays, detached);
+	if (status != B_OK)
+		return status;
+
+	// Handle empty transaction
+	if (runArrays.CountBlocks() == 0) {
+		if (detached) {
+			fTransactionID = cache_detach_sub_transaction(fVolume->BlockCache(),
+														  fTransactionID, NULL, NULL);
+			fUnwrittenTransactions = 1;
+		} else {
+			cache_end_transaction(fVolume->BlockCache(), fTransactionID, NULL,
+								  NULL);
+			fUnwrittenTransactions = 0;
+		}
+		return B_OK;
+	}
+
+	// Phase 3: Validate log space
+	status = _ValidateLogSpace(runArrays);
+	if (status != B_OK)
+		return status;
+
+	// Phase 4: Write log entries
+	off_t logPosition;
+	status = _WriteLogEntries(runArrays, logPosition);
+	if (status != B_OK)
+		return status;
+
+	// Phase 5: Create log entry record
+	LogEntry* logEntry = new(std::nothrow) LogEntry(this, fVolume->LogEnd(),
+													runArrays.LogEntryLength());
+	if (logEntry == NULL) {
+		return JournalErrorHandler::HandleError(B_NO_MEMORY,
+												"log_entry_alloc", "transaction_finalize", fVolume);
+	}
+
+	#ifdef BFS_DEBUGGER_COMMANDS
+	logEntry->SetTransactionID(fTransactionID);
+	#endif
+
+	// Phase 6: Update superblock
+	fVolume->SuperBlock().flags = SUPER_BLOCK_DISK_DIRTY;
+	fVolume->SuperBlock().log_end = HOST_ENDIAN_TO_BFS_INT64(logPosition);
+
+	status = fVolume->WriteSuperBlock();
+
+	fVolume->LogEnd() = logPosition;
+	T(LogEntry(logEntry, fVolume->LogEnd(), true));
+
+	// Flush drive cache for consistency
+	ioctl(fVolume->Device(), B_FLUSH_DRIVE_CACHE);
+
+	// Phase 7: Finalize transaction
+	mutex_lock(&fEntriesLock);
+	fEntries.Add(logEntry);
+	fUsed += logEntry->Length();
+	mutex_unlock(&fEntriesLock);
+
+	if (detached) {
+		fTransactionID = cache_detach_sub_transaction(fVolume->BlockCache(),
+													  fTransactionID, _TransactionWritten, logEntry);
+		fUnwrittenTransactions = 1;
+
+		if (status == B_OK && _TransactionSize() > fLogSize) {
+			// Transaction still too large - must fail
+			dprintf("transaction too large (%d blocks, log size %d)!\n",
+					(int)_TransactionSize(), (int)fLogSize);
+			return B_BUFFER_OVERFLOW;
+		}
+	} else {
+		cache_end_transaction(fVolume->BlockCache(), fTransactionID,
+							  _TransactionWritten, logEntry);
+		fUnwrittenTransactions = 0;
+	}
+
+	return status;
+}
+
+
 /*!	This is a callback function that is called by the cache, whenever
-	all blocks of a transaction have been flushed to disk.
-	This lets us keep track of completed transactions, and update
-	the log start pointer as needed. Note, the transactions may not be
-	completed in the order they were written.
-*/
+ * all blocks of a transaction have been flushed to disk.
+ * This lets us keep track of completed transactions, and update
+ * the log start pointer as needed. Note, the transactions may not be
+ * completed in the order they were written.
+ */
 /*static*/ void
 Journal::_TransactionWritten(int32 transactionID, int32 event, void* _logEntry)
 {
 	LogEntry* logEntry = (LogEntry*)_logEntry;
 
 	PRINT(("Log entry %p has been finished, transaction ID = %" B_PRId32 "\n",
-		logEntry, transactionID));
+		   logEntry, transactionID));
 
 	Journal* journal = logEntry->GetJournal();
 	disk_super_block& superBlock = journal->fVolume->SuperBlock();
@@ -660,7 +1070,7 @@ Journal::_TransactionWritten(int32 transactionID, int32 event, void* _logEntry)
 		LogEntry* next = journal->fEntries.GetNext(logEntry);
 		if (next != NULL) {
 			superBlock.log_start = HOST_ENDIAN_TO_BFS_INT64(next->Start()
-				% journal->fLogSize);
+			% journal->fLogSize);
 		} else {
 			superBlock.log_start = HOST_ENDIAN_TO_BFS_INT64(
 				journal->fVolume->LogEnd());
@@ -685,8 +1095,8 @@ Journal::_TransactionWritten(int32 transactionID, int32 event, void* _logEntry)
 
 		status_t status = journal->fVolume->WriteSuperBlock();
 		if (status != B_OK) {
-			FATAL(("_TransactionWritten: could not write back superblock: %s\n",
-				strerror(status)));
+			JournalErrorHandler::HandleError(status, "superblock_write",
+											 "transaction_complete", journal->fVolume);
 		}
 
 		journal->fVolume->LogStart() = superBlock.LogStart();
@@ -698,8 +1108,7 @@ Journal::_TransactionWritten(int32 transactionID, int32 event, void* _logEntry)
 /*static*/ void
 Journal::_TransactionIdle(int32 transactionID, int32 event, void* _journal)
 {
-	// The current transaction seems to be idle - flush it. (We can't do this
-	// in this thread, as flushing the log can produce new transaction events.)
+	// The current transaction seems to be idle - flush it
 	Journal* journal = (Journal*)_journal;
 	release_sem(journal->fLogFlusherSem);
 }
@@ -719,218 +1128,14 @@ Journal::_LogFlusher(void* _journal)
 }
 
 
-/*!	Writes the blocks that are part of current transaction into the log,
-	and ends the current transaction.
-	If the current transaction is too large to fit into the log, it will
-	try to detach an existing sub-transaction.
-*/
-status_t
-Journal::_WriteTransactionToLog()
-{
-	// TODO: in case of a failure, we need a backup plan like writing all
-	//	changed blocks back to disk immediately (hello disk corruption!)
-
-	bool detached = false;
-
-	if (_TransactionSize() > fLogSize) {
-		// The current transaction won't fit into the log anymore, try to
-		// detach the current sub-transaction
-		if (_HasSubTransaction() && cache_blocks_in_main_transaction(
-				fVolume->BlockCache(), fTransactionID) < (int32)fLogSize) {
-			detached = true;
-		} else {
-			// We created a transaction larger than one we can write back to
-			// disk - the only option we have (besides risking disk corruption
-			// by writing it back anyway), is to let it fail.
-			dprintf("transaction too large (%d blocks, log size %d)!\n",
-				(int)_TransactionSize(), (int)fLogSize);
-			return B_BUFFER_OVERFLOW;
-		}
-	}
-
-	fHasSubtransaction = false;
-
-	int32 blockShift = fVolume->BlockShift();
-	off_t logOffset = fVolume->ToBlock(fVolume->Log()) << blockShift;
-	off_t logStart = fVolume->LogEnd() % fLogSize;
-	off_t logPosition = logStart;
-	status_t status;
-
-	// create run_array structures for all changed blocks
-
-	RunArrays runArrays(this);
-
-	off_t blockNumber;
-	long cookie = 0;
-	while (cache_next_block_in_transaction(fVolume->BlockCache(),
-			fTransactionID, detached, &cookie, &blockNumber, NULL,
-			NULL) == B_OK) {
-		status = runArrays.Insert(blockNumber);
-		if (status < B_OK) {
-			FATAL(("filling log entry failed!"));
-			return status;
-		}
-	}
-
-	if (runArrays.CountBlocks() == 0) {
-		// nothing has changed during this transaction
-		if (detached) {
-			fTransactionID = cache_detach_sub_transaction(fVolume->BlockCache(),
-				fTransactionID, NULL, NULL);
-			fUnwrittenTransactions = 1;
-		} else {
-			cache_end_transaction(fVolume->BlockCache(), fTransactionID, NULL,
-				NULL);
-			fUnwrittenTransactions = 0;
-		}
-		return B_OK;
-	}
-
-	// If necessary, flush the log, so that we have enough space for this
-	// transaction
-	if (runArrays.LogEntryLength() > FreeLogBlocks()) {
-		cache_sync_transaction(fVolume->BlockCache(), fTransactionID);
-		if (runArrays.LogEntryLength() > FreeLogBlocks()) {
-			panic("no space in log after sync (%ld for %ld blocks)!",
-				(long)FreeLogBlocks(), (long)runArrays.LogEntryLength());
-		}
-	}
-
-	// Write log entries to disk
-
-	int32 maxVecs = runArrays.MaxArrayLength() + 1;
-		// one extra for the index block
-
-	BStackOrHeapArray<iovec, 8> vecs(maxVecs);
-	if (!vecs.IsValid()) {
-		// TODO: write back log entries directly?
-		return B_NO_MEMORY;
-	}
-
-	for (int32 k = 0; k < runArrays.CountArrays(); k++) {
-		run_array* array = runArrays.ArrayAt(k);
-		int32 index = 0, count = 1;
-		int32 wrap = fLogSize - logStart;
-
-		add_to_iovec(vecs, index, maxVecs, (void*)array, fVolume->BlockSize());
-
-		// add block runs
-
-		for (int32 i = 0; i < array->CountRuns(); i++) {
-			const block_run& run = array->RunAt(i);
-			off_t blockNumber = fVolume->ToBlock(run);
-
-			for (int32 j = 0; j < run.Length(); j++) {
-				if (count >= wrap) {
-					// We need to write back the first half of the entry
-					// directly as the log wraps around
-					if (writev_pos(fVolume->Device(), logOffset
-						+ (logStart << blockShift), vecs, index) < 0)
-						FATAL(("could not write log area!\n"));
-
-					logPosition = logStart + count;
-					logStart = 0;
-					wrap = fLogSize;
-					count = 0;
-					index = 0;
-				}
-
-				// make blocks available in the cache
-				const void* data = block_cache_get(fVolume->BlockCache(),
-					blockNumber + j);
-				if (data == NULL)
-					return B_IO_ERROR;
-
-				add_to_iovec(vecs, index, maxVecs, data, fVolume->BlockSize());
-				count++;
-			}
-		}
-
-		// write back the rest of the log entry
-		if (count > 0) {
-			logPosition = logStart + count;
-			if (writev_pos(fVolume->Device(), logOffset
-					+ (logStart << blockShift), vecs, index) < 0)
-				FATAL(("could not write log area: %s!\n", strerror(errno)));
-		}
-
-		// release blocks again
-		for (int32 i = 0; i < array->CountRuns(); i++) {
-			const block_run& run = array->RunAt(i);
-			off_t blockNumber = fVolume->ToBlock(run);
-
-			for (int32 j = 0; j < run.Length(); j++) {
-				block_cache_put(fVolume->BlockCache(), blockNumber + j);
-			}
-		}
-
-		logStart = logPosition % fLogSize;
-	}
-
-	LogEntry* logEntry = new(std::nothrow) LogEntry(this, fVolume->LogEnd(),
-		runArrays.LogEntryLength());
-	if (logEntry == NULL) {
-		FATAL(("no memory to allocate log entries!"));
-		return B_NO_MEMORY;
-	}
-
-#ifdef BFS_DEBUGGER_COMMANDS
-	logEntry->SetTransactionID(fTransactionID);
-#endif
-
-	// Update the log end pointer in the superblock
-
-	fVolume->SuperBlock().flags = SUPER_BLOCK_DISK_DIRTY;
-	fVolume->SuperBlock().log_end = HOST_ENDIAN_TO_BFS_INT64(logPosition);
-
-	status = fVolume->WriteSuperBlock();
-
-	fVolume->LogEnd() = logPosition;
-	T(LogEntry(logEntry, fVolume->LogEnd(), true));
-
-	// We need to flush the drives own cache here to ensure
-	// disk consistency.
-	// If that call fails, we can't do anything about it anyway
-	ioctl(fVolume->Device(), B_FLUSH_DRIVE_CACHE);
-
-	// at this point, we can finally end the transaction - we're in
-	// a guaranteed valid state
-
-	mutex_lock(&fEntriesLock);
-	fEntries.Add(logEntry);
-	fUsed += logEntry->Length();
-	mutex_unlock(&fEntriesLock);
-
-	if (detached) {
-		fTransactionID = cache_detach_sub_transaction(fVolume->BlockCache(),
-			fTransactionID, _TransactionWritten, logEntry);
-		fUnwrittenTransactions = 1;
-
-		if (status == B_OK && _TransactionSize() > fLogSize) {
-			// If the transaction is too large after writing, there is no way to
-			// recover, so let this transaction fail.
-			dprintf("transaction too large (%d blocks, log size %d)!\n",
-				(int)_TransactionSize(), (int)fLogSize);
-			return B_BUFFER_OVERFLOW;
-		}
-	} else {
-		cache_end_transaction(fVolume->BlockCache(), fTransactionID,
-			_TransactionWritten, logEntry);
-		fUnwrittenTransactions = 0;
-	}
-
-	return status;
-}
-
-
 /*!	Flushes the current log entry to disk. If \a flushBlocks is \c true it will
-	also write back all dirty blocks for this volume.
-*/
+ * also write back all dirty blocks for this volume.
+ */
 status_t
 Journal::_FlushLog(bool canWait, bool flushBlocks)
 {
 	status_t status = canWait ? recursive_lock_lock(&fLock)
-		: recursive_lock_trylock(&fLock);
+	: recursive_lock_trylock(&fLock);
 	if (status != B_OK)
 		return status;
 
@@ -944,8 +1149,10 @@ Journal::_FlushLog(bool canWait, bool flushBlocks)
 
 	if (fUnwrittenTransactions != 0) {
 		status = _WriteTransactionToLog();
-		if (status < B_OK)
-			FATAL(("writing current log entry failed: %s\n", strerror(status)));
+		if (status < B_OK) {
+			JournalErrorHandler::HandleError(status, "log_write",
+											 "flush_operation", fVolume);
+		}
 	}
 
 	if (flushBlocks)
@@ -957,8 +1164,8 @@ Journal::_FlushLog(bool canWait, bool flushBlocks)
 
 
 /*!	Flushes the current log entry to disk, and also writes back all dirty
-	blocks for this volume (completing all open transactions).
-*/
+ * blocks for this volume (completing all open transactions).
+ */
 status_t
 Journal::FlushLogAndBlocks()
 {
@@ -1007,7 +1214,7 @@ Journal::Lock(Transaction* owner, bool separateSubTransactions)
 		}
 
 		cache_add_transaction_listener(fVolume->BlockCache(), fTransactionID,
-			TRANSACTION_IDLE, _TransactionIdle, this);
+									   TRANSACTION_IDLE, _TransactionIdle, this);
 	}
 	return B_OK;
 }
@@ -1054,7 +1261,7 @@ uint32
 Journal::_TransactionSize() const
 {
 	int32 count = cache_blocks_in_transaction(fVolume->BlockCache(),
-		fTransactionID);
+											  fTransactionID);
 	if (count <= 0)
 		return 0;
 
@@ -1127,7 +1334,7 @@ Journal::Dump()
 		LogEntry* entry = iterator.Next();
 
 		kprintf("  %p %6" B_PRId32 " %6" B_PRIu32 " %6" B_PRIu32 "\n", entry,
-			entry->TransactionID(), entry->Start(), entry->Length());
+				entry->TransactionID(), entry->Start(), entry->Length());
 	}
 }
 
@@ -1215,8 +1422,8 @@ Transaction::NotifyListeners(bool success)
 
 
 /*!	Move the inodes into the parent transaction. This is needed only to make
-	sure they will still be reverted in case the transaction is aborted.
-*/
+ * sure they will still be reverted in case the transaction is aborted.
+ */
 void
 Transaction::MoveListenersTo(Transaction* transaction)
 {

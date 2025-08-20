@@ -373,7 +373,7 @@ rule KernelArchitectureSetup architecture
 			HAIKU_KERNEL_PIC_LINKFLAGS += -z max-page-size=0x1000 ;
 			HAIKU_KERNEL_ADDON_LINKFLAGS += -z max-page-size=0x1000 ;
 
-			if x86 in $(HAIKU_ARCHS[2-]) || x86_gcc2 in $(HAIKU_ARCHS[2-]) {
+			if x86 in $(HAIKU_ARCHS[2-]) {
 				Echo "Enable kernel ia32 compatibility" ;
 				HAIKU_KERNEL_DEFINES += _COMPAT_MODE ;
 				HAIKU_KERNEL_COMPAT_MODE = 1 ;
