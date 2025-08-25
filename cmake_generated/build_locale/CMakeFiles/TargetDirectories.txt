@@ -1,0 +1,4 @@
+/home/ruslan/haiku/cmake_generated/build_locale/CMakeFiles/locale_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_locale/CMakeFiles/locale_kit.dir
+/home/ruslan/haiku/cmake_generated/build_locale/CMakeFiles/edit_cache.dir
+/home/ruslan/haiku/cmake_generated/build_locale/CMakeFiles/rebuild_cache.dir

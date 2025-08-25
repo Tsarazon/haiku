@@ -1,0 +1,22 @@
+# Meson build options for Haiku App Kit
+# These match the conditional compilation in the original Jamfile
+
+option('run_without_registrar', 
+       type: 'boolean', 
+       value: false,
+       description: 'Allow running applications without the registrar (development only)')
+
+option('run_without_app_server',
+       type: 'integer',
+       value: 0, 
+       description: 'Allow running applications without the app server (0=disabled, non-zero=enabled)')
+
+option('haiku_root',
+       type: 'string',
+       value: '',
+       description: 'Path to Haiku source tree (auto-detected if empty)')
+
+option('target_arch', 
+       type: 'string',
+       value: 'x86_64',
+       description: 'Target architecture (x86_64, riscv64, arm64, etc.)')

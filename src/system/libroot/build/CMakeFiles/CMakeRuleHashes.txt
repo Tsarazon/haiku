@@ -1,0 +1,2 @@
+# Hashes of file build rules.
+8d77f05de6576de0946b19ca068a3c5a CMakeFiles/libroot_cross_compile

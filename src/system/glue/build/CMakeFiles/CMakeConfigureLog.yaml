@@ -1,0 +1,183 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineSystem.cmake:205 (message)"
+      - "CMakeLists.txt:14 (project)"
+    message: |
+      The system is: Linux - 6.12.41+deb13-amd64 - x86_64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:14 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" failed.
+      Compiler: /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc 
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      1
+      /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find crti.o: Нет такого файла или каталога
+      /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find start_dyn.o: Нет такого файла или каталога
+      /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find init_term_dyn.o: Нет такого файла или каталога
+      /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find -lroot: Нет такого файла или каталога
+      /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find crtn.o: Нет такого файла или каталога
+      collect2: error: ld returned 1 exit status
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCCompiler.cmake:123 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:14 (project)"
+    message: |
+      Compiling the C compiler identification source file "CMakeCCompilerId.c" succeeded.
+      Compiler: /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc 
+      Build flags: 
+      Id flags: -c 
+      
+      The output was:
+      0
+      
+      
+      Compilation of the C compiler identification source "CMakeCCompilerId.c" produced "CMakeCCompilerId.o"
+      
+      The C compiler identification is GNU, found in:
+        /home/ruslan/haiku/src/system/glue/build/CMakeFiles/3.31.6/CompilerIdC/CMakeCCompilerId.o
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerId.cmake:1237 (message)"
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineASMCompiler.cmake:135 (CMAKE_DETERMINE_COMPILER_ID_VENDOR)"
+      - "CMakeLists.txt:14 (project)"
+    message: |
+      Checking whether the ASM compiler is GNU using "--version" matched "(GNU assembler)|(GCC)|(Free Software Foundation)":
+      x86_64-unknown-haiku-gcc (GCC) 13.3.0
+      Copyright (C) 2023 Free Software Foundation, Inc.
+      This is free software; see the source for copying conditions.  There is NO
+      warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "/usr/share/cmake-3.31/Modules/CMakeDetermineCompilerABI.cmake:74 (try_compile)"
+      - "/usr/share/cmake-3.31/Modules/CMakeTestCCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:14 (project)"
+    checks:
+      - "Detecting C compiler ABI info"
+    directories:
+      source: "/home/ruslan/haiku/src/system/glue/build/CMakeFiles/CMakeScratch/TryCompile-wEXMed"
+      binary: "/home/ruslan/haiku/src/system/glue/build/CMakeFiles/CMakeScratch/TryCompile-wEXMed"
+    cmakeVariables:
+      CMAKE_C_FLAGS: ""
+      CMAKE_C_FLAGS_DEBUG: "-g"
+      CMAKE_EXE_LINKER_FLAGS: ""
+    buildResult:
+      variable: "CMAKE_C_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: '/home/ruslan/haiku/src/system/glue/build/CMakeFiles/CMakeScratch/TryCompile-wEXMed'
+        
+        Run Build Command(s): /usr/bin/cmake -E env VERBOSE=1 /usr/bin/gmake -f Makefile cmTC_1b59d/fast
+        /usr/bin/gmake  -f CMakeFiles/cmTC_1b59d.dir/build.make CMakeFiles/cmTC_1b59d.dir/build
+        gmake[1]: Entering directory '/home/ruslan/haiku/src/system/glue/build/CMakeFiles/CMakeScratch/TryCompile-wEXMed'
+        Building C object CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o
+        /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc   -v -o CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o -c /usr/share/cmake-3.31/Modules/CMakeCCompilerABI.c
+        Using built-in specs.
+        COLLECT_GCC=/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc
+        Target: x86_64-unknown-haiku
+        Configured with: /home/ruslan/haiku/buildtools/gcc/configure --prefix=/home/ruslan/haiku/generated/cross-tools-x86_64 --target=x86_64-unknown-haiku --disable-nls --disable-shared --with-system-zlib --enable-languages=c,c++ --enable-lto --enable-frame-pointer --enable-__cxa-atexit --enable-threads=posix --with-default-libstdcxx-abi=gcc4-compatible --with-sysroot=/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot --disable-maintainer-mode --disable-libgomp --disable-libatomic --enable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (GCC) 
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_1b59d.dir/'
+         /home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/cc1 -quiet -v /usr/share/cmake-3.31/Modules/CMakeCCompilerABI.c -fPIC -Wno-multichar -fno-omit-frame-pointer -quiet -dumpdir CMakeFiles/cmTC_1b59d.dir/ -dumpbase CMakeCCompilerABI.c.c -dumpbase-ext .c -mtune=generic -march=x86-64 -version -o /tmp/ccBCgtb1.s
+        GNU C17 (GCC) version 13.3.0 (x86_64-unknown-haiku)
+        	compiled by GNU C version 14.2.0, GMP version 6.2.1, MPFR version 4.1.0, MPC version 1.2.1, isl version isl-0.24-GMP
+        
+        GGC heuristics: --param ggc-min-expand=100 --param ggc-min-heapsize=131072
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/non-packaged/develop/headers"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/app"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/device"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/drivers"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/game"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/interface"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/kernel"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/locale"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/mail"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/media"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/midi"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/midi2"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/net"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/opengl"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/storage"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/support"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/translation"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/graphics"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/input_server"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/mail_daemon"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/registrar"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/screen_saver"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/add-ons/tracker"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/be_apps/Deskbar"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/be_apps/NetPositive"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/os/be_apps/Tracker"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/3rdparty"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/bsd"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/glibc"
+        ignoring nonexistent directory "/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/gnu"
+        #include "..." search starts here:
+        #include <...> search starts here:
+         /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include
+         /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include-fixed
+         /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/include
+         /home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers/posix
+         /home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/headers
+        End of search list.
+        Compiler executable checksum: a8e6be7c75c860096a99c940a219a77d
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_1b59d.dir/'
+         /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/as -v -V -Qy --64 -o CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o /tmp/ccBCgtb1.s
+        GNU assembler version 2.41 (x86_64-unknown-haiku) using BFD version (GNU Binutils) 2.41
+        COMPILER_PATH=/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/
+        BELIBRARIES=/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/lib/:/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o' '-c' '-mtune=generic' '-march=x86-64' '-dumpdir' 'CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.'
+        Linking C executable cmTC_1b59d
+        /usr/bin/cmake -E cmake_link_script CMakeFiles/cmTC_1b59d.dir/link.txt --verbose=1
+        Using built-in specs.
+        COLLECT_GCC=/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc
+        COLLECT_LTO_WRAPPER=/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/lto-wrapper
+        Target: x86_64-unknown-haiku
+        Configured with: /home/ruslan/haiku/buildtools/gcc/configure --prefix=/home/ruslan/haiku/generated/cross-tools-x86_64 --target=x86_64-unknown-haiku --disable-nls --disable-shared --with-system-zlib --enable-languages=c,c++ --enable-lto --enable-frame-pointer --enable-__cxa-atexit --enable-threads=posix --with-default-libstdcxx-abi=gcc4-compatible --with-sysroot=/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot --disable-maintainer-mode --disable-libgomp --disable-libatomic --enable-multilib
+        Thread model: posix
+        Supported LTO compression algorithms: zlib zstd
+        gcc version 13.3.0 (GCC) 
+        COMPILER_PATH=/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/
+        BELIBRARIES=/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/:/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/lib/:/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/lib/
+        COLLECT_GCC_OPTIONS='-v' '-o' 'cmTC_1b59d' '-mtune=generic' '-march=x86-64' '-dumpdir' 'cmTC_1b59d.'
+         /home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/collect2 -plugin /home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/liblto_plugin.so -plugin-opt=/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc0Zukd0.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lroot -plugin-opt=-pass-through=-lgcc --sysroot=/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot --eh-frame-hdr -m elf_x86_64_haiku -shared -no-undefined -o cmTC_1b59d crti.o /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/crtbeginS.o start_dyn.o init_term_dyn.o -L/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0 -L/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/lib -L/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/lib -v CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o -lgcc -lroot -lgcc /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/crtendS.o crtn.o
+        collect2 version 13.3.0
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld -plugin /home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/liblto_plugin.so -plugin-opt=/home/ruslan/haiku/generated/cross-tools-x86_64/libexec/gcc/x86_64-unknown-haiku/13.3.0/lto-wrapper -plugin-opt=-fresolution=/tmp/cc0Zukd0.res -plugin-opt=-pass-through=-lgcc -plugin-opt=-pass-through=-lroot -plugin-opt=-pass-through=-lgcc --sysroot=/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot --eh-frame-hdr -m elf_x86_64_haiku -shared -no-undefined -o cmTC_1b59d crti.o /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/crtbeginS.o start_dyn.o init_term_dyn.o -L/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0 -L/home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/lib -L/home/ruslan/haiku/generated/cross-tools-x86_64/sysroot/boot/system/develop/lib -v CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o -lgcc -lroot -lgcc /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/crtendS.o crtn.o
+        GNU ld (GNU Binutils) 2.41
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find crti.o: No such file or directory
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find start_dyn.o: No such file or directory
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find init_term_dyn.o: No such file or directory
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find -lroot: No such file or directory
+        /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/../../../../x86_64-unknown-haiku/bin/ld: cannot find crtn.o: No such file or directory
+        collect2: error: ld returned 1 exit status
+        /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-gcc  -v -Wl,-v CMakeFiles/cmTC_1b59d.dir/CMakeCCompilerABI.c.o -o cmTC_1b59d
+        gmake[1]: *** [CMakeFiles/cmTC_1b59d.dir/build.make:102: cmTC_1b59d] Error 1
+        gmake[1]: Leaving directory '/home/ruslan/haiku/src/system/glue/build/CMakeFiles/CMakeScratch/TryCompile-wEXMed'
+        gmake: *** [Makefile:134: cmTC_1b59d/fast] Error 2
+        
+      exitCode: 2
+...

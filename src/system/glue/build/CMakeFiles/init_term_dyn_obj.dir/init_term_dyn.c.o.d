@@ -1,0 +1,30 @@
+CMakeFiles/init_term_dyn_obj.dir/init_term_dyn.c.o: \
+ /home/ruslan/haiku/src/system/glue/init_term_dyn.c \
+ /home/ruslan/haiku/src/system/glue/haiku_version_glue.c \
+ /home/ruslan/haiku/headers/os/support/SupportDefs.h \
+ /home/ruslan/haiku/headers/os/BeBuild.h \
+ /home/ruslan/haiku/headers/config/HaikuConfig.h \
+ /home/ruslan/haiku/headers/os/support/Errors.h \
+ /home/ruslan/haiku/headers/posix/limits.h \
+ /home/ruslan/haiku/headers/config/types.h \
+ /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include/float.h \
+ /home/ruslan/haiku/headers/posix/arch/x86_64/limits.h \
+ /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include/limits.h \
+ /home/ruslan/haiku/headers/posix/inttypes.h \
+ /home/ruslan/haiku/headers/posix/stdint.h \
+ /home/ruslan/haiku/headers/posix/sys/types.h \
+ /home/ruslan/haiku/headers/posix/null.h \
+ /home/ruslan/haiku/headers/posix/size_t.h \
+ /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include/stddef.h \
+ /home/ruslan/haiku/headers/posix/time.h \
+ /home/ruslan/haiku/headers/posix/locale_t.h \
+ /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include/stdbool.h \
+ /home/ruslan/haiku/headers/private/system/image_defs.h \
+ /home/ruslan/haiku/headers/os/kernel/image.h \
+ /home/ruslan/haiku/headers/os/kernel/OS.h \
+ /home/ruslan/haiku/generated/cross-tools-x86_64/lib/gcc/x86_64-unknown-haiku/13.3.0/include/stdarg.h \
+ /home/ruslan/haiku/headers/os/storage/StorageDefs.h \
+ /home/ruslan/haiku/headers/posix/fcntl.h \
+ /home/ruslan/haiku/headers/posix/sys/stat.h \
+ /home/ruslan/haiku/headers/posix/unistd.h \
+ /home/ruslan/haiku/headers/posix/sys/param.h

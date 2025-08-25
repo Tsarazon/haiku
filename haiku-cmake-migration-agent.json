@@ -1,0 +1,1475 @@
+{
+  "project": "Haiku OS CMake Migration",
+  "repository": "https://github.com/Tsarazon/haiku",
+  "version": "1.0.0",
+  "description": "Comprehensive migration tasks from Jam to CMake for Haiku OS (simplified fork without gcc2/dual-ABI)",
+  "configuration": {
+    "source_repo": "https://github.com/Tsarazon/haiku",
+    "buildtools_repo": "https://github.com/haiku/buildtools",
+    "target_build_system": "CMake",
+    "cmake_minimum_version": "3.16",
+    "supported_architectures": ["x86_64", "x86", "arm", "arm64", "riscv64"],
+    "removed_features": ["gcc2", "dual_abi", "powerpc", "m68k", "sparc", "openfirmware"],
+    "parallel_execution": true,
+    "validation_required": true,
+    "buildtools_integration": {
+      "description": "Haiku's custom gcc, binutils, and build tools",
+      "components": [
+        "gcc (with Haiku patches)",
+        "binutils (with Haiku patches)",
+        "jam (build system)",
+        "bison",
+        "flex",
+        "m4",
+        "make",
+        "texinfo"
+      ],
+      "critical_for": [
+        "cross-compilation from Linux/BSD/macOS",
+        "bootstrap process",
+        "Haiku-specific compiler features",
+        "ELF handling customizations"
+      ]
+    }
+  },
+  "phases": [
+    {
+      "id": "phase_0_5",
+      "name": "Buildtools Integration",
+      "duration_days": 14,
+      "description": "Critical: Handle Haiku's custom gcc, binutils, and build tools",
+      "tasks": [
+        {
+          "id": "0.5.1",
+          "name": "Analyze Buildtools Repository",
+          "type": "analysis",
+          "priority": "critical",
+          "repository": "https://github.com/haiku/buildtools",
+          "components_to_analyze": [
+            {
+              "name": "gcc",
+              "path": "/gcc",
+              "haiku_patches": [
+                "gcc/gcc/config/haiku.h",
+                "gcc/gcc/config/t-haiku",
+                "gcc/gcc/config/i386/haiku.h",
+                "gcc/gcc/config/i386/haiku64.h",
+                "gcc/gcc/config/arm/haiku.h",
+                "gcc/gcc/config/riscv/haiku.h"
+              ],
+              "critical_features": [
+                "Haiku target triplet support",
+                "TLS implementation",
+                "Stack protector customization",
+                "Haiku-specific defines",
+                "Runtime library paths"
+              ]
+            },
+            {
+              "name": "binutils",
+              "path": "/binutils",
+              "haiku_patches": [
+                "binutils/bfd/config.bfd",
+                "binutils/ld/emulparams/elf_x86_64_haiku.sh",
+                "binutils/ld/emulparams/elf_i386_haiku.sh",
+                "binutils/ld/emulparams/armelf_haiku.sh"
+              ],
+              "critical_features": [
+                "Haiku ELF format",
+                "Custom dynamic linker path",
+                "Symbol versioning support",
+                "Haiku-specific relocations"
+              ]
+            },
+            {
+              "name": "jam",
+              "path": "/jam",
+              "note": "Being replaced by CMake but needed during transition"
+            }
+          ],
+          "output": {
+            "type": "report",
+            "path": "/build/cmake/migration/buildtools_analysis.md"
+          }
+        },
+        {
+          "id": "0.5.2",
+          "name": "Create CMake Toolchain for Buildtools",
+          "type": "implementation",
+          "priority": "critical",
+          "description": "Integrate buildtools gcc/binutils with CMake",
+          "create_files": [
+            {
+              "path": "/build/cmake/toolchains/buildtools_cross.cmake",
+              "content": [
+                "# Haiku cross-compilation using buildtools",
+                "set(CMAKE_SYSTEM_NAME Haiku)",
+                "set(CMAKE_SYSTEM_VERSION 1)",
+                "",
+                "# Set buildtools prefix",
+                "set(BUILDTOOLS_PREFIX ${HAIKU_OUTPUT_DIR}/cross-tools-${HAIKU_ARCH})",
+                "",
+                "# Configure compiler from buildtools",
+                "set(CMAKE_C_COMPILER ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-gcc)",
+                "set(CMAKE_CXX_COMPILER ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-g++)",
+                "set(CMAKE_AR ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-ar)",
+                "set(CMAKE_RANLIB ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-ranlib)",
+                "set(CMAKE_LINKER ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-ld)",
+                "set(CMAKE_STRIP ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-strip)",
+                "set(CMAKE_OBJCOPY ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-objcopy)",
+                "set(CMAKE_OBJDUMP ${BUILDTOOLS_PREFIX}/bin/${HAIKU_ARCH}-unknown-haiku-objdump)",
+                "",
+                "# Haiku-specific compiler flags from buildtools patches",
+                "set(CMAKE_C_FLAGS_INIT \"-fno-strict-aliasing -fno-delete-null-pointer-checks\")",
+                "set(CMAKE_CXX_FLAGS_INIT \"-fno-strict-aliasing -fno-delete-null-pointer-checks\")",
+                "",
+                "# Haiku runtime paths",
+                "set(CMAKE_INSTALL_RPATH \"/boot/system/lib\")",
+                "set(CMAKE_BUILD_WITH_INSTALL_RPATH FALSE)",
+                "",
+                "# Find programs on host",
+                "set(CMAKE_FIND_ROOT_PATH ${BUILDTOOLS_PREFIX})",
+                "set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)",
+                "set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)",
+                "set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)",
+                "",
+                "# Haiku-specific defines",
+                "add_definitions(-D__HAIKU__ -D_GNU_SOURCE)"
+              ]
+            },
+            {
+              "path": "/build/cmake/modules/BuildtoolsIntegration.cmake",
+              "content": [
+                "# Integration with Haiku buildtools",
+                "",
+                "function(build_cross_tools ARCH)",
+                "    set(BUILDTOOLS_DIR ${CMAKE_SOURCE_DIR}/../buildtools)",
+                "    set(OUTPUT_DIR ${CMAKE_BINARY_DIR}/cross-tools-${ARCH})",
+                "    ",
+                "    # Configure buildtools",
+                "    execute_process(",
+                "        COMMAND ${BUILDTOOLS_DIR}/configure",
+                "            --prefix=${OUTPUT_DIR}",
+                "            --target=${ARCH}-unknown-haiku",
+                "            --disable-nls",
+                "            --disable-shared",
+                "            --with-sysroot=${CMAKE_BINARY_DIR}/sysroot",
+                "            --with-build-sysroot=${CMAKE_BINARY_DIR}/sysroot",
+                "        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/buildtools-build",
+                "    )",
+                "    ",
+                "    # Build gcc and binutils",
+                "    execute_process(",
+                "        COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}",
+                "        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/buildtools-build",
+                "    )",
+                "    ",
+                "    # Install to cross-tools directory",
+                "    execute_process(",
+                "        COMMAND make install",
+                "        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}/buildtools-build",
+                "    )",
+                "endfunction()",
+                "",
+                "function(verify_buildtools)",
+                "    # Verify gcc has Haiku patches",
+                "    execute_process(",
+                "        COMMAND ${CMAKE_C_COMPILER} -dumpspecs",
+                "        OUTPUT_VARIABLE GCC_SPECS",
+                "    )",
+                "    ",
+                "    if(NOT GCC_SPECS MATCHES \"haiku\")",
+                "        message(FATAL_ERROR \"GCC does not have Haiku patches!\")",
+                "    endif()",
+                "    ",
+                "    # Verify binutils has Haiku support",
+                "    execute_process(",
+                "        COMMAND ${CMAKE_LINKER} --help",
+                "        OUTPUT_VARIABLE LD_HELP",
+                "    )",
+                "    ",
+                "    if(NOT LD_HELP MATCHES \"elf.*haiku\")",
+                "        message(FATAL_ERROR \"Binutils does not have Haiku support!\")",
+                "    endif()",
+                "endfunction()"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0.5.3",
+          "name": "Build Cross-Tools with CMake",
+          "type": "implementation",
+          "priority": "critical",
+          "description": "Replace jam-based buildtools build with CMake",
+          "steps": [
+            {
+              "step": "Create CMakeLists.txt for buildtools",
+              "path": "/buildtools/CMakeLists.txt",
+              "content": [
+                "cmake_minimum_required(VERSION 3.16)",
+                "project(HaikuBuildtools)",
+                "",
+                "# Options",
+                "set(HAIKU_HOST_ARCH ${CMAKE_HOST_SYSTEM_PROCESSOR})",
+                "set(HAIKU_TARGET_ARCH \"x86_64\" CACHE STRING \"Target architecture\")",
+                "",
+                "# Build GCC",
+                "ExternalProject_Add(gcc",
+                "    SOURCE_DIR ${CMAKE_SOURCE_DIR}/gcc",
+                "    CONFIGURE_COMMAND ${CMAKE_SOURCE_DIR}/gcc/configure",
+                "        --prefix=${CMAKE_INSTALL_PREFIX}",
+                "        --target=${HAIKU_TARGET_ARCH}-unknown-haiku",
+                "        --enable-languages=c,c++",
+                "        --disable-nls",
+                "        --without-headers",
+                "        --with-gnu-as",
+                "        --with-gnu-ld",
+                "        --disable-libssp",
+                "        --disable-tls",
+                "    BUILD_COMMAND make all-gcc all-target-libgcc",
+                "    INSTALL_COMMAND make install-gcc install-target-libgcc",
+                ")",
+                "",
+                "# Build Binutils",
+                "ExternalProject_Add(binutils",
+                "    SOURCE_DIR ${CMAKE_SOURCE_DIR}/binutils",
+                "    CONFIGURE_COMMAND ${CMAKE_SOURCE_DIR}/binutils/configure",
+                "        --prefix=${CMAKE_INSTALL_PREFIX}",
+                "        --target=${HAIKU_TARGET_ARCH}-unknown-haiku",
+                "        --disable-nls",
+                "        --disable-werror",
+                "        --with-sysroot=/",
+                "    BUILD_COMMAND make",
+                "    INSTALL_COMMAND make install",
+                ")",
+                "",
+                "# Dependencies",
+                "add_dependencies(gcc binutils)"
+              ]
+            },
+            {
+              "step": "Preserve Haiku patches",
+              "critical": true,
+              "files_to_preserve": [
+                "gcc/gcc/config/haiku.h",
+                "gcc/gcc/config/*/haiku*.h",
+                "binutils/bfd/config.bfd (Haiku sections)",
+                "binutils/ld/emulparams/*haiku*.sh"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0.5.4",
+          "name": "Validate Buildtools Integration",
+          "type": "validation",
+          "priority": "critical",
+          "tests": [
+            {
+              "name": "Compiler feature test",
+              "script": "/build/cmake/tests/buildtools/test_compiler.sh",
+              "checks": [
+                "Haiku target triplet recognized",
+                "__HAIKU__ defined",
+                "TLS support working",
+                "Stack protector functioning",
+                "Correct runtime paths"
+              ]
+            },
+            {
+              "name": "Linker feature test",
+              "script": "/build/cmake/tests/buildtools/test_linker.sh",
+              "checks": [
+                "Haiku ELF format",
+                "Dynamic linker path (/system/runtime_loader)",
+                "Symbol versioning",
+                "Proper RPATH handling"
+              ]
+            },
+            {
+              "name": "Cross-compilation test",
+              "script": "/build/cmake/tests/buildtools/test_cross_compile.sh",
+              "steps": [
+                "Build simple C program",
+                "Build simple C++ program",
+                "Link with Haiku libraries",
+                "Verify ELF format",
+                "Check dependencies"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "0.5.5",
+          "name": "Bootstrap Integration",
+          "type": "implementation",
+          "priority": "critical",
+          "description": "Ensure bootstrap works with CMake-built buildtools",
+          "bootstrap_stages": [
+            {
+              "stage": 0,
+              "name": "Build buildtools",
+              "commands": [
+                "cd buildtools",
+                "cmake -B build -DHAIKU_TARGET_ARCH=${ARCH}",
+                "cmake --build build -j${JOBS}",
+                "cmake --install build --prefix ${CROSS_TOOLS}"
+              ]
+            },
+            {
+              "stage": 1,
+              "name": "Build minimal Haiku with cross-tools",
+              "commands": [
+                "cd haiku",
+                "cmake -B build",
+                "    -DCMAKE_TOOLCHAIN_FILE=build/cmake/toolchains/buildtools_cross.cmake",
+                "    -DHAIKU_ARCH=${ARCH}",
+                "    -DHAIKU_BOOTSTRAP=ON",
+                "cmake --build build -j${JOBS}"
+              ]
+            }
+          ],
+          "validation": {
+            "check_tools": [
+              "${CROSS_TOOLS}/bin/${ARCH}-unknown-haiku-gcc --version",
+              "${CROSS_TOOLS}/bin/${ARCH}-unknown-haiku-ld --version",
+              "file ${BUILD_DIR}/objects/haiku/kernel",
+              "readelf -h ${BUILD_DIR}/objects/haiku/kernel | grep 'OS/ABI.*Haiku'"
+            ]
+          }
+        }
+      ]
+    },
+      "id": "phase_2_5",
+      "name": "Incremental Dual-Build Phase",
+      "duration_days": 21,
+      "description": "Gradual migration with mixed Jam/CMake builds to reduce risk",
+      "tasks": [
+        {
+          "id": "2.5.1",
+          "name": "Setup Dual-Build Infrastructure",
+          "type": "implementation",
+          "priority": "critical",
+          "components": [
+            {
+              "name": "dual_build_coordinator",
+              "path": "/build/dual_build/coordinator.py",
+              "purpose": "Orchestrate mixed Jam/CMake builds",
+              "features": [
+                "dependency_resolution_between_systems",
+                "artifact_sharing",
+                "build_order_management",
+                "symbol_export_validation"
+              ]
+            },
+            {
+              "name": "jam_cmake_bridge",
+              "path": "/build/dual_build/bridge.cmake",
+              "implementation": [
+                "# Import Jam-built libraries",
+                "function(import_jam_library NAME PATH)",
+                "    add_library(${NAME} SHARED IMPORTED)",
+                "    set_target_properties(${NAME} PROPERTIES",
+                "        IMPORTED_LOCATION ${JAM_BUILD_DIR}/${PATH}",
+                "        IMPORTED_SONAME ${NAME}.so",
+                "    )",
+                "endfunction()",
+                "",
+                "# Export CMake targets for Jam",
+                "function(export_for_jam TARGET)",
+                "    install(TARGETS ${TARGET}",
+                "        EXPORT JamExports",
+                "        LIBRARY DESTINATION ${JAM_BUILD_DIR}/lib",
+                "        ARCHIVE DESTINATION ${JAM_BUILD_DIR}/lib",
+                "    )",
+                "endfunction()"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2.5.2",
+          "name": "Stage 1: libroot Only",
+          "type": "migration",
+          "priority": "critical",
+          "description": "Migrate only libroot to CMake, everything else stays in Jam",
+          "steps": [
+            "Build entire system with Jam as baseline",
+            "Build libroot with CMake",
+            "Binary comparison of libroot.so",
+            "Symbol table validation",
+            "ABI compliance check",
+            "Replace Jam libroot with CMake version",
+            "Full system test with CMake libroot"
+          ],
+          "validation": {
+            "binary_diff": "cmp -b jam/libroot.so cmake/libroot.so",
+            "symbols": "nm -D jam/libroot.so | sort > jam.syms && nm -D cmake/libroot.so | sort > cmake.syms && diff jam.syms cmake.syms",
+            "abi": "abi-compliance-checker -l libroot -old jam.abi -new cmake.abi",
+            "runtime": "Boot test with CMake libroot"
+          }
+        },
+        {
+          "id": "2.5.3",
+          "name": "Stage 2: Add Kernel and Runtime Loader",
+          "type": "migration",
+          "priority": "critical",
+          "components": [
+            {
+              "name": "kernel",
+              "validate_each_arch": true,
+              "checks": [
+                "kernel_size_check",
+                "symbol_table_exact_match",
+                "boot_test_each_platform"
+              ]
+            },
+            {
+              "name": "runtime_loader",
+              "critical_tests": [
+                "elf_loading",
+                "symbol_resolution",
+                "lazy_binding",
+                "tls_handling"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2.5.4",
+          "name": "Stage 3: System Libraries",
+          "type": "migration",
+          "priority": "high",
+          "order": [
+            "libbe.so",
+            "libnetwork.so",
+            "libmedia.so",
+            "libtracker.so",
+            "libpackage.so"
+          ],
+          "validation_after_each": true
+        },
+        {
+          "id": "2.5.5",
+          "name": "Stage 4: Servers and Applications",
+          "type": "migration",
+          "priority": "medium",
+          "parallel": true,
+          "components": [
+            "servers",
+            "preferences",
+            "applications"
+          ]
+        }
+      ]
+    },
+      "id": "phase_0",
+      "name": "Resource System Analysis",
+      "duration_days": 3,
+      "tasks": [
+        {
+          "id": "0.1",
+          "name": "Analyze RDEF Usage Patterns",
+          "type": "analysis",
+          "priority": "critical",
+          "description": "Comprehensive analysis of .rdef files and resource handling",
+          "analyze_patterns": [
+            {
+              "pattern": "application_resources",
+              "files": "/src/apps/**/*.rdef",
+              "extract": [
+                "app_signature",
+                "app_version",
+                "app_flags",
+                "file_types",
+                "icon_definitions",
+                "mini_icon",
+                "large_icon",
+                "vector_icon"
+              ]
+            },
+            {
+              "pattern": "preference_resources",
+              "files": "/src/preferences/**/*.rdef",
+              "extract": [
+                "app_signature",
+                "pref_app_flags",
+                "icon_resources"
+              ]
+            },
+            {
+              "pattern": "addon_resources",
+              "files": "/src/add-ons/**/*.rdef",
+              "extract": [
+                "addon_signature",
+                "addon_version",
+                "supported_types"
+              ]
+            },
+            {
+              "pattern": "system_resources",
+              "files": "/src/servers/**/*.rdef",
+              "extract": [
+                "server_signature",
+                "launch_flags",
+                "icon_resources"
+              ]
+            }
+          ],
+          "special_cases": [
+            {
+              "name": "vector_icons",
+              "path": "/data/artwork/icons/",
+              "format": "HVIF",
+              "compiler": "Icon-O-Matic"
+            },
+            {
+              "name": "bitmap_icons",
+              "path": "/data/artwork/bitmaps/",
+              "formats": ["PNG", "BMP"],
+              "sizes": ["16x16", "32x32", "64x64"]
+            },
+            {
+              "name": "localization_catalogs",
+              "path": "/data/catalogs/",
+              "format": "catalog",
+              "languages": ["en", "de", "fr", "ja", "es", "ru", "pt", "it"]
+            }
+          ],
+          "output": {
+            "type": "report",
+            "path": "/build/cmake/migration/rdef_analysis.json",
+            "include": [
+              "rdef_patterns",
+              "resource_dependencies",
+              "icon_formats",
+              "signature_registry",
+              "version_info_patterns"
+            ]
+          }
+        },
+        {
+          "id": "0.2",
+          "name": "Create Resource Compilation Infrastructure",
+          "type": "implementation",
+          "priority": "critical",
+          "create_scripts": [
+            {
+              "path": "/build/cmake/tools/rdef_compiler_wrapper.py",
+              "purpose": "Wrapper for rc compiler with dependency tracking",
+              "features": [
+                "dependency_scanning",
+                "include_path_resolution",
+                "error_handling",
+                "incremental_compilation"
+              ]
+            },
+            {
+              "path": "/build/cmake/tools/resource_merger.py",
+              "purpose": "Merge multiple resource files",
+              "features": [
+                "resource_deduplication",
+                "conflict_resolution",
+                "binary_resource_handling"
+              ]
+            },
+            {
+              "path": "/build/cmake/tools/icon_converter.py",
+              "purpose": "Convert between icon formats",
+              "features": [
+                "hvif_to_png",
+                "png_to_hvif",
+                "bitmap_scaling",
+                "vector_optimization"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phase_1",
+      "name": "Analysis and Preparation",
+      "duration_days": 14,
+      "tasks": [
+        {
+          "id": "1.1",
+          "name": "Analyze Jam Build System",
+          "type": "analysis",
+          "priority": "critical",
+          "files_to_analyze": [
+            "/Jamfile",
+            "/build/jam/BuildSetup",
+            "/build/jam/MainBuildRules",
+            "/build/jam/HaikuImage",
+            "/build/jam/KernelRules",
+            "/build/jam/DriverRules",
+            "/build/jam/FileRules",
+            "/build/jam/OverriddenJamRules",
+            "/build/jam/packages/*.jam",
+            "/build/jam/repositories/HaikuPorts/*",
+            "/src/**/Jamfile"
+          ],
+          "jam_to_cmake_mapping": {
+            "create_table": true,
+            "path": "/docs/develop/build/cmake/jam_cmake_mapping.md",
+            "categories": [
+              {
+                "name": "Build Rules",
+                "mappings": [
+                  {"jam": "Application", "cmake": "haiku_application()"},
+                  {"jam": "SharedLibrary", "cmake": "haiku_library(SHARED)"},
+                  {"jam": "StaticLibrary", "cmake": "haiku_library(STATIC)"},
+                  {"jam": "KernelAddon", "cmake": "haiku_kernel_module()"},
+                  {"jam": "Driver", "cmake": "haiku_driver()"},
+                  {"jam": "Addon", "cmake": "haiku_addon()"},
+                  {"jam": "Server", "cmake": "haiku_server()"},
+                  {"jam": "Preference", "cmake": "haiku_preference_app()"}
+                ]
+              },
+              {
+                "name": "Resource Rules",
+                "mappings": [
+                  {"jam": "AddResources", "cmake": "haiku_add_resource_def()"},
+                  {"jam": "AddFileDataResource", "cmake": "haiku_add_resource_file()"},
+                  {"jam": "SetVersionInfo", "cmake": "haiku_add_version_info()"},
+                  {"jam": "SetSubDirSupportedPlatforms", "cmake": "if(HAIKU_ARCH IN_LIST ...)"}
+                ]
+              },
+              {
+                "name": "Conditionals",
+                "mappings": [
+                  {"jam": "if $(TARGET_ARCH) = x86_64", "cmake": "if(HAIKU_ARCH STREQUAL \"x86_64\")"},
+                  {"jam": "if $(HAIKU_BUILD_TYPE) = debug", "cmake": "if(CMAKE_BUILD_TYPE STREQUAL \"Debug\")"},
+                  {"jam": "UsePrivateHeaders", "cmake": "target_include_directories(PRIVATE ...)"}
+                ]
+              }
+            ]
+          },
+          "output": {
+            "type": "report",
+            "path": "/build/cmake/migration/analysis/jam_analysis.md",
+            "include": [
+              "build_rules_mapping",
+              "dependency_graph",
+              "custom_functions",
+              "platform_configurations",
+              "package_definitions",
+              "conditional_compilation_patterns"
+            ]
+          },
+          "commands": [
+            "find . -name 'Jamfile' -o -name '*.jam' | xargs grep -h '^rule' | sort -u > /tmp/jam_rules.txt",
+            "python3 scripts/analyze_jam_dependencies.py > /tmp/dependencies.json",
+            "python3 scripts/extract_conditionals.py > /tmp/conditionals.json"
+          ]
+        },
+        {
+          "id": "1.2",
+          "name": "Create Migration Infrastructure",
+          "type": "setup",
+          "priority": "critical",
+          "create_directories": [
+            "/build/cmake",
+            "/build/cmake/modules",
+            "/build/cmake/toolchains",
+            "/build/cmake/templates",
+            "/build/cmake/tools",
+            "/build/cmake/scripts",
+            "/build/cmake/validation",
+            "/build/cmake/migration"
+          ],
+          "create_files": [
+            {
+              "path": "/build/cmake/README.md",
+              "template": "migration_readme"
+            },
+            {
+              "path": "/build/cmake/tools/jam2cmake.py",
+              "template": "converter_script"
+            }
+          ]
+        },
+        {
+          "id": "1.3",
+          "name": "Document Current Package System",
+          "type": "analysis",
+          "priority": "high",
+          "analyze": [
+            "/build/jam/packages/Haiku",
+            "/build/jam/repositories/HaikuPorts/x86_64",
+            "/build/jam/repositories/HaikuPorts/x86",
+            "/build/jam/repositories/HaikuPorts/arm"
+          ],
+          "output": {
+            "type": "json",
+            "path": "/build/cmake/migration/packages.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "phase_2",
+      "name": "CMake Infrastructure",
+      "duration_days": 14,
+      "tasks": [
+        {
+          "id": "2.1",
+          "name": "Create CMake Modules",
+          "type": "implementation",
+          "priority": "critical",
+          "create_modules": [
+            {
+              "path": "/build/cmake/modules/HaikuCommon.cmake",
+              "functions": [
+                "haiku_application",
+                "haiku_library",
+                "haiku_static_library",
+                "haiku_kernel_module",
+                "haiku_driver",
+                "haiku_addon",
+                "haiku_server",
+                "haiku_preference_app"
+              ],
+              "template": "haiku_common_module"
+            },
+            {
+              "path": "/build/cmake/modules/HaikuResources.cmake",
+              "functions": [
+                "haiku_add_resource_def",
+                "haiku_compile_rdef",
+                "haiku_add_resource_file",
+                "haiku_add_hvif_icon",
+                "haiku_add_vector_icon",
+                "haiku_set_mime_signature",
+                "haiku_set_attributes",
+                "haiku_compile_mime_db",
+                "haiku_merge_resources",
+                "haiku_add_version_info",
+                "haiku_add_file_type_icon",
+                "haiku_add_localization_catalog"
+              ],
+              "dependencies": ["/src/bin/rc", "/src/tools/resattr"],
+              "rdef_compiler": {
+                "executable": "rc",
+                "flags": ["-I", "${CMAKE_SOURCE_DIR}/data/artwork"],
+                "include_paths": [
+                  "/headers/os",
+                  "/headers/posix",
+                  "/data/artwork/icons"
+                ]
+              },
+              "resource_types": {
+                "app_signature": "application/x-vnd.haiku-*",
+                "app_version": "version_info",
+                "app_flags": "B_SINGLE_LAUNCH | B_MULTIPLE_LAUNCH",
+                "file_types": "supported_types",
+                "icons": {
+                  "vector": "HVIF",
+                  "bitmap": "BMAP",
+                  "mini": "MICN",
+                  "large": "ICON"
+                },
+                "attributes": {
+                  "BEOS:APP_VERSION": "version",
+                  "BEOS:APP_SIG": "signature",
+                  "BEOS:TYPE": "mime_type",
+                  "BEOS:PREF_APP": "preferred_app",
+                  "BEOS:ICON": "icon_data"
+                }
+              }
+            },
+            {
+              "path": "/build/cmake/modules/HaikuPackages.cmake",
+              "functions": [
+                "haiku_create_package",
+                "haiku_package_info",
+                "haiku_add_package_dependency",
+                "haiku_generate_hpkg",
+                "haiku_repository_info"
+              ],
+              "dependencies": ["/src/bin/package", "/src/tools/package_repo"]
+            },
+            {
+              "path": "/build/cmake/modules/HaikuBootstrap.cmake",
+              "functions": [
+                "haiku_bootstrap_stage",
+                "haiku_cross_compiler",
+                "haiku_minimal_build",
+                "haiku_bootstrap_package"
+              ]
+            },
+            {
+              "path": "/build/cmake/modules/HaikuTesting.cmake",
+              "functions": [
+                "haiku_add_test",
+                "haiku_test_suite",
+                "haiku_benchmark"
+              ]
+            }
+          ]
+        },
+        {
+          "id": "2.2",
+          "name": "Create Toolchain Files",
+          "type": "implementation",
+          "priority": "critical",
+          "toolchains": [
+            {
+              "path": "/build/cmake/toolchains/x86_64.cmake",
+              "architecture": "x86_64",
+              "compiler": "gcc",
+              "system_name": "Haiku",
+              "processor": "x86_64"
+            },
+            {
+              "path": "/build/cmake/toolchains/x86.cmake",
+              "architecture": "x86",
+              "compiler": "gcc",
+              "system_name": "Haiku",
+              "processor": "i686"
+            },
+            {
+              "path": "/build/cmake/toolchains/arm.cmake",
+              "architecture": "arm",
+              "compiler": "gcc",
+              "system_name": "Haiku",
+              "processor": "armv7"
+            },
+            {
+              "path": "/build/cmake/toolchains/arm64.cmake",
+              "architecture": "arm64",
+              "compiler": "gcc",
+              "system_name": "Haiku",
+              "processor": "aarch64"
+            },
+            {
+              "path": "/build/cmake/toolchains/riscv64.cmake",
+              "architecture": "riscv64",
+              "compiler": "gcc",
+              "system_name": "Haiku",
+              "processor": "riscv64"
+            }
+          ]
+        },
+        {
+          "id": "2.3",
+          "name": "Create Root CMakeLists",
+          "type": "implementation",
+          "priority": "critical",
+          "file": "/CMakeLists.txt",
+          "content": {
+            "cmake_minimum": "3.16",
+            "project": "Haiku",
+            "languages": ["C", "CXX", "ASM"],
+            "options": [
+              "HAIKU_ARCH",
+              "HAIKU_BUILD_TYPE",
+              "HAIKU_ENABLE_TESTS",
+              "HAIKU_CREATE_IMAGE",
+              "HAIKU_PACKAGE_BUILD"
+            ],
+            "includes": [
+              "build/cmake/modules/HaikuCommon.cmake",
+              "build/cmake/modules/HaikuResources.cmake",
+              "build/cmake/modules/HaikuPackages.cmake"
+            ],
+            "subdirectories": [
+              "headers",
+              "src",
+              "data"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": "phase_3",
+      "name": "Core System Components",
+      "duration_days": 21,
+      "tasks": [
+        {
+          "id": "3.1",
+          "name": "Convert Kernel Build",
+          "type": "conversion",
+          "priority": "critical",
+          "source": "/src/system/kernel/Jamfile",
+          "target": "/src/system/kernel/CMakeLists.txt",
+          "subdirectories": [
+            "arch/x86_64",
+            "arch/x86",
+            "arch/arm",
+            "arch/riscv",
+            "cache",
+            "debug",
+            "device_manager",
+            "disk_device_manager",
+            "fs",
+            "lib",
+            "locks",
+            "scheduler",
+            "slab",
+            "util",
+            "vm"
+          ],
+          "special_requirements": [
+            "kernel_link_script",
+            "kernel_symbols_export",
+            "architecture_specific_flags",
+            "interrupt_handlers"
+          ],
+          "critical_risks": {
+    "kernel_libroot_runtime": {
+      "risk_level": "CRITICAL",
+      "description": "Kernel, libroot, and runtime loader are extremely fragile",
+      "mitigation": {
+        "linker_scripts": {
+          "description": "Exact replication of Jam linker scripts",
+          "kernel_script": {
+            "path": "/build/cmake/linker/kernel.ld",
+            "critical_sections": [
+              "ENTRY(_start)",
+              "SECTIONS { .text 0x80000000 : { *(.text.boot) *(.text*) } }",
+              "PROVIDE(_end = .);",
+              "init_array ordering",
+              "exception_table alignment"
+            ],
+            "implementation": [
+              "# Extract existing kernel linker script",
+              "gcc -Wl,--verbose 2>&1 | sed -n '/^===/,/^===/p' > base.ld",
+              "# Merge with Haiku-specific sections",
+              "cat base.ld haiku_kernel_sections.ld > kernel.ld",
+              "# Use in CMake",
+              "set_target_properties(kernel PROPERTIES",
+              "    LINK_FLAGS \"-T ${CMAKE_SOURCE_DIR}/build/cmake/linker/kernel.ld\"",
+              "    LINK_DEPENDS ${CMAKE_SOURCE_DIR}/build/cmake/linker/kernel.ld",
+              ")"
+            ]
+          },
+          "libroot_script": {
+            "path": "/build/cmake/linker/libroot.ld",
+            "versioning": "/src/system/libroot/versions/",
+            "critical_aspects": [
+              "GLIBC compatibility symbols",
+              "BeOS compatibility symbols",
+              "Symbol versioning nodes",
+              "Weak symbol handling"
+            ]
+          }
+        },
+        "symbol_versioning": {
+          "description": "Complex libroot symbol versioning",
+          "version_files": [
+            "GLIBC_2.2.5",
+            "GLIBC_2.3",
+            "GLIBC_2.4",
+            "LIBROOT_1_ALPHA1",
+            "LIBROOT_1_ALPHA2",
+            "LIBROOT_1_ALPHA3",
+            "LIBROOT_1_ALPHA4"
+          ],
+          "implementation": [
+            "# Generate version script from Jam versions",
+            "function(generate_libroot_version_script)",
+            "    set(VERSION_SCRIPT ${CMAKE_BINARY_DIR}/libroot.map)",
+            "    ",
+            "    # Parse all version files",
+            "    file(GLOB VERSION_FILES ${CMAKE_SOURCE_DIR}/src/system/libroot/versions/*.ver)",
+            "    ",
+            "    # Generate version nodes",
+            "    file(WRITE ${VERSION_SCRIPT} \"/* Auto-generated version script */\\n\")",
+            "    foreach(VER_FILE ${VERSION_FILES})",
+            "        get_filename_component(VERSION_NAME ${VER_FILE} NAME_WE)",
+            "        file(READ ${VER_FILE} SYMBOLS)",
+            "        file(APPEND ${VERSION_SCRIPT} \"${VERSION_NAME} {\\n\")",
+            "        file(APPEND ${VERSION_SCRIPT} \"  global:\\n\")",
+            "        string(REPLACE \"\\n\" \";\\n    \" SYMBOLS \"${SYMBOLS}\")",
+            "        file(APPEND ${VERSION_SCRIPT} \"    ${SYMBOLS}\\n\")",
+            "        file(APPEND ${VERSION_SCRIPT} \"};\\n\\n\")",
+            "    endforeach()",
+            "    ",
+            "    # Add dependency chain",
+            "    file(APPEND ${VERSION_SCRIPT} \"LIBROOT_1_ALPHA4 { } LIBROOT_1_ALPHA3;\\n\")",
+            "    file(APPEND ${VERSION_SCRIPT} \"LIBROOT_1_ALPHA3 { } LIBROOT_1_ALPHA2;\\n\")",
+            "    file(APPEND ${VERSION_SCRIPT} \"LIBROOT_1_ALPHA2 { } LIBROOT_1_ALPHA1;\\n\")",
+            "    file(APPEND ${VERSION_SCRIPT} \"LIBROOT_1_ALPHA1 { } GLIBC_2.4;\\n\")",
+            "    file(APPEND ${VERSION_SCRIPT} \"GLIBC_2.4 { } GLIBC_2.3;\\n\")",
+            "    file(APPEND ${VERSION_SCRIPT} \"GLIBC_2.3 { } GLIBC_2.2.5;\\n\")",
+            "    ",
+            "    return(${VERSION_SCRIPT})",
+            "endfunction()"
+          ],
+          "validation": [
+            "readelf -V jam/libroot.so > jam_versions.txt",
+            "readelf -V cmake/libroot.so > cmake_versions.txt",
+            "diff -u jam_versions.txt cmake_versions.txt"
+          ]
+        },
+        "init_order": {
+          "description": "Critical initialization order for constructors/destructors",
+          "implementation": [
+            "# Control init priority explicitly",
+            "__attribute__((constructor(101))) void early_init();",
+            "__attribute__((constructor(102))) void libroot_init();",
+            "__attribute__((constructor(103))) void pthread_init();",
+            "",
+            "# CMake handling",
+            "set_source_files_properties(init.cpp PROPERTIES",
+            "    COMPILE_FLAGS \"-fno-use-cxa-atexit\"",
+            ")",
+            "",
+            "# Link order matters!",
+            "target_link_libraries(app",
+            "    -Wl,--start-group",
+            "    root",
+            "    pthread",
+            "    -Wl,--end-group",
+            ")"
+          ],
+          "validation": [
+            "objdump -s -j .init_array jam/libroot.so > jam_init.txt",
+            "objdump -s -j .init_array cmake/libroot.so > cmake_init.txt",
+            "diff -u jam_init.txt cmake_init.txt",
+            "",
+            "# Check constructor call order at runtime",
+            "LD_DEBUG=all ./test_app 2>&1 | grep 'calling init'"
+          ]
+        },
+        "binary_validation": {
+          "description": "Bit-exact validation for critical binaries",
+          "script": "/build/cmake/validation/binary_exact_validator.py",
+          "implementation": [
+            "#!/usr/bin/env python3",
+            "import subprocess, hashlib, sys",
+            "",
+            "class BinaryValidator:",
+            "    def __init__(self, jam_binary, cmake_binary):",
+            "        self.jam = jam_binary",
+            "        self.cmake = cmake_binary",
+            "    ",
+            "    def validate_exact(self):",
+            "        # Strip debug info for comparison",
+            "        subprocess.run(['strip', '--strip-debug', '-o', '/tmp/jam_stripped', self.jam])",
+            "        subprocess.run(['strip', '--strip-debug', '-o', '/tmp/cmake_stripped', self.cmake])",
+            "        ",
+            "        # Compare sections",
+            "        sections = ['.text', '.rodata', '.data', '.got', '.plt']",
+            "        for section in sections:",
+            "            jam_sec = self._extract_section(self.jam, section)",
+            "            cmake_sec = self._extract_section(self.cmake, section)",
+            "            if jam_sec != cmake_sec:",
+            "                print(f'Section {section} differs!')",
+            "                self._hexdump_diff(jam_sec, cmake_sec)",
+            "                return False",
+            "        ",
+            "        # Compare symbols",
+            "        if not self._compare_symbols():",
+            "            return False",
+            "        ",
+            "        # Compare relocations",
+            "        if not self._compare_relocations():",
+            "            return False",
+            "        ",
+            "        return True",
+            "    ",
+            "    def _extract_section(self, binary, section):",
+            "        result = subprocess.run(",
+            "            ['objcopy', '--dump-section', f'{section}=/dev/stdout', binary],",
+            "            capture_output=True",
+            "        )",
+            "        return result.stdout",
+            "    ",
+            "    def _compare_symbols(self):",
+            "        jam_syms = subprocess.check_output(['nm', '-D', '--defined-only', self.jam])",
+            "        cmake_syms = subprocess.check_output(['nm', '-D', '--defined-only', self.cmake])",
+            "        return jam_syms == cmake_syms",
+            "    ",
+            "    def _compare_relocations(self):",
+            "        jam_rel = subprocess.check_output(['readelf', '-r', self.jam])",
+            "        cmake_rel = subprocess.check_output(['readelf', '-r', self.cmake])",
+            "        # Normalize addresses",
+            "        jam_rel = self._normalize_addresses(jam_rel)",
+            "        cmake_rel = self._normalize_addresses(cmake_rel)",
+            "        return jam_rel == cmake_rel"
+          ],
+          "targets": [
+            "kernel",
+            "libroot.so",
+            "runtime_loader",
+            "libbe.so"
+          ],
+          "acceptable_differences": {
+            "build_id": "Can differ - timestamp based",
+            "debug_sections": "Can differ - not loaded at runtime",
+            "comment_sections": "Can differ - metadata only"
+          }
+        },
+        "syscall_validation": {
+          "description": "Critical syscall table validation",
+          "implementation": [
+            "# Extract syscall table from kernel",
+            "objdump -d kernel | grep 'syscall\\|int.*0x63' > syscalls.txt",
+            "",
+            "# Verify syscall numbers match",
+            "# Haiku syscalls are in src/system/kernel/syscalls.cpp",
+            "# Must preserve exact numbering for ABI compatibility"
+          ],
+          "syscall_headers": [
+            "/headers/private/kernel/syscalls.h",
+            "/headers/private/system/syscall_numbers.h"
+          ],
+          "critical_syscalls": {
+            "read": 0,
+            "write": 1,
+            "open": 2,
+            "close": 3,
+            "create_thread": 35,
+            "create_port": 40,
+            "create_sem": 45,
+            "create_area": 50
+          },
+          "validation_script": "/build/cmake/validation/verify_syscalls.py",
+          "checks": [
+            "Syscall number preservation",
+            "Syscall argument order",
+            "Syscall return types",
+            "Error code compatibility"
+          ]
+        },
+          "phase1": "Build only libroot with CMake, rest with Jam",
+          "phase2": "Add kernel and runtime_loader",
+          "phase3": "Complete system migration",
+          "validation_each_phase": true
+        }
+      }
+    },
+    "bootloader_complexity": {
+      "risk_level": "HIGH",
+      "arm64_specific": {
+        "device_tree": {
+          "description": "ARM64 requires device-tree blob handling",
+          "implementation": [
+            "find_program(DTC dtc REQUIRED)",
+            "add_custom_command(",
+            "    OUTPUT ${DTB_FILE}",
+            "    COMMAND ${DTC} -O dtb -o ${DTB_FILE} ${DTS_FILE}",
+            "    DEPENDS ${DTS_FILE}",
+            ")"
+          ],
+          "files": [
+            "/src/system/boot/platform/arm64/device_tree.cpp",
+            "/data/dts/*.dts"
+          ]
+        },
+        "boot_requirements": [
+          "PSCI support",
+          "GICv2/v3 initialization",
+          "MMU early setup",
+          "spin-table or PSCI for SMP"
+        ]
+      },
+      "riscv_specific": {
+        "sbi_interface": "Supervisor Binary Interface handling",
+        "boot_stages": [
+          "M-mode firmware (OpenSBI)",
+          "S-mode bootloader",
+          "Device-tree parsing"
+        ],
+        "implementation": "/build/cmake/bootloader/riscv_boot.cmake"
+      }
+    },
+    "driver_conditionals": {
+      "risk_level": "MEDIUM",
+      "jam_patterns": {
+        "platform_checks": "if $(HAIKU_TARGET_PLATFORM) = x86_64",
+        "arch_checks": "if $(TARGET_ARCH) = arm",
+        "feature_checks": "if $(HAIKU_BUILD_FEATURE_X) = 1"
+      },
+      "cmake_solution": {
+        "implementation": [
+          "# Platform-specific driver compilation",
+          "if(HAIKU_ARCH STREQUAL \"x86_64\")",
+          "    add_subdirectory(drivers/x86_64)",
+          "elseif(HAIKU_ARCH STREQUAL \"arm\")",
+          "    add_subdirectory(drivers/arm)",
+          "endif()",
+          "",
+          "# Feature-based compilation",
+          "if(HAIKU_BUILD_FEATURE_WIFI)",
+          "    add_subdirectory(drivers/network/wlan)",
+          "endif()"
+        ],
+        "driver_matrix": "/build/cmake/drivers/platform_matrix.json"
+      }
+    },
+    "packagefs_integration": {
+      "risk_level": "CRITICAL",
+      "description": "Package system is deeply integrated with Jam",
+      "validation": {
+        "package_binary_format": {
+          "tool": "/build/cmake/validation/validate_hpkg.py",
+          "checks": [
+            "HPKG header validation",
+            "TOC structure verification",
+            "Attribute section parsing",
+            "Data compression verification"
+          ]
+        },
+        "packageinfo_generation": {
+          "test_suite": "/build/cmake/tests/package_tests/",
+          "compare_with_jam": true,
+          "fields_to_validate": [
+            "name", "version", "architecture",
+            "requires", "provides", "replaces",
+            "freshens", "conflicts", "supplements"
+          ]
+        },
+        "package_activation": {
+          "test": "Verify packagefs mounts packages correctly",
+          "validation": "Compare activated state with Jam build"
+        }
+      }
+    }
+  },
+  "validation": {
+    "abi_compliance": {
+      "description": "Strict ABI validation for all shared libraries",
+      "tools": {
+        "abi_dumper": {
+          "purpose": "Extract ABI from binaries",
+          "usage": "abi-dumper libbe.so -o libbe.abi",
+          "install": "pkgman install abi_dumper"
+        },
+        "abi_compliance_checker": {
+          "purpose": "Compare ABI between Jam and CMake builds",
+          "usage": "abi-compliance-checker -l libbe -old jam.abi -new cmake.abi",
+          "threshold": "100% compatibility required"
+        }
+      },
+      "script": "/build/cmake/validation/abi_validator.py",
+      "libraries_to_check": [
+        "libroot.so",
+        "libbe.so",
+        "libnetwork.so",
+        "libmedia.so",
+        "libtracker.so",
+        "libmail.so",
+        "libpackage.so"
+      ],
+      "checks": [
+        "exported_symbols",
+        "symbol_versions",
+        "vtable_layout",
+        "struct_padding",
+        "function_signatures",
+        "enum_values"
+      ]
+    },
+            "binary_size_check": true,
+            "symbol_table_check": true,
+            "boot_test": true
+          }
+        },
+        {
+          "id": "3.2",
+          "name": "Convert Bootloader",
+          "type": "conversion",
+          "priority": "critical",
+          "components": [
+            {
+              "source": "/src/system/boot/loader/Jamfile",
+              "target": "/src/system/boot/loader/CMakeLists.txt",
+              "type": "stage2_loader"
+            },
+            {
+              "source": "/src/system/boot/platform/bios_ia32/Jamfile",
+              "target": "/src/system/boot/platform/bios_ia32/CMakeLists.txt",
+              "type": "bios_boot"
+            },
+            {
+              "source": "/src/system/boot/platform/efi/Jamfile",
+              "target": "/src/system/boot/platform/efi/CMakeLists.txt",
+              "type": "efi_boot"
+            },
+            {
+              "source": "/src/system/boot/platform/u-boot/Jamfile",
+              "target": "/src/system/boot/platform/u-boot/CMakeLists.txt",
+              "type": "uboot"
+            }
+          ],
+          "special_flags": [
+            "-fno-stack-protector",
+            "-fno-pic",
+            "-march=i386"
+          ]
+        },
+        {
+          "id": "3.3",
+          "name": "Convert libroot",
+          "type": "conversion",
+          "priority": "critical",
+          "source": "/src/system/libroot/Jamfile",
+          "target": "/src/system/libroot/CMakeLists.txt",
+          "subdirectories": [
+            "posix",
+            "os",
+            "add-ons"
+          ],
+          "version_script": "/src/system/libroot/versions/libroot.versions",
+          "exports": "libroot.map",
+          "special_requirements": [
+            "symbol_versioning",
+            "posix_compliance",
+            "thread_local_storage"
+          ]
+        },
+        {
+          "id": "3.4",
+          "name": "Convert Haiku Kits",
+          "type": "conversion",
+          "priority": "high",
+          "kits": [
+            {
+              "name": "app",
+              "source": "/src/kits/app/Jamfile",
+              "target": "/src/kits/app/CMakeLists.txt",
+              "library": "libbe.so"
+            },
+            {
+              "name": "interface",
+              "source": "/src/kits/interface/Jamfile",
+              "target": "/src/kits/interface/CMakeLists.txt",
+              "library": "libbe.so"
+            },
+            {
+              "name": "storage",
+              "source": "/src/kits/storage/Jamfile",
+              "target": "/src/kits/storage/CMakeLists.txt",
+              "library": "libbe.so"
+            },
+            {
+              "name": "support",
+              "source": "/src/kits/support/Jamfile",
+              "target": "/src/kits/support/CMakeLists.txt",
+              "library": "libbe.so"
+            },
+            {
+              "name": "media",
+              "source": "/src/kits/media/Jamfile",
+              "target": "/src/kits/media/CMakeLists.txt",
+              "library": "libmedia.so"
+            },
+            {
+              "name": "network",
+              "source": "/src/kits/network/Jamfile",
+              "target": "/src/kits/network/CMakeLists.txt",
+              "library": "libnetwork.so"
+            },
+            {
+              "name": "game",
+              "source": "/src/kits/game/Jamfile",
+              "target": "/src/kits/game/CMakeLists.txt",
+              "library": "libgame.so"
+            },
+            {
+              "name": "translation",
+              "source": "/src/kits/translation/Jamfile",
+              "target": "/src/kits/translation/CMakeLists.txt",
+              "library": "libtranslation.so"
+            }
+          ]
+        },
+        {
+          "id": "3.5",
+          "name": "Convert Runtime Loader",
+          "type": "conversion",
+          "priority": "critical",
+          "source": "/src/system/runtime_loader/Jamfile",
+          "target": "/src/system/runtime_loader/CMakeLists.txt",
+          "special_requirements": [
+            "static_linking",
+            "custom_entry_point",
+            "elf_relocation"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "phase_4",
+      "name": "System Servers",
+      "duration_days": 14,
+      "tasks": [
+        {
+          "id": "4.1",
+          "name": "Convert System Servers",
+          "type": "conversion",
+          "priority": "high",
+          "servers": [
+            {
+              "name": "app_server",
+              "source": "/src/servers/app/Jamfile",
+              "target": "/src/servers/app/CMakeLists.txt",
+              "dependencies": ["libbe", "libagg", "libfreetype"],
+              "resources": ["app_server.rdef"]
+            },
+            {
+              "name": "debug_server",
+              "source": "/src/servers/debug/Jamfile",
+              "target": "/src/servers/debug/CMakeLists.txt",
+              "dependencies": ["libbe", "libdebug"]
+            },
+            {
+              "name": "input_server",
+              "source": "/src/servers/input/Jamfile",
+              "target": "/src/servers/input/CMakeLists.txt",
+              "dependencies": ["libbe", "libinput"]
+            },
+            {
+              "name": "mount_server",
+              "source": "/src/servers/mount/Jamfile",
+              "target": "/src/servers/mount/CMakeLists.txt",
+              "dependencies": ["libbe"]
+            },
+            {
+              "name": "net_server",
+              "source": "/src/servers/net/Jamfile",
+              "target": "/src/servers/net/CMakeLists.txt",
+              "dependencies": ["libbe", "libnetwork"]
+            },
+            {
+              "name": "notification_server",
+              "source": "/src/servers/notification/Jamfile",
+              "target": "/src/servers/notification/CMakeLists.txt",
+              "dependencies": ["libbe"]
+            },
+            {
+              "name": "package_daemon",
+              "source": "/src/servers/package/Jamfile",
+              "target": "/src/servers/package/CMakeLists.txt",
+              "dependencies": ["libbe", "libpackage"]
+            },
+            {
+              "name": "registrar",
+              "source": "/src/servers/registrar/Jamfile",
+              "target": "/src/servers/registrar/CMakeLists.txt",
+              "dependencies": ["libbe"]
+            },
+            {
+              "name": "media_server",
+              "source": "/src/servers/media/Jamfile",
+              "target": "/src/servers/media/CMakeLists.txt",
+              "dependencies": ["libbe", "libmedia"],
+              "real_time": true
+            },
+            {
+              "name": "mail_daemon",
+              "source": "/src/servers/mail/Jamfile",
+              "target": "/src/servers/mail/CMakeLists.txt",
+              "dependencies": ["libbe", "libmail"]
+            }
+          ]
+        }
+      ]
+    },
+    {

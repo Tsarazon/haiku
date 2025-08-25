@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+e6bf6c4397251625c55fcf8778cac499 /home/ruslan/haiku/cmake_generated/objects/haiku/x86_64/release/kits/app/app_kit.o
+b8c14a9d75cd0b4eee56dfc04c6c3270 CMakeFiles/app_kit

@@ -1,0 +1,345 @@
+# Haiku Interface Kit - CMake Build System
+# This builds interface_kit.o with cross-compiler exactly matching Jam build
+#
+# Usage:
+#   cmake -B ../../../cmake_generated .   # Clean build directory in main Haiku folder
+#   cmake -B ../../../cmake_generated -DHAIKU_ROOT=/path/to/haiku .
+#   cmake -B ../../../cmake_generated -DHAIKU_ARCH=riscv64 .
+#
+# Configurable variables:
+#   HAIKU_ROOT        - Path to Haiku source tree (auto-detected)
+#   HAIKU_ARCH        - Target architecture (default: x86_64)  
+#   HAIKU_TARGET      - Target triplet (default: ${HAIKU_ARCH}-unknown-haiku)
+#   HAIKU_*_PACKAGE   - Package names for zlib, zstd, ICU, GCC
+
+cmake_minimum_required(VERSION 3.16)
+
+# Detect Haiku root directory automatically (can be overridden)
+if(NOT DEFINED HAIKU_ROOT)
+    get_filename_component(HAIKU_ROOT "${CMAKE_SOURCE_DIR}/../../.." ABSOLUTE)
+endif()
+
+# Configure target architecture (can be overridden)
+if(NOT DEFINED HAIKU_ARCH)
+    set(HAIKU_ARCH "x86_64")
+endif()
+
+# Configure target triplet (can be overridden)  
+if(NOT DEFINED HAIKU_TARGET)
+    set(HAIKU_TARGET "${HAIKU_ARCH}-unknown-haiku")
+endif()
+
+message(STATUS "Using Haiku root: ${HAIKU_ROOT}")
+message(STATUS "Using Haiku architecture: ${HAIKU_ARCH}")
+message(STATUS "Using Haiku target: ${HAIKU_TARGET}")
+
+# Use cross-compiler BEFORE project() call
+set(CMAKE_C_COMPILER ${HAIKU_ROOT}/generated/cross-tools-${HAIKU_ARCH}/bin/${HAIKU_TARGET}-gcc CACHE FILEPATH "" FORCE)
+set(CMAKE_CXX_COMPILER ${HAIKU_ROOT}/generated/cross-tools-${HAIKU_ARCH}/bin/${HAIKU_TARGET}-g++ CACHE FILEPATH "" FORCE)
+
+# Set sysroot for cross-compilation
+set(CMAKE_SYSROOT ${HAIKU_ROOT}/generated/cross-tools-${HAIKU_ARCH}/sysroot)
+
+# Configure cross-compilation paths
+set(CMAKE_FIND_ROOT_PATH ${HAIKU_ROOT}/generated/cross-tools-${HAIKU_ARCH}/sysroot)
+set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
+# Skip CMake's automatic compiler testing for cross-compilation
+set(CMAKE_C_COMPILER_WORKS TRUE)
+set(CMAKE_CXX_COMPILER_WORKS TRUE)
+
+project(interface_kit LANGUAGES C CXX)
+
+message(STATUS "=== Building Interface Kit with CMake Cross-Compiler ===")
+
+# CMake modules path (simplified for testing)
+# list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/../../build/cmake/modules)
+
+# Set up architecture-aware directory structure (matching Jam exactly)
+set(HAIKU_CMAKE_OUTPUT_DIR "${HAIKU_ROOT}/cmake_generated")
+set(HAIKU_ARCH_OBJECTS_DIR "${HAIKU_CMAKE_OUTPUT_DIR}/objects/haiku/${HAIKU_ARCH}/release")
+set(HAIKU_KITS_DIR "${HAIKU_ARCH_OBJECTS_DIR}/kits")
+set(HAIKU_INTERFACE_KIT_DIR "${HAIKU_KITS_DIR}/interface")
+
+# Compilation happens in shared temp directory
+set(HAIKU_TEMP_BUILD_DIR "${HAIKU_CMAKE_OUTPUT_DIR}/temp_build")
+
+# Create directories - only final output directory, temp is auto-created by CMake
+file(MAKE_DIRECTORY ${HAIKU_INTERFACE_KIT_DIR})
+
+# Build package headers (exactly matching Jam build system approach)
+# This matches the exact include paths used by Haiku's Jam build
+set(HAIKU_BUILD_PACKAGES_BASE "${HAIKU_ROOT}/generated/build_packages")
+
+# Package versions (can be overridden via -D flags)
+# Example: cmake -DHAIKU_ROOT=/path/to/haiku -DHAIKU_ARCH=riscv64 ...
+if(NOT DEFINED HAIKU_ZLIB_PACKAGE)
+    set(HAIKU_ZLIB_PACKAGE "zlib-1.3.1-3-${HAIKU_ARCH}")
+endif()
+if(NOT DEFINED HAIKU_ZSTD_PACKAGE)
+    set(HAIKU_ZSTD_PACKAGE "zstd-1.5.6-1-${HAIKU_ARCH}")
+endif()
+if(NOT DEFINED HAIKU_ICU_PACKAGE)
+    set(HAIKU_ICU_PACKAGE "icu74-74.1-3-${HAIKU_ARCH}")
+endif()
+if(NOT DEFINED HAIKU_GCC_PACKAGE)
+    set(HAIKU_GCC_PACKAGE "gcc_syslibs_devel-13.3.0_2023_08_10-1-${HAIKU_ARCH}")
+endif()
+
+# Add the same include directories that Jam uses (from debug output analysis)
+include_directories(SYSTEM
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_ZLIB_PACKAGE}/develop/headers
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_ZSTD_PACKAGE}/develop/headers  
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_ICU_PACKAGE}/develop/headers
+)
+
+set(ICU_FOUND TRUE)
+set(ZLIB_FOUND TRUE) 
+set(ZSTD_FOUND TRUE)
+
+# Include headers exactly like Jam build (complete mapping from haiku-headers-mapping.md)
+# Order matters: build packages first, then private, then public
+include_directories(SYSTEM
+    # Private headers (highest precedence for compression algorithm headers)
+    ${HAIKU_ROOT}/headers/private/app
+    ${HAIKU_ROOT}/headers/private/interface
+    ${HAIKU_ROOT}/headers/private/input
+    ${HAIKU_ROOT}/headers/private/kernel
+    ${HAIKU_ROOT}/headers/private/libroot
+    ${HAIKU_ROOT}/headers/private/locale
+    ${HAIKU_ROOT}/headers/private/media
+    ${HAIKU_ROOT}/headers/private/print
+    ${HAIKU_ROOT}/headers/private/shared
+    ${HAIKU_ROOT}/headers/private/support    # ZlibCompressionAlgorithm.h here
+    ${HAIKU_ROOT}/headers/private/storage
+    ${HAIKU_ROOT}/headers/private/tracker
+    ${HAIKU_ROOT}/headers/private
+    ${HAIKU_ROOT}/headers/private/system
+    ${HAIKU_ROOT}/headers/private/system/arch/${HAIKU_ARCH}
+    
+    # Build headers (include redirectors)
+    ${HAIKU_ROOT}/headers/build/private/support
+    
+    # GCC C++ headers from build packages
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/c++
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/c++/${HAIKU_TARGET}
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/c++/backward
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/c++/ext
+    
+    # Compatibility headers
+    ${HAIKU_ROOT}/headers/glibc
+    ${HAIKU_ROOT}/headers/posix
+    
+    # GCC built-in headers  
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/gcc/include
+    ${HAIKU_BUILD_PACKAGES_BASE}/${HAIKU_GCC_PACKAGE}/develop/headers/gcc/include-fixed
+    
+    # Public OS headers (last to avoid conflicts)
+    ${HAIKU_ROOT}/headers
+    ${HAIKU_ROOT}/headers/os
+    ${HAIKU_ROOT}/headers/os/add-ons
+    ${HAIKU_ROOT}/headers/os/add-ons/file_system
+    ${HAIKU_ROOT}/headers/os/add-ons/graphics
+    ${HAIKU_ROOT}/headers/os/add-ons/input_server
+    ${HAIKU_ROOT}/headers/os/add-ons/registrar
+    ${HAIKU_ROOT}/headers/os/add-ons/screen_saver
+    ${HAIKU_ROOT}/headers/os/add-ons/tracker
+    ${HAIKU_ROOT}/headers/os/app
+    ${HAIKU_ROOT}/headers/os/device
+    ${HAIKU_ROOT}/headers/os/drivers
+    ${HAIKU_ROOT}/headers/os/game
+    ${HAIKU_ROOT}/headers/os/interface
+    ${HAIKU_ROOT}/headers/os/kernel
+    ${HAIKU_ROOT}/headers/os/locale
+    ${HAIKU_ROOT}/headers/os/media
+    ${HAIKU_ROOT}/headers/os/mail
+    ${HAIKU_ROOT}/headers/os/midi
+    ${HAIKU_ROOT}/headers/os/midi2
+    ${HAIKU_ROOT}/headers/os/net
+    ${HAIKU_ROOT}/headers/os/storage
+    ${HAIKU_ROOT}/headers/os/support
+    ${HAIKU_ROOT}/headers/os/translation
+    
+    # Library headers
+    ${HAIKU_ROOT}/headers/libs/agg
+    ${HAIKU_ROOT}/headers/libs/icon
+    
+    # Build configuration
+    ${HAIKU_ROOT}/build/config_headers
+    ${HAIKU_ROOT}/src/kits/tracker
+)
+
+# Find optional dependencies using CMake (for cross-compilation these may not be found)
+find_package(ZLIB QUIET)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(ICU QUIET icu-uc icu-io)
+endif()
+
+
+# Interface Kit sources (exactly from interface/Jamfile)
+set(INTERFACE_KIT_SOURCES
+    AboutWindow.cpp
+    AbstractLayout.cpp
+    AbstractLayoutItem.cpp
+    AbstractSpinner.cpp
+    AffineTransform.cpp
+    Alert.cpp
+    Alignment.cpp
+    BMCPrivate.cpp
+    Bitmap.cpp
+    Box.cpp
+    Button.cpp
+    CardLayout.cpp
+    CardView.cpp
+    ChannelControl.cpp
+    ChannelSlider.cpp
+    CheckBox.cpp
+    ColorControl.cpp
+    ColorConversion.cpp
+    ColorMenuItem.cpp
+    Control.cpp
+    ControlLook.cpp
+    DecimalSpinner.cpp
+    DecorInfo.cpp
+    Deskbar.cpp
+    Dragger.cpp
+    Font.cpp
+    Gradient.cpp
+    GradientConic.cpp
+    GradientDiamond.cpp
+    GradientLinear.cpp
+    GradientRadial.cpp
+    GradientRadialFocus.cpp
+    GraphicsDefs.cpp
+    GridLayout.cpp
+    GridLayoutBuilder.cpp
+    GridView.cpp
+    GroupLayout.cpp
+    GroupLayoutBuilder.cpp
+    GroupView.cpp
+    HaikuControlLook.cpp
+    Icon.cpp
+    Input.cpp
+    InterfaceDefs.cpp
+    Layout.cpp
+    LayoutContext.cpp
+    LayoutItem.cpp
+    LayoutUtils.cpp
+    ListItem.cpp
+    ListView.cpp
+    Menu.cpp
+    MenuBar.cpp
+    MenuField.cpp
+    MenuItem.cpp
+    MenuItemPrivate.cpp
+    MenuPrivate.cpp
+    MenuWindow.cpp
+    OptionControl.cpp
+    OptionPopUp.cpp
+    OutlineListView.cpp
+    Picture.cpp
+    PictureButton.cpp
+    PictureDataWriter.cpp
+    PicturePlayer.cpp
+    Point.cpp
+    Polygon.cpp
+    PopUpMenu.cpp
+    PrintJob.cpp
+    PrivateScreen.cpp
+    RadioButton.cpp
+    Rect.cpp
+    Region.cpp
+    RegionSupport.cpp
+    Screen.cpp
+    ScrollBar.cpp
+    ScrollView.cpp
+    SeparatorItem.cpp
+    SeparatorView.cpp
+    Shape.cpp
+    Shelf.cpp
+    Size.cpp
+    Slider.cpp
+    SpaceLayoutItem.cpp
+    Spinner.cpp
+    SplitLayout.cpp
+    SplitLayoutBuilder.cpp
+    SplitView.cpp
+    StatusBar.cpp
+    StringItem.cpp
+    StringView.cpp
+    TabView.cpp
+    TextControl.cpp
+    TextInput.cpp
+    TextView.cpp
+    ToolTip.cpp
+    ToolTipManager.cpp
+    TwoDimensionalLayout.cpp
+    View.cpp
+    ViewLayoutItem.cpp
+    ViewPort.cpp
+    Window.cpp
+    WindowStack.cpp
+    ZombieReplicantView.cpp
+    layouter/CollapsingLayouter.cpp
+    layouter/ComplexLayouter.cpp
+    layouter/LayoutOptimizer.cpp
+    layouter/Layouter.cpp
+    layouter/OneElementLayouter.cpp
+    layouter/SimpleLayouter.cpp
+    textview_support/InlineInput.cpp
+    textview_support/LineBuffer.cpp
+    textview_support/StyleBuffer.cpp
+    textview_support/TextGapBuffer.cpp
+    textview_support/UndoBuffer.cpp
+    textview_support/WidthBuffer.cpp
+    ../shared/DragTrackingFilter.cpp
+    ../shared/HSL.cpp
+)
+
+# Create interface_kit.o as object library (matches Jam MergeObject)
+add_library(interface_kit_obj OBJECT ${INTERFACE_KIT_SOURCES})
+
+# Add interface_kit specific includes
+target_include_directories(interface_kit_obj PRIVATE
+    ${CMAKE_SOURCE_DIR}/textview_support
+    ${CMAKE_SOURCE_DIR}/layouter
+)
+
+# Add compiler flags exactly matching Jam build  
+target_compile_definitions(interface_kit_obj PRIVATE 
+    ZSTD_ENABLED
+    HAIKU_TARGET_PLATFORM_HAIKU
+)
+target_compile_options(interface_kit_obj PRIVATE 
+    -O2
+    -fno-strict-aliasing
+)
+
+# Headers are now available globally from build packages, no target-specific linking needed
+
+# Set cross-compiler properties
+set_target_properties(interface_kit_obj PROPERTIES
+    POSITION_INDEPENDENT_CODE ON
+    OUTPUT_NAME interface_kit
+)
+
+# Create interface_kit.o exactly like Jam build (MergeObject)
+add_custom_command(
+    OUTPUT ${HAIKU_INTERFACE_KIT_DIR}/interface_kit.o
+    COMMAND ${CMAKE_LINKER} -r $<TARGET_OBJECTS:interface_kit_obj> -o ${HAIKU_INTERFACE_KIT_DIR}/interface_kit.o
+    DEPENDS interface_kit_obj
+    COMMENT "Merging objects into interface_kit.o (matching Jam MergeObject)"
+    COMMAND_EXPAND_LISTS
+    VERBATIM
+)
+
+add_custom_target(interface_kit ALL DEPENDS ${HAIKU_INTERFACE_KIT_DIR}/interface_kit.o)
+
+message(STATUS "Interface Kit CMake cross-compilation configured:")
+message(STATUS "  Sources: ${INTERFACE_KIT_SOURCES}")
+message(STATUS "  Cross-compiler: ${HAIKU_TARGET}-gcc")
+message(STATUS "  Output: interface_kit.o object file")
+message(STATUS "  Dependencies: zlib, zstd, ICU")

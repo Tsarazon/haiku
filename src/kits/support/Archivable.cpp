@@ -835,4 +835,26 @@ _ZN11BArchivable20_ReservedArchivable2Ev(BArchivable* archivable,
 }
 
 
+// Compatibility functions for binary compatibility with older Haiku builds
+// These were in the original build/libbe/support/Archivable.cpp
+extern "C" void
+BuildFuncName(const char* className, BString& funcName)
+{
+	// Use the modern internal function
+	BString classNameStr(className);
+	build_function_name(classNameStr, funcName);
+}
+
+
+extern "C" int
+GetNumber(const char*& name)
+{
+	int val = atoi(name);
+	while (isdigit(*name)) {
+		++name;
+	}
+	return val;
+}
+
+
 void BArchivable::_ReservedArchivable3() {}

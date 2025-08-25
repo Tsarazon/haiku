@@ -1,0 +1,4 @@
+/home/ruslan/haiku/cmake_generated/build_app/CMakeFiles/app_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_app/CMakeFiles/app_kit.dir
+/home/ruslan/haiku/cmake_generated/build_app/CMakeFiles/edit_cache.dir
+/home/ruslan/haiku/cmake_generated/build_app/CMakeFiles/rebuild_cache.dir

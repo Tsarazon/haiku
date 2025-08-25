@@ -9,7 +9,7 @@ This document provides a complete analysis of the Haiku build system, documentin
 - **Total Jam Rules**: 301+ custom rules across 20 rule files
 - **Largest Rule File**: ImageRules (83 rules)
 - **Documentation Coverage**: 385+ rules documented vs 301+ actual rules
-- **Platform Support**: x86_64, x86_gcc2, arm64, riscv64 (active); m68k, ppc (legacy, sparc removed)
+- **Platform Support**: x86_64, arm64, riscv64 (active); m68k, ppc (legacy, sparc removed)
 - **Cross-compilation**: Full support with bootstrap repositories
 - **Platform Configurations**: Located in `/build/jam/board/` (not `/build/jam/platforms/`)
 
@@ -121,8 +121,7 @@ Located in `/build/jam/repositories/` with architecture-specific configurations:
 ```
 repositories/
 ├── HaikuPorts/
-│   ├── x86_64          # Intel/AMD 64-bit packages
-│   ├── x86_gcc2        # Legacy Intel 32-bit packages  
+│   ├── x86_64          # Intel/AMD 64-bit package
 │   ├── arm64           # ARM 64-bit packages
 │   ├── aarch64         # ARM 64-bit (alternative name)
 │   └── riscv64         # RISC-V 64-bit packages

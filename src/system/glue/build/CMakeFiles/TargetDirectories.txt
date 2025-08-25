@@ -1,0 +1,12 @@
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/init_term_dyn_obj.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/start_dyn_obj.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/haiku_version_glue_obj.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/crti_obj.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/crtn_obj.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/glue_objects.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/edit_cache.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/rebuild_cache.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/list_install_components.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/install.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/install/local.dir
+/home/ruslan/haiku/src/system/glue/build/CMakeFiles/install/strip.dir
