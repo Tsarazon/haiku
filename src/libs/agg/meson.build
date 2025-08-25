@@ -39,8 +39,9 @@ libagg = static_library('agg',
     cpp_args: [
         '-O2',                           # Release optimization
         '-fno-strict-aliasing',          # Standard Haiku flag
-        '-fno-implicit-templates',       # Prevent template bloat
-        '-fno-implicit-inline-templates', # Prevent inline template bloat
+        # Removed template control flags to allow instantiation for libbe.so
+        # '-fno-implicit-templates',       # Prevent template bloat  
+        # '-fno-implicit-inline-templates', # Prevent inline template bloat
         '-w',                            # Disable warnings (as in Jamfile)
         '-DHAIKU_TARGET_PLATFORM_HAIKU'
     ],

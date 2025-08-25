@@ -1,0 +1,154 @@
+# Haiku libroot POSIX musl math x86_64
+# Corresponds to src/system/libroot/posix/musl/math/x86_64/Jamfile
+
+message('Building libroot POSIX musl math x86_64...')
+
+# Architecture detection - must be x86_64
+target_arch = get_option('target_arch')
+if target_arch != 'x86_64'
+    error('This meson.build is only for x86_64 architecture')
+endif
+
+# Musl math x86_64 sources (from Jamfile MergeObject)
+# Arch-specific assembly sources
+posix_musl_math_x86_64_sources = files([
+    'acosl.s',
+    'asinl.s',
+    'atan2l.s', 'atanl.s',
+    'ceill.s',
+    'exp2l.s', 'expl.s', 'expm1l.s',
+    'fabsf.s', 'fabsl.s', 'fabs.s',
+    'floorl.s',
+    'fmodl.s',
+    '__invtrigl.s',
+    'llrintf.s', 'llrintl.s', 'llrint.s',
+    'log10l.s', 'log1pl.s', 'log2l.s', 'logl.s',
+    'lrintf.s', 'lrintl.s', 'lrint.s',
+    'remainderl.s',
+    'rintl.s',
+    'sqrtf.s', 'sqrtl.s', 'sqrt.s',
+    'truncl.s',
+    # C sources
+    'fma.c',
+    'fmaf.c',
+    # Generic sources (from Jamfile SEARCH on generics from parent dir)
+    '../acos.c', '../acosf.c',
+    '../acosh.c', '../acoshf.c', '../acoshl.c',
+    '../asin.c', '../asinf.c',
+    '../asinh.c', '../asinhf.c', '../asinhl.c',
+    '../atan2.c', '../atan2f.c',
+    '../atan.c', '../atanf.c',
+    '../atanh.c', '../atanhf.c', '../atanhl.c',
+    '../cbrt.c', '../cbrtf.c', '../cbrtl.c',
+    '../ceil.c', '../ceilf.c',
+    '../copysign.c', '../copysignf.c', '../copysignl.c',
+    '../cos.c', '../cosf.c', '../cosl.c', '../__cosl.c', '../__cos.c', '../__cosdf.c',
+    '../cosh.c', '../coshf.c', '../coshl.c',
+    '../erf.c', '../erff.c', '../erfl.c',
+    '../exp10.c', '../exp10f.c', '../exp10l.c',
+    '../exp2.c', '../exp2f.c', '../exp2f_data.c',
+    '../exp.c', '../exp_data.c', '../expf.c',
+    '../expm1.c', '../expm1f.c',
+    '../__expo2.c', '../__expo2f.c',
+    '../fdim.c', '../fdimf.c', '../fdiml.c',
+    '../finite.c', '../finitef.c',
+    '../floor.c', '../floorf.c',
+    '../fmal.c',
+    '../fmax.c', '../fmaxf.c', '../fmaxl.c',
+    '../fmin.c', '../fminf.c', '../fminl.c',
+    '../fmod.c', '../fmodf.c',
+    '../__fpclassify.c', '../__fpclassifyf.c', '../__fpclassifyl.c',
+    '../frexp.c', '../frexpf.c', '../frexpl.c',
+    '../hypot.c', '../hypotf.c', '../hypotl.c',
+    '../ilogb.c', '../ilogbf.c', '../ilogbl.c',
+    '../j0.c', '../j0f.c',
+    '../j1.c', '../j1f.c',
+    '../jn.c', '../jnf.c',
+    '../ldexp.c', '../ldexpf.c', '../ldexpl.c',
+    '../lgamma.c', '../lgammaf.c', '../lgammaf_r.c', '../lgammal.c', '../lgamma_r.c',
+    '../llround.c', '../llroundf.c', '../llroundl.c',
+    '../log10.c', '../log10f.c',
+    '../log1p.c', '../log1pf.c',
+    '../log2.c', '../log2_data.c', '../log2f.c', '../log2f_data.c',
+    '../logb.c', '../logbf.c', '../logbl.c',
+    '../log.c', '../log_data.c', '../logf.c', '../logf_data.c',
+    '../lround.c', '../lroundf.c', '../lroundl.c',
+    '../__math_divzero.c', '../__math_divzerof.c',
+    '../__math_invalid.c', '../__math_invalidf.c',
+    '../__math_oflow.c', '../__math_oflowf.c',
+    '../__math_uflow.c', '../__math_uflowf.c',
+    '../__math_xflow.c', '../__math_xflowf.c',
+    '../modf.c', '../modff.c', '../modfl.c',
+    '../nan.c', '../nanf.c', '../nanl.c',
+    '../nearbyint.c', '../nearbyintf.c', '../nearbyintl.c',
+    '../nextafter.c', '../nextafterf.c', '../nextafterl.c',
+    '../nexttoward.c', '../nexttowardf.c', '../nexttowardl.c',
+    '../__polevll.c',
+    '../pow.c', '../pow_data.c', '../powf.c', '../powf_data.c', '../powl.c',
+    '../remainder.c', '../remainderf.c',
+    '../__rem_pio2.c', '../__rem_pio2f.c',
+    '../__rem_pio2_large.c', '../__rem_pio2l.c',
+    '../remquo.c', '../remquof.c', '../remquol.c',
+    '../rint.c', '../rintf.c',
+    '../round.c', '../roundf.c', '../roundl.c',
+    '../scalb.c', '../scalbf.c',
+    '../scalbln.c', '../scalblnf.c', '../scalblnl.c',
+    '../scalbn.c', '../scalbnf.c', '../scalbnl.c',
+    '../__signbit.c', '../__signbitf.c', '../__signbitl.c',
+    '../signgam.c',
+    '../significand.c', '../significandf.c',
+    '../__sin.c', '../sin.c', '../__sinl.c', '../sinl.c',
+    '../sincos.c', '../sincosf.c', '../sincosl.c',
+    '../__sindf.c', '../sinf.c',
+    '../sinh.c', '../sinhf.c', '../sinhl.c',
+    '../__tan.c', '../tan.c', '../__tandf.c', '../tanf.c', '../__tanl.c', '../tanl.c',
+    '../tanh.c', '../tanhf.c', '../tanhl.c',
+    '../tgamma.c', '../tgammaf.c', '../tgammal.c',
+    '../trunc.c', '../truncf.c',
+])
+
+# Build musl math x86_64 object library
+posix_musl_math_x86_64_lib = static_library('posix_musl_math_x86_64',
+    posix_musl_math_x86_64_sources,
+    
+    include_directories: [
+        haiku_config['get_all_include_dirs'],
+        # From Jamfile: SubDirSysHdrs [ FDirName $(SUBDIR) .. .. include ]
+        include_directories('../../include'),
+        # From Jamfile: UseHeaders [ FDirName $(SUBDIR) .. .. internal ]
+        include_directories('../../internal'),
+        # From Jamfile: UseHeaders [ FDirName $(SUBDIR) .. .. arch generic ]
+        include_directories('../../arch/generic'),
+        # From Jamfile: UseHeaders [ FDirName $(SUBDIR) .. .. arch $(architecture) ]
+        include_directories('../../arch/' + target_arch),
+    ],
+    
+    c_args: [
+        '-fno-builtin',
+        '-fno-strict-aliasing',
+        '-Wno-unused-but-set-variable',  # From Jamfile: SubDirCcFlags -Wno-unused-but-set-variable
+        '-D_GNU_SOURCE',
+        '-D_DEFAULT_SOURCE',
+        '-DBUILDING_LIBROOT=1',
+        '-DARCH_' + target_arch,
+    ],
+    
+    cpp_args: [
+        '-fno-builtin',
+        '-fno-strict-aliasing',
+        '-Wno-unused-but-set-variable',
+        '-D_GNU_SOURCE',
+        '-D_DEFAULT_SOURCE',
+        '-DBUILDING_LIBROOT=1',
+        '-DARCH_' + target_arch,
+    ],
+    
+    install: false
+)
+
+# Export for parent
+posix_musl_math_x86_64_dep = declare_dependency(
+    link_with: posix_musl_math_x86_64_lib
+)
+
+message('libroot POSIX musl math x86_64 configured successfully')

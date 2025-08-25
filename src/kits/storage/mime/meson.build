@@ -38,16 +38,8 @@ libstorage_kit_mime = static_library('storage_kit_mime',
     install: false
 )
 
-# Create merged static library libstorage_kit_mime.a (matching Jam output)
-mime_merged = custom_target('storage_kit_mime_output',
-    input: libstorage_kit_mime,
-    output: 'libstorage_kit_mime_output.a',
-    command: [
-        'sh', '-c',
-        'mkdir -p ' + haiku_config['libs_output_dir'] + ' && cp @INPUT@ ' + haiku_config['libs_output_dir'] + '/libstorage_kit_mime.a'
-    ],
-    build_by_default: true,
-    install: false
-)
+# Export the static library directly (no custom external directory)
+# This matches standard Meson behavior - files stay in builddir
+mime_merged = libstorage_kit_mime
 
 message('Storage Kit MIME Library configured successfully - output: libstorage_kit_mime.a')

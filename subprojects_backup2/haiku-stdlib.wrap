@@ -1,0 +1,5 @@
+[wrap-file]
+directory = haiku-stdlib
+
+[provide]
+c_stdlib = haiku_c_stdlib

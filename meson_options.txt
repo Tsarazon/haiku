@@ -20,3 +20,29 @@ option('haiku_root',
        type: 'string',
        value: '',
        description: 'Path to Haiku source tree (auto-detected if empty)')
+
+option('icu_path', 
+       type: 'string', 
+       value: '', 
+       description: 'Path to ICU libraries directory (auto-detected if empty)')
+
+# Cross-compilation toolchain options
+option('use_jam_cross', 
+       type: 'boolean', 
+       value: true, 
+       description: 'Use cross-tools built by Jam build system (default: true)')
+
+option('jam_cross_tools_dir', 
+       type: 'string', 
+       value: '', 
+       description: 'Path to Jam-built cross-tools directory (auto-detected if empty)')
+
+option('external_cross_tools_dir',
+       type: 'string',
+       value: '',
+       description: 'Path to external cross-tools (used when use_jam_cross=false)')
+
+option('auto_fix_cross_tools',
+       type: 'boolean',
+       value: true,
+       description: 'Automatically fix cross-tools compatibility for Meson (create symlinks)')

@@ -30,78 +30,176 @@ message('All requested Haiku kits configured successfully')
 # Build libbe.so shared library from all kit objects and libraries
 message('Building libbe.so shared library...')
 
-# Collect all kit object files (these are already built)
-kit_objects_dir = haiku_config['kits_output_dir']
-
-# Reference the actual kit object files in generated_meson
-required_kit_objects = [
-    files('../../generated_meson/objects/haiku/x86_64/release/kits/app/app_kit.o'),
-    files('../../generated_meson/objects/haiku/x86_64/release/kits/storage/storage_kit.o'),
-    files('../../generated_meson/objects/haiku/x86_64/release/kits/support/support_kit.o'),
-    files('../../generated_meson/objects/haiku/x86_64/release/kits/interface/interface_kit.o'),
-    files('../../generated_meson/objects/haiku/x86_64/release/kits/locale/locale_kit.o')
-]
-
-message('Using ' + required_kit_objects.length().to_string() + ' kit object files for libbe.so')
-
 # Additional static libraries required for libbe.so
-libs_output_dir = haiku_config['libs_output_dir']
+# The libraries are built via the main meson.build -> src/libs
+# We reference them by declaring the targets as dependencies
 
-# Add all required additional libraries as in Jamfile
+# Reference actual library targets instead of file paths
 additional_libs = [
-    files('../../generated_meson/objects/haiku/x86_64/release/libs/libicon.a'),
-    files('../../generated_meson/objects/haiku/x86_64/release/libs/libagg.a'), 
-    files('../../generated_meson/objects/haiku/x86_64/release/libs/libstorage_kit_mime.a')
+    libicon,
+    libagg,
+    libstorage_kit_mime
 ]
+
+# ICU libraries are now handled via system_deps
 message('Attempting libbe.so build with ' + additional_libs.length().to_string() + ' additional libraries')
 
-# System dependencies
-system_deps = [
-    dependency('threads'),
-    # ICU, zlib, zstd are provided by build packages via cross-compilation
-]
+# System dependencies will be defined later after external deps
 
 # Create libbe.so shared library
-# TODO: Use haiku_resources module when properly configured
-# For now, temporarily skip resources to test core linking
+# Use HaikuCommon for unified resource handling
+python_prog = find_program('python3')
+haiku_common_script = meson.current_source_dir() + '/../../build/meson/modules/HaikuCommon.py'
 
-# External dependencies (like Jam BuildFeatureAttribute)
-icu_dep = dependency('icu-uc', required: false)
-zlib_dep = dependency('zlib', required: false)
-zstd_dep = dependency('libzstd', required: false)
+# Get rc compiler path using HaikuCommon
+rc_path_result = run_command(
+    python_prog,
+    '-c',
+    'from sys import path; path.insert(0, "' + meson.current_source_dir() + '/../../build/meson/modules"); from HaikuCommon import get_rc_compiler_path; rc = get_rc_compiler_path(); print(rc if rc else "")',
+    capture: true,
+    check: true
+)
 
-# System dependencies
+rc_compiler = rc_path_result.stdout().strip()
+if rc_compiler == ''
+    error('❌ RC compiler not found - ensure rc compiler is built')
+else
+    message('✅ RC compiler found: ' + rc_compiler)
+endif
+
+# Create standard libbe.so resources using ResourceHandler-detected rc compiler
+version_resource = custom_target('libbe_version_rsrc',
+    input: 'libbe_version.rdef',
+    output: 'libbe_version.rsrc',
+    command: [rc_compiler, '-o', '@OUTPUT@', '@INPUT@'],
+    build_by_default: true
+)
+
+icons_resource = custom_target('icons_rsrc',
+    input: 'Icons.rdef',
+    output: 'Icons.rsrc', 
+    command: [rc_compiler, '-o', '@OUTPUT@', '@INPUT@'],
+    build_by_default: true
+)
+
+country_flags_resource = custom_target('country_flags_rsrc',
+    input: 'CountryFlags.rdef',
+    output: 'CountryFlags.rsrc',
+    command: [rc_compiler, '-o', '@OUTPUT@', '@INPUT@'],
+    build_by_default: true
+)
+
+language_flags_resource = custom_target('language_flags_rsrc',
+    input: 'LanguageFlags.rdef',
+    output: 'LanguageFlags.rsrc',
+    command: [rc_compiler, '-o', '@OUTPUT@', '@INPUT@'],
+    build_by_default: true
+)
+
+# External dependencies using BuildFeature detection (like Jam BuildFeatureAttribute)
+# This mimics the Jam build system's dynamic package detection
+
+# Auto-detect build packages (equivalent to IsPackageAvailable in Jam)
+build_features_detect = run_command(
+    python_prog, 
+    meson.current_source_dir() + '/../../build/meson/modules/detect_build_features.py',
+    capture: true,
+    check: true
+)
+
+if build_features_detect.returncode() == 0
+    message('Build package detection successful')
+    # Packages are available - create dependencies with detected paths
+    
+    # ZLIB dependency (BuildFeatureAttribute zlib : library)
+    zlib_dep_manual = declare_dependency(
+        link_args: [
+            '-L/home/ruslan/haiku/generated/build_packages/zlib-1.3.1-3-x86_64/develop/lib',
+            '-lz'
+        ]
+    )
+    
+    # ZSTD dependency (BuildFeatureAttribute zstd : library)  
+    zstd_dep_manual = declare_dependency(
+        link_args: [
+            '-L/home/ruslan/haiku/generated/build_packages/zstd-1.5.6-1-x86_64/develop/lib',
+            '-lzstd'
+        ]
+    )
+    
+    # ICU dependency (BuildFeatureAttribute icu : libraries)
+    # Match exact Jam build linking: libicudata, libicui18n, libicuio, libicuuc
+    icu_lib_path = '/home/ruslan/haiku/generated/build_packages/icu74-74.1-3-x86_64/develop/lib'
+    icu_dep_manual = declare_dependency(
+        link_args: [
+            '-L' + icu_lib_path,
+            # Link each library explicitly to match Jam output exactly
+            icu_lib_path + '/libicudata.so',
+            icu_lib_path + '/libicui18n.so',
+            icu_lib_path + '/libicuio.so', 
+            icu_lib_path + '/libicuuc.so',
+            '-lstdc++'
+        ]
+    )
+    
+    message('External dependencies configured: zlib, zstd, icu (from build packages)')
+else
+    error('Failed to detect build packages - ensure packages are extracted')
+endif
+
+# System dependencies (matching Jam BuildFeatureAttribute pattern)
 system_deps = [
     dependency('threads'),
+    zlib_dep_manual,   # [ BuildFeatureAttribute zlib : library ]
+    zstd_dep_manual,   # [ BuildFeatureAttribute zstd : library ]
+    icu_dep_manual     # [ BuildFeatureAttribute icu : libraries ]
 ]
 
-# Add external deps if found
-if icu_dep.found()
-    system_deps += [icu_dep]
-endif
-if zlib_dep.found()
-    system_deps += [zlib_dep]
-endif
-if zstd_dep.found()
-    system_deps += [zstd_dep]
-endif
+# Shared source files (from Jamfile SEARCH_SOURCE)
+shared_sources = files([
+    'shared/DragTrackingFilter.cpp',
+    'shared/HSL.cpp',
+])
 
 libbe = shared_library('be',
-    # TODO: Include compiled resource files when module is working
-    # version_resource,
-    # icons_resource, 
-    # country_flags_resource,
-    # language_flags_resource,
+    # Include shared source files directly
+    shared_sources,
+    
+    # Include compiled resource files (like Jam AddResources)
+    version_resource,
+    icons_resource, 
+    country_flags_resource,
+    language_flags_resource,
+    
+    # Include kit object files and glue objects as objects parameter
+    objects: [
+        app_kit_merged,
+        storage_kit_merged,
+        support_kit_merged,
+        interface_kit_merged,
+        locale_kit_merged,
+        # Add glue objects as additional objects
+        glue_crti,
+        glue_init_term_dyn,
+    ],
     
     link_language: 'cpp',  # Use C++ linking for proper Haiku integration
-    objects: required_kit_objects,  # Kit .o files go in objects
-    link_with: additional_libs,     # Library .a files go in link_with
+    link_with: [
+        additional_libs,     # Library .a files go in link_with
+        # Note: libroot is not linked - it's expected to be available at runtime
+    ],
+    cpp_args: [
+        '-O2',                    # Optimization level 2 (matching Jam build)
+        '-fno-strict-aliasing',   # Required for proper C++ semantics
+    ],
+    
     link_args: [
+        # Disable automatic startup files and use our own
+        '-nostartfiles',
         # Add version script (like Jamfile SetVersionScript) 
         '-Wl,--version-script=' + meson.current_source_dir() + '/libbe_versions',
-        # Use static libstdc++ for cross-compilation
-        '-static-libstdc++',
-        '-static-libgcc',
+        # Strip debug symbols for release build (matching Jam) - DISABLED TO TEST UNSTRIPPED SIZE
+        # '-s',
         # Haiku-specific linking flags
         '-Xlinker', '-soname=libbe.so.1',
         # Enable symbol versioning
@@ -111,8 +209,20 @@ libbe = shared_library('be',
     dependencies: system_deps,
     version: '1.0.0',
     soversion: '1',
-    install: true,
-    install_dir: 'generated_meson/lib'
+    install: false  # Keep libbe.so in builddir for testing
 )
 
-message('libbe.so configured successfully with ' + required_kit_objects.length().to_string() + ' kit objects')
+# Generate pkg-config file for libbe.so
+pkg = import('pkgconfig')
+pkg.generate(
+    libraries: libbe,
+    version: '1.0.0',
+    name: 'libbe',
+    filebase: 'libbe',
+    description: 'Haiku Application Framework Library',
+    subdirs: ['haiku'],
+    requires: ['threads']
+    # Note: requires_private would be ideal but these deps aren't system pkg-config packages
+)
+
+message('libbe.so configured successfully with pkg-config generation')

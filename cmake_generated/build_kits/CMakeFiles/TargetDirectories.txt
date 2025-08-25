@@ -1,0 +1,14 @@
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/app_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/app_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/interface_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/interface_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/locale_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/locale_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/storage_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/storage_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/support_kit_obj.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/support_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/shared_kit.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/libbe.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/edit_cache.dir
+/home/ruslan/haiku/cmake_generated/build_kits/CMakeFiles/rebuild_cache.dir

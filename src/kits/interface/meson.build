@@ -156,7 +156,7 @@ interface_kit_obj = static_library('interface_kit_obj',
     cpp_args: [
         '-O2',                           # Optimization (matching Jam)
         '-fno-strict-aliasing',          # Standard Haiku flag
-        '-fno-implicit-templates',       # KEY: Prevent template instantiation bloat
+        # '-fno-implicit-templates',       # KEY: Prevent template instantiation bloat - REMOVED for libbe.so linking
         '-fno-implicit-inline-templates' # KEY: Prevent inline template bloat
     ] + interface_kit_defines,
     pic: true,                           # Use Meson's pic instead of manual -fPIC
@@ -166,16 +166,14 @@ interface_kit_obj = static_library('interface_kit_obj',
     install: false
 )
 
-# Output directory (matching generated_meson structure)
-interface_kit_output_dir = haiku_config['kits_output_dir'] + '/interface'
-
 # Create merged object file interface_kit.o (matching Jam MergeObject)
 interface_kit_merged = custom_target('interface_kit',
     input: interface_kit_obj,
     output: 'interface_kit.o',
     command: [
         'sh', '-c',
-        'mkdir -p ' + interface_kit_output_dir + ' && /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r -o ' + interface_kit_output_dir + '/interface_kit.o @INPUT@.p/*.o'
+        '/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r -o "$1" "$2".p/*.o',
+        'sh', '@OUTPUT@', '@INPUT@'
     ],
     build_by_default: true,
     install: false

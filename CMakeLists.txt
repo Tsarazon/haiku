@@ -40,7 +40,7 @@ set(HAIKU_CMAKE_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/cmake_generated")
 set(HAIKU_OBJECTS_DIR "${HAIKU_CMAKE_OUTPUT_DIR}/objects")
 set(HAIKU_ARCH_OBJECTS_DIR "${HAIKU_OBJECTS_DIR}/haiku/${HAIKU_ARCH}")
 set(HAIKU_RELEASE_DIR "${HAIKU_ARCH_OBJECTS_DIR}/release")
-
+/home/ruslan/haiku/MESON_BUILD_INTEGRATION_LOG.md
 # Define output directories following Jam structure
 set(HAIKU_TOOLS_DIR "${HAIKU_RELEASE_DIR}/tools")
 set(HAIKU_LIBS_DIR "${HAIKU_RELEASE_DIR}/lib") 

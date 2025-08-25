@@ -62,7 +62,7 @@ libicon = static_library('icon',
     cpp_args: [
         '-O2',                           # Release optimization
         '-fno-strict-aliasing',          # Standard Haiku flag
-        '-fno-implicit-templates',       # Prevent template bloat
+        # '-fno-implicit-templates',       # Prevent template bloat - REMOVED for libbe.so linking
         '-fno-implicit-inline-templates', # Prevent inline template bloat
         '-w',                            # Disable warnings (as in Jamfile)
         '-DZSTD_ENABLED',                # Critical: Match interface kit pattern

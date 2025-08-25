@@ -1,0 +1,307 @@
+# Haiku libroot POSIX glibc implementation
+# Auto-generated from directory structure analysis with custom modules integration
+
+message('Building libroot POSIX glibc layer...')
+
+# Build features integration for glibc
+build_features_available = [
+    'icu',  # /home/ruslan/haiku/generated/build_packages/icu74-74.1-3-x86_64/develop/headers/unicode
+]
+message('glibc using build features:', build_features_available)
+
+# Architecture detection
+target_arch = get_option('target_arch')
+
+# glibc implementation sources (from extensions/)
+posix_glibc_sources = files([
+    # Extensions module (SubInclude extensions in Jamfile)
+    'extensions/getopt.c',
+    'extensions/getopt1.c',
+    'extensions/obstack.c',
+    
+    # ICONV module (SubInclude iconv in Jamfile)
+    'iconv/gconv_builtin.c',
+    'iconv/gconv_simple.c',
+    
+    # LIBIO module (SubInclude libio in Jamfile) - partial list due to file count
+    'libio/__fbufsize.c',
+    'libio/__flbf.c',
+    'libio/__fpending.c',
+    'libio/__fpurge.c',
+    'libio/__freadable.c',
+    'libio/__freadahead.c',
+    'libio/__freading.c',
+    'libio/__freadptr.c',
+    'libio/__freadptrinc.c',
+    'libio/__fseterr.c',
+    'libio/__fsetlocking.c',
+    'libio/__fwritable.c',
+    'libio/__fwriting.c',
+    'libio/clearerr.c',
+    'libio/clearerr_u.c',
+    'libio/fcloseall.c',
+    'libio/feof.c',
+    'libio/feof_u.c',
+    'libio/ferror.c',
+    'libio/ferror_u.c',
+    'libio/filedoalloc.c',
+    'libio/fileno.c',
+    'libio/fileops.c',
+    'libio/flockfile.c',
+    'libio/fmemopen.c',
+    'libio/fputc.c',
+    'libio/fputc_u.c',
+    'libio/fputwc.c',
+    'libio/fputwc_u.c',
+    'libio/freopen.c',
+    'libio/fseek.c',
+    'libio/fseeko.c',
+    'libio/ftello.c',
+    'libio/fwide.c',
+    'libio/fwprintf.c',
+    'libio/fwscanf.c',
+    'libio/genops.c',
+    'libio/getc.c',
+    'libio/getc_u.c',
+    'libio/getchar.c',
+    'libio/getchar_u.c',
+    'libio/getwc.c',
+    'libio/getwc_u.c',
+    'libio/getwchar.c',
+    'libio/getwchar_u.c',
+    'libio/iofclose.c',
+    'libio/iofdopen.c',
+    'libio/iofflush.c',
+    'libio/iofgetpos.c',
+    'libio/iofgets.c',
+    'libio/iofgets_u.c',
+    'libio/iofgetws.c',
+    'libio/iofgetws_u.c',
+    'libio/iofopen.c',
+    'libio/iofopncook.c',
+    'libio/iofputs.c',
+    'libio/iofputs_u.c',
+    'libio/iofputws.c',
+    'libio/iofputws_u.c',
+    'libio/iofread.c',
+    'libio/iofread_u.c',
+    'libio/iofsetpos.c',
+    'libio/ioftell.c',
+    'libio/iofwide.c',
+    'libio/iofwrite.c',
+    'libio/iofwrite_u.c',
+    'libio/iogetdelim.c',
+    'libio/iogetline.c',
+    'libio/iogets.c',
+    'libio/iogetwline.c',
+    'libio/iopadn.c',
+    'libio/iopopen.c',
+    'libio/ioputs.c',
+    'libio/ioseekoff.c',
+    'libio/ioseekpos.c',
+    'libio/iosetbuffer.c',
+    'libio/iosetvbuf.c',
+    'libio/ioungetc.c',
+    'libio/ioungetwc.c',
+    'libio/iovdprintf.c',
+    'libio/iovsprintf.c',
+    'libio/iovsscanf.c',
+    'libio/iovswscanf.c',
+    'libio/iowpadn.c',
+    'libio/memstream.c',
+    'libio/pclose.c',
+    'libio/peekc.c',
+    'libio/putc.c',
+    'libio/putc_u.c',
+    'libio/putchar.c',
+    'libio/putchar_u.c',
+    'libio/putwc.c',
+    'libio/putwc_u.c',
+    'libio/putwchar.c',
+    'libio/putwchar_u.c',
+    'libio/rewind.c',
+    'libio/setbuf.c',
+    'libio/setlinebuf.c',
+    'libio/stdfiles.c',
+    'libio/stdio.c',
+    'libio/strops.c',
+    'libio/swprintf.c',
+    'libio/swscanf.c',
+    'libio/vasprintf.c',
+    'libio/vscanf.c',
+    'libio/vsnprintf.c',
+    'libio/vswprintf.c',
+    'libio/vwprintf.c',
+    'libio/vwscanf.c',
+    'libio/wfiledoalloc.c',
+    'libio/wfileops.c',
+    'libio/wgenops.c',
+    'libio/wprintf.c',
+    'libio/wscanf.c',
+    'libio/wstrops.c',
+    
+    # REGEX module (SubInclude regex in Jamfile)
+    'regex/regcomp.c',
+    'regex/regex.c', 
+    'regex/regex_internal.c',
+    'regex/regexec.c',
+    
+    # STDIO-COMMON module (SubInclude stdio-common in Jamfile)
+    'stdio-common/_itoa.c',
+    'stdio-common/_itowa.c',
+    'stdio-common/asprintf.c',
+    'stdio-common/dprintf.c',
+    'stdio-common/fprintf.c',
+    'stdio-common/fscanf.c',
+    'stdio-common/fxprintf.c',
+    'stdio-common/getline.c',
+    'stdio-common/getw.c',
+    'stdio-common/itoa-digits.c',
+    'stdio-common/itoa-udigits.c',
+    'stdio-common/itowa-digits.c',
+    'stdio-common/perror.c',
+    'stdio-common/printf-parsemb.c',
+    'stdio-common/printf-parsewc.c',
+    'stdio-common/printf-prs.c',
+    'stdio-common/printf.c',
+    'stdio-common/printf_fp.c',
+    'stdio-common/printf_fphex.c',
+    'stdio-common/printf_size.c',
+    'stdio-common/psignal.c',
+    'stdio-common/putw.c',
+    'stdio-common/reg-printf.c',
+    'stdio-common/scanf.c',
+    'stdio-common/snprintf.c',
+    'stdio-common/sprintf.c',
+    'stdio-common/sscanf.c',
+    'stdio-common/vfprintf.c',
+    'stdio-common/vfscanf.c',
+    'stdio-common/vfwprintf.c',
+    'stdio-common/vfwscanf.c',
+    'stdio-common/vprintf.c',
+    
+    # STDLIB module (SubInclude stdlib in Jamfile)
+    'stdlib/drand48-iter.c',
+    'stdlib/drand48.c',
+    'stdlib/drand48_r.c',
+    'stdlib/erand48.c',
+    'stdlib/erand48_r.c',
+    'stdlib/fpioconst.c',
+    'stdlib/inlines.c',
+    'stdlib/jrand48.c',
+    'stdlib/jrand48_r.c',
+    'stdlib/lcong48.c',
+    'stdlib/lcong48_r.c',
+    'stdlib/lrand48.c',
+    'stdlib/lrand48_r.c',
+    'stdlib/mrand48.c',
+    'stdlib/mrand48_r.c',
+    'stdlib/nrand48.c',
+    'stdlib/nrand48_r.c',
+    'stdlib/random_r.c',
+    'stdlib/seed48.c',
+    'stdlib/seed48_r.c',
+    'stdlib/srand48.c',
+    'stdlib/srand48_r.c',
+    'stdlib/strtod.c',
+    'stdlib/strtof.c',
+    'stdlib/strtol.c',
+    'stdlib/strtold.c',
+    'stdlib/strtoll.c',
+    'stdlib/strtoul.c',
+    'stdlib/strtoull.c',
+    
+    # WCSMBS module (SubInclude wcsmbs in Jamfile)
+    'wcsmbs/wcsmbsload.c',
+    'wcsmbs/wcstod.c',
+    'wcsmbs/wcstof.c',
+    'wcsmbs/wcstol.c',
+    'wcsmbs/wcstold.c',
+    'wcsmbs/wcstoll.c',
+    'wcsmbs/wcstoul.c',
+    'wcsmbs/wcstoull.c',
+])
+
+# Architecture-specific glibc sources
+if target_arch == 'x86_64'
+    posix_glibc_arch_sources = files([
+        'arch/x86_64/add_n.S',
+        'arch/x86_64/addmul_1.S',
+        'arch/x86_64/ldbl2mpn.c',
+        'arch/x86_64/lshift.S',
+        'arch/x86_64/mul_1.S',
+        'arch/x86_64/rshift.S',
+        'arch/x86_64/sub_n.S',
+        'arch/x86_64/submul_1.S',
+    ])
+else
+    posix_glibc_arch_sources = []
+endif
+
+# Build glibc object library
+posix_glibc_lib = static_library('posix_glibc',
+    posix_glibc_sources,
+    posix_glibc_arch_sources,
+    
+    include_directories: [
+        haiku_config['get_all_include_dirs'],
+        include_directories('include'),
+        include_directories('include/arch/' + target_arch),
+        # GMP headers from buildtools
+        include_directories('../../../../../buildtools/gcc/gmp'),
+        include_directories('../../../../../buildtools/gcc/gmp/mpn/' + target_arch),
+        # GLIBC internal headers for submodules
+        include_directories('extensions'),
+        include_directories('iconv'),
+        include_directories('libio'),
+        include_directories('regex'),
+        include_directories('stdio-common'),
+        include_directories('stdlib'),
+        include_directories('wcsmbs'),
+        include_directories('locale'),
+        include_directories('math'),
+    ],
+    
+    c_args: [
+        '-fno-builtin',
+        '-fno-strict-aliasing',
+        '-D_GNU_SOURCE',
+        '-D_DEFAULT_SOURCE',
+        '-DBUILDING_LIBROOT=1',
+        '-DHAVE_ICU=1',
+        '-I/home/ruslan/haiku/generated/build_packages/icu74-74.1-3-x86_64/develop/headers/unicode',
+        '-DARCH_' + target_arch,
+        # Additional glibc-specific defines for C
+        '-D__BEGIN_DECLS=',
+        '-D__END_DECLS=',
+        '-D_LIBC=1',
+        '-DHAVE_CONFIG_H=1',
+        '-DSHARED=1',
+        '-DDO_VERSIONING=1',
+    ],
+    
+    cpp_args: [
+        '-fno-builtin',
+        '-fno-strict-aliasing',
+        '-D_GNU_SOURCE',
+        '-D_DEFAULT_SOURCE',
+        '-DBUILDING_LIBROOT=1',
+        '-DHAVE_ICU=1',
+        '-I/home/ruslan/haiku/generated/build_packages/icu74-74.1-3-x86_64/develop/headers/unicode',
+        '-DARCH_' + target_arch,
+        # Additional glibc-specific defines for C++
+        '-D__BEGIN_DECLS=extern "C" {',
+        '-D__END_DECLS=}',
+        '-D_LIBC=1',
+        '-DHAVE_CONFIG_H=1',
+    ],
+    
+    install: false
+)
+
+# Export for parent
+posix_glibc_dep = declare_dependency(
+    link_with: posix_glibc_lib
+)
+
+message('libroot POSIX glibc layer configured successfully')

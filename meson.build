@@ -1,10 +1,9 @@
 # Haiku OS - Meson Build System
 # Root build configuration integrating with existing Jam build system
 
-project('haiku', ['c', 'cpp'],
+project('haiku', 'c',
     version: '1.0.0-alpha',
     default_options: [
-        'cpp_std=c++17',
         'c_std=c11',
         'warning_level=1',
         'optimization=2',
@@ -12,6 +11,12 @@ project('haiku', ['c', 'cpp'],
     ],
     meson_version: '>=0.63.0'
 )
+
+# Subproject stdlib override removed - causes include path conflicts
+# Using direct cross-compiler configuration instead
+
+# Add C++ support after stdlib override
+add_languages('cpp', required: false, native: false)
 
 message('=== Haiku OS Meson Build System ===')
 
@@ -22,7 +27,7 @@ python = python_mod.find_installation('python3', required: true)
 # Execute HaikuCommon.py to get configuration
 haiku_config_result = run_command(
     python, 
-    meson.current_build_dir() / 'modules' / 'HaikuCommon.py',
+    meson.current_source_dir() / 'build' / 'meson' / 'modules' / 'HaikuCommon.py',
     check: true,
     capture: true
 )
@@ -33,8 +38,11 @@ endif
 
 message('Haiku configuration initialized successfully')
 
-# File system module
+# File system module  
 fs = import('fs')
+
+# Add custom modules directory
+add_languages('cpp', required: false)
 
 # Haiku root directory
 haiku_root = meson.current_source_dir()
@@ -43,6 +51,12 @@ haiku_root = meson.current_source_dir()
 target_arch = get_option('target_arch')
 run_without_registrar = get_option('run_without_registrar')  
 run_without_app_server = get_option('run_without_app_server')
+
+# Cross-compilation toolchain options
+use_jam_cross = get_option('use_jam_cross')
+jam_cross_tools_dir = get_option('jam_cross_tools_dir')
+external_cross_tools_dir = get_option('external_cross_tools_dir')
+auto_fix_cross_tools = get_option('auto_fix_cross_tools')
 
 # Proper Jam-style output directories
 objects_base = haiku_root + '/generated_meson/objects/haiku/' + target_arch + '/release'
@@ -53,6 +67,31 @@ message('Target architecture: ' + target_arch)
 message('Objects base directory: ' + objects_base)
 message('Kits output directory: ' + kits_output_dir)
 message('Libs output directory: ' + libs_output_dir)
+
+# Cross-tools configuration and compatibility
+message('Cross-tools configuration:')
+message('  Use Jam cross-tools: ' + use_jam_cross.to_string())
+if jam_cross_tools_dir != ''
+    message('  Jam cross-tools directory: ' + jam_cross_tools_dir)
+endif
+if external_cross_tools_dir != ''
+    message('  External cross-tools directory: ' + external_cross_tools_dir)
+endif
+message('  Auto-fix compatibility: ' + auto_fix_cross_tools.to_string())
+
+# Auto-fix cross-tools compatibility if enabled
+if auto_fix_cross_tools
+    cross_tools_fix = run_command(python, 
+        files('build/meson/modules/detect_build_features.py'),
+        '--fix-cross-tools', 
+        '--architecture', target_arch,
+        check: false)
+    if cross_tools_fix.returncode() == 0
+        message('✅ Cross-tools compatibility ensured')
+    else
+        warning('⚠️ Cross-tools compatibility check failed: ' + cross_tools_fix.stderr())
+    endif
+endif
 
 # Create a Python-based configuration object (simulated)
 # In a real implementation, this would use the Python module
@@ -161,11 +200,17 @@ haiku_config = {
 # Build subdirectories
 message('Building Haiku OS components...')
 
-# Build all Haiku kits
-subdir('src/kits')
+# Build system glue objects FIRST (required for linking)
+subdir('src/system/glue')
 
-# Build support libraries
+# Build libroot SECOND (required by everything else)
+subdir('src/system/libroot')
+
+# Build support libraries (required by kits)
 subdir('src/libs')
+
+# Build all Haiku kits (depends on libraries)
+subdir('src/kits')
 
 # Future: Add other major Haiku components
 # subdir('src/servers')      # System servers

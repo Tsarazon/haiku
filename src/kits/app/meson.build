@@ -76,14 +76,9 @@ build_pkg_paths = [
     build_packages_base + '/' + zlib_package + '/develop/headers',
     build_packages_base + '/' + zstd_package + '/develop/headers', 
     build_packages_base + '/' + icu_package + '/develop/headers',
-    # GCC C++ headers
-    build_packages_base + '/' + gcc_package + '/develop/headers/c++',
-    build_packages_base + '/' + gcc_package + '/develop/headers/c++/' + target_arch + '-unknown-haiku',
-    build_packages_base + '/' + gcc_package + '/develop/headers/c++/backward',
-    build_packages_base + '/' + gcc_package + '/develop/headers/c++/ext',
-    # GCC built-in headers
-    build_packages_base + '/' + gcc_package + '/develop/headers/gcc/include',
-    build_packages_base + '/' + gcc_package + '/develop/headers/gcc/include-fixed',
+    # GCC C++ headers REMOVED - they conflict with cross-tools and break #include_next
+    # The cross-compiler automatically finds its own C++ headers
+    # Adding them explicitly breaks the include path ordering for #include_next
 ]
 
 foreach pkg_path : build_pkg_paths
@@ -112,15 +107,14 @@ app_kit_lib = static_library(
 )
 
 # Create merged object file app_kit.o (equivalent to Jamfile MergeObject)
-# Output to generated_meson mirroring Jam structure: /generated_meson/objects/haiku/x86_64/release/kits/app/app_kit.o
-app_kit_output_dir = haiku_config['kits_output_dir'] + '/app'
 app_kit_merged = custom_target(
     'app_kit.o',
     input: app_kit_lib,
     output: 'app_kit.o',
     command: [
         'sh', '-c',
-        'mkdir -p ' + app_kit_output_dir + ' && /home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r -o ' + app_kit_output_dir + '/app_kit.o @INPUT@.p/*.o'
+        '/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r -o "$1" "$2".p/*.o',
+        'sh', '@OUTPUT@', '@INPUT@'
     ],
     build_by_default: true,
     install: false
