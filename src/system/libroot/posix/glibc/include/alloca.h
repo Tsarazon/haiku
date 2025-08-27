@@ -1,8 +1,7 @@
 #ifndef _GLIBC_ALLOCA_H
 #define _GLIBC_ALLOCA_H
 
-#include <stddef.h>
-#include <alloca.h>
+#include_next <alloca.h>
 
 /* Now define the internal interfaces.  */
 #define __MAX_ALLOCA_CUTOFF	65536

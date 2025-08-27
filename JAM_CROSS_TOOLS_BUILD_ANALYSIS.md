@@ -13,7 +13,7 @@ This document analyzes how Jam creates cross-compilation tools with integrated l
 └── [various support scripts]
 
 /home/ruslan/haiku/
-├── build_cross_tools.sh       # Wrapper script for modern builds
+├── build/meson/scripts/build_cross_tools.sh  # Wrapper script for modern builds
 └── Jamrules                   # Main Jam configuration
 ```
 
@@ -137,7 +137,7 @@ SharedLibrary libbe.so :
 
 ## Cross-Tools Build Process
 
-### 1. Buildtools Compilation (`build_cross_tools.sh`)
+### 1. Buildtools Compilation (`build/meson/scripts/build_cross_tools.sh`)
 ```bash
 #!/bin/bash
 ARCH=${1:-x86_64}

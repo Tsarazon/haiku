@@ -129,34 +129,30 @@ glibc_libio_lib = static_library('glibc_libio',
     glibc_libio_sources,
     
     include_directories: [
-        haiku_config['get_all_include_dirs'],
-        # From Jamfile: SubDirSysHdrs include/arch/TARGET_ARCH
+        # From Jamfile: SubDirSysHdrs - glibc directories FIRST
         include_directories('../include/arch/' + target_arch),
-        # From Jamfile: SubDirSysHdrs include/arch/generic
         include_directories('../include/arch/generic'),
-        # From Jamfile: SubDirSysHdrs stdio-common
         include_directories('../stdio-common'),
-        # From Jamfile: SubDirSysHdrs libio
-        include_directories('.'),
-        # From Jamfile: SubDirSysHdrs include
+        include_directories('.'),  # libio
         include_directories('../include'),
-        # From Jamfile: SubDirSysHdrs locale
         include_directories('../locale'),
-        # From Jamfile: SubDirSysHdrs glibc root
-        include_directories('..'),
-        # From Jamfile: SubDirSysHdrs iconv
+        include_directories('..'),  # glibc root
         include_directories('../iconv'),
-        # From Jamfile: UsePrivateHeaders libroot (included in haiku_config)
+        # Haiku system headers - CRITICAL for glibc compilation (relative from src/system/libroot/posix/glibc/libio)
+        include_directories('../../../../../../headers'),
+        include_directories('../../../../../../headers/os'),
+        include_directories('../../../../../../headers/os/support'),
+        include_directories('../../../../../../headers/posix'),
+        include_directories('../../../../../../headers/private/libroot'),
     ],
     
     c_args: [
+        # Don't use -nostdinc for glibc - it needs system headers for inline assembly
         '-fno-builtin',
         '-fno-strict-aliasing',
         '-D_GNU_SOURCE',  # From Jamfile: SubDirCcFlags -D_GNU_SOURCE -DUSE_IN_LIBIO
         '-DUSE_IN_LIBIO',
-        '-D_DEFAULT_SOURCE',
-        '-DBUILDING_LIBROOT=1',
-        '-DARCH_' + target_arch,
+        # Note: __mbstate_t is defined in libio.h, don't redefine here
     ],
     
     cpp_args: [

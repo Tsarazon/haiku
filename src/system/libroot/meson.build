@@ -28,7 +28,7 @@ libroot = shared_library('root',
         posix_arch_dep,
         # All POSIX modules (from subdir calls in posix/meson.build)
         posix_crypt_dep,
-        # posix_glibc_dep,  # Temporarily disabled - complex dependency issues
+        posix_glibc_dep,  # Re-enabled to provide stdio functions
         posix_locale_dep,
         posix_malloc_dep,
         posix_musl_dep,

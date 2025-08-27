@@ -6,12 +6,15 @@ message('Building libroot OS layer...')
 # Architecture detection
 target_arch = get_option('target_arch')
 
-# Generate syscalls.S.inc from syscalls.h
-python_prog = find_program('python3')
+# Generate syscalls.S.inc using gensyscalls tool
+# First try to find Meson-built version, fallback to JAM-built
+gensyscalls_tool = find_program('gensyscalls_meson', 
+    '/home/ruslan/haiku/generated/objects/linux/x86_64/release/tools/gensyscalls/gensyscalls_x86_64',
+    required: true)
+
 syscalls_generator = custom_target('syscalls_inc',
-    input: '../../../../headers/private/system/syscalls.h',
     output: 'syscalls.S.inc',
-    command: [python_prog, meson.project_source_root() + '/build/meson/scripts/generate_syscalls.py', '@INPUT@', '@OUTPUT@'],
+    command: [gensyscalls_tool, '-c', '@OUTPUT@'],
     build_by_default: true
 )
 
@@ -45,6 +48,17 @@ os_sources = files([
     'thread.c',
     'time.cpp',
     'wait_for_objects.cpp',
+    
+    # locks
+    'locks/init_once.cpp',
+    'locks/mutex.cpp',  
+    'locks/recursive_lock.cpp',
+    'locks/rw_lock.cpp',
+])
+
+# KMessage.cpp from kernel messaging  
+kmessage_source = files([
+    '../../kernel/messaging/KMessage.cpp'
 ])
 
 # Architecture-specific subdirectory
@@ -52,7 +66,7 @@ subdir('arch/' + target_arch)
 
 # Build OS layer object library
 os_main_lib = static_library('os_main',
-    os_sources,
+    [os_sources, kmessage_source],
     
     # Add generated syscalls as dependency
     dependencies: [declare_dependency(sources: syscalls_generator)],

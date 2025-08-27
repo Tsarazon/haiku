@@ -58,6 +58,21 @@ jam_cross_tools_dir = get_option('jam_cross_tools_dir')
 external_cross_tools_dir = get_option('external_cross_tools_dir')
 auto_fix_cross_tools = get_option('auto_fix_cross_tools')
 
+# Cross-tools build options
+build_cross_tools_with_meson = get_option('build_cross_tools_with_meson')
+cross_tools_buildtools_dir = get_option('cross_tools_buildtools_dir')
+cross_tools_jobs = get_option('cross_tools_jobs')
+cross_tools_output_dir = get_option('cross_tools_output_dir')
+
+# Optional packages configuration
+beos_compatibility = get_option('beos_compatibility')
+development_env = get_option('development_env')
+include_git = get_option('include_git')
+include_webpositive = get_option('include_webpositive')
+include_welcome = get_option('include_welcome')
+include_bebook = get_option('include_bebook')
+include_sources = get_option('include_sources')
+
 # Proper Jam-style output directories
 objects_base = haiku_root + '/generated_meson/objects/haiku/' + target_arch + '/release'
 kits_output_dir = objects_base + '/kits'
@@ -78,6 +93,24 @@ if external_cross_tools_dir != ''
     message('  External cross-tools directory: ' + external_cross_tools_dir)
 endif
 message('  Auto-fix compatibility: ' + auto_fix_cross_tools.to_string())
+message('  Build cross-tools with Meson: ' + build_cross_tools_with_meson.to_string())
+if cross_tools_output_dir != ''
+    message('  Cross-tools output directory: ' + cross_tools_output_dir)
+else
+    message('  Cross-tools output directory: auto-detect (generated for Jam, builddir for Meson)')
+endif
+
+# Configure optional packages
+message('Optional packages configuration:')
+message('  BeOS compatibility: ' + beos_compatibility.to_string())
+message('  Development environment: ' + development_env)
+message('  Include Git: ' + include_git.to_string())
+message('  Include WebPositive: ' + include_webpositive.to_string())
+message('  Include Welcome: ' + include_welcome.to_string())
+message('  Include BeBook: ' + include_bebook.to_string())
+message('  Include sources: ' + include_sources.to_string())
+
+# Optional packages will be handled by build targets that use these options
 
 # Auto-fix cross-tools compatibility if enabled
 if auto_fix_cross_tools
@@ -91,6 +124,70 @@ if auto_fix_cross_tools
     else
         warning('⚠️ Cross-tools compatibility check failed: ' + cross_tools_fix.stderr())
     endif
+endif
+
+# Build cross-tools with Meson wrapper if enabled
+if build_cross_tools_with_meson
+    message('Building cross-tools with Meson wrapper...')
+    
+    # Determine buildtools directory
+    buildtools_dir = cross_tools_buildtools_dir
+    if not fs.is_absolute(buildtools_dir)
+        buildtools_dir = haiku_root / buildtools_dir
+    endif
+    
+    # Auto-detect jobs if not specified
+    jobs_arg = cross_tools_jobs
+    if jobs_arg == 0
+        jobs_arg = run_command('nproc', check: false).returncode() == 0 ? run_command('nproc', capture: true).stdout().strip().to_int() : 4
+    endif
+    
+    # Determine cross-tools output directory
+    if cross_tools_output_dir != ''
+        # User-specified directory
+        cross_tools_dir = fs.is_absolute(cross_tools_output_dir) ? cross_tools_output_dir : haiku_root / cross_tools_output_dir
+    else
+        # Auto-detect: "generated" for Jam compatibility, "builddir" for Meson
+        if use_jam_cross
+            cross_tools_dir = haiku_root / 'generated' / ('cross-tools-' + target_arch)
+        else
+            cross_tools_dir = haiku_root / 'builddir' / ('cross-tools-' + target_arch)
+        endif
+    endif
+    
+    # Build cross-tools using wrapper
+    cross_tools_build = custom_target('build-cross-tools',
+        output: 'cross-tools-built.stamp',
+        command: [
+            haiku_root / 'build/scripts/build_cross_tools_gcc4',
+            target_arch + '-unknown-haiku',
+            haiku_root,
+            buildtools_dir,
+            cross_tools_dir,
+            '-j' + jobs_arg.to_string()
+        ],
+        console: true,
+        build_by_default: true,
+        install: false
+    )
+    
+    message('Cross-tools will be built to: ' + cross_tools_dir)
+    
+    # Regenerate cross-file after build
+    cross_file_regen = custom_target('regenerate-cross-file',
+        input: cross_tools_build,
+        output: 'cross-file-regenerated.stamp',
+        command: [
+            python,
+            haiku_root / 'build/meson/modules/detect_build_features.py',
+            '--generate-cross-file',
+            '--architecture', target_arch,
+            '--output', haiku_root / 'build/meson' / ('haiku-' + target_arch + '-cross-dynamic.ini')
+        ],
+        build_by_default: true
+    )
+    
+    message('Cross-compilation file will be updated after cross-tools build')
 endif
 
 # Create a Python-based configuration object (simulated)

@@ -1,5 +1,6 @@
 # Haiku Interface Kit - Meson Build Configuration
 # This builds interface_kit.o matching the exact Jam build system output
+# Uses HaikuCommon integrated JAM rules system (MainBuildRules + HeadersRules + BuildFeatures)
 
 # Interface Kit sources (exactly from interface/Jamfile)
 interface_kit_sources = [
@@ -172,7 +173,7 @@ interface_kit_merged = custom_target('interface_kit',
     output: 'interface_kit.o',
     command: [
         'sh', '-c',
-        '/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r -o "$1" "$2".p/*.o',
+        '/home/ruslan/haiku/generated/cross-tools-x86_64/bin/x86_64-unknown-haiku-ld -r --whole-archive -o "$1" "$2"',
         'sh', '@OUTPUT@', '@INPUT@'
     ],
     build_by_default: true,

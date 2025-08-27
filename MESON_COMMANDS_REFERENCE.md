@@ -54,12 +54,12 @@ meson test -C builddir
 /home/ruslan/haiku/
 ├── builddir/                          # Meson build directory (KEEP THIS)
 │   ├── build.ninja                    # Generated build files
-│   └── meson-*                        # Meson internal files
+│   ├── meson-*                        # Meson internal files
+│   └── src/                           # Built objects and libraries
+│       └── kits/                      # Kit object files and libbe.so
 ├── build/meson/                       # Configuration files
 │   ├── haiku-x86_64-cross.ini        # Cross-compilation setup
 │   └── modules/HaikuCommon.py         # Custom configuration
-├── generated_meson/                   # Output files
-│   └── objects/haiku/x86_64/release/  # Built objects and libraries
 └── src/kits/                          # Source with meson.build files
 ```
 
@@ -82,7 +82,6 @@ meson compile -C builddir src/kits/libbe.so.1.0.0
 ```bash
 # DON'T DELETE BUILD DIRECTORY
 rm -rf builddir                        # ❌ WRONG!
-rm -rf generated_meson                 # ❌ WRONG!
 
 # DON'T USE NINJA DIRECTLY
 ninja -C builddir                      # ❌ Use meson compile instead
@@ -92,20 +91,19 @@ ninja -C builddir                      # ❌ Use meson compile instead
 
 ```bash
 # Check file sizes
-ls -la /home/ruslan/haiku/generated_meson/objects/haiku/x86_64/release/kits/*.o
-ls -la /home/ruslan/haiku/generated/objects/haiku/x86_64/release/kits/*.o
+ls -la /home/ruslan/haiku/builddir/src/kits/*.o
+ls -la /home/ruslan/haiku/builddir/src/kits/*/*.o
 
-# Compare libraries
-ls -la /home/ruslan/haiku/generated_meson/objects/haiku/x86_64/release/kits/libbe.so*
-ls -la /home/ruslan/haiku/generated/objects/haiku/x86_64/release/kits/libbe.so*
+# Check libraries
+ls -la /home/ruslan/haiku/builddir/src/kits/libbe.so*
 
 # Check symbols
 nm file.so | wc -l                     # Count symbols
 objdump -h file.so                     # Check sections
 
 # Find files
-find /home/ruslan/haiku -name "*_kit.o" -type f -exec ls -la {} \;
-find /home/ruslan/haiku -name "libbe.so*" -type f
+find /home/ruslan/haiku/builddir -name "*_kit.o" -type f -exec ls -la {} \;
+find /home/ruslan/haiku/builddir -name "libbe.so*" -type f
 ```
 
 ## 🚨 **Current Status:**
@@ -129,4 +127,4 @@ find /home/ruslan/haiku -name "libbe.so*" -type f
 ---
 
 *Created: August 23, 2025*  
-*Last Updated: When you stop being an idiot and use these commands*
+*Last Updated: August 26, 2025 - Removed outdated /generated_meson/ references*

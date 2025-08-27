@@ -6,6 +6,11 @@ message('Building libroot POSIX musl layer...')
 # Architecture detection
 target_arch = get_option('target_arch')
 
+# Include subdirectories for additional musl components
+subdir('stdlib')
+subdir('string') 
+subdir('time')
+
 # Core musl implementation sources (architecture-independent)
 posix_musl_sources = files([
     # Complex math functions
@@ -375,6 +380,12 @@ endif
 posix_musl_lib = static_library('posix_musl',
     posix_musl_sources,
     posix_musl_arch_sources,
+    
+    link_with: [
+        musl_stdlib,
+        musl_string,
+        musl_time,
+    ],
     
     include_directories: [
         include_directories('include'),  # musl's features.h must come first

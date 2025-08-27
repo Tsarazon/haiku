@@ -17,23 +17,16 @@ glibc_iconv_lib = static_library('glibc_iconv',
     glibc_iconv_sources,
     
     include_directories: [
-        haiku_config['get_all_include_dirs'],
-        # From Jamfile: SubDirSysHdrs include/arch/TARGET_ARCH
+        # From Jamfile: SubDirSysHdrs - glibc directories FIRST
         include_directories('../include/arch/' + target_arch),
-        # From Jamfile: SubDirSysHdrs include/arch/generic
         include_directories('../include/arch/generic'),
-        # From Jamfile: SubDirSysHdrs include
         include_directories('../include'),
-        # From Jamfile: SubDirSysHdrs libio
         include_directories('../libio'),
-        # From Jamfile: SubDirSysHdrs ctype (directory doesn't exist, removed)
-        # From Jamfile: SubDirSysHdrs iconv
-        include_directories('.'),
-        # From Jamfile: SubDirSysHdrs locale
+        include_directories('.'),  # iconv
         include_directories('../locale'),
-        # From Jamfile: SubDirSysHdrs glibc root
-        include_directories('..'),
-        # From Jamfile: UsePrivateHeaders libroot (included in haiku_config)
+        include_directories('..'),  # glibc root
+        # From Jamfile: UsePrivateHeaders libroot - use haiku_config includes
+        haiku_config['get_all_include_dirs'],
     ],
     
     c_args: [
@@ -41,15 +34,7 @@ glibc_iconv_lib = static_library('glibc_iconv',
         '-fno-strict-aliasing',
         '-D_GNU_SOURCE',  # From Jamfile: SubDirCcFlags -D_GNU_SOURCE -DUSE_IN_LIBIO
         '-DUSE_IN_LIBIO',
-        '-D_DEFAULT_SOURCE',
-        '-DBUILDING_LIBROOT=1',
-        '-DARCH_' + target_arch,
-        '-D__BEGIN_DECLS=',
-        '-D__END_DECLS=',
-        '-D_LIBC=1',
-        '-DHAVE_CONFIG_H=1',
-        '-DSHARED=1',
-        '-DDO_VERSIONING=1',
+        '-D__mbstate_t=mbstate_t',  # Map glibc internal type to Haiku type
     ],
     
     cpp_args: [

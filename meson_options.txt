@@ -46,3 +46,61 @@ option('auto_fix_cross_tools',
        type: 'boolean',
        value: true,
        description: 'Automatically fix cross-tools compatibility for Meson (create symlinks)')
+
+# Cross-tools build integration
+option('build_cross_tools_with_meson', 
+       type: 'boolean', 
+       value: false,
+       description: 'Build cross-tools using Meson wrapper instead of direct script execution')
+
+option('cross_tools_buildtools_dir',
+       type: 'string', 
+       value: 'buildtools',
+       description: 'Path to buildtools directory for cross-tools compilation')
+
+option('cross_tools_jobs',
+       type: 'integer',
+       value: 0,
+       description: 'Number of parallel jobs for cross-tools build (0 = auto-detect)')
+
+option('cross_tools_output_dir',
+       type: 'string',
+       value: '',
+       description: 'Output directory for cross-tools (empty = auto-detect: "generated" for Jam compatibility, "builddir" for Meson)')
+
+# Optional packages for Haiku image
+option('beos_compatibility', 
+       type: 'boolean', 
+       value: false,
+       description: 'Include BeOS compatibility layer (x86 only)')
+
+option('development_env', 
+       type: 'combo', 
+       choices: ['none', 'min', 'base', 'full'], 
+       value: 'none',
+       description: 'Development environment level (none/min/base/full)')
+
+option('include_git', 
+       type: 'boolean', 
+       value: false,
+       description: 'Include Git version control system')
+
+option('include_webpositive', 
+       type: 'boolean', 
+       value: true,
+       description: 'Include WebPositive browser')
+
+option('include_welcome', 
+       type: 'boolean', 
+       value: true,
+       description: 'Include Welcome documentation')
+
+option('include_bebook', 
+       type: 'boolean', 
+       value: false,
+       description: 'Include BeBook API documentation')
+
+option('include_sources', 
+       type: 'boolean', 
+       value: false,
+       description: 'Include Haiku source code in image')
