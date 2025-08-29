@@ -14,7 +14,7 @@ local sourceDirs =
 ;
 
 # system headers
-UseLibraryHeaders agg icon ;
+UseLibraryHeaders blend2d icon ;
 
 UsePrivateHeaders shared ;
 
