@@ -1,0 +1,157 @@
+SubDir HAIKU_TOP src libs blend2d ;
+
+AddSubDirSupportedPlatforms libbe_test ;
+
+UseLibraryHeaders blend2d ;
+
+SubDirCcFlags -w -O2 -fno-strict-aliasing -fvisibility=hidden -DBL_STATIC -DBL_NO_STDCXX -DASMJIT_STATIC -DASMJIT_NO_STDCXX ;
+SubDirC++Flags -w -O2 -fno-strict-aliasing -fvisibility=hidden -DBL_STATIC -DBL_NO_STDCXX -ASMJIT_STATIC -DASMJIT_NO_STDCXX ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) ] ;
+
+		StaticLibrary [ MultiArchDefaultGristFiles libblend2d.a ] :
+			# Core Blend2D sources
+			api-build.cpp
+			api-globals.cpp
+			api-impl.cpp
+			api-nocxx.cpp
+			array.cpp
+			bitarray.cpp
+			bitset.cpp
+			context.cpp
+			font.cpp
+			fontdata.cpp
+			fontface.cpp
+			fontfeaturesettings.cpp
+			fontmanager.cpp
+			fonttagdata.cpp
+			fonttagdataids.cpp
+			fontvariationsettings.cpp
+			format.cpp
+			geometry.cpp
+			gradient.cpp
+			image.cpp
+			imagecodec.cpp
+			imagedecoder.cpp
+			imageencoder.cpp
+			matrix.cpp
+			object.cpp
+			path.cpp
+			pattern.cpp
+			pixelconverter.cpp
+			random.cpp
+			region.cpp
+			runtime.cpp
+			string.cpp
+			style.cpp
+			var.cpp
+			
+			# Support and algorithms
+			support/algorithm.cpp
+			support/math.cpp
+			support/memops.cpp
+			tables/tables.cpp
+			
+			# Image codecs
+			codec/bmpcodec.cpp
+			codec/jpegcodec.cpp
+			codec/pngcodec.cpp
+			codec/qoicodec.cpp
+			
+			# Compression
+			compression/deflate.cpp
+			compression/zlib.cpp
+			
+			# OpenType font engine
+			opentype/otcff.cpp
+			opentype/otcmap.cpp
+			opentype/otcore.cpp
+			opentype/otdefs.cpp
+			opentype/otface.cpp
+			opentype/otglyf.cpp
+			opentype/othb.cpp
+			opentype/otkern.cpp
+			opentype/otlayout.cpp
+			opentype/otmetrics.cpp
+			opentype/otname.cpp
+			
+			# Pipeline (rendering engine)
+			pipeline/pipedefs.cpp
+			pipeline/pipegencore.cpp
+			pipeline/pipegenruntime.cpp
+			pipeline/pipegen.cpp
+			
+			# JIT pipeline (performance critical)
+			pipeline/jit/compoppart.cpp
+			pipeline/jit/fetchpart.cpp
+			pipeline/jit/fetchpixelptrpart.cpp
+			pipeline/jit/fetchsolidpart.cpp
+			pipeline/jit/fillpart.cpp
+			pipeline/jit/jitbase.cpp
+			pipeline/jit/pipecompiler.cpp
+			pipeline/jit/pipefunction.cpp
+			pipeline/jit/pipegencore.cpp
+			pipeline/jit/pipejitruntime.cpp
+			pipeline/jit/pipepart.cpp
+			pipeline/jit/pipeprimitives.cpp
+			
+			# Threading support
+			threading/atomic.cpp
+			threading/conditionvariable.cpp
+			threading/mutex.cpp
+			threading/thread.cpp
+			threading/threadpool.cpp
+			threading/uniqueidgenerator.cpp
+			
+			# AsmJit JIT compiler (embedded)
+			asmjit/core/archtraits.cpp
+			asmjit/core/assembler.cpp
+			asmjit/core/builder.cpp
+			asmjit/core/codebuffer.cpp
+			asmjit/core/codeholder.cpp
+			asmjit/core/compiler.cpp
+			asmjit/core/constpool.cpp
+			asmjit/core/cpuinfo.cpp
+			asmjit/core/emitter.cpp
+			asmjit/core/emithelper.cpp
+			asmjit/core/environment.cpp
+			asmjit/core/errorhandler.cpp
+			asmjit/core/formatter.cpp
+			asmjit/core/func.cpp
+			asmjit/core/funcargscontext.cpp
+			asmjit/core/globals.cpp
+			asmjit/core/inst.cpp
+			asmjit/core/jitallocator.cpp
+			asmjit/core/jitruntime.cpp
+			asmjit/core/logger.cpp
+			asmjit/core/operand.cpp
+			asmjit/core/osutils.cpp
+			asmjit/core/ralocal.cpp
+			asmjit/core/rapass.cpp
+			asmjit/core/rastack.cpp
+			asmjit/core/string.cpp
+			asmjit/core/support.cpp
+			asmjit/core/target.cpp
+			asmjit/core/type.cpp
+			asmjit/core/virtmem.cpp
+			asmjit/core/zone.cpp
+			asmjit/core/zonehash.cpp
+			asmjit/core/zonelist.cpp
+			asmjit/core/zonestack.cpp
+			asmjit/core/zonetree.cpp
+			asmjit/core/zonevector.cpp
+			asmjit/x86/x86assembler.cpp
+			asmjit/x86/x86builder.cpp
+			asmjit/x86/x86compiler.cpp
+			asmjit/x86/x86emithelper.cpp
+			asmjit/x86/x86formatter.cpp
+			asmjit/x86/x86func.cpp
+			asmjit/x86/x86instapi.cpp
+			asmjit/x86/x86instdb.cpp
+			asmjit/x86/x86rapass.cpp
+			;
+	}
+}

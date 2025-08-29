@@ -10,15 +10,7 @@
 #define ICON_RENDERER_H
 
 
-#include <agg_gamma_lut.h>
-#include <agg_pixfmt_rgba.h>
-#include <agg_rasterizer_compound_aa.h>
-#include <agg_rendering_buffer.h>
-#include <agg_renderer_scanline.h>
-#include <agg_scanline_bin.h>
-#include <agg_scanline_u.h>
-#include <agg_span_allocator.h>
-#include <agg_trans_affine.h>
+#include <blend2d.h>
 
 #include "IconBuild.h"
 #include "Transformable.h"
@@ -33,20 +25,17 @@ _BEGIN_ICON_NAMESPACE
 
 class Icon;
 
-typedef agg::gamma_lut
-			<agg::int8u, agg::int8u>		GammaTable;
+// Blend2D replacements for AGG types
+typedef BLImage                             RenderingBuffer;
+typedef BLFormat                            PixelFormat;
+typedef BLFormat                            PixelFormatPre;
+typedef BLContext                           BaseRenderer;
+typedef BLContext                           BaseRendererPre;
 
-typedef agg::rendering_buffer				RenderingBuffer;
-typedef agg::pixfmt_bgra32					PixelFormat;
-typedef agg::pixfmt_bgra32_pre				PixelFormatPre;
-typedef agg::renderer_base<PixelFormat>		BaseRenderer;
-typedef agg::renderer_base<PixelFormatPre>	BaseRendererPre;
-
-typedef agg::scanline_u8					Scanline;
-typedef agg::scanline_bin					BinaryScanline;
-typedef agg::span_allocator<agg::rgba8>		SpanAllocator;
-typedef agg::rasterizer_compound_aa
-			<agg::rasterizer_sl_clip_dbl>	CompoundRasterizer;
+typedef BLContext                           Scanline;
+typedef BLContext                           BinaryScanline;
+typedef BLContext                           SpanAllocator;
+typedef BLContext                           CompoundRasterizer;
 
 class IconRenderer {
  public:
@@ -70,12 +59,9 @@ class IconRenderer {
 									// colorspace and size need to
 									// be the same as bitmap passed
 									// to constructor
-			void				SetBackground(const agg::rgba8& color);
+			void				SetBackground(const BLRgba32& color);
 									// used when no background bitmap
 									// is set
-
-			const _ICON_NAMESPACE GammaTable& GammaTable() const
-									{ return fGammaTable; }
 
 			void				Demultiply();
 
@@ -92,22 +78,13 @@ class IconRenderer {
 
 			BBitmap*			fBitmap;
 			const BBitmap*		fBackground;
-			agg::rgba8			fBackgroundColor;
+			BLRgba32			fBackgroundColor;
 			const Icon*			fIcon;
 
-			_ICON_NAMESPACE GammaTable fGammaTable;
-
-			RenderingBuffer		fRenderingBuffer;
-			PixelFormat			fPixelFormat;
-			PixelFormatPre		fPixelFormatPre;
-			BaseRenderer		fBaseRenderer;
-			BaseRendererPre		fBaseRendererPre;
-
-			Scanline			fScanline;
-			BinaryScanline		fBinaryScanline;
-			SpanAllocator		fSpanAllocator;
-
-			CompoundRasterizer	fRasterizer;
+			// Blend2D rendering objects
+			BLImage				fRenderingImage;
+			BLContext			fContext;
+			BLFormat			fPixelFormat;
 
 			Transformable		fGlobalTransform;
 };

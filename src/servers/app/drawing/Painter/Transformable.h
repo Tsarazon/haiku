@@ -1,8 +1,9 @@
 /*
  * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>. All rights reserved.
+ * Copyright 2024, Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * A handy front-end to agg::trans_affine transformation matrix.
+ * A handy front-end to BLMatrix2D transformation matrix (migrated from AGG).
  *
  */
 
@@ -13,10 +14,9 @@
 #include <Archivable.h>
 #include <Rect.h>
 
-#include <agg_trans_affine.h>
+#include <blend2d.h>
 
-class Transformable : public BArchivable,
-					  public agg::trans_affine {
+class Transformable : public BArchivable {
  public:
 								Transformable();
 								Transformable(const Transformable& other);
@@ -32,7 +32,7 @@ class Transformable : public BArchivable,
 
 								// set to or combine with other matrix
 			void				SetTransformable(const Transformable& other);
-			Transformable&		operator=(const agg::trans_affine& other);
+			Transformable&		operator=(const BLMatrix2D& other);
 			Transformable&		operator=(const Transformable& other);
 			Transformable&		Multiply(const Transformable& other);
 			void				Reset();
@@ -64,6 +64,13 @@ class Transformable : public BArchivable,
 	virtual	void				ShearBy(BPoint origin, double xShear, double yShear);
 
 	virtual	void				TransformationChanged() {}
+
+	// Access to underlying matrix
+	const BLMatrix2D&		Matrix() const { return fMatrix; }
+	BLMatrix2D&				Matrix() { return fMatrix; }
+
+private:
+	BLMatrix2D				fMatrix;	// Replaces agg::trans_affine inheritance
 };
 
 #endif // TRANSFORMABLE_H

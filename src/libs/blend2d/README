@@ -1,0 +1,34 @@
+# Blend2D Integration for Haiku
+
+## Overview
+Blend2D is a high-performance 2D vector graphics engine with JIT compilation capabilities.
+This integration replaces the Anti-Grain Geometry (AGG) library in Haiku's graphics stack.
+
+## License
+Zlib License - Compatible with Haiku's MIT-style licensing
+
+## Build Configuration
+- Static linking (libblend2d.a)
+- JIT compiler enabled for performance
+- SIMD optimizations (SSE2 to AVX-512)
+- Multi-threaded rendering support
+
+## Integration Points
+- Main rendering context: BLContext replaces AGG rasterizer/renderer pipeline
+- Vector paths: BLPath replaces agg::path_storage
+- Transformations: BLMatrix2D replaces agg::trans_affine
+- Text rendering: BLFont replaces AGGTextRenderer
+- Images: BLImage replaces agg::rendering_buffer
+
+## Performance Benefits
+- JIT-compiled rendering pipelines
+- Modern SIMD vectorization
+- Multi-threaded rendering
+- Efficient memory management
+- Active development and optimization
+
+## Build Dependencies
+- CMake (for upstream Blend2D build)
+- C++17 compatible compiler
+- Threading support (pthread on Haiku)
+- No external dependencies (AsmJit embedded)

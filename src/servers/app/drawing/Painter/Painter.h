@@ -12,16 +12,16 @@
 #define PAINTER_H
 
 
-#include "AGGTextRenderer.h"
+#include "Blend2DTextRenderer.h"
 #include "FontManager.h"
-#include "PainterAggInterface.h"
+#include "PainterBlend2DInterface.h"
 #include "PatternHandler.h"
 #include "ServerFont.h"
 #include "Transformable.h"
 
 #include "defines.h"
 
-#include <agg_conv_curve.h>
+#include <blend2d.h>
 
 #include <AffineTransform.h>
 #include <Font.h>
@@ -304,10 +304,10 @@ private:
 									const BGradient& gradient);
 
 			void				_CalcLinearGradientTransform(BPoint startPoint,
-									BPoint endPoint, agg::trans_affine& mtx,
+									BPoint endPoint, BLMatrix2D& mtx,
 									float gradient_d2 = 100.0f) const;
 			void				_CalcRadialGradientTransform(BPoint center,
-									agg::trans_affine& mtx,
+									BLMatrix2D& mtx,
 									float gradient_d2 = 100.0f) const;
 
 			void				_MakeGradient(const BGradient& gradient,
@@ -318,11 +318,9 @@ private:
 			void				_MakeGradient(Array& array,
 									const BGradient& gradient) const;
 
-			template<class VertexSource, typename GradientFunction>
-			void				_RasterizePath(VertexSource& path,
+			void				_RasterizePath(const BLPath& path,
 									const BGradient& gradient,
-									GradientFunction function,
-									agg::trans_affine& gradientTransform,
+									BLMatrix2D& gradientTransform,
 									int gradientStop = 100);
 
 private:
@@ -352,9 +350,9 @@ private:
 	// a class handling rendering and caching of glyphs
 	// it is setup to load from a specific Freetype supported
 	// font file which it gets from ServerFont
-	mutable	AGGTextRenderer		fTextRenderer;
+	mutable	Blend2DTextRenderer	fTextRenderer;
 
-	mutable	PainterAggInterface	fInternal;
+	mutable	PainterBlend2DInterface	fInternal;
 };
 
 
