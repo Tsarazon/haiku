@@ -21,7 +21,8 @@ InputManager* gInputManager;
 
 
 InputManager::InputManager()
-	: BLocker("input manager"),
+	:
+	BLocker("input manager"),
 	fFreeStreams(2),
 	fUsedStreams(2)
 {
@@ -54,16 +55,16 @@ InputManager::GetStream()
 {
 	BAutolock _(this);
 	
-	EventStream* stream = NULL;
+	auto* stream = static_cast<EventStream*>(nullptr);
 	do {
 		delete stream;
 			// this deletes the previous invalid stream
 
 		stream = fFreeStreams.RemoveItemAt(0);
-	} while (stream != NULL && !stream->IsValid());
+	} while (stream != nullptr && !stream->IsValid());
 
-	if (stream == NULL)
-		return NULL;
+	if (stream == nullptr)
+		return nullptr;
 
 	fUsedStreams.AddItem(stream);
 	return stream;
@@ -73,7 +74,7 @@ InputManager::GetStream()
 void
 InputManager::PutStream(EventStream* stream)
 {
-	if (stream == NULL)
+	if (stream == nullptr)
 		return;
 
 	BAutolock _(this);
@@ -91,11 +92,11 @@ InputManager::UpdateScreenBounds(BRect bounds)
 {
 	BAutolock _(this);
 
-	for (int32 i = fUsedStreams.CountItems(); i-- > 0;) {
+	for (auto i = fUsedStreams.CountItems(); i-- > 0;) {
 		fUsedStreams.ItemAt(i)->UpdateScreenBounds(bounds);
 	}
 
-	for (int32 i = fFreeStreams.CountItems(); i-- > 0;) {
+	for (auto i = fFreeStreams.CountItems(); i-- > 0;) {
 		fFreeStreams.ItemAt(i)->UpdateScreenBounds(bounds);
 	}
 }

@@ -84,47 +84,32 @@ resize_frame(IntRect& frame, uint32 resizingMode, int32 x, int32 y)
 View::View(IntRect frame, IntPoint scrollingOffset, const char* name,
 		int32 token, uint32 resizeMode, uint32 flags)
 	:
-	fName(name),
-	fToken(token),
+	fName{name},
+	fToken{token},
 
-	fFrame(frame),
-	fScrollingOffset(scrollingOffset),
+	fFrame{frame},
+	fScrollingOffset{scrollingOffset},
 
-	fViewColor((rgb_color){ 255, 255, 255, 255 }),
-	fWhichViewColor(B_NO_COLOR),
-	fWhichViewColorTint(B_NO_TINT),
-	fViewBitmap(NULL),
-	fBitmapResizingMode(0),
-	fBitmapOptions(0),
+	fViewColor{255, 255, 255, 255},
+	fWhichViewColor{B_NO_COLOR},
+	fWhichViewColorTint{B_NO_TINT},
+	fViewBitmap{nullptr},
+	fBitmapResizingMode{0},
+	fBitmapOptions{0},
 
-	fResizeMode(resizeMode),
-	fFlags(flags),
+	fResizeMode{resizeMode},
+	fFlags{flags},
 
 	// Views start visible by default
-	fHidden(false),
-	fVisible(true),
-	fBackgroundDirty(true),
-	fIsDesktopBackground(false),
+	fHidden{false},
+	fVisible{true},
+	fBackgroundDirty{true},
+	fIsDesktopBackground{false},
 
-	fEventMask(0),
-	fEventOptions(0),
-
-	fWindow(NULL),
-	fParent(NULL),
-
-	fFirstChild(NULL),
-	fPreviousSibling(NULL),
-	fNextSibling(NULL),
-	fLastChild(NULL),
-
-	fCursor(NULL),
-	fPicture(NULL),
-
-	fLocalClipping((BRect)Bounds()),
-	fScreenClipping(),
-	fScreenClippingValid(false),
-	fUserClipping(NULL),
-	fScreenAndUserClipping(NULL)
+	fLocalClipping{static_cast<BRect>(Bounds())},
+	fScreenClipping{},
+	fUserClipping{nullptr},
+	fScreenAndUserClipping{nullptr}
 {
 	if (fDrawState.IsSet())
 		fDrawState->SetSubPixelPrecise(fFlags & B_SUBPIXEL_PRECISE);
@@ -134,9 +119,9 @@ View::View(IntRect frame, IntPoint scrollingOffset, const char* name,
 View::~View()
 {
 	// iterate over children and delete each one
-	View* view = fFirstChild;
+	auto* view = fFirstChild;
 	while (view) {
-		View* toast = view;
+		auto* toast = view;
 		view = view->fNextSibling;
 		delete toast;
 	}
@@ -146,9 +131,9 @@ View::~View()
 IntRect
 View::Bounds() const
 {
-	IntRect bounds(fScrollingOffset.x, fScrollingOffset.y,
+	IntRect bounds{fScrollingOffset.x, fScrollingOffset.y,
 		fScrollingOffset.x + fFrame.Width(),
-		fScrollingOffset.y + fFrame.Height());
+		fScrollingOffset.y + fFrame.Height()};
 	return bounds;
 }
 
@@ -176,13 +161,13 @@ View::AttachedToWindow(::Window* window)
 		fIsDesktopBackground = true;
 
 	// insert view into local token space
-	if (fWindow != NULL) {
+	if (fWindow != nullptr) {
 		fWindow->ServerWindow()->App()->ViewTokens().SetToken(fToken,
 			B_HANDLER_TOKEN, this);
 	}
 
 	// attach child views as well
-	for (View* child = FirstChild(); child; child = child->NextSibling())
+	for (auto* child = FirstChild(); child; child = child->NextSibling())
 		child->AttachedToWindow(window);
 }
 
@@ -191,12 +176,12 @@ void
 View::DetachedFromWindow()
 {
 	// remove view from local token space
-	if (fWindow != NULL && fWindow->ServerWindow()->App() != NULL)
+	if (fWindow != nullptr && fWindow->ServerWindow()->App() != nullptr)
 		fWindow->ServerWindow()->App()->ViewTokens().RemoveToken(fToken);
 
-	fWindow = NULL;
+	fWindow = nullptr;
 	// detach child views as well
-	for (View* child = FirstChild(); child; child = child->NextSibling())
+	for (auto* child = FirstChild(); child; child = child->NextSibling())
 		child->DetachedFromWindow();
 }
 
@@ -276,21 +261,21 @@ View::AddChild(View* view)
 bool
 View::RemoveChild(View* view)
 {
-	if (view == NULL || view->fParent != this) {
+	if (view == nullptr || view->fParent != this) {
 		printf("View::RemoveChild(%p - %s) - View is not child of "
-			"this (%p) view!\n", view, view ? view->Name() : NULL, this);
+			"this (%p) view!\n", view, view ? view->Name() : nullptr, this);
 		return false;
 	}
 
-	view->fParent = NULL;
+	view->fParent = nullptr;
 
 	if (fLastChild == view)
 		fLastChild = view->fPreviousSibling;
-		// view->fNextSibling would be NULL
+		// view->fNextSibling would be nullptr
 
 	if (fFirstChild == view )
 		fFirstChild = view->fNextSibling;
-		// view->fPreviousSibling would be NULL
+		// view->fPreviousSibling would be nullptr
 
 	// connect child before and after view
 	if (view->fPreviousSibling)
@@ -300,12 +285,12 @@ View::RemoveChild(View* view)
 		view->fNextSibling->fPreviousSibling = view->fPreviousSibling;
 
 	// view has no siblings anymore
-	view->fPreviousSibling = NULL;
-	view->fNextSibling = NULL;
+	view->fPreviousSibling = nullptr;
+	view->fNextSibling = nullptr;
 
 	if (view->IsVisible()) {
-		Overlay* overlay = view->_Overlay();
-		if (overlay != NULL)
+		auto* overlay = view->_Overlay();
+		if (overlay != nullptr)
 			overlay->Hide();
 
 		RebuildClipping(false);
@@ -345,7 +330,7 @@ View::TopView()
 uint32
 View::CountChildren(bool deep) const
 {
-	uint32 count = 0;
+	auto count = 0U;
 	for (View* child = FirstChild(); child; child = child->NextSibling()) {
 		count++;
 		if (deep) {
@@ -370,9 +355,9 @@ View::CollectTokensForChildren(BList* tokenMap) const
 bool
 View::MarkAt(DrawingEngine* engine, const BPoint& where, int32 level)
 {
-	BRect rect(fFrame.left, fFrame.top, fFrame.right, fFrame.bottom);
+	auto rect = BRect{fFrame.left, fFrame.top, fFrame.right, fFrame.bottom};
 
-	if (Parent() != NULL) {
+	if (Parent() != nullptr) {
 		Parent()->ConvertToScreen(&rect);
 		if (!rect.Contains(where))
 			return false;
@@ -387,7 +372,7 @@ View::MarkAt(DrawingEngine* engine, const BPoint& where, int32 level)
 	}
 
 	if (!found) {
-		rgb_color color = {0};
+		auto color = rgb_color{0};
 		switch (level % 2) {
 			case 0: color.green = rand() % 256; break;
 			case 1: color.blue = rand() % 256; break;
@@ -441,18 +426,18 @@ View*
 View::ViewAt(const BPoint& where)
 {
 	if (!fVisible)
-		return NULL;
+		return nullptr;
 
-	IntRect frame = Frame();
-	if (Parent() != NULL)
+	auto frame = Frame();
+	if (Parent() != nullptr)
 		Parent()->LocalToScreenTransform().Apply(&frame);
 
 	if (!frame.Contains(where))
-		return NULL;
+		return nullptr;
 
 	for (View* child = FirstChild(); child; child = child->NextSibling()) {
-		View* view = child->ViewAt(where);
-		if (view != NULL)
+		auto* view = child->ViewAt(where);
+		if (view != nullptr)
 			return view;
 	}
 
@@ -473,12 +458,12 @@ View::SetName(const char* string)
 void
 View::SetFlags(uint32 flags)
 {
-	uint32 oldFlags = fFlags;
+	auto oldFlags = fFlags;
 	fFlags = flags;
 
 	// Child view with B_TRANSPARENT_BACKGROUND flag change clipping of
 	// parent view.
-	if (fParent != NULL
+	if (fParent != nullptr
 		&& IsVisible()
 		&& (((oldFlags & B_TRANSPARENT_BACKGROUND) != 0)
 			!= ((fFlags & B_TRANSPARENT_BACKGROUND) != 0))) {
@@ -493,16 +478,16 @@ void
 View::SetViewBitmap(ServerBitmap* bitmap, IntRect sourceRect,
 	IntRect destRect, int32 resizingMode, int32 options)
 {
-	if (fViewBitmap != NULL) {
-		Overlay* overlay = _Overlay();
+	if (fViewBitmap != nullptr) {
+		auto* overlay = _Overlay();
 
-		if (bitmap != NULL) {
+		if (bitmap != nullptr) {
 			// take over overlay token from current overlay (if it has any)
-			Overlay* newOverlay = bitmap->Overlay();
+			auto* newOverlay = bitmap->Overlay();
 
-			if (overlay != NULL && newOverlay != NULL)
+			if (overlay != nullptr && newOverlay != nullptr)
 				newOverlay->TakeOverToken(overlay);
-		} else if (overlay != NULL)
+		} else if (overlay != nullptr)
 			overlay->Hide();
 	}
 
@@ -519,8 +504,8 @@ View::SetViewBitmap(ServerBitmap* bitmap, IntRect sourceRect,
 ::Overlay*
 View::_Overlay() const
 {
-	if (fViewBitmap == NULL)
-		return NULL;
+	if (fViewBitmap == nullptr)
+		return nullptr;
 
 	return fViewBitmap->Overlay();
 }
@@ -529,11 +514,11 @@ View::_Overlay() const
 void
 View::_UpdateOverlayView() const
 {
-	Overlay* overlay = _Overlay();
-	if (overlay == NULL)
+	auto* overlay = _Overlay();
+	if (overlay == nullptr)
 		return;
 
-	IntRect destination = fBitmapDestination;
+	auto destination = fBitmapDestination;
 	LocalToScreenTransform().Apply(&destination);
 
 	overlay->Configure(fBitmapSource, destination);
@@ -550,7 +535,7 @@ View::UpdateOverlay()
 	if (!IsVisible())
 		return;
 
-	if (_Overlay() != NULL) {
+	if (_Overlay() != nullptr) {
 		_UpdateOverlayView();
 	} else {
 		// recursively ask children of this view
@@ -569,13 +554,13 @@ void
 View::_LocalToScreenTransform(SimpleTransform& transform) const
 {
 	const View* view = this;
-	int32 offsetX = 0;
-	int32 offsetY = 0;
+	auto offsetX = 0;
+	auto offsetY = 0;
 	do {
 		offsetX += view->fFrame.left - view->fScrollingOffset.x;
 		offsetY += view->fFrame.top  - view->fScrollingOffset.y;
 		view = view->fParent;
-	} while (view != NULL);
+	} while (view != nullptr);
 
 	transform.AddOffset(offsetX, offsetY);
 }
@@ -585,13 +570,13 @@ void
 View::_ScreenToLocalTransform(SimpleTransform& transform) const
 {
 	const View* view = this;
-	int32 offsetX = 0;
-	int32 offsetY = 0;
+	auto offsetX = 0;
+	auto offsetY = 0;
 	do {
 		offsetX += view->fScrollingOffset.x - view->fFrame.left;
 		offsetY += view->fScrollingOffset.y - view->fFrame.top;
 		view = view->fParent;
-	} while (view != NULL);
+	} while (view != nullptr);
 
 	transform.AddOffset(offsetX, offsetY);
 }
@@ -613,10 +598,10 @@ View::MoveBy(int32 x, int32 y, BRegion* dirtyRegion)
 #if 1
 // based on redraw on new location
 		// the place were we are now visible
-		IntRect newVisibleBounds(Bounds());
+		auto newVisibleBounds = IntRect{Bounds()};
 		// we can use the frame of the old
 		// local clipping to see which parts need invalidation
-		IntRect oldVisibleBounds(newVisibleBounds);
+		auto oldVisibleBounds = IntRect{newVisibleBounds};
 		oldVisibleBounds.OffsetBy(-x, -y);
 		LocalToScreenTransform().Apply(&oldVisibleBounds);
 
@@ -628,8 +613,8 @@ View::MoveBy(int32 x, int32 y, BRegion* dirtyRegion)
 #else
 // blitting version, invalidates
 // old contents
-		IntRect oldVisibleBounds(Bounds());
-		IntRect newVisibleBounds(oldVisibleBounds);
+		auto oldVisibleBounds = IntRect{Bounds()};
+		auto newVisibleBounds = IntRect{oldVisibleBounds};
 		oldVisibleBounds.OffsetBy(-x, -y);
 		LocalToScreenTransform().Apply(&oldVisibleBounds);
 
@@ -642,7 +627,7 @@ View::MoveBy(int32 x, int32 y, BRegion* dirtyRegion)
 		// clipping oldVisibleBounds to newVisibleBounds
 		// makes sure we don't copy parts hidden under
 		// parent views
-		BRegion* region = fWindow->GetRegion();
+		auto* region = fWindow->GetRegion();
 		if (region) {
 			region->Set(oldVisibleBounds & newVisibleBounds);
 			fWindow->CopyContents(region, x, y);
@@ -683,11 +668,11 @@ View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 	fFrame.bottom += y;
 
 	if (fVisible && dirtyRegion) {
-		IntRect oldBounds(Bounds());
+		auto oldBounds = IntRect{Bounds()};
 		oldBounds.right -= x;
 		oldBounds.bottom -= y;
 
-		BRegion* dirty = fWindow->GetRegion();
+		auto* dirty = fWindow->GetRegion();
 		if (!dirty)
 			return;
 
@@ -712,8 +697,8 @@ View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 						|| (child->fFlags & B_TRANSPARENT_BACKGROUND) != 0) {
 						continue;
 					}
-					IntRect previousChildVisible(
-						child->Frame() & oldBounds & Bounds());
+					auto previousChildVisible = IntRect{
+						child->Frame() & oldBounds & Bounds()};
 					if (dirty->Frame().Intersects(previousChildVisible)) {
 						dirty->Exclude((clipping_rect)previousChildVisible);
 					}
@@ -731,7 +716,7 @@ View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 		child->ParentResized(x, y, dirtyRegion);
 
 	// view bitmap
-	if (fViewBitmap != NULL)
+	if (fViewBitmap != nullptr)
 		resize_frame(fBitmapDestination, fBitmapResizingMode, x, y);
 
 	// at this point, children are at their new locations,
@@ -745,13 +730,13 @@ View::ResizeBy(int32 x, int32 y, BRegion* dirtyRegion)
 void
 View::ParentResized(int32 x, int32 y, BRegion* dirtyRegion)
 {
-	IntRect newFrame = fFrame;
+	auto newFrame = fFrame;
 	resize_frame(newFrame, fResizeMode & 0x0000ffff, x, y);
 
 	if (newFrame != fFrame) {
 		// careful, MoveBy will change fFrame
-		int32 widthDiff = (int32)(newFrame.Width() - fFrame.Width());
-		int32 heightDiff = (int32)(newFrame.Height() - fFrame.Height());
+		auto widthDiff = static_cast<int32>(newFrame.Width() - fFrame.Width());
+		auto heightDiff = static_cast<int32>(newFrame.Height() - fFrame.Height());
 
 		MoveBy(newFrame.left - fFrame.left,
 			newFrame.top - fFrame.top, dirtyRegion);
@@ -780,7 +765,7 @@ View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 	// old contents
 
 	// remember old bounds for tracking dirty region
-	IntRect oldBounds(Bounds());
+	auto oldBounds = IntRect{Bounds()};
 
 	// NOTE: using ConvertToVisibleInTopView()
 	// instead of ConvertToScreen(), this makes
@@ -790,7 +775,7 @@ View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 
 	// find the area of the view that can be scrolled,
 	// contents are shifted in the opposite direction from scrolling
-	IntRect stillVisibleBounds(oldBounds);
+	auto stillVisibleBounds = IntRect{oldBounds};
 	stillVisibleBounds.OffsetBy(x, y);
 	stillVisibleBounds = stillVisibleBounds & oldBounds;
 
@@ -800,7 +785,7 @@ View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 	// do the blit, this will make sure
 	// that other more complex dirty regions
 	// are taken care of
-	BRegion* copyRegion = fWindow->GetRegion();
+	auto* copyRegion = fWindow->GetRegion();
 	if (!copyRegion)
 		return;
 	copyRegion->Set((clipping_rect)stillVisibleBounds);
@@ -808,7 +793,7 @@ View::ScrollBy(int32 x, int32 y, BRegion* dirtyRegion)
 
 	// find the dirty region as far as we are
 	// concerned
-	BRegion* dirty = copyRegion;
+	auto* dirty = copyRegion;
 		// reuse copyRegion and call it dirty
 
 	dirty->Set((clipping_rect)oldBounds);
@@ -833,10 +818,10 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 
 	// TODO: figure out what to do when we have a transform which is not
 	// a dilation
-	BAffineTransform transform = CurrentState()->CombinedTransform();
+	auto transform = CurrentState()->CombinedTransform();
 	if (!transform.IsIdentity() && transform.IsDilation()) {
-		BPoint points[4] = { src.LeftTop(), src.RightBottom(),
-							 dst.LeftTop(), dst.RightBottom() };
+		BPoint points[4] = {src.LeftTop(), src.RightBottom(),
+							 dst.LeftTop(), dst.RightBottom()};
 		transform.Apply(&points[0], 4);
 		src.Set(points[0].x, points[0].y, points[1].x, points[1].y);
 		dst.Set(points[2].x, points[2].y, points[3].x, points[3].y);
@@ -846,14 +831,14 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 
 	// blitting version
 
-	int32 xOffset = dst.left - src.left;
-	int32 yOffset = dst.top - src.top;
+	auto xOffset = dst.left - src.left;
+	auto yOffset = dst.top - src.top;
 
 	// figure out which part can be blittet
-	IntRect visibleSrc(src);
+	auto visibleSrc = IntRect{src};
 	ConvertToVisibleInTopView(&visibleSrc);
 
-	IntRect visibleSrcAtDest(src);
+	auto visibleSrcAtDest = IntRect{src};
 	visibleSrcAtDest.OffsetBy(xOffset, yOffset);
 	ConvertToVisibleInTopView(&visibleSrcAtDest);
 
@@ -864,7 +849,7 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 	// do the blit, this will make sure
 	// that other more complex dirty regions
 	// are taken care of
-	BRegion* copyRegion = fWindow->GetRegion();
+	auto* copyRegion = fWindow->GetRegion();
 	if (!copyRegion)
 		return;
 
@@ -888,10 +873,10 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 	fWindow->CopyContents(copyRegion, xOffset, yOffset);
 
 	// find the dirty region as far as we are concerned
-	IntRect dirtyDst(dst);
+	auto dirtyDst = IntRect{dst};
 	ConvertToVisibleInTopView(&dirtyDst);
 
-	BRegion* dirty = fWindow->GetRegion();
+	auto* dirty = fWindow->GetRegion();
 	if (!dirty) {
 		fWindow->RecycleRegion(copyRegion);
 		return;
@@ -918,7 +903,7 @@ View::CopyBits(IntRect src, IntRect dst, BRegion& windowContentClipping)
 void
 View::ColorUpdated(color_which which, rgb_color color)
 {
-	float tint = B_NO_TINT;
+	auto tint = B_NO_TINT;
 
 	if (fWhichViewColor == which)
 		SetViewColor(tint_color(color, fWhichViewColorTint));
@@ -929,7 +914,7 @@ View::ColorUpdated(color_which which, rgb_color color)
 	if (CurrentState()->LowUIColor(&tint) == which)
 		CurrentState()->SetLowColor(tint_color(color, tint));
 
-	for (View* child = FirstChild(); child != NULL;
+	for (View* child = FirstChild(); child != nullptr;
 			child = child->NextSibling()) {
 
 		child->ColorUpdated(which, color);
@@ -953,7 +938,7 @@ View::SetViewUIColor(color_which which, float tint)
 color_which
 View::ViewUIColor(float* tint)
 {
-	if (tint != NULL)
+	if (tint != nullptr)
 		*tint = fWhichViewColorTint;
 
 	return fWhichViewColor;
@@ -966,9 +951,9 @@ View::ViewUIColor(float* tint)
 void
 View::PushState()
 {
-	DrawState* previousState = fDrawState.Detach();
-	DrawState* newState = previousState->PushState();
-	if (newState == NULL)
+	auto* previousState = fDrawState.Detach();
+	auto* newState = previousState->PushState();
+	if (newState == nullptr)
 		newState = previousState;
 
 	fDrawState.SetTo(newState);
@@ -983,13 +968,13 @@ View::PushState()
 void
 View::PopState()
 {
-	if (fDrawState->PreviousState() == NULL) {
+	if (fDrawState->PreviousState() == nullptr) {
 		fprintf(stderr, "WARNING: User called BView(%s)::PopState(), "
 			"but there is NO state on stack!\n", Name());
 		return;
 	}
 
-	bool rebuildClipping = fDrawState->HasAdditionalClipping();
+	auto rebuildClipping = fDrawState->HasAdditionalClipping();
 
 	fDrawState.SetTo(fDrawState->PopState());
 	fDrawState->SetSubPixelPrecise(fFlags & B_SUBPIXEL_PRECISE);
@@ -1035,10 +1020,10 @@ View::SetPicture(ServerPicture* picture)
 void
 View::BlendAllLayers()
 {
-	if (fPicture == NULL)
+	if (fPicture == nullptr)
 		return;
-	Layer* layer = dynamic_cast<Layer*>(fPicture.Get());
-	if (layer == NULL)
+	auto* layer = dynamic_cast<Layer*>(fPicture.Get());
+	if (layer == nullptr)
 		return;
 	BlendLayer(layer);
 }
@@ -1053,7 +1038,7 @@ View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 		return;
 	}
 
-	if (fViewBitmap != NULL || fViewColor != B_TRANSPARENT_COLOR) {
+	if (fViewBitmap != nullptr || fViewColor != B_TRANSPARENT_COLOR) {
 		// we can only draw within our own area
 		BRegion* redraw;
 		if ((fFlags & B_DRAW_ON_CHILDREN) != 0) {
@@ -1071,9 +1056,9 @@ View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 		// add the current clipping
 		redraw->IntersectWith(effectiveClipping);
 
-		Overlay* overlayCookie = _Overlay();
+		auto* overlayCookie = _Overlay();
 
-		if (fViewBitmap != NULL && overlayCookie == NULL) {
+		if (fViewBitmap != nullptr && overlayCookie == nullptr) {
 			// draw view bitmap
 			// TODO: support other options!
 			BRect rect = fBitmapDestination;
@@ -1106,7 +1091,7 @@ View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 				if (fBitmapOptions & B_TILE_BITMAP) {
 					// tile across entire view
 
-					float start = rect.left;
+					auto start = rect.left;
 					while (rect.top < redraw->Frame().bottom) {
 						while (rect.left < redraw->Frame().right) {
 							drawingEngine->DrawBitmap(fViewBitmap,
@@ -1177,7 +1162,7 @@ View::Draw(DrawingEngine* drawingEngine, const BRegion* effectiveClipping,
 //				debugger(message);
 //			}
 
-			drawingEngine->FillRegion(*redraw, overlayCookie != NULL
+			drawingEngine->FillRegion(*redraw, overlayCookie != nullptr
 				? overlayCookie->Color() : fViewColor);
 		}
 
@@ -1230,7 +1215,7 @@ View::SetHidden(bool hidden)
 		fHidden = hidden;
 
 		// recurse into children and update their visible flag
-		bool oldVisible = fVisible;
+		auto oldVisible = fVisible;
 		UpdateVisibleDeep(fParent ? fParent->IsVisible() : !fHidden);
 		if (oldVisible != fVisible) {
 			// Include or exclude us from the parent area, and update the
@@ -1264,7 +1249,7 @@ View::IsHidden() const
 void
 View::UpdateVisibleDeep(bool parentVisible)
 {
-	bool wasVisible = fVisible;
+	auto wasVisible = fVisible;
 
 	fVisible = parentVisible && !fHidden;
 	for (View* child = FirstChild(); child; child = child->NextSibling())
@@ -1273,7 +1258,7 @@ View::UpdateVisibleDeep(bool parentVisible)
 	// overlay handling
 
 	Overlay* overlay = _Overlay();
-	if (overlay == NULL)
+	if (overlay == nullptr)
 		return;
 
 	if (fVisible && !wasVisible)
@@ -1309,14 +1294,14 @@ View::AddTokensForViewsInRegion(BPrivate::PortLink& link, BRegion& region,
 
 		// This check will prevent descending the view hierarchy
 		// any further than necessary
-		IntRect screenBounds(Bounds());
+		auto screenBounds = IntRect{Bounds()};
 		LocalToScreenTransform().Apply(&screenBounds);
 		if (!region.Intersects((clipping_rect)screenBounds))
 			return;
 
 		// Unfortunately, we intersecting another region, but otherwise
 		// we couldn't provide the exact update rect to the client
-		BRegion localDirty = _ScreenClipping(windowContentClipping);
+		auto localDirty = _ScreenClipping(windowContentClipping);
 		localDirty.IntersectWith(&region);
 		if (localDirty.CountRects() > 0) {
 			link.Attach<int32>(fToken);
@@ -1362,7 +1347,7 @@ View::PrintToStream() const
 
 	printf("  state:\n");
 	printf("    user clipping:  %d\n", fDrawState->HasClipping());
-	BPoint origin = fDrawState->CombinedOrigin();
+	auto origin = fDrawState->CombinedOrigin();
 	printf("    origin:         BPoint(%.1f, %.1f)\n", origin.x, origin.y);
 	printf("    scale:          %.2f\n", fDrawState->CombinedScale());
 	printf("\n");
@@ -1379,7 +1364,7 @@ View::RebuildClipping(bool deep)
 		// if this view does not draw over children,
 		// exclude all children from the clipping
 		if ((fFlags & B_DRAW_ON_CHILDREN) == 0) {
-			BRegion* childrenRegion = fWindow->GetRegion();
+			auto* childrenRegion = fWindow->GetRegion();
 			if (!childrenRegion)
 				return;
 
@@ -1410,17 +1395,17 @@ View::RebuildClipping(bool deep)
 		// probably not have any children, so it is not that expensive
 		// after all
 		if (!fUserClipping.IsSet()) {
-			fUserClipping.SetTo(new (nothrow) BRegion);
+			fUserClipping.SetTo(new (nothrow) BRegion{});
 			if (!fUserClipping.IsSet())
 				return;
 		}
 
 		fDrawState->GetCombinedClippingRegion(fUserClipping.Get());
 	} else {
-		fUserClipping.SetTo(NULL);
+		fUserClipping.SetTo(nullptr);
 	}
 
-	fScreenAndUserClipping.SetTo(NULL);
+	fScreenAndUserClipping.SetTo(nullptr);
 	fScreenClippingValid = false;
 }
 
@@ -1437,7 +1422,7 @@ View::ScreenAndUserClipping(const BRegion* windowContentClipping, bool force) co
 		return *fScreenAndUserClipping.Get();
 
 	// build a new combined user and screen clipping
-	fScreenAndUserClipping.SetTo(new (nothrow) BRegion(*fUserClipping.Get()));
+	fScreenAndUserClipping.SetTo(new (nothrow) BRegion{*fUserClipping.Get()});
 	if (!fScreenAndUserClipping.IsSet())
 		return fScreenClipping;
 
@@ -1467,7 +1452,7 @@ View::InvalidateScreenClipping()
 //	if (!fScreenClippingValid)
 //		return;
 
-	fScreenAndUserClipping.SetTo(NULL);
+	fScreenAndUserClipping.SetTo(nullptr);
 	fScreenClippingValid = false;
 	// invalidate the childrens screen clipping as well
 	for (View* child = FirstChild(); child; child = child->NextSibling()) {
@@ -1507,7 +1492,7 @@ View::_MoveScreenClipping(int32 x, int32 y, bool deep)
 {
 	if (fScreenClippingValid) {
 		fScreenClipping.OffsetBy(x, y);
-		fScreenAndUserClipping.SetTo(NULL);
+		fScreenAndUserClipping.SetTo(nullptr);
 	}
 
 	if (deep) {

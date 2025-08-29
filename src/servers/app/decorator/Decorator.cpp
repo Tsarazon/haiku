@@ -61,7 +61,7 @@ Decorator::Tab::Tab()
 	closeBitmaps[0] = closeBitmaps[1] = closeBitmaps[2] = closeBitmaps[3]
 		= minimizeBitmaps[0] = minimizeBitmaps[1] = minimizeBitmaps[2]
 		= minimizeBitmaps[3] = zoomBitmaps[0] = zoomBitmaps[1] = zoomBitmaps[2]
-		= zoomBitmaps[3] = NULL;
+		= zoomBitmaps[3] = nullptr;
 }
 
 
@@ -78,7 +78,7 @@ Decorator::Decorator(DesktopSettings& settings, BRect frame,
 	:
 	fLocker("Decorator"),
 
-	fDrawingEngine(NULL),
+	fDrawingEngine(nullptr),
 	fDrawState(),
 
 	fTitleBarRect(),
@@ -100,7 +100,7 @@ Decorator::Decorator(DesktopSettings& settings, BRect frame,
 	fBorderWidth(-1),
 	fOutlineBorderWidth(-1),
 
-	fTopTab(NULL),
+	fTopTab(nullptr),
 
 	fDesktop(desktop),
 	fFootprintValid(false)
@@ -113,7 +113,7 @@ Decorator::Decorator(DesktopSettings& settings, BRect frame,
 
 	Frees the color set and the title string
 */
-Decorator::~Decorator()
+Decorator::~Decorator() noexcept
 {
 }
 
@@ -124,9 +124,9 @@ Decorator::AddTab(DesktopSettings& settings, const char* title,
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* tab = _AllocateNewTab();
-	if (tab == NULL)
-		return NULL;
+	auto* tab = _AllocateNewTab();
+	if (tab == nullptr)
+		return nullptr;
 	tab->title = title;
 	tab->look = look;
 	tab->flags = flags;
@@ -140,16 +140,16 @@ Decorator::AddTab(DesktopSettings& settings, const char* title,
 
 	if (ok == false) {
 		delete tab;
-		return NULL;
+		return nullptr;
 	}
 
-	Decorator::Tab* oldTop = fTopTab;
+	auto* oldTop = fTopTab;
 	fTopTab = tab;
 	if (_AddTab(settings, index, updateRegion) == false) {
 		fTabList.RemoveItem(tab);
 		delete tab;
 		fTopTab = oldTop;
-		return NULL;
+		return nullptr;
 	}
 
 	_InvalidateFootprint();
@@ -163,11 +163,11 @@ Decorator::RemoveTab(int32 index, BRegion* updateRegion)
 	AutoWriteLocker _(fLocker);
 
 	// add removed tab area to update region before removing it
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(TabRect(index));
 
-	Decorator::Tab* tab = fTabList.RemoveItemAt(index);
-	if (tab == NULL)
+	auto* tab = fTabList.RemoveItemAt(index);
+	if (tab == nullptr)
 		return false;
 
 	_RemoveTab(index, updateRegion);
@@ -200,7 +200,7 @@ Decorator::TabAt(const BPoint& where) const
 	AutoReadLocker _(fLocker);
 
 	for (int32 i = 0; i < fTabList.CountItems(); i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
+		auto* tab = fTabList.ItemAt(i);
 		if (tab->tabRect.Contains(where))
 			return i;
 	}
@@ -228,7 +228,7 @@ Decorator::SetDrawingEngine(DrawingEngine* engine)
 	fDrawingEngine = engine;
 	// lots of subclasses will depend on the driver for text support, so call
 	// _DoLayout() after we have it
-	if (fDrawingEngine != NULL) {
+	if (fDrawingEngine != nullptr) {
 		_DoLayout();
 		_DoOutlineLayout();
 	}
@@ -255,8 +255,8 @@ Decorator::SetFlags(int32 tab, uint32 flags, BRegion* updateRegion)
 	if (flags & B_NOT_RESIZABLE)
 		flags |= B_NOT_H_RESIZABLE | B_NOT_V_RESIZABLE;
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 	_SetFlags(decoratorTab, flags, updateRegion);
 	_InvalidateFootprint();
@@ -285,7 +285,7 @@ Decorator::ColorsChanged(DesktopSettings& settings, BRegion* updateRegion)
 
 	UpdateColors(settings);
 
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 
 	_InvalidateBitmaps();
@@ -301,8 +301,8 @@ Decorator::SetLook(int32 tab, DesktopSettings& settings, window_look look,
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	_SetLook(decoratorTab, settings, look, updateRect);
@@ -360,8 +360,8 @@ Decorator::TabRect(int32 tab) const
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return BRect();
 	return decoratorTab->tabRect;
 }
@@ -387,8 +387,8 @@ Decorator::SetClose(int32 tab, bool pressed)
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	if (pressed != decoratorTab->closePressed) {
@@ -410,8 +410,8 @@ Decorator::SetMinimize(int32 tab, bool pressed)
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	if (pressed != decoratorTab->minimizePressed) {
@@ -432,8 +432,8 @@ Decorator::SetZoom(int32 tab, bool pressed)
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	if (pressed != decoratorTab->zoomPressed) {
@@ -451,8 +451,8 @@ Decorator::SetTitle(int32 tab, const char* string, BRegion* updateRegion)
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	decoratorTab->title.SetTo(string);
@@ -473,8 +473,8 @@ Decorator::Title(int32 tab) const
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return "";
 
 	return decoratorTab->title;
@@ -494,8 +494,8 @@ Decorator::TabLocation(int32 tab) const
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = _TabAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = _TabAt(tab);
+	if (decoratorTab == nullptr)
 		return 0.0f;
 
 	return (float)decoratorTab->tabOffset;
@@ -508,8 +508,8 @@ Decorator::SetTabLocation(int32 tab, float location, bool isShifting,
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return false;
 	if (_SetTabLocation(decoratorTab, location, isShifting, updateRegion)) {
 		_InvalidateFootprint();
@@ -532,8 +532,8 @@ Decorator::SetFocus(int32 tab, bool active)
 {
 	AutoWriteLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 	decoratorTab->isFocused = active;
 	_SetFocus(decoratorTab);
@@ -546,12 +546,12 @@ Decorator::IsFocus(int32 tab) const
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return false;
 
 	return decoratorTab->isFocused;
-};
+}
 
 
 bool
@@ -627,7 +627,7 @@ Decorator::RegionAt(BPoint where, int32& tabIndex) const
 	tabIndex = -1;
 
 	for (int32 i = 0; i < fTabList.CountItems(); i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
+		auto* tab = fTabList.ItemAt(i);
 		if (tab->closeRect.Contains(where)) {
 			tabIndex = i;
 			return REGION_CLOSE_BUTTON;
@@ -817,7 +817,7 @@ Decorator::SetRegionHighlight(Region region, uint8 highlight, BRegion* dirty,
 		return true;
 	fRegionHighlights[index] = highlight;
 
-	if (dirty != NULL)
+	if (dirty != nullptr)
 		ExtendDirtyRegion(region, *dirty);
 
 	return true;
@@ -891,7 +891,7 @@ Decorator::DrawTab(int32 tabIndex)
 	AutoReadLocker _(fLocker);
 
 	Decorator::Tab* tab = fTabList.ItemAt(tabIndex);
-	if (tab == NULL)
+	if (tab == nullptr)
 		return;
 
 	_DrawTab(tab, tab->tabRect);
@@ -908,8 +908,8 @@ Decorator::DrawTitle(int32 tab)
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 	_DrawTitle(decoratorTab, decoratorTab->tabRect);
 }
@@ -921,8 +921,8 @@ Decorator::DrawClose(int32 tab)
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	_DrawClose(decoratorTab, true, decoratorTab->closeRect);
@@ -935,8 +935,8 @@ Decorator::DrawMinimize(int32 tab)
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 
 	_DrawTab(decoratorTab, decoratorTab->minimizeRect);
@@ -949,8 +949,8 @@ Decorator::DrawZoom(int32 tab)
 {
 	AutoReadLocker _(fLocker);
 
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
+	auto* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == nullptr)
 		return;
 	_DrawZoom(decoratorTab, true, decoratorTab->zoomRect);
 }
@@ -991,9 +991,9 @@ Decorator::TabHeight()
 Decorator::Tab*
 Decorator::_AllocateNewTab()
 {
-	Decorator::Tab* tab = new(std::nothrow) Decorator::Tab;
-	if (tab == NULL)
-		return NULL;
+	auto* tab = new(std::nothrow) Decorator::Tab{};
+	if (tab == nullptr)
+		return nullptr;
 
 	// Set appropriate colors based on the current focus value. In this case,
 	// each decorator defaults to not having the focus.
@@ -1005,9 +1005,9 @@ Decorator::_AllocateNewTab()
 void
 Decorator::_DrawTabs(BRect rect)
 {
-	Decorator::Tab* focusTab = NULL;
+	Decorator::Tab* focusTab = nullptr;
 	for (int32 i = 0; i < fTabList.CountItems(); i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
+		auto* tab = fTabList.ItemAt(i);
 		if (tab->isFocused) {
 			focusTab = tab;
 			continue;
@@ -1015,7 +1015,7 @@ Decorator::_DrawTabs(BRect rect)
 		_DrawTab(tab, rect);
 	}
 
-	if (focusTab != NULL)
+	if (focusTab != nullptr)
 		_DrawTab(focusTab, rect);
 }
 
@@ -1046,7 +1046,7 @@ void
 Decorator::_FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 {
 	// get previous extent
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 
 	_InvalidateBitmaps();
@@ -1056,7 +1056,7 @@ Decorator::_FontsChanged(DesktopSettings& settings, BRegion* updateRegion)
 	_DoOutlineLayout();
 
 	_InvalidateFootprint();
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 }
 
@@ -1068,7 +1068,7 @@ Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 	// TODO: we could be much smarter about the update region
 
 	// get previous extent
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 
 	tab->look = look;
@@ -1078,7 +1078,7 @@ Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 	_DoOutlineLayout();
 
 	_InvalidateFootprint();
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 }
 
@@ -1089,7 +1089,7 @@ Decorator::_SetFlags(Decorator::Tab* tab, uint32 flags, BRegion* updateRegion)
 	// TODO: we could be much smarter about the update region
 
 	// get previous extent
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 
 	tab->flags = flags;
@@ -1097,7 +1097,7 @@ Decorator::_SetFlags(Decorator::Tab* tab, uint32 flags, BRegion* updateRegion)
 	_DoOutlineLayout();
 
 	_InvalidateFootprint();
-	if (updateRegion != NULL)
+	if (updateRegion != nullptr)
 		updateRegion->Include(&GetFootprint());
 }
 
@@ -1106,7 +1106,7 @@ void
 Decorator::_MoveBy(BPoint offset)
 {
 	for (int32 i = 0; i < fTabList.CountItems(); i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
+		auto* tab = fTabList.ItemAt(i);
 
 		tab->zoomRect.OffsetBy(offset);
 		tab->closeRect.OffsetBy(offset);
@@ -1202,7 +1202,7 @@ Decorator::_GetFootprint(BRegion *region)
 void
 Decorator::_GetOutlineFootprint(BRegion* region)
 {
-	if (region == NULL)
+	if (region == nullptr)
 		return;
 
 	region->Include(fTopOutlineBorder);
@@ -1225,9 +1225,9 @@ Decorator::_InvalidateBitmaps()
 	for (int32 i = 0; i < fTabList.CountItems(); i++) {
 		Decorator::Tab* tab = static_cast<Decorator::Tab*>(_TabAt(i));
 		for (int32 index = 0; index < 4; index++) {
-			tab->closeBitmaps[index] = NULL;
-			tab->minimizeBitmaps[index] = NULL;
-			tab->zoomBitmaps[index] = NULL;
+			tab->closeBitmaps[index] = nullptr;
+			tab->minimizeBitmaps[index] = nullptr;
+			tab->zoomBitmaps[index] = nullptr;
 		}
 	}
 }

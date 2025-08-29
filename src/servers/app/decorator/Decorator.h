@@ -36,7 +36,7 @@ class Decorator {
 public:
 	struct Tab {
 							Tab();
-		virtual				~Tab() {}
+		virtual				~Tab() noexcept = default;
 
 		BRect				tabRect;
 
@@ -105,7 +105,7 @@ public:
 								Decorator(DesktopSettings& settings,
 											BRect frame,
 											Desktop* desktop);
-	virtual						~Decorator();
+	virtual						~Decorator() noexcept;
 
 	virtual	Decorator::Tab*		AddTab(DesktopSettings& settings,
 									const char* title, window_look look,
@@ -124,7 +124,7 @@ public:
 			void				SetTopTab(int32 tab);
 
 			void				SetDrawingEngine(DrawingEngine *driver);
-	inline	DrawingEngine*		GetDrawingEngine() const
+	inline	DrawingEngine*		GetDrawingEngine() const noexcept
 									{ return fDrawingEngine; }
 
 			void				FontsChanged(DesktopSettings& settings,
@@ -178,14 +178,14 @@ public:
 			void				ResizeBy(float x, float y, BRegion* dirty);
 			void				ResizeBy(BPoint offset, BRegion* dirty);
 			void				SetOutlinesDelta(BPoint delta, BRegion* dirty);
-			bool				IsOutlineResizing() const
+			bool				IsOutlineResizing() const noexcept
 									{ return fOutlinesDelta != BPoint(0, 0); }
 
 	virtual	bool				SetRegionHighlight(Region region,
 									uint8 highlight, BRegion* dirty,
 									int32 tab = -1);
 	inline	uint8				RegionHighlight(Region region,
-									int32 tab = -1) const;
+									int32 tab = -1) const noexcept;
 
 			bool				SetSettings(const BMessage& settings,
 									BRegion* updateRegion = NULL);
@@ -323,10 +323,10 @@ private:
 };
 
 
-uint8
-Decorator::RegionHighlight(Region region, int32 tab) const
+inline uint8
+Decorator::RegionHighlight(Region region, int32 tab) const noexcept
 {
-	int32 index = (int32)region - 1;
+	int32 index = static_cast<int32>(region) - 1;
 	return index >= 0 && index < REGION_COUNT - 1
 		? fRegionHighlights[index] : 0;
 }

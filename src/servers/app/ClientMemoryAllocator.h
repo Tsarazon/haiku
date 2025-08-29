@@ -14,31 +14,38 @@
 
 #include <util/DoublyLinkedList.h>
 
+#include <cstdint>
+#include <memory>
+
 
 class ServerApp;
 struct chunk;
 struct block;
 
-struct chunk : DoublyLinkedListLinkImpl<struct chunk> {
-	area_id	area;
-	uint8*	base;
-	size_t	size;
+struct chunk : DoublyLinkedListLinkImpl<chunk> {
+	area_id	area{};
+	uint8*	base{nullptr};
+	size_t	size{0};
 };
 
-struct block : DoublyLinkedListLinkImpl<struct block> {
-	struct chunk* chunk;
-	uint8*	base;
-	size_t	size;
+struct block : DoublyLinkedListLinkImpl<block> {
+	struct chunk* chunk{nullptr};
+	uint8*	base{nullptr};
+	size_t	size{0};
 };
 
-typedef DoublyLinkedList<block> block_list;
-typedef DoublyLinkedList<chunk> chunk_list;
+using block_list = DoublyLinkedList<block>;
+using chunk_list = DoublyLinkedList<chunk>;
 
 
 class ClientMemoryAllocator : public BReferenceable {
 public:
 								ClientMemoryAllocator(ServerApp* application);
 								~ClientMemoryAllocator();
+								
+								// Disable copy construction and assignment
+								ClientMemoryAllocator(const ClientMemoryAllocator&) = delete;
+								ClientMemoryAllocator& operator=(const ClientMemoryAllocator&) = delete;
 
 			void*				Allocate(size_t size, block** _address,
 									bool& newArea);
@@ -49,7 +56,7 @@ public:
 			void				Dump();
 
 private:
-			struct block*		_AllocateChunk(size_t size, bool& newArea);
+			block*				_AllocateChunk(size_t size, bool& newArea);
 
 private:
 			ServerApp*			fApplication;
@@ -61,7 +68,7 @@ private:
 
 class AreaMemory {
 public:
-	virtual						~AreaMemory() {}
+	virtual						~AreaMemory() = default;
 
 	virtual area_id				Area() = 0;
 	virtual uint8*				Address() = 0;
@@ -71,40 +78,40 @@ public:
 
 class ClientMemory : public AreaMemory {
 public:
-								ClientMemory();
+								ClientMemory() = default;
 
-	virtual						~ClientMemory();
+	virtual						~ClientMemory() override;
 
 			void*				Allocate(ClientMemoryAllocator* allocator,
 									size_t size, bool& newArea);
 
-	virtual area_id				Area();
-	virtual uint8*				Address();
-	virtual uint32				AreaOffset();
+	area_id						Area() override;
+	uint8*						Address() override;
+	uint32						AreaOffset() override;
 
 private:
 			BReference<ClientMemoryAllocator>
 								fAllocator;
-			block*				fBlock;
+			block*				fBlock{nullptr};
 };
 
 
 /*! Just clones an existing area. */
-class ClonedAreaMemory  : public AreaMemory{
+class ClonedAreaMemory : public AreaMemory {
 public:
-								ClonedAreaMemory();
-	virtual						~ClonedAreaMemory();
+								ClonedAreaMemory() = default;
+	virtual						~ClonedAreaMemory() override;
 
 			void*				Clone(area_id area, uint32 offset);
 
-	virtual area_id				Area();
-	virtual uint8*				Address();
-	virtual uint32				AreaOffset();
+	area_id						Area() override;
+	uint8*						Address() override;
+	uint32						AreaOffset() override;
 
 private:
-			area_id		fClonedArea;
-			uint32		fOffset;
-			uint8*		fBase;
+			area_id		fClonedArea{-1};
+			uint32		fOffset{0};
+			uint8*		fBase{nullptr};
 };
 
 

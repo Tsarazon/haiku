@@ -28,8 +28,8 @@
 #include "ServerApp.h"
 
 
-typedef block_list::Iterator block_iterator;
-typedef chunk_list::Iterator chunk_iterator;
+using block_iterator = block_list::Iterator;
+using chunk_iterator = chunk_list::Iterator;
 
 
 ClientMemoryAllocator::ClientMemoryAllocator(ServerApp* application)
@@ -44,19 +44,11 @@ ClientMemoryAllocator::~ClientMemoryAllocator()
 {
 	// delete all areas and chunks/blocks that are still allocated
 
-	while (true) {
-		struct block* block = fFreeBlocks.RemoveHead();
-		if (block == NULL)
-			break;
-
+	while (auto* block = fFreeBlocks.RemoveHead()) {
 		free(block);
 	}
 
-	while (true) {
-		struct chunk* chunk = fChunks.RemoveHead();
-		if (chunk == NULL)
-			break;
-
+	while (auto* chunk = fChunks.RemoveHead()) {
 		delete_area(chunk->area);
 		free(chunk);
 	}
@@ -67,28 +59,27 @@ void*
 ClientMemoryAllocator::Allocate(size_t size, block** _address, bool& newArea)
 {
 	// A detached allocator no longer allows any further allocations
-	if (fApplication == NULL)
-		return NULL;
+	if (fApplication == nullptr)
+		return nullptr;
 
 	BAutolock locker(fLock);
 
 	// Search best matching free block from the list
 
-	block_iterator iterator = fFreeBlocks.GetIterator();
-	struct block* block;
-	struct block* best = NULL;
+	auto iterator = fFreeBlocks.GetIterator();
+	block* best = nullptr;
 
-	while ((block = iterator.Next()) != NULL) {
-		if (block->size >= size && (best == NULL || block->size < best->size))
+	while (auto* block = iterator.Next()) {
+		if (block->size >= size && (best == nullptr || block->size < best->size))
 			best = block;
 	}
 
-	if (best == NULL) {
+	if (best == nullptr) {
 		// We didn't find a free block - we need to allocate
 		// another chunk, or resize an existing chunk
 		best = _AllocateChunk(size, newArea);
-		if (best == NULL)
-			return NULL;
+		if (best == nullptr)
+			return nullptr;
 	} else
 		newArea = false;
 
@@ -105,9 +96,9 @@ ClientMemoryAllocator::Allocate(size_t size, block** _address, bool& newArea)
 	// TODO: maybe we should have the user reserve memory in its object
 	//	for us, so we don't have to do this here...
 
-	struct block* usedBlock = (struct block*)malloc(sizeof(struct block));
-	if (usedBlock == NULL)
-		return NULL;
+	auto* usedBlock = static_cast<block*>(malloc(sizeof(block)));
+	if (usedBlock == nullptr)
+		return nullptr;
 
 	usedBlock->base = best->base;
 	usedBlock->size = size;
@@ -124,16 +115,16 @@ ClientMemoryAllocator::Allocate(size_t size, block** _address, bool& newArea)
 void
 ClientMemoryAllocator::Free(block* freeBlock)
 {
-	if (freeBlock == NULL)
+	if (freeBlock == nullptr)
 		return;
 
 	BAutolock locker(fLock);
 
 	// search for an adjacent free block
 
-	block_iterator iterator = fFreeBlocks.GetIterator();
-	struct block* before = NULL;
-	struct block* after = NULL;
+	auto iterator = fFreeBlocks.GetIterator();
+	block* before = nullptr;
+	block* after = nullptr;
 	bool inFreeList = true;
 
 	if (freeBlock->size != freeBlock->chunk->size) {
@@ -141,7 +132,7 @@ ClientMemoryAllocator::Free(block* freeBlock)
 		//	and if we had one free blocks list per chunk!
 		//	IOW this is a bit slow...
 
-		while (struct block* block = iterator.Next()) {
+		while (auto* block = iterator.Next()) {
 			if (block->chunk != freeBlock->chunk)
 				continue;
 
@@ -152,18 +143,18 @@ ClientMemoryAllocator::Free(block* freeBlock)
 				after = block;
 		}
 
-		if (before != NULL && after != NULL) {
+		if (before != nullptr && after != nullptr) {
 			// merge with adjacent blocks
 			before->size += after->size + freeBlock->size;
 			fFreeBlocks.Remove(after);
 			free(after);
 			free(freeBlock);
 			freeBlock = before;
-		} else if (before != NULL) {
+		} else if (before != nullptr) {
 			before->size += freeBlock->size;
 			free(freeBlock);
 			freeBlock = before;
-		} else if (after != NULL) {
+		} else if (after != nullptr) {
 			after->base -= freeBlock->size;
 			after->size += freeBlock->size;
 			free(freeBlock);
@@ -175,7 +166,7 @@ ClientMemoryAllocator::Free(block* freeBlock)
 
 	if (freeBlock->size == freeBlock->chunk->size) {
 		// We can delete the chunk now
-		struct chunk* chunk = freeBlock->chunk;
+		auto* chunk = freeBlock->chunk;
 
 		if (inFreeList)
 			fFreeBlocks.Remove(freeBlock);
@@ -184,7 +175,7 @@ ClientMemoryAllocator::Free(block* freeBlock)
 		fChunks.Remove(chunk);
 		delete_area(chunk->area);
 
-		if (fApplication != NULL)
+		if (fApplication != nullptr)
 			fApplication->NotifyDeleteClientArea(chunk->area);
 
 		free(chunk);
@@ -196,37 +187,37 @@ void
 ClientMemoryAllocator::Detach()
 {
 	BAutolock locker(fLock);
-	fApplication = NULL;
+	fApplication = nullptr;
 }
 
 
 void
 ClientMemoryAllocator::Dump()
 {
-	if (fApplication != NULL) {
+	if (fApplication != nullptr) {
 		debug_printf("Application %" B_PRId32 ", %s: chunks:\n",
 			fApplication->ClientTeam(), fApplication->Signature());
 	}
 
-	chunk_list::Iterator iterator = fChunks.GetIterator();
+	auto iterator = fChunks.GetIterator();
 	int32 i = 0;
-	while (struct chunk* chunk = iterator.Next()) {
+	while (auto* chunk = iterator.Next()) {
 		debug_printf("  [%4" B_PRId32 "] %p, area %" B_PRId32 ", base %p, "
 			"size %lu\n", i++, chunk, chunk->area, chunk->base, chunk->size);
 	}
 
 	debug_printf("free blocks:\n");
 
-	block_list::Iterator blockIterator = fFreeBlocks.GetIterator();
+	auto blockIterator = fFreeBlocks.GetIterator();
 	i = 0;
-	while (struct block* block = blockIterator.Next()) {
+	while (auto* block = blockIterator.Next()) {
 		debug_printf("  [%6" B_PRId32 "] %p, chunk %p, base %p, size %lu\n",
 			i++, block, block->chunk, block->base, block->size);
 	}
 }
 
 
-struct block*
+block*
 ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 {
 	// round up to multiple of page size
@@ -234,9 +225,9 @@ ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 
 	// At first, try to resize our existing areas
 
-	chunk_iterator iterator = fChunks.GetIterator();
-	struct chunk* chunk;
-	while ((chunk = iterator.Next()) != NULL) {
+	auto iterator = fChunks.GetIterator();
+	chunk* chunk = nullptr;
+	while ((chunk = iterator.Next()) != nullptr) {
 		status_t status = resize_area(chunk->area, chunk->size + size);
 		if (status == B_OK) {
 			newArea = false;
@@ -246,24 +237,24 @@ ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 
 	// TODO: resize and relocate while holding the write lock
 
-	struct block* block;
+	block* block;
 	uint8* address;
 
-	if (chunk == NULL) {
+	if (chunk == nullptr) {
 		// TODO: temporary measurement as long as resizing areas doesn't
 		//	work the way we need (with relocating the area, if needed)
 		if (size < B_PAGE_SIZE * 32)
 			size = B_PAGE_SIZE * 32;
 
 		// create new area for this allocation
-		chunk = (struct chunk*)malloc(sizeof(struct chunk));
-		if (chunk == NULL)
-			return NULL;
+		chunk = static_cast<struct chunk*>(malloc(sizeof(struct chunk)));
+		if (chunk == nullptr)
+			return nullptr;
 
-		block = (struct block*)malloc(sizeof(struct block));
-		if (block == NULL) {
+		block = static_cast<struct block*>(malloc(sizeof(struct block)));
+		if (block == nullptr) {
 			free(chunk);
-			return NULL;
+			return nullptr;
 		}
 
 		char name[B_OS_NAME_LENGTH];
@@ -278,7 +269,7 @@ ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 		if (area < B_OK) {
 			free(block);
 			free(chunk);
-			return NULL;
+			return nullptr;
 		}
 
 		// add chunk to list
@@ -291,9 +282,9 @@ ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 		newArea = true;
 	} else {
 		// create new free block for this chunk
-		block = (struct block *)malloc(sizeof(struct block));
-		if (block == NULL)
-			return NULL;
+		block = static_cast<struct block*>(malloc(sizeof(struct block)));
+		if (block == nullptr)
+			return nullptr;
 
 		address = chunk->base + chunk->size;
 		chunk->size += size;
@@ -314,18 +305,13 @@ ClientMemoryAllocator::_AllocateChunk(size_t size, bool& newArea)
 // #pragma mark -
 
 
-ClientMemory::ClientMemory()
-	:
-	fAllocator(NULL),
-	fBlock(NULL)
-{
-}
+// Constructor now defaulted in header file
 
 
 ClientMemory::~ClientMemory()
 {
-	if (fAllocator != NULL) {
-		if (fBlock != NULL)
+	if (fAllocator != nullptr) {
+		if (fBlock != nullptr)
 			fAllocator->Free(fBlock);
 		fAllocator.Unset();
 	}
@@ -345,7 +331,7 @@ ClientMemory::Allocate(ClientMemoryAllocator* allocator, size_t size,
 area_id
 ClientMemory::Area()
 {
-	if (fBlock != NULL)
+	if (fBlock != nullptr)
 		return fBlock->chunk->area;
 	return B_ERROR;
 }
@@ -354,16 +340,16 @@ ClientMemory::Area()
 uint8*
 ClientMemory::Address()
 {
-	if (fBlock != NULL)
+	if (fBlock != nullptr)
 		return fBlock->base;
-	return 0;
+	return nullptr;
 }
 
 
 uint32
 ClientMemory::AreaOffset()
 {
-	if (fBlock != NULL)
+	if (fBlock != nullptr)
 		return fBlock->base - fBlock->chunk->base;
 	return 0;
 }
@@ -372,13 +358,7 @@ ClientMemory::AreaOffset()
 // #pragma mark -
 
 
-ClonedAreaMemory::ClonedAreaMemory()
-	:
-	fClonedArea(-1),
-	fOffset(0),
-	fBase(NULL)
-{
-}
+// Constructor now defaulted in header file
 
 
 ClonedAreaMemory::~ClonedAreaMemory()
@@ -393,8 +373,8 @@ ClonedAreaMemory::Clone(area_id area, uint32 offset)
 {
 	fClonedArea = clone_area("server_memory", (void**)&fBase, B_ANY_ADDRESS,
 		B_READ_AREA | B_WRITE_AREA, area);
-	if (fBase == NULL)
-		return NULL;
+	if (fBase == nullptr)
+		return nullptr;
 	fOffset = offset;
 	return Address();
 }

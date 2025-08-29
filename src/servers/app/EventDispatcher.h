@@ -28,12 +28,12 @@ struct event_listener;
 class EventTarget {
 	public:
 		EventTarget();
-		~EventTarget();
+		~EventTarget() noexcept;
 
 		void SetTo(const BMessenger& messenger);
 		BMessenger& Messenger() { return fMessenger; }
 
-		event_listener* FindListener(int32 token, int32* _index = NULL);
+		event_listener* FindListener(int32 token, int32* _index = nullptr);
 		bool AddListener(int32 token, uint32 eventMask, uint32 options,
 				bool temporary);
 		void RemoveListener(event_listener* listener, bool temporary);
@@ -42,10 +42,10 @@ class EventTarget {
 		bool RemoveTemporaryListener(int32 token);
 		void RemoveTemporaryListeners();
 
-		bool IsEmpty() const { return fListeners.IsEmpty(); }
+		bool IsEmpty() const noexcept { return fListeners.IsEmpty(); }
 
-		int32 CountListeners() const { return fListeners.CountItems(); }
-		event_listener* ListenerAt(int32 index) const
+		int32 CountListeners() const noexcept { return fListeners.CountItems(); }
+		event_listener* ListenerAt(int32 index) const noexcept
 				{ return fListeners.ItemAt(index); }
 
 	private:
@@ -57,16 +57,16 @@ class EventTarget {
 
 class EventFilter {
 	public:
-		virtual ~EventFilter() {};
+		virtual ~EventFilter() noexcept {};
 		virtual filter_result Filter(BMessage* event, EventTarget** _target,
-			int32* _viewToken = NULL, BMessage* latestMouseMoved = NULL) = 0;
+			int32* _viewToken = nullptr, BMessage* latestMouseMoved = nullptr) = 0;
 		virtual void RemoveTarget(EventTarget* target);
 };
 
 class EventDispatcher : public BLocker {
 	public:
 		EventDispatcher();
-		~EventDispatcher();
+		~EventDispatcher() noexcept;
 
 		status_t SetTo(EventStream* stream);
 		status_t InitCheck();
@@ -87,7 +87,7 @@ class EventDispatcher : public BLocker {
 		void SendFakeMouseMoved(EventTarget& target, int32 viewToken);
 		bigtime_t IdleTime();
 
-		bool HasCursorThread();
+		bool HasCursorThread() noexcept;
 		void SetHWInterface(HWInterface* interface);
 
 		void SetDragMessage(BMessage& message, ServerBitmap* bitmap,
@@ -97,7 +97,7 @@ class EventDispatcher : public BLocker {
 			// if the mouse is not pressed, it should
 			// be delivered to the "current" target right away.
 
-		void SetDesktop(Desktop* desktop);
+		void SetDesktop(Desktop* desktop) noexcept;
 
 	private:
 		status_t _Run();
@@ -108,8 +108,8 @@ class EventDispatcher : public BLocker {
 				float importance);
 
 		bool _AddTokens(BMessage* message, EventTarget* target,
-				uint32 eventMask, BMessage* nextMouseMoved = NULL,
-				int32* _viewToken = NULL);
+				uint32 eventMask, BMessage* nextMouseMoved = nullptr,
+				int32* _viewToken = nullptr);
 		void _RemoveTokens(BMessage* message);
 		void _SetFeedFocus(BMessage* message);
 		void _UnsetFeedFocus(BMessage* message);

@@ -72,24 +72,23 @@ struct event_listener {
 	uint32		EffectiveOptions() const { return options | temporary_options; }
 };
 
-static const char* kTokenName = "_token";
+static constexpr const char* kTokenName = "_token";
 
-static const uint32 kFakeMouseMoved = 'fake';
+static constexpr uint32 kFakeMouseMoved = 'fake';
 
-static const float kMouseMovedImportance = 0.1f;
-static const float kMouseTransitImportance = 1.0f;
-static const float kStandardImportance = 0.9f;
-static const float kListenerImportance = 0.8f;
+static constexpr float kMouseMovedImportance = 0.1f;
+static constexpr float kMouseTransitImportance = 1.0f;
+static constexpr float kStandardImportance = 0.9f;
+static constexpr float kListenerImportance = 0.8f;
 
 
 EventTarget::EventTarget()
-	:
-	fListeners(2)
+	: fListeners{2}
 {
 }
 
 
-EventTarget::~EventTarget()
+EventTarget::~EventTarget() noexcept
 {
 }
 
@@ -105,7 +104,7 @@ event_listener*
 EventTarget::FindListener(int32 token, int32* _index)
 {
 	for (int32 i = fListeners.CountItems(); i-- > 0;) {
-		event_listener* listener = fListeners.ItemAt(i);
+		auto* listener = fListeners.ItemAt(i);
 
 		if (listener->token == token) {
 			if (_index)
@@ -114,7 +113,7 @@ EventTarget::FindListener(int32 token, int32* _index)
 		}
 	}
 
-	return NULL;
+	return nullptr;
 }
 
 
@@ -149,7 +148,7 @@ void
 EventTarget::RemoveTemporaryListeners()
 {
 	for (int32 index = CountListeners(); index-- > 0;) {
-		event_listener* listener = ListenerAt(index);
+		auto* listener = ListenerAt(index);
 
 		_RemoveTemporaryListener(listener, index);
 	}
@@ -160,8 +159,8 @@ bool
 EventTarget::RemoveTemporaryListener(int32 token)
 {
 	int32 index;
-	event_listener* listener = FindListener(token, &index);
-	if (listener == NULL)
+	auto* listener = FindListener(token, &index);
+	if (listener == nullptr)
 		return false;
 
 	return _RemoveTemporaryListener(listener, index);
@@ -172,8 +171,8 @@ bool
 EventTarget::RemoveListener(int32 token)
 {
 	int32 index;
-	event_listener* listener = FindListener(token, &index);
-	if (listener == NULL)
+	auto* listener = FindListener(token, &index);
+	if (listener == nullptr)
 		return false;
 
 	if (listener->temporary_event_mask != 0) {
@@ -193,8 +192,8 @@ bool
 EventTarget::AddListener(int32 token, uint32 eventMask,
 	uint32 options, bool temporary)
 {
-	event_listener* listener = new (std::nothrow) event_listener;
-	if (listener == NULL)
+	auto* listener = new (std::nothrow) event_listener;
+	if (listener == nullptr)
 		return false;
 
 	listener->token = token;
@@ -232,29 +231,28 @@ EventFilter::RemoveTarget(EventTarget* target)
 
 
 EventDispatcher::EventDispatcher()
-	:
-	BLocker("event dispatcher"),
-	fStream(NULL),
-	fThread(-1),
-	fCursorThread(-1),
-	fPreviousMouseTarget(NULL),
-	fFocus(NULL),
-	fSuspendFocus(false),
-	fMouseFilter(NULL),
-	fKeyboardFilter(NULL),
-	fTargets(10),
-	fNextLatestMouseMoved(NULL),
-	fLastButtons(0),
-	fLastUpdate(system_time()),
-	fDraggingMessage(false),
-	fCursorLock("cursor loop lock"),
-	fHWInterface(NULL),
-	fDesktop(NULL)
+	: BLocker{"event dispatcher"},
+	  fStream{nullptr},
+	  fThread{-1},
+	  fCursorThread{-1},
+	  fPreviousMouseTarget{nullptr},
+	  fFocus{nullptr},
+	  fSuspendFocus{false},
+	  fMouseFilter{nullptr},
+	  fKeyboardFilter{nullptr},
+	  fTargets{10},
+	  fNextLatestMouseMoved{nullptr},
+	  fLastButtons{0},
+	  fLastUpdate{system_time()},
+	  fDraggingMessage{false},
+	  fCursorLock{"cursor loop lock"},
+	  fHWInterface{nullptr},
+	  fDesktop{nullptr}
 {
 }
 
 
-EventDispatcher::~EventDispatcher()
+EventDispatcher::~EventDispatcher() noexcept
 {
 	_Unset();
 }
@@ -267,7 +265,7 @@ EventDispatcher::SetTo(EventStream* stream)
 
 	_Unset();
 
-	if (stream == NULL)
+	if (stream == nullptr)
 		return B_OK;
 
 	fStream = stream;
@@ -278,7 +276,7 @@ EventDispatcher::SetTo(EventStream* stream)
 status_t
 EventDispatcher::InitCheck()
 {
-	if (fStream != NULL) {
+	if (fStream != nullptr) {
 		if (fThread < B_OK)
 			return fThread;
 
@@ -291,7 +289,7 @@ EventDispatcher::InitCheck()
 void
 EventDispatcher::_Unset()
 {
-	if (fStream == NULL)
+	if (fStream == nullptr)
 		return;
 
 	fStream->SendQuit();
@@ -303,7 +301,7 @@ EventDispatcher::_Unset()
 	fThread = fCursorThread = -1;
 
 	gInputManager->PutStream(fStream);
-	fStream = NULL;
+	fStream = nullptr;
 }
 
 
@@ -339,9 +337,9 @@ EventDispatcher::RemoveTarget(EventTarget& target)
 	BAutolock _(this);
 
 	if (fFocus == &target)
-		fFocus = NULL;
+		fFocus = nullptr;
 	if (fPreviousMouseTarget == &target)
-		fPreviousMouseTarget = NULL;
+		fPreviousMouseTarget = nullptr;
 
 	if (fKeyboardFilter.IsSet())
 		fKeyboardFilter->RemoveTarget(&target);
@@ -373,8 +371,8 @@ EventDispatcher::_AddListener(EventTarget& target, int32 token,
 	if (!fTargets.HasItem(&target))
 		fTargets.AddItem(&target);
 
-	event_listener* listener = target.FindListener(token);
-	if (listener != NULL) {
+	auto* listener = target.FindListener(token);
+	if (listener != nullptr) {
 		// we already have this target, update its event mask
 		if (temporary) {
 			if (eventMask != 0)
@@ -415,7 +413,7 @@ void
 EventDispatcher::_RemoveTemporaryListeners()
 {
 	for (int32 i = fTargets.CountItems(); i-- > 0;) {
-		EventTarget* target = fTargets.ItemAt(i);
+		auto* target = fTargets.ItemAt(i);
 
 		target->RemoveTemporaryListeners();
 	}
@@ -500,11 +498,11 @@ EventDispatcher::GetMouse(BPoint& where, int32& buttons)
 void
 EventDispatcher::SendFakeMouseMoved(EventTarget& target, int32 viewToken)
 {
-	if (fStream == NULL)
+	if (fStream == nullptr)
 		return;
 
-	BMessage* fakeMove = new BMessage(kFakeMouseMoved);
-	if (fakeMove == NULL)
+	auto* fakeMove = new BMessage(kFakeMouseMoved);
+	if (fakeMove == nullptr)
 		return;
 
 	fakeMove->AddMessenger("target", target.Messenger());
@@ -523,11 +521,11 @@ EventDispatcher::_SendFakeMouseMoved(BMessage* message)
 		|| message->FindMessenger("target", &target) != B_OK)
 		return;
 
-	if (fDesktop == NULL)
+	if (fDesktop == nullptr)
 		return;
 
 	// Check if the target is still valid
-	::EventTarget* eventTarget = NULL;
+	auto* eventTarget = static_cast<::EventTarget*>(nullptr);
 
 	fDesktop->LockSingleWindow();
 
@@ -536,7 +534,7 @@ EventDispatcher::_SendFakeMouseMoved(BMessage* message)
 
 	fDesktop->UnlockSingleWindow();
 
-	if (eventTarget == NULL)
+	if (eventTarget == nullptr)
 		return;
 
 	BMessage moved(B_MOUSE_MOVED);
@@ -546,7 +544,7 @@ EventDispatcher::_SendFakeMouseMoved(BMessage* message)
 	if (fDraggingMessage)
 		moved.AddMessage("be:drag_message", &fDragMessage);
 
-	if (fPreviousMouseTarget != NULL
+	if (fPreviousMouseTarget != nullptr
 		&& fPreviousMouseTarget->Messenger() != target) {
 		_AddTokens(&moved, fPreviousMouseTarget, B_POINTER_EVENTS);
 		_SendMessage(fPreviousMouseTarget->Messenger(), &moved,
@@ -576,7 +574,7 @@ EventDispatcher::IdleTime()
 
 
 bool
-EventDispatcher::HasCursorThread()
+EventDispatcher::HasCursorThread() noexcept
 {
 	return fCursorThread >= B_OK;
 }
@@ -594,7 +592,7 @@ EventDispatcher::SetHWInterface(HWInterface* interface)
 	fHWInterface = interface;
 
 	// adopt the cursor position of the new HW interface
-	if (interface != NULL)
+	if (interface != nullptr)
 		fLastCursorPosition = interface->CursorPosition();
 }
 
@@ -621,7 +619,7 @@ EventDispatcher::SetDragMessage(BMessage& message,
 
 
 void
-EventDispatcher::SetDesktop(Desktop* desktop)
+EventDispatcher::SetDesktop(Desktop* desktop) noexcept
 {
 	fDesktop = desktop;
 }
@@ -648,7 +646,7 @@ EventDispatcher::_SendMessage(BMessenger& messenger, BMessage* message,
 	// TODO: add failed messages to a queue, and start dropping them by importance
 	//	(and use the same mechanism in ServerWindow::SendMessageToClient())
 
-	status_t status = messenger.SendMessage(message, (BHandler*)NULL, 0);
+	status_t status = messenger.SendMessage(message, (BHandler*)nullptr, 0);
 	if (status != B_OK) {
 		printf("EventDispatcher: failed to send message '%.4s' to target: %s\n",
 			(char*)&message->what, strerror(status));
@@ -673,14 +671,14 @@ EventDispatcher::_AddTokens(BMessage* message, EventTarget* target,
 	int32 added = 0;
 
 	for (int32 i = 0; i < count; i++) {
-		event_listener* listener = target->ListenerAt(i);
+		auto* listener = target->ListenerAt(i);
 		if ((listener->EffectiveEventMask() & eventMask) == 0)
 			continue;
 
-		if (nextMouseMoved != NULL && message->what == B_MOUSE_MOVED
+		if (nextMouseMoved != nullptr && message->what == B_MOUSE_MOVED
 			&& (listener->EffectiveOptions() & B_NO_POINTER_HISTORY) != 0
 			&& message != nextMouseMoved
-			&& _viewToken != NULL) {
+			&& _viewToken != nullptr) {
 			if (listener->token == *_viewToken) {
 				// focus view doesn't want to get pointer history
 				*_viewToken = B_NULL_TOKEN;
@@ -725,7 +723,7 @@ EventDispatcher::_DeliverDragMessage()
 {
 	ETRACE(("EventDispatcher::_DeliverDragMessage()\n"));
 
-	if (fDraggingMessage && fPreviousMouseTarget != NULL) {
+	if (fDraggingMessage && fPreviousMouseTarget != nullptr) {
 		BMessage::Private(fDragMessage).SetWasDropped(true);
 		fDragMessage.RemoveName("_original_what");
 		fDragMessage.AddInt32("_original_what", fDragMessage.what);
@@ -741,7 +739,7 @@ EventDispatcher::_DeliverDragMessage()
 	fDragMessage.what = 0;
 	fDraggingMessage = false;
 
-	fHWInterface->SetDragBitmap(NULL, B_ORIGIN);
+	fHWInterface->SetDragBitmap(nullptr, B_ORIGIN);
 }
 
 
@@ -756,8 +754,8 @@ EventDispatcher::_EventLoop()
 		BAutolock _(this);
 		fLastUpdate = system_time();
 
-		EventTarget* current = NULL;
-		EventTarget* previous = NULL;
+		EventTarget* current = nullptr;
+		EventTarget* previous = nullptr;
 		bool pointerEvent = false;
 		bool keyboardEvent = false;
 		bool addedTokens = false;
@@ -780,7 +778,7 @@ EventDispatcher::_EventLoop()
 					// ourselves
 					BAutolock _(fCursorLock);
 
-					if (fHWInterface != NULL) {
+					if (fHWInterface != nullptr) {
 						fHWInterface->MoveCursorTo(fLastCursorPosition.x,
 							fLastCursorPosition.y);
 					}
@@ -788,7 +786,7 @@ EventDispatcher::_EventLoop()
 
 				// This is for B_NO_POINTER_HISTORY - we always want the
 				// latest mouse moved event in the queue only
-				if (fNextLatestMouseMoved == NULL)
+				if (fNextLatestMouseMoved == nullptr)
 					fNextLatestMouseMoved = fStream->PeekLatestMouseMoved();
 				else if (fNextLatestMouseMoved != event) {
 					// Drop older mouse moved messages if the server is lagging
@@ -841,7 +839,7 @@ EventDispatcher::_EventLoop()
 				event->AddPoint("screen_where", fLastCursorPosition);
 
 				if (event->what == B_MOUSE_MOVED
-					&& fPreviousMouseTarget != NULL
+					&& fPreviousMouseTarget != nullptr
 					&& mouseTarget != fPreviousMouseTarget) {
 					// Target has changed, we need to notify the previous target
 					// that the mouse has exited its views
@@ -857,7 +855,7 @@ EventDispatcher::_EventLoop()
 
 				current = fPreviousMouseTarget = mouseTarget;
 
-				if (current != NULL) {
+				if (current != nullptr) {
 					int32 focusView = viewToken;
 					addedTokens |= _AddTokens(event, current, B_POINTER_EVENTS,
 						fNextLatestMouseMoved, &focusView);
@@ -898,7 +896,7 @@ EventDispatcher::_EventLoop()
 
 				keyboardEvent = true;
 
-				if (fFocus != NULL && _AddTokens(event, fFocus,
+				if (fFocus != nullptr && _AddTokens(event, fFocus,
 						B_KEYBOARD_EVENTS)) {
 					// if tokens were added, we need to explicetly suspend
 					// focus in the event - if not, the event is simply not
@@ -920,7 +918,7 @@ EventDispatcher::_EventLoop()
 				else
 					current = fFocus;
 
-				if (current != NULL && (!fSuspendFocus || addedTokens)) {
+				if (current != nullptr && (!fSuspendFocus || addedTokens)) {
 					_SendMessage(current->Messenger(), event,
 						kStandardImportance);
 				}
@@ -941,7 +939,7 @@ EventDispatcher::_EventLoop()
 			}
 
 			for (int32 i = fTargets.CountItems(); i-- > 0;) {
-				EventTarget* target = fTargets.ItemAt(i);
+				auto* target = fTargets.ItemAt(i);
 
 				// We already sent the event to the all focus and last focus
 				// tokens
@@ -952,7 +950,7 @@ EventDispatcher::_EventLoop()
 				if (!_AddTokens(event, target,
 						keyboardEvent ? B_KEYBOARD_EVENTS : B_POINTER_EVENTS,
 						event->what == B_MOUSE_MOVED
-							? fNextLatestMouseMoved : NULL))
+							? fNextLatestMouseMoved : nullptr))
 					continue;
 
 				if (!_SendMessage(target->Messenger(), event,
@@ -973,7 +971,7 @@ EventDispatcher::_EventLoop()
 		}
 
 		if (fNextLatestMouseMoved == event)
-			fNextLatestMouseMoved = NULL;
+			fNextLatestMouseMoved = nullptr;
 		delete event;
 	}
 
@@ -992,12 +990,12 @@ void
 EventDispatcher::_CursorLoop()
 {
 	BPoint where;
-	const bigtime_t toolTipDelay = BToolTipManager::Manager()->ShowDelay();
+	const auto toolTipDelay = BToolTipManager::Manager()->ShowDelay();
 	bool mouseIdleSent = true;
 	status_t status = B_OK;
 
 	while (status != B_ERROR) {
-		const bigtime_t timeout = mouseIdleSent ?
+		const auto timeout = mouseIdleSent ?
 			B_INFINITE_TIMEOUT : toolTipDelay;
 		status = fStream->GetNextCursorPosition(where, timeout);
 
@@ -1005,7 +1003,7 @@ EventDispatcher::_CursorLoop()
 			mouseIdleSent = false;
 			BAutolock _(fCursorLock);
 
-			if (fHWInterface != NULL)
+			if (fHWInterface != nullptr)
 				fHWInterface->MoveCursorTo(where.x, where.y);
 		} else if (status == B_TIMED_OUT) {
 			mouseIdleSent = true;
@@ -1023,7 +1021,7 @@ EventDispatcher::_CursorLoop()
 status_t
 EventDispatcher::_event_looper(void* _dispatcher)
 {
-	EventDispatcher* dispatcher = (EventDispatcher*)_dispatcher;
+	auto* dispatcher = static_cast<EventDispatcher*>(_dispatcher);
 
 	ETRACE(("Start event loop\n"));
 	dispatcher->_EventLoop();
@@ -1035,7 +1033,7 @@ EventDispatcher::_event_looper(void* _dispatcher)
 status_t
 EventDispatcher::_cursor_looper(void* _dispatcher)
 {
-	EventDispatcher* dispatcher = (EventDispatcher*)_dispatcher;
+	auto* dispatcher = static_cast<EventDispatcher*>(_dispatcher);
 
 	ETRACE(("Start cursor loop\n"));
 	dispatcher->_CursorLoop();

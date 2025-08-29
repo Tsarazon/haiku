@@ -1,0 +1,122 @@
+Starting build of type regular ... 
+...patience...
+...found 2259 target(s)...
+...updating 3 target(s)...
+C++ generated/objects/linux/x86_64/release/build/libbe/app/Message.o 
+src/build/libbe/app/Message.cpp:453:1: error: redeclaration ‘constexpr bool BMessage::IsEmpty() const’ differs in ‘constexpr’ from previous declaration
+  453 | BMessage::IsEmpty() const
+      | ^~~~~~~~
+In file included from src/build/libbe/app/Message.cpp:10:
+headers/build/os/app/Message.h:68:41: note: previous declaration ‘bool BMessage::IsEmpty() const’
+   68 |                 bool                    IsEmpty() const;
+      |                                         ^~~~~~~
+In file included from headers/build/os/support/ByteOrder.h:1,
+                 from headers/build/os/app/Messenger.h:13,
+                 from headers/build/private/app/MessagePrivate.h:13,
+                 from src/build/libbe/app/Message.cpp:12:
+src/build/libbe/app/Message.cpp: In member function ‘void BMessage::_PrintToStream(const char*) const’:
+headers/build/../os/support/ByteOrder.h:117:33: warning: narrowing conversion of ‘__builtin_bswap32(((uint32)((const BMessage*)this)->BMessage::what))’ from ‘uint32’ {aka ‘unsigned int’} to ‘int32’ {aka ‘int’} [-Wnarrowing]
+  117 | #define __swap_int32(arg)       (uint32)__builtin_bswap32(arg)
+      |                                 ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+headers/build/../os/support/ByteOrder.h:64:41: note: in expansion of macro ‘__swap_int32’
+   64 | #define B_BENDIAN_TO_HOST_INT32(arg)    __swap_int32(arg)
+      |                                         ^~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:503:21: note: in expansion of macro ‘B_BENDIAN_TO_HOST_INT32’
+  503 |         int32 value{B_BENDIAN_TO_HOST_INT32(what)};
+      |                     ^~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::Rename(const char*, const char*)’:
+src/build/libbe/app/Message.cpp:652:27: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  652 |         auto *nextField = &fHeader->hash_table[hash];
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:665:37: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  665 |                         nextField = &fHeader->hash_table[hash];
+      |                                     ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:667:45: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  667 |                                 nextField = &fFields[*nextField].next_field;
+      |                                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:681:29: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+  681 |                 nextField = &field->next_field;
+      |                             ^~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::Flatten(BDataIO*, ssize_t*) const’:
+src/build/libbe/app/Message.cpp:817:29: warning: comparison of integer expressions of different signedness: ‘ssize_t’ {aka ‘long int’} and ‘long unsigned int’ [-Wsign-compare]
+  817 |                 if (result2 != fieldsSize)
+      |                     ~~~~~~~~^~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::_AddField(const char*, type_code, bool, field_header**)’:
+src/build/libbe/app/Message.cpp:1283:54: error: expected ‘)’ before ‘;’ token
+ 1283 |                         count * sizeof(field_header));
+      |                                                      ^
+      |                                                      )
+src/build/libbe/app/Message.cpp:1292:27: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1292 |         auto *nextField = &fHeader->hash_table[hash];
+      |                           ^~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1294:29: warning: taking address of packed member of ‘BMessage::field_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1294 |                 nextField = &fFields[*nextField].next_field;
+      |                             ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::_RemoveField(field_header*)’:
+src/build/libbe/app/Message.cpp:1333:32: warning: taking address of packed member of ‘BMessage::message_header’ may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1333 |         auto *value = fHeader->hash_table;
+      |                       ~~~~~~~~~^~~~~~~~~~
+src/build/libbe/app/Message.cpp:1357:93: error: expected ‘)’ before ‘;’ token
+ 1357 |                 field_header *newFields = static_cast<field_header *>(realloc(fFields, size);
+      |                                                                                             ^
+      |                                                                                             )
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindPoint(const char*, BPoint*) const’:
+src/build/libbe/app/Message.cpp:1644:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BPoint’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1644 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1683:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1683 | DEFINE_FUNCTIONS(BPoint, Point, B_POINT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+In file included from headers/build/os/interface/Point.h:1,
+                 from headers/build/../os/interface/Rect.h:11,
+                 from headers/build/os/interface/Rect.h:1,
+                 from headers/build/os/app/Message.h:16:
+headers/build/../os/interface/Point.h:15:7: note: ‘class BPoint’ declared here
+   15 | class BPoint {
+      |       ^~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindPoint(const char*, int32, BPoint*) const’:
+src/build/libbe/app/Message.cpp:1660:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BPoint’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1660 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1683:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1683 | DEFINE_FUNCTIONS(BPoint, Point, B_POINT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Point.h:15:7: note: ‘class BPoint’ declared here
+   15 | class BPoint {
+      |       ^~~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindRect(const char*, BRect*) const’:
+src/build/libbe/app/Message.cpp:1644:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BRect’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1644 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1684:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1684 | DEFINE_FUNCTIONS(BRect, Rect, B_RECT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Rect.h:15:7: note: ‘class BRect’ declared here
+   15 | class BRect {
+      |       ^~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindRect(const char*, int32, BRect*) const’:
+src/build/libbe/app/Message.cpp:1660:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BRect’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1660 |                 memcpy(p, ptr, sizeof(type));                                                                           \
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~
+src/build/libbe/app/Message.cpp:1684:1: note: in expansion of macro ‘DEFINE_FUNCTIONS’
+ 1684 | DEFINE_FUNCTIONS(BRect, Rect, B_RECT_TYPE);
+      | ^~~~~~~~~~~~~~~~
+headers/build/../os/interface/Rect.h:15:7: note: ‘class BRect’ declared here
+   15 | class BRect {
+      |       ^~~~~
+src/build/libbe/app/Message.cpp: In member function ‘status_t BMessage::FindMessenger(const char*, int32, BMessenger*) const’:
+src/build/libbe/app/Message.cpp:1970:23: warning: ‘void* memcpy(void*, const void*, size_t)’ writing to an object of type ‘class BMessenger’ with no trivial copy-assignment; use copy-assignment or copy-initialization instead [-Wclass-memaccess]
+ 1970 |                 memcpy(messenger, data, sizeof(BMessenger));
+      |                 ~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+headers/build/os/app/Messenger.h:20:7: note: ‘class BMessenger’ declared here
+   20 | class BMessenger {
+      |       ^~~~~~~~~~
+
+gcc -c "src/build/libbe/app/Message.cpp" -O2 -Wall -Wno-trigraphs -Wno-ctor-dtor-privacy -Woverloaded-virtual -Wpointer-arith -Wcast-align -Wsign-compare -Wno-multichar -fPIC -include headers/build/BeOSBuildCompatibility.h -DARCH_x86_64 -D_NO_INLINE_ASM -D__NO_INLINE__ -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D__STDC_FORMAT_MACROS -D__STDC_LIMIT_MACROS -DHAIKU_HOST_USE_XATTR_REF -DHAIKU_HOST_PLATFORM_LINUX -DHAIKU_HOST_PLATFORM_64_BIT -DHAIKU_PACKAGING_ARCH=\"x86_64\" -iquote build/user_config_headers -iquote build/config_headers -iquote src/build/libbe/app -iquote generated/objects/common/build/libbe/app -iquote generated/objects/linux/x86_64/common/build/libbe/app -iquote generated/objects/haiku/x86_64/common/build/libbe/app -iquote src/kits/app -I headers/build/private/app -I headers/build/private/kernel -I headers/build/private/shared -I headers/build/host/linux -I headers/build -I headers/build/os -I headers/build/os/add-ons/registrar -I headers/build/os/app -I headers/build/os/bluetooth -I headers/build/os/drivers -I headers/build/os/kernel -I headers/build/os/interface -I headers/build/os/locale -I headers/build/os/storage -I headers/build/os/support -I headers/build/private -o "generated/objects/linux/x86_64/release/build/libbe/app/Message.o"
+
+...failed C++ generated/objects/linux/x86_64/release/build/libbe/app/Message.o ...
+...removing generated/objects/linux/x86_64/release/build/libbe/app/Message.o
+
+BUILD FAILURE:
+...failed updating 1 target(s)...
+...skipped 2 target(s)...

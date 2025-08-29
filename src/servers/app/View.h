@@ -47,7 +47,7 @@ public:
 							View(IntRect frame, IntPoint scrollingOffset,
 								const char* name, int32 token,
 								uint32 resizeMode, uint32 flags);
-	virtual					~View();
+	virtual					~View() noexcept;
 
 			int32			Token() const
 								{ return fToken; }
@@ -91,7 +91,7 @@ public:
 	inline	bool			HasParent(View* candidate) const
 							{
 								return fParent == candidate
-									|| (fParent != NULL
+									|| (fParent != nullptr
 										&& fParent->HasParent(candidate));
 							}
 
@@ -259,16 +259,16 @@ protected:
 			bool			fBackgroundDirty : 1;
 			bool			fIsDesktopBackground : 1;
 
-			uint32			fEventMask;
-			uint32			fEventOptions;
+			uint32			fEventMask = 0;
+			uint32			fEventOptions = 0;
 
-			::Window*		fWindow;
-			View*			fParent;
+			::Window*		fWindow = nullptr;
+			View*			fParent = nullptr;
 
-			View*			fFirstChild;
-			View*			fPreviousSibling;
-			View*			fNextSibling;
-			View*			fLastChild;
+			View*			fFirstChild = nullptr;
+			View*			fPreviousSibling = nullptr;
+			View*			fNextSibling = nullptr;
+			View*			fLastChild = nullptr;
 
 			BReference<ServerCursor>
 							fCursor;
@@ -279,7 +279,7 @@ protected:
 			BRegion			fLocalClipping;
 
 	mutable	BRegion			fScreenClipping;
-	mutable	bool			fScreenClippingValid;
+	mutable	bool			fScreenClippingValid = false;
 
 			ObjectDeleter<BRegion>
 							fUserClipping;

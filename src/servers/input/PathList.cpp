@@ -16,15 +16,13 @@
 
 struct PathList::path_entry {
 	path_entry(const char* _path)
-		:
-		ref_count(1)
+		: path{strdup(_path)}, ref_count{1}
 	{
-		path = strdup(_path);
 	}
 
-	~path_entry()
+	~path_entry() noexcept
 	{
-		free((char*)path);
+		free(const_cast<char*>(path));
 	}
 
 	const char* path;
@@ -34,7 +32,7 @@ struct PathList::path_entry {
 
 PathList::PathList()
 	:
-	fPaths(10)
+	fPaths{10}
 {
 }
 
@@ -47,9 +45,9 @@ PathList::~PathList()
 bool
 PathList::HasPath(const char* path, int32* _index) const
 {
-	for (int32 i = fPaths.CountItems(); i-- > 0;) {
+	for (auto i = fPaths.CountItems(); i-- > 0;) {
 		if (!strcmp(fPaths.ItemAt(i)->path, path)) {
-			if (_index != NULL)
+			if (_index != nullptr)
 				*_index = i;
 			return true;
 		}
@@ -62,7 +60,7 @@ PathList::HasPath(const char* path, int32* _index) const
 status_t
 PathList::AddPath(const char* path)
 {
-	if (path == NULL)
+	if (path == nullptr)
 		return B_BAD_VALUE;
 
 	int32 index;
@@ -71,8 +69,8 @@ PathList::AddPath(const char* path)
 		return B_OK;
 	}
 
-	path_entry* entry = new(std::nothrow) path_entry(path);
-	if (entry == NULL || entry->path == NULL || !fPaths.AddItem(entry)) {
+	auto* entry = new(std::nothrow) path_entry(path);
+	if (entry == nullptr || entry->path == nullptr || !fPaths.AddItem(entry)) {
 		delete entry;
 		return B_NO_MEMORY;
 	}
@@ -105,9 +103,9 @@ PathList::CountPaths() const
 const char*
 PathList::PathAt(int32 index) const
 {
-	path_entry* entry = fPaths.ItemAt(index);
-	if (entry == NULL)
-		return NULL;
+	auto* entry = fPaths.ItemAt(index);
+	if (entry == nullptr)
+		return nullptr;
 
 	return entry->path;
 }

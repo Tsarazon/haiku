@@ -362,14 +362,48 @@ class BuildComparator:
         
         return comparison
 
+    def compare_two_files(self, file1: str, file2: str, 
+                         search_patterns: Optional[List[str]] = None) -> Dict[str, any]:
+        """Сравнить два конкретных файла"""
+        file1_path = Path(file1)
+        file2_path = Path(file2)
+        
+        print(f"🔄 Comparing two specific files:")
+        print(f"  File 1: {file1_path}")
+        print(f"  File 2: {file2_path}")
+        
+        if not file1_path.exists():
+            return {"error": f"File 1 doesn't exist: {file1_path}"}
+        if not file2_path.exists():
+            return {"error": f"File 2 doesn't exist: {file2_path}"}
+        
+        comparison = self.compare_object_files(file1_path, file2_path)
+        
+        # Поиск специфичных символов если задано
+        if search_patterns:
+            print(f"🔍 Searching for specific symbols: {search_patterns}")
+            file1_specific = self.search_specific_symbols(file1_path, search_patterns)
+            file2_specific = self.search_specific_symbols(file2_path, search_patterns)
+            
+            comparison["specific_symbols"] = {
+                "patterns": search_patterns,
+                "file1_matches": file1_specific,
+                "file2_matches": file2_specific
+            }
+        
+        return comparison
+
 def main():
     parser = argparse.ArgumentParser(
-        description="Compare JAM and Meson builds of Haiku components",
+        description="Compare object files",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Compare interface kit
+  # Compare interface kit (pattern mode)
   python compare_builds.py interface_kit "*/interface/interface_kit.o"
+  
+  # Compare two specific files (direct mode)
+  python compare_builds.py --files file1.o file2.o
   
   # Compare with specific symbol search
   python compare_builds.py interface_kit "*/interface/interface_kit.o" --search-symbols hsl rgb color
@@ -379,8 +413,10 @@ Examples:
         """
     )
     
-    parser.add_argument("component", help="Component name for reporting")
-    parser.add_argument("pattern", help="Glob pattern to find object files")
+    parser.add_argument("component", nargs="?", help="Component name for reporting")
+    parser.add_argument("pattern", nargs="?", help="Glob pattern to find object files")
+    parser.add_argument("--files", "-f", nargs=2, metavar=("FILE1", "FILE2"),
+                       help="Compare two specific files directly")
     parser.add_argument("--search-symbols", "-s", nargs="*", 
                        help="Symbol patterns to search for specifically")
     parser.add_argument("--output", "-o", type=Path,
@@ -396,11 +432,26 @@ Examples:
     comparator = BuildComparator(args.haiku_root)
     
     # Выполнить сравнение
-    comparison = comparator.compare_component(
-        args.component, 
-        args.pattern,
-        args.search_symbols
-    )
+    if args.files:
+        # Режим прямого сравнения двух файлов
+        comparison = comparator.compare_two_files(
+            args.files[0],
+            args.files[1], 
+            args.search_symbols
+        )
+        component_name = f"File comparison"
+    else:
+        # Режим поиска по паттерну
+        if not args.component or not args.pattern:
+            print("❌ Error: component and pattern are required when not using --files")
+            sys.exit(1)
+            
+        comparison = comparator.compare_component(
+            args.component, 
+            args.pattern,
+            args.search_symbols
+        )
+        component_name = args.component
     
     if "error" in comparison:
         print(f"❌ Comparison failed: {comparison['error']}")
@@ -419,7 +470,7 @@ Examples:
     
     # JSON output если нужен
     if args.json:
-        json_file = args.output.with_suffix('.json') if args.output else Path(f"{args.component}_comparison.json")
+        json_file = args.output.with_suffix('.json') if args.output else Path(f"{component_name}_comparison.json")
         with open(json_file, 'w') as f:
             json.dump(comparison, f, indent=2, default=str)
         print(f"📊 JSON data saved to: {json_file}")
@@ -430,17 +481,17 @@ Examples:
     
     print(f"\n📊 Quick Summary:")
     print(f"   Size difference: {size_diff:+.2f}%")
-    print(f"   Symbol count: JAM={symbols['jam_count']}, Meson={symbols['meson_count']}")
+    print(f"   Symbol count: File1={symbols['jam_count']}, File2={symbols['meson_count']}")
     print(f"   Identical symbols: {'✅ YES' if symbols['identical'] else '❌ NO'}")
     
     if symbols["identical"] and abs(size_diff) < 1.0:
-        print("🎉 PERFECT MATCH! Builds are essentially identical.")
+        print("🎉 PERFECT MATCH! Files are essentially identical.")
         sys.exit(0)
     elif symbols["identical"]:
         print("✅ EXCELLENT! Symbol sets identical, minor size difference.")
         sys.exit(0)
     else:
-        print("⚠️  Builds differ - check the report for details.")
+        print("⚠️  Files differ - check the report for details.")
         sys.exit(1)
 
 if __name__ == "__main__":

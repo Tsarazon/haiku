@@ -15,10 +15,10 @@
 class PathList {
 public:
 							PathList();
-							~PathList();
+							~PathList() noexcept;
 
 			bool			HasPath(const char* path,
-								int32* _index = NULL) const;
+								int32* _index = nullptr) const;
 			status_t		AddPath(const char* path);
 			status_t		RemovePath(const char* path);
 

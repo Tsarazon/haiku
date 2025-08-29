@@ -17,16 +17,16 @@ class EventStream;
 
 class InputManager : public BLocker {
 	public:
-		InputManager();
-		virtual ~InputManager();
+								InputManager();
+		virtual						~InputManager();
 
-		void UpdateScreenBounds(BRect bounds);
+		void						UpdateScreenBounds(BRect bounds);
 
-		bool AddStream(EventStream* stream);
-		void RemoveStream(EventStream* stream);
+		bool						AddStream(EventStream* stream);
+		void						RemoveStream(EventStream* stream);
 
-		EventStream* GetStream();
-		void PutStream(EventStream* stream);
+		EventStream*				GetStream();
+		void						PutStream(EventStream* stream);
 
 	private:
 		BObjectList<EventStream, true> fFreeStreams;

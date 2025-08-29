@@ -93,7 +93,7 @@ struct dano_variable_size_array {
 } _PACKED;
 
 
-inline int32
+constexpr inline int32
 pad_to_8(int32 value)
 {
 	return (value + 7) & ~7;
@@ -246,8 +246,8 @@ MessageAdapter::ConvertToKMessage(const BMessage* from, KMessage& to)
 		return B_BAD_VALUE;
 
 	BMessage::Private fromPrivate(const_cast<BMessage*>(from));
-	BMessage::message_header* header = fromPrivate.GetMessageHeader();
-	uint8* data = fromPrivate.GetMessageData();
+	auto header = fromPrivate.GetMessageHeader();
+	auto data = fromPrivate.GetMessageData();
 
 	// Iterate through the fields and import them in the target message
 	BMessage::field_header* field = fromPrivate.GetMessageFields();
@@ -342,7 +342,7 @@ MessageAdapter::_ConvertFromKMessage(const KMessage *fromMessage,
 MessageAdapter::_R5FlattenedSize(const BMessage *from)
 {
 	BMessage::Private messagePrivate((BMessage *)from);
-	BMessage::message_header* header = messagePrivate.GetMessageHeader();
+	auto header = messagePrivate.GetMessageHeader();
 
 	// header size (variable, depending on the flags)
 
@@ -359,7 +359,7 @@ MessageAdapter::_R5FlattenedSize(const BMessage *from)
 
 	// field size
 
-	uint8 *data = messagePrivate.GetMessageData();
+	auto data = messagePrivate.GetMessageData();
 	BMessage::field_header *field = messagePrivate.GetMessageFields();
 	for (uint32 i = 0; i < header->field_count; i++, field++) {
 		// flags and type
@@ -406,8 +406,8 @@ MessageAdapter::_FlattenR5Message(uint32 format, const BMessage *from,
 	char *buffer, ssize_t *size)
 {
 	BMessage::Private messagePrivate((BMessage *)from);
-	BMessage::message_header *header = messagePrivate.GetMessageHeader();
-	uint8 *data = messagePrivate.GetMessageData();
+	auto header = messagePrivate.GetMessageHeader();
+	auto data = messagePrivate.GetMessageData();
 
 	r5_message_header *r5header = (r5_message_header *)buffer;
 	uint8 *pointer = (uint8 *)buffer + sizeof(r5_message_header);
@@ -551,9 +551,9 @@ MessageAdapter::_UnflattenR5Message(uint32 format, BMessage *into,
 	into->MakeEmpty();
 
 	BMessage::Private messagePrivate(into);
-	BMessage::message_header *header = messagePrivate.GetMessageHeader();
+	auto header = messagePrivate.GetMessageHeader();
 
-	TReadHelper reader(stream);
+	auto reader = TReadHelper(stream);
 	if (format == MESSAGE_FORMAT_R5_SWAPPED)
 		reader.SetSwap(true);
 
@@ -706,7 +706,7 @@ MessageAdapter::_UnflattenDanoMessage(uint32 format, BMessage *into,
 {
 	into->MakeEmpty();
 
-	TReadHelper reader(stream);
+	auto reader = TReadHelper(stream);
 	if (format == MESSAGE_FORMAT_DANO_SWAPPED)
 		reader.SetSwap(true);
 
@@ -731,7 +731,7 @@ MessageAdapter::_UnflattenDanoMessage(uint32 format, BMessage *into,
 			return B_BAD_DATA;
 
 		ssize_t fieldSize = sectionHeader.size - sizeof(dano_section_header);
-		uint8 *fieldBuffer = NULL;
+		uint8 *fieldBuffer = nullptr;
 		if (fieldSize <= 0) {
 			// there may be no data. we shouldn't fail because of that
 			offset += sectionHeader.size;
@@ -739,7 +739,7 @@ MessageAdapter::_UnflattenDanoMessage(uint32 format, BMessage *into,
 		}
 
 		fieldBuffer = (uint8 *)malloc(fieldSize);
-		if (fieldBuffer == NULL)
+		if (fieldBuffer == nullptr)
 			throw (status_t)B_NO_MEMORY;
 
 		reader(fieldBuffer, fieldSize);

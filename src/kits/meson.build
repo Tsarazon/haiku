@@ -160,53 +160,26 @@ icu_dep_manual = declare_dependency(link_args: icu_libs)
 
 message('External dependencies configured via HaikuCommon BuildFeatures API')
 
-# System libraries via proper JAM rule mapping (per JAM_TO_PYTHON_MAPPING.md)
-system_libs_result = run_command(
-    python_prog,
-    '-c',
-    '''
-import sys
-sys.path.insert(0, "/home/ruslan/haiku/build/meson/modules")
-
-# Use proper JAM rule mapping according to JAM_TO_PYTHON_MAPPING.md:
-# TargetLibsupc++ -> from SystemLibraryRules import TargetLibsupcpp
-from SystemLibraryRules import TargetLibsupcpp
-
-# Get proper libsupc++ (shared version for __dso_handle)
-libsupcpp_libs = TargetLibsupcpp(as_path=True)  # Should be shared .so
-libsupcpp_path = libsupcpp_libs[0] if libsupcpp_libs else ""
-
-# Get glue objects paths (hard-coded for now, as glue system is complex)
-glue_objs = [
-    "/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/arch/x86_64/crti.o",
-    "/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/init_term_dyn.o", 
-    "/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/arch/x86_64/crtn.o"
+# System libraries - simplified approach for now
+# Get glue objects paths (from JAM build)
+glue_objects = [
+    '/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/arch/x86_64/crti.o',
+    '/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/init_term_dyn.o', 
+    '/home/ruslan/haiku/generated/objects/haiku/x86_64/release/system/glue/arch/x86_64/crtn.o'
 ]
 
-print("LIBSUPCPP:" + str(libsupcpp_path))
-print("GLUE_OBJECTS:" + ";".join(glue_objs))
-    ''',
-    capture: true,
-    check: true
-)
+# Use standard libsupc++ for now (not critical for basic linking)
+libsupcpp_so_dep = declare_dependency(link_args: ['-lsupc++'])
 
-# Parse system libraries output
-system_libs_output = system_libs_result.stdout().strip().split('\n')
-libsupcpp_path = system_libs_output[0].replace('LIBSUPCPP:', '')
-glue_objects = system_libs_output[1].replace('GLUE_OBJECTS:', '').split(';')
+message('System libraries configured: using standard libsupc++')
 
-# Create dependency declarations using proper paths
-libsupcpp_so_dep = declare_dependency(link_args: [libsupcpp_path])
-
-message('System libraries configured via JAM rules: libsupc++ = ' + libsupcpp_path)
-
-# System dependencies (matching JAM BuildFeatureAttribute pattern)
+# System dependencies - simplified for initial testing
 system_deps = [
     dependency('threads'),
     zlib_dep_manual,      # [ BuildFeatureAttribute zlib : library ]
-    zstd_dep_manual,      # [ BuildFeatureAttribute zstd : library ]
-    icu_dep_manual,       # [ BuildFeatureAttribute icu : libraries ]
-    libsupcpp_so_dep      # Critical: libsupc++.so for __dso_handle in shared libraries
+    zstd_dep_manual,      # [ BuildFeatureAttribute zstd : library ]  
+    icu_dep_manual        # [ BuildFeatureAttribute icu : libraries ]
+    # Skip libsupc++ and libroot for now to get basic linking working
 ]
 
 # MainBuildRules integration completed above via system libraries configuration

@@ -1,0 +1,1 @@
+/bin/bash: строка 1: /home/ruslan/haiku/buildtools/jam/jam: Нет такого файла или каталога

@@ -1,0 +1,285 @@
+{
+  "timestamp": "2025-08-28T10:51:13.735383",
+  "iso1": "/home/ruslan/haiku/generated_previously/haiku-nightly-anyboot_1.iso",
+  "iso2": "/home/ruslan/haiku/generated/haiku-nightly-anyboot.iso",
+  "comparisons": {
+    "file_size": {
+      "iso1_size": 688717824,
+      "iso2_size": 688717824,
+      "size_diff": 0,
+      "size_diff_mb": 0.0,
+      "size_diff_percent": 0.0
+    },
+    "checksums": {
+      "iso1_md5": "33339a9863f9bcc97b6ee24b229a404b",
+      "iso1_sha256": "43f255e012477bc33aa3471fb1c52857ec9c42630b39633c260becf223f260e3",
+      "iso2_md5": "b673f9fffb2b6b5ce735c99c2fe4fa4f",
+      "iso2_sha256": "2663f2c3108773f53dcc4729057c1c90454f36d2045cde7aa97f614d6dce2405",
+      "identical": false
+    },
+    "iso_info": {
+      "iso1": {
+        "System id": "",
+        "Volume id": "haiku-nightly-x86_64",
+        "Volume set id": "",
+        "Publisher id": "",
+        "Data preparer id": "XORRISO-1.5.6 2023.06.07.180001, LIBISOBURN-1.5.6, LIBISOFS-1.5.6, LIBBURN-1.5.6",
+        "Application id": "",
+        "Copyright File id": "",
+        "Abstract File id": "",
+        "Bibliographic File id": "",
+        "Volume set size is": "1",
+        "Volume set sequence number is": "1",
+        "Logical block size is": "2048",
+        "Volume size is": "1626",
+        "Eltorito validation header": "",
+        "Eltorito defaultboot header": ""
+      },
+      "iso2": {
+        "System id": "",
+        "Volume id": "haiku-nightly-x86_64",
+        "Volume set id": "",
+        "Publisher id": "",
+        "Data preparer id": "XORRISO-1.5.6 2023.06.07.180001, LIBISOBURN-1.5.6, LIBISOFS-1.5.6, LIBBURN-1.5.6",
+        "Application id": "",
+        "Copyright File id": "",
+        "Abstract File id": "",
+        "Bibliographic File id": "",
+        "Volume set size is": "1",
+        "Volume set sequence number is": "1",
+        "Logical block size is": "2048",
+        "Volume size is": "1626",
+        "Eltorito validation header": "",
+        "Eltorito defaultboot header": ""
+      }
+    },
+    "boot_sector": {
+      "iso1": {
+        "signatures": [
+          "haiku"
+        ],
+        "boot_sector_hash": "7826d20cd3ba7958ce7f4fb5027f2bf9b0b70430be9b74dde32691c61d2b4a1e"
+      },
+      "iso2": {
+        "signatures": [
+          "haiku"
+        ],
+        "boot_sector_hash": "7826d20cd3ba7958ce7f4fb5027f2bf9b0b70430be9b74dde32691c61d2b4a1e"
+      },
+      "boot_sectors_identical": true
+    },
+    "file_structure": {
+      "iso1_file_count": 9,
+      "iso2_file_count": 9,
+      "files_only_in_iso1": [
+        "----------   0    0    0             512 Aug 18 2025 [     34 00]  BASE_MBR.BIN;1 ",
+        "----------   0    0    0            1897 Aug 11 2025 [   1475 00]  README.HTM;1 ",
+        "----------   0    0    0            2048 Aug 18 2025 [     33 00]  BOOT.CAT;1 ",
+        "----------   0    0    0         2949120 Aug 18 2025 [     35 00]  ESP.IMA;1 ",
+        "d---------   0    0    0            2048 Aug 18 2025 [     20 02]  . ",
+        "d---------   0    0    0            2048 Aug 18 2025 [     20 02]  .. "
+      ],
+      "files_only_in_iso2": [
+        "----------   0    0    0             512 Aug 28 2025 [     34 00]  BASE_MBR.BIN;1 ",
+        "----------   0    0    0            1897 Aug 21 2025 [   1475 00]  README.HTM;1 ",
+        "----------   0    0    0            2048 Aug 28 2025 [     33 00]  BOOT.CAT;1 ",
+        "----------   0    0    0         2949120 Aug 28 2025 [     35 00]  ESP.IMA;1 ",
+        "d---------   0    0    0            2048 Aug 28 2025 [     20 02]  . ",
+        "d---------   0    0    0            2048 Aug 28 2025 [     20 02]  .. "
+      ],
+      "common_files": 2,
+      "total_unique_files": 14
+    },
+    "packages": {
+      "iso1": {
+        "error": "Could not mount ISO"
+      },
+      "iso2": {
+        "error": "Could not mount ISO"
+      }
+    },
+    "entropy": {
+      "iso1": {
+        "avg_entropy": 4.959162445822355,
+        "min_entropy": 0.0,
+        "max_entropy": 7.997997843064223,
+        "samples_analyzed": 3
+      },
+      "iso2": {
+        "avg_entropy": 4.959378659282031,
+        "min_entropy": 0.0,
+        "max_entropy": 7.997997843064223,
+        "samples_analyzed": 3
+      }
+    },
+    "timestamps": {
+      "iso1": {
+        "file_mtime": "2025-08-18T21:19:28.733764",
+        "file_ctime": "2025-08-28T10:45:37.980461",
+        "iso_creation_time": "20250818181733",
+        "age_days": 9.563758045630875
+      },
+      "iso2": {
+        "file_mtime": "2025-08-28T10:38:52.523037",
+        "file_ctime": "2025-08-28T10:38:52.523037",
+        "iso_creation_time": "20250828073531",
+        "age_days": 0.008621595987567196
+      },
+      "time_diff_hours": 229.32327479805554
+    },
+    "filesystem_features": {
+      "iso1": {
+        "rock_ridge": true,
+        "joliet": false,
+        "udf": false,
+        "el_torito": true,
+        "apple_extensions": false
+      },
+      "iso2": {
+        "rock_ridge": true,
+        "joliet": false,
+        "udf": false,
+        "el_torito": true,
+        "apple_extensions": false
+      }
+    },
+    "compression": {
+      "iso1": {
+        "unique_bytes": 256,
+        "byte_variety": 1.0,
+        "estimated_compressibility": 0.0,
+        "redundancy_ratio": 0.8091001510620117,
+        "sample_size": 1048576
+      },
+      "iso2": {
+        "unique_bytes": 256,
+        "byte_variety": 1.0,
+        "estimated_compressibility": 0.0,
+        "redundancy_ratio": 0.8091297149658203,
+        "sample_size": 1048576
+      }
+    },
+    "binary_diff": {
+      "total_differences": 71533,
+      "changed_sectors": [
+        16,
+        18,
+        20,
+        24,
+        35,
+        41,
+        49,
+        50,
+        51,
+        61,
+        73,
+        87,
+        89,
+        90,
+        91,
+        92,
+        93,
+        94,
+        95,
+        96,
+        97,
+        98,
+        99,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        135,
+        142,
+        144,
+        145,
+        146,
+        147,
+        162,
+        163,
+        168,
+        188,
+        189,
+        190,
+        191,
+        202,
+        209,
+        210,
+        211,
+        212,
+        213,
+        214,
+        215,
+        216,
+        217,
+        218,
+        219,
+        220,
+        221,
+        227,
+        228,
+        229,
+        230,
+        231,
+        232,
+        233,
+        234,
+        235,
+        236,
+        237,
+        238,
+        239,
+        240,
+        241,
+        242,
+        243,
+        244,
+        248,
+        2048,
+        2054,
+        2095,
+        2097,
+        2099,
+        2101,
+        2103,
+        2105,
+        2111,
+        2114,
+        2115,
+        2117,
+        2118,
+        2119,
+        2120
+      ],
+      "similarity_percent": 94.39056094390561,
+      "largest_diff_offset": 11143168,
+      "diff_distribution": {},
+      "total_sectors_analyzed": 10001,
+      "different_sectors": 561
+    },
+    "performance": {
+      "iso1": {
+        "read_speed_mbps": 2522.4344479191723,
+        "read_time_seconds": 0.003964424133300781,
+        "test_data_size_mb": 10.0
+      },
+      "iso2": {
+        "read_speed_mbps": 1707.013959545806,
+        "read_time_seconds": 0.005858182907104492,
+        "test_data_size_mb": 10.0
+      }
+    }
+  }
+}
