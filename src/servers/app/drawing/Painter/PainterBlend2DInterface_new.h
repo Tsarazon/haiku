@@ -4,17 +4,18 @@
  * Copyright 2015, Julian Harnath <julian.harnath@rwth-aachen.de>
  * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef PAINTER_DATA_H
-#define PAINTER_DATA_H
+#ifndef PAINTER_BLEND2D_INTERFACE_H
+#define PAINTER_BLEND2D_INTERFACE_H
 
 
 #include "defines.h"
 
-#include <agg_path_storage.h>
+#include <blend2d.h>
+#include "../Blend2D/Blend2DInterface.h"
 
 
-struct PainterAggInterface {
-	PainterAggInterface(PatternHandler& patternHandler)
+struct PainterBlend2DInterface {
+	PainterBlend2DInterface(PatternHandler& patternHandler)
 		:
 		fBuffer(),
 		fPixelFormat(fBuffer, &patternHandler),
@@ -35,11 +36,11 @@ struct PainterAggInterface {
 	{
 	}
 
-	agg::rendering_buffer	fBuffer;
+	BLImage				fImage;
 
-	// AGG rendering and rasterization classes
-	pixfmt					fPixelFormat;
-	renderer_base			fBaseRenderer;
+	// Blend2D rendering and rasterization classes
+	BLContext				fContext;
+	BLPath					fPath;
 
 	// Regular drawing mode: pixel-aligned, no alpha masking
 	scanline_unpacked_type	fUnpackedScanline;

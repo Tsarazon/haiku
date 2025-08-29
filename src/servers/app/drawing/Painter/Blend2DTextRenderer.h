@@ -1,11 +1,11 @@
 /*
- * Copyright 2024, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Blend2D text renderer replacing AGGTextRenderer
+ * Copyright 2005-2009, Stephan Aßmus <superstippi@gmx.de>.
+ * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
+ * All rights reserved. Distributed under the terms of the MIT License.
  */
 #ifndef BLEND2D_TEXT_RENDERER_H
 #define BLEND2D_TEXT_RENDERER_H
+
 
 #include "defines.h"
 
@@ -15,65 +15,75 @@
 
 #include <blend2d.h>
 
+
 class FontCacheReference;
 
 class Blend2DTextRenderer {
 public:
-    Blend2DTextRenderer(BLContext& context, BLMatrix2D& viewTransformation);
-    virtual ~Blend2DTextRenderer();
+								Blend2DTextRenderer(BLContext& context,
+									BLMatrix2D& viewTransformation);
+	virtual						~Blend2DTextRenderer();
 
-    void SetFont(const ServerFont &font);
-    inline const ServerFont& Font() const { return fFont; }
+			void				SetFont(const ServerFont &font);
+	inline	const ServerFont&	Font() const
+									{ return fFont; }
 
-    void SetHinting(bool hinting);
-    bool Hinting() const { return fHinted; }
+			void				SetHinting(bool hinting);
+			bool				Hinting() const
+									{ return fHinted; }
 
-    void SetAntialiasing(bool antialiasing);
-    bool Antialiasing() const { return fAntialias; }
+			void				SetAntialiasing(bool antialiasing);
+			bool				Antialiasing() const
+									{ return fAntialias; }
 
-    BRect RenderString(const char* utf8String,
-                      uint32 length, const BPoint& baseLine,
-                      const BRect& clippingFrame, bool dryRun,
-                      BPoint* nextCharPos,
-                      const escapement_delta* delta,
-                      FontCacheReference* cacheReference);
+			BRect				RenderString(const char* utf8String,
+									uint32 length, const BPoint& baseLine,
+									const BRect& clippingFrame, bool dryRun,
+									BPoint* nextCharPos,
+									const escapement_delta* delta,
+									FontCacheReference* cacheReference);
 
-    BRect RenderString(const char* utf8String,
-                      uint32 length, const BPoint* offsets,
-                      const BRect& clippingFrame, bool dryRun,
-                      BPoint* nextCharPos,
-                      FontCacheReference* cacheReference);
+			BRect				RenderString(const char* utf8String,
+									uint32 length, const BPoint* offsets,
+									const BRect& clippingFrame, bool dryRun,
+									BPoint* nextCharPos,
+									FontCacheReference* cacheReference);
 
 private:
-    class StringRenderer;
-    friend class StringRenderer;
 
-    // Blend2D text rendering objects
-    BLFont                  fBlendFont;       // Replaces AGG font handling
-    BLGlyphBuffer           fGlyphBuffer;     // Replaces AGG glyph pipeline
-    BLFontFace              fFontFace;        // Font face for glyph access
+	class StringRenderer;
+	friend class StringRenderer;
 
-    BLContext&              fContext;         // Main rendering context
-    BLMatrix2D&             fViewTransformation;
+	// Pipeline to process the vectors glyph paths (curves + contour)
+	FontCacheEntry::GlyphPathAdapter	fPathAdaptor;
+	FontCacheEntry::GlyphGray8Adapter	fGray8Adaptor;
+	FontCacheEntry::GlyphGray8Scanline	fGray8Scanline;
+	FontCacheEntry::GlyphMonoAdapter	fMonoAdaptor;
+	FontCacheEntry::GlyphMonoScanline	fMonoScanline;
 
-    ServerFont              fFont;
-    bool                    fHinted;
-    bool                    fAntialias;
-    Transformable           fEmbeddedTransformation;
-    
-    // Font loading and caching
-    bool LoadFont(const ServerFont& serverFont);
-    void UpdateFontSettings();
-    
-    // Text measurement and rendering
-    BRect MeasureString(const char* utf8String, uint32 length,
-                       const BPoint& baseLine,
-                       const escapement_delta* delta) const;
-                       
-    BRect RenderGlyphRun(const BLGlyphRun& glyphRun,
-                        const BPoint& origin,
-                        const BRect& clippingFrame,
-                        bool dryRun);
+	FontCacheEntry::CurveConverter		fCurves;
+	FontCacheEntry::ContourConverter	fContour;
+
+	renderer_type&				fSolidRenderer;
+	renderer_bin_type&			fBinRenderer;
+	renderer_subpix_type&		fSubpixRenderer;
+	scanline_unpacked_type&		fScanline;
+	scanline_unpacked_subpix_type& fSubpixScanline;
+	rasterizer_subpix_type&		fSubpixRasterizer;
+	scanline_unpacked_masked_type*& fMaskedScanline;
+
+	rasterizer_type				fRasterizer;
+		// NOTE: the object has it's own rasterizer object
+		// since it might be using a different gamma setting
+		// to support non-anti-aliased text rendering
+
+	ServerFont					fFont;
+	bool						fHinted;
+									// is glyph hinting active?
+	bool						fAntialias;
+	Transformable				fEmbeddedTransformation;
+									// rotated or sheared font?
+	agg::trans_affine&			fViewTransformation;
 };
 
-#endif // BLEND2D_TEXT_RENDERER_H
+#endif // AGG_TEXT_RENDERER_H
