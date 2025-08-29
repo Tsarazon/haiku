@@ -12,7 +12,7 @@
 
 #include <Point.h>
 
-#include <agg_trans_affine.h>
+#include <blend2d.h>
 
 
 class BView;
@@ -68,7 +68,7 @@ class DragCornerState : public DragState {
 			double				fOldYScale;
 			double				fOldWidth;
 			double				fOldHeight;
-			agg::trans_affine	fMatrix;
+			BLMatrix2D			fMatrix;
 			BPoint				fOldOffset;
 };
 
@@ -96,7 +96,7 @@ class DragSideState : public DragState {
 			double				fOldXScale;
 			double				fOldYScale;
 			double				fOldSideDist;
-			agg::trans_affine	fMatrix;
+			BLMatrix2D			fMatrix;
 			BPoint				fOldOffset;
 };
 

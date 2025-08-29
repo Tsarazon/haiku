@@ -182,7 +182,7 @@ StackBlurFilter::_Filter32(uint8* buffer, unsigned width, unsigned height,
 	unsigned mul_sum;
 	unsigned shr_sum;
 
-	agg::pod_vector<color_type> stack;
+	BLArray<color_type> stack;
 
 	if (rx > 0) {
 		if (rx > 254)
@@ -190,7 +190,7 @@ StackBlurFilter::_Filter32(uint8* buffer, unsigned width, unsigned height,
 		div = rx * 2 + 1;
 		mul_sum = stack_blur_tables<int>::g_stack_blur8_mul[rx];
 		shr_sum = stack_blur_tables<int>::g_stack_blur8_shr[rx];
-		stack.allocate(div);
+		stack.resize(div);
 
 		for (y = 0; y < h; y++) {
 			sum_r = 
@@ -309,7 +309,7 @@ StackBlurFilter::_Filter32(uint8* buffer, unsigned width, unsigned height,
 		div = ry * 2 + 1;
 		mul_sum = stack_blur_tables<int>::g_stack_blur8_mul[ry];
 		shr_sum = stack_blur_tables<int>::g_stack_blur8_shr[ry];
-		stack.allocate(div);
+		stack.resize(div);
 
 		int stride = bpr;
 		for(x = 0; x < w; x++) {
@@ -451,7 +451,7 @@ StackBlurFilter::_Filter8(uint8* buffer, unsigned width, unsigned height,
 	unsigned mul_sum;
 	unsigned shr_sum;
 
-	agg::pod_vector<uint8> stack;
+	BLArray<uint8> stack;
 
 	if(rx > 0)
 	{
@@ -459,7 +459,7 @@ StackBlurFilter::_Filter8(uint8* buffer, unsigned width, unsigned height,
 		div = rx * 2 + 1;
 		mul_sum = stack_blur_tables<int>::g_stack_blur8_mul[rx];
 		shr_sum = stack_blur_tables<int>::g_stack_blur8_shr[rx];
-		stack.allocate(div);
+		stack.resize(div);
 
 		for(y = 0; y < h; y++)
 		{
@@ -526,7 +526,7 @@ StackBlurFilter::_Filter8(uint8* buffer, unsigned width, unsigned height,
 		div = ry * 2 + 1;
 		mul_sum = stack_blur_tables<int>::g_stack_blur8_mul[ry];
 		shr_sum = stack_blur_tables<int>::g_stack_blur8_shr[ry];
-		stack.allocate(div);
+		stack.resize(div);
 
 		int stride = bpr;
 		for(x = 0; x < w; x++)
