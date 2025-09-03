@@ -47,6 +47,10 @@ public:
 			bool				Antialiasing() const
 									{ return fAntialias; }
 
+			void				SetTransform(const agg::trans_affine& transform);
+			void				SetSubpixelPrecise(bool precise);
+			void				SetKerning(bool kerning);
+
 			BRect				RenderString(const char* utf8String,
 									uint32 length, const BPoint& baseLine,
 									const BRect& clippingFrame, bool dryRun,
@@ -92,6 +96,8 @@ private:
 	bool						fHinted;
 									// is glyph hinting active?
 	bool						fAntialias;
+	bool						fSubpixelPrecise;
+	bool						fKerning;
 	Transformable				fEmbeddedTransformation;
 									// rotated or sheared font?
 	agg::trans_affine&			fViewTransformation;

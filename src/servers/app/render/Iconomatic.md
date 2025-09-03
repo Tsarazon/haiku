@@ -1,0 +1,51 @@
+### Из apps/icon-o-matic
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:212` - `agg::line_cap_e`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:215` - `agg::line_cap_e aggMode = agg::butt_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:218` - `aggMode = agg::butt_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:221` - `aggMode = agg::square_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:224` - `aggMode = agg::round_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:231` - `agg::line_join_e`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:234` - `agg::line_join_e aggMode = agg::miter_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:237` - `aggMode = agg::miter_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:240` - `aggMode = agg::round_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/generic/support/support_ui.cpp:243` - `aggMode = agg::bevel_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:163` - `convert_join_mode_svg(agg::line_join_e mode)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:167` - `case agg::round_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:170` - `case agg::bevel_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:173` - `case agg::miter_join`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:182` - `convert_cap_mode_svg(agg::line_cap_e mode)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:186` - `case agg::square_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:189` - `case agg::round_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:192` - `case agg::butt_cap`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:250` - `if (stroke->line_cap() != agg::butt_cap)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/SVGExporter.cpp:255` - `if (stroke->line_join() != agg::miter_join)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:219` - `stroke->line_cap(agg::butt_cap)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:222` - `stroke->line_cap(agg::round_cap)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:225` - `stroke->line_cap(agg::square_cap)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:231` - `stroke->line_join(agg::miter_join)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:234` - `stroke->line_join(agg::round_join)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:237` - `stroke->line_join(agg::bevel_join)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:272` - `agg::trans_affine baseTransform(0, 1.0/128.0, -1.0/128.0, 0, ...)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:280` - `agg::trans_affine baseTransform(0, 1.0/64.0, -1.0/64.0, 0, ...)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/import_export/svg/DocumentBuilder.cpp:289` - `agg::trans_affine gradientTransform(...)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:75` - `fMatrix.multiply(agg::trans_affine_scaling(fOldXScale, fOldYScale))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:76` - `fMatrix.multiply(agg::trans_affine_rotation(fParent->LocalRotation() * M_PI / 180.0))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:77` - `fMatrix.multiply(agg::trans_affine_translation(fParent->Translation().x, ...))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:297` - `fMatrix.multiply(agg::trans_affine_scaling(fOldXScale, fOldYScale))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:298` - `fMatrix.multiply(agg::trans_affine_rotation(fParent->LocalRotation() * M_PI / 180.0))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.cpp:299` - `fMatrix.multiply(agg::trans_affine_translation(fParent->Translation().x, ...))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.h:71` - `agg::trans_affine fMatrix`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBoxStates.h:99` - `agg::trans_affine fMatrix`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/PerspectiveBox.cpp:418` - `agg::trans_affine m`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/PerspectiveBox.cpp:423` - `agg::trans_affine_rotation r(angle * M_PI / 180.0)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/PerspectiveBox.cpp:430` - `m.multiply(agg::trans_affine_translation(xOffset, yOffset))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBox.cpp:503` - `fabs(agg::calc_line_point_distance(start.x, start.y, end.x, end.y, ...))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBox.cpp:663` - `agg::trans_affine m`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBox.cpp:668` - `agg::trans_affine_rotation r(angle * M_PI / 180.0)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/TransformBox.cpp:675` - `m.multiply(agg::trans_affine_translation(xOffset, yOffset))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:58` - `double rotation = agg::rad2deg(other.rotation())`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:142` - `agg::trans_affine_rotation m(degrees * M_PI / 180.0)`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:259` - `multiply(agg::trans_affine_translation(-fPivot.x, -fPivot.y))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:260` - `multiply(agg::trans_affine_scaling(xScale, yScale))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:261` - `multiply(agg::trans_affine_rotation(fRotation * M_PI / 180.0))`
+- `/home/ruslan/haiku/src/apps/icon-o-matic/transformable/ChannelTransform.cpp:263` - `multiply(agg::trans_affine_translation(fPivot.x + fTranslation.x, ...))`

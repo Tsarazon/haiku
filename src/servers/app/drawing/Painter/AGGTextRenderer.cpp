@@ -56,6 +56,8 @@ AGGTextRenderer::AGGTextRenderer(renderer_subpix_type& subpixRenderer,
 
 	fHinted(true),
 	fAntialias(true),
+	fSubpixelPrecise(false),
+	fKerning(true),
 	fEmbeddedTransformation(),
 	fViewTransformation(viewTransformation)
 {
@@ -437,4 +439,25 @@ AGGTextRenderer::RenderString(const char* string, uint32 length,
 		NULL, fFont.Spacing(), offsets, cacheReference);
 
 	return transform.TransformBounds(renderer.Bounds());
+}
+
+
+void
+AGGTextRenderer::SetTransform(const agg::trans_affine& transform)
+{
+	// TODO: Store transform if needed for text rendering
+}
+
+
+void 
+AGGTextRenderer::SetSubpixelPrecise(bool precise)
+{
+	fSubpixelPrecise = precise;
+}
+
+
+void
+AGGTextRenderer::SetKerning(bool kerning)
+{
+	fKerning = kerning;
 }

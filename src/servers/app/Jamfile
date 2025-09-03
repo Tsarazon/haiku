@@ -122,4 +122,5 @@ SEARCH on [ FGristFiles $(font_src) ] = [ FDirName $(HAIKU_TOP) src servers app 
 
 
 SubInclude HAIKU_TOP src servers app drawing ;
+SubInclude HAIKU_TOP src servers app render ;
 SubInclude HAIKU_TOP src servers app stackandtile ;
