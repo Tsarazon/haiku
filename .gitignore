@@ -3,6 +3,21 @@ generated*
 build/jam/UserBuildConfig
 build/user_config_headers
 
+# Build logs and temporary files
+*.log
+build_log*.txt
+configure*.log
+yet_another_log.log
+build_final.log
+
+# Temporary development files
+Comments
+Task
+MEMORY_CAPSULE_SONNET.md
+
+# External library headers (temporary)
+headers/libs/blend2d/
+
 # KDE backup files ending with a ~ (created by KDE and Qt text editors)
 *~
 # Vim temporary/lock files
