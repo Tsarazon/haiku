@@ -1,11 +1,14 @@
 SubDir HAIKU_TOP src servers app ;
 
 UseLibraryHeaders agg ;
+UseLibraryHeaders blend2d ;
+UseLibraryHeaders asmjit ;
 UsePrivateHeaders app graphics input interface kernel shared storage support ;
 
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing Painter ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing Painter drawing_modes ] ;
+UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing Blend2D ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing interface local ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing interface remote ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app stackandtile ] ;
@@ -108,7 +111,7 @@ Application app_server :
 	:
 	libtranslation.so libbe.so libbnetapi.so
 	libaslocal.a libasremote.a
-	libasdrawing.a libpainter.a libagg.a
+	libasdrawing.a libpainter.a libagg.a libblend2d.a libasmjit.a
 	[ BuildFeatureAttribute freetype : library ]
 	[ BuildFeatureAttribute fontconfig : library ]
 	libstackandtile.a liblinprog.a libtextencoding.so shared
@@ -122,5 +125,4 @@ SEARCH on [ FGristFiles $(font_src) ] = [ FDirName $(HAIKU_TOP) src servers app 
 
 
 SubInclude HAIKU_TOP src servers app drawing ;
-SubInclude HAIKU_TOP src servers app render ;
 SubInclude HAIKU_TOP src servers app stackandtile ;

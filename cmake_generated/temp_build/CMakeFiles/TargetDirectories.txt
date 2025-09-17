@@ -1,4 +1,0 @@
-/home/ruslan/haiku/cmake_generated/temp_build/CMakeFiles/interface_kit_obj.dir
-/home/ruslan/haiku/cmake_generated/temp_build/CMakeFiles/interface_kit.dir
-/home/ruslan/haiku/cmake_generated/temp_build/CMakeFiles/edit_cache.dir
-/home/ruslan/haiku/cmake_generated/temp_build/CMakeFiles/rebuild_cache.dir

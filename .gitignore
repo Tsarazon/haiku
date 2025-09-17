@@ -2,7 +2,7 @@
 generated*
 build/jam/UserBuildConfig
 build/user_config_headers
-
+builddir
 # Build logs and temporary files
 *.log
 build_log*.txt
@@ -16,7 +16,7 @@ Task
 MEMORY_CAPSULE_SONNET.md
 
 # External library headers (temporary)
-headers/libs/blend2d/
+
 
 # KDE backup files ending with a ~ (created by KDE and Qt text editors)
 *~

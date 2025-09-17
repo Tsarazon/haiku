@@ -1,3 +1,0 @@
-# Hashes of file build rules.
-d590ed09b83bc31d28beba44ed8d1697 /home/ruslan/haiku/cmake_generated/objects/haiku/x86_64/release/kits/interface/interface_kit.o
-751b4f37db9c9dc0c59ad3f7c1f991ba CMakeFiles/interface_kit

@@ -1,9 +1,0 @@
-option('haiku_objects_dir', 
-       type: 'string',
-       value: '',
-       description: 'Path to Haiku objects directory')
-
-option('build_packages_dir', 
-       type: 'string',
-       value: '',
-       description: 'Path to Haiku build packages directory')

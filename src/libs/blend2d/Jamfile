@@ -1,0 +1,399 @@
+SubDir HAIKU_TOP src libs blend2d ;
+
+# Blend2D library build configuration
+# Based on official Blend2D CMakeLists.txt
+
+UsePrivateHeaders [ FDirName $(HAIKU_TOP) headers libs blend2d ] ;
+UsePrivateHeaders [ FDirName $(HAIKU_TOP) src libs blend2d src ] ;
+
+# Add AsmJit library headers for JIT support  
+UseLibraryHeaders asmjit ;
+SubDirC++Flags -I$(HAIKU_TOP)/headers/libs -I$(HAIKU_TOP)/headers/libs/asmjit ;
+
+# Use modern C++ and GCC headers via Haiku build feature system
+UseBuildFeatureHeaders gcc_syslibs_devel : c++-headers ;
+UseBuildFeatureHeaders gcc_syslibs_devel : gcc-headers ;
+
+# Compiler flags for Blend2D - using standard Haiku C++ integration
+local blend2dFlags = -O2 -fno-strict-aliasing -DHAIKU_TARGET_PLATFORM_HAIKU ;
+
+# Enable JIT with AsmJit library
+if $(TARGET_ARCH) = x86_64 || $(TARGET_ARCH) = x86 {
+    blend2dFlags += -DBLEND2D_BUILD_JIT ;
+}
+
+# Add SIMD feature flags for x86 architectures  
+if $(TARGET_ARCH) = x86_64 || $(TARGET_ARCH) = x86 {
+    SUBDIRC++FLAGS += -DBL_TARGET_OPT_SSE2 -DBL_BUILD_OPT_SSE2 -DBL_TARGET_OPT_SSE4_2 -DBL_BUILD_OPT_SSE4_2 ;
+}
+
+# Disable some warnings for Blend2D code
+blend2dFlags += -Wno-unused-parameter -Wno-sign-compare ;
+
+# Core Blend2D source files (no path prefix)
+local blend2dCoreSources = 
+    # Core API
+    api-globals.cpp
+    api-nocxx.cpp
+    object.cpp
+    
+    # Data structures  
+    array.cpp
+    array_test.cpp
+    bitarray.cpp
+    bitarray_test.cpp
+    bitset.cpp
+    bitset_test.cpp
+    string.cpp
+    string_test.cpp
+    var.cpp
+    var_test.cpp
+    
+    # Composition operations
+    compopinfo.cpp
+    
+    # Core rendering
+    context.cpp
+    context_test.cpp
+    filesystem.cpp
+    
+    # Font system
+    font.cpp
+    fontdata.cpp
+    fontface.cpp
+    fontfeaturesettings.cpp
+    fontfeaturesettings_test.cpp
+    fontmanager.cpp
+    fonttagdataids.cpp
+    fonttagdataids_test.cpp
+    fonttagdatainfo.cpp
+    fonttagdatainfo_test.cpp
+    fonttagset.cpp
+    font_test.cpp
+    fontvariationsettings.cpp
+    fontvariationsettings_test.cpp
+    
+    # Format support
+    format.cpp
+    
+    # Geometry and math
+    geometry.cpp
+    glyphbuffer.cpp
+    gradient.cpp
+    gradient_test.cpp
+    
+    # Image processing
+    imagecodec.cpp
+    imagecodec_test.cpp
+    image.cpp
+    imagedecoder.cpp
+    imageencoder.cpp
+    imagescale.cpp
+    image_test.cpp
+    
+    # Matrix operations
+    matrix_avx.cpp
+    matrix.cpp
+    matrix_sse2.cpp
+    matrix_test.cpp
+    
+    # Path operations
+    path.cpp
+    pathstroke.cpp
+    path_test.cpp
+    pattern.cpp
+    
+    # Pixel operations
+    pixelconverter_avx2.cpp
+    pixelconverter.cpp
+    pixelconverter_sse2.cpp
+    pixelconverter_ssse3.cpp
+    pixelconverter_test.cpp
+    
+    # Random and RGBA
+    random.cpp
+    random_test.cpp
+    rgba_test.cpp
+    
+    # Runtime
+    runtime.cpp
+    runtimescope.cpp
+    
+    # Tracing
+    trace.cpp
+;
+
+# Codec source files (no path prefix)
+local codecSources = 
+    bmpcodec.cpp
+    codec_test.cpp
+    jpegcodec.cpp
+    jpeghuffman.cpp
+    jpegops.cpp
+    jpegops_sse2.cpp
+    pngcodec.cpp
+    pngops_asimd.cpp
+    pngops_avx.cpp
+    pngops.cpp
+    pngopssimdimpl_test.cpp
+    pngops_sse2.cpp
+    qoicodec.cpp
+;
+
+# Compression source files (no path prefix)
+local compressionSources = 
+    checksum_asimd.cpp
+    checksum_asimd_crypto.cpp
+    checksum.cpp
+    checksum_sse2.cpp
+    checksum_sse4_2.cpp
+    checksum_test.cpp
+    deflatedecoder.cpp
+    deflatedecoderfast_avx2.cpp
+    deflatedecoderfast.cpp
+    deflatedecoderutils.cpp
+    deflatedefs.cpp
+    deflateencoder.cpp
+    deflate_test.cpp
+;
+
+# OpenType source files (no path prefix)
+local opentypeSources = 
+    otcff.cpp
+    otcff_test.cpp
+    otcmap.cpp
+    otcore.cpp
+    otface.cpp
+    otglyf_asimd.cpp
+    otglyf_avx2.cpp
+    otglyf.cpp
+    otglyfsimddata.cpp
+    otglyf_sse4_2.cpp
+    otkern.cpp
+    otlayout.cpp
+    otmetrics.cpp
+    otname.cpp
+;
+
+# Pipeline JIT source files (no path prefix)
+local pipelineJitSources = 
+    compoppart.cpp
+    fetchgradientpart.cpp
+    fetchpart.cpp
+    fetchpatternpart.cpp
+    fetchpixelptrpart.cpp
+    fetchsolidpart.cpp
+    fetchutilscoverage.cpp
+    fetchutilsinlineloops.cpp
+    fetchutilspixelaccess.cpp
+    fetchutilspixelgather.cpp
+    fillpart.cpp
+    pipecompiler_a64.cpp
+    pipecompiler_test_avx2fma.cpp
+    pipecompiler_test.cpp
+    pipecompiler_test_sse2.cpp
+    pipecompiler_x86.cpp
+    pipecomposer.cpp
+    pipefunction.cpp
+    pipegenruntime.cpp
+    pipepart.cpp
+    pipeprimitives.cpp
+;
+
+# Pipeline core source files (no path prefix)
+local pipelineSources = 
+    pipedefs.cpp
+    piperuntime.cpp
+;
+
+# Pipeline reference source files (no path prefix)
+local pipelineRefSources = 
+    fixedpiperuntime.cpp
+;
+
+# Pixel ops source files (no path prefix)
+local pixelopsSources = 
+    funcs.cpp
+    interpolation_avx2.cpp
+    interpolation.cpp
+    interpolation_sse2.cpp
+    scalar_test.cpp
+;
+
+# Raster source files (no path prefix)
+local rasterSources = 
+    analyticrasterizer_test.cpp
+    rastercontext.cpp
+    rastercontextops.cpp
+    renderfetchdata.cpp
+    rendertargetinfo.cpp
+    workdata.cpp
+    workermanager.cpp
+    workerproc.cpp
+    workersynchronization.cpp
+;
+
+# SIMD test source files (no path prefix)
+local simdSources = 
+    simdarm_test_asimd.cpp
+    simd_test.cpp
+    simdx86_test_avx2.cpp
+    simdx86_test_avx512.cpp
+    simdx86_test_avx.cpp
+    simdx86_test_sse2.cpp
+    simdx86_test_sse4_1.cpp
+    simdx86_test_sse4_2.cpp
+    simdx86_test_ssse3.cpp
+;
+
+# Support source files (no path prefix)
+local supportSources = 
+    arenaallocator.cpp
+    algorithm_test.cpp
+    arenabitarray_test.cpp
+    arenahashmap.cpp
+    arenahashmap_test.cpp
+    arenalist_test.cpp
+    arenatree_test.cpp
+    bitops_test.cpp
+    intops_test.cpp
+    math.cpp
+    math_test.cpp
+    memops_test.cpp
+    ptrops_test.cpp
+    scopedallocator.cpp
+    zeroallocator.cpp
+    zeroallocator_test.cpp
+;
+
+# Tables source files (no path prefix)
+local tablesSources = 
+    tables.cpp
+    tables_test.cpp
+;
+
+# Threading source files (no path prefix)
+local threadingSources = 
+    futex.cpp
+    thread.cpp
+    threadpool.cpp
+    threadpool_test.cpp
+    uniqueidgenerator.cpp
+;
+
+# Unicode source files (no path prefix)
+local unicodeSources = 
+    unicode.cpp
+    unicode_test.cpp
+;
+
+# Multi-architecture build setup  
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+    on $(architectureObject) {
+        UsePrivateSystemHeaders ;
+        
+        
+        # Collect all sources
+        local allSources = $(blend2dCoreSources) $(codecSources) $(compressionSources)
+            $(opentypeSources) $(pipelineJitSources) $(pipelineSources) 
+            $(pipelineRefSources) $(pixelopsSources) $(rasterSources)
+            $(simdSources) $(supportSources) $(tablesSources) 
+            $(threadingSources) $(unicodeSources) ;
+        
+        # Apply blend2d-specific flags  
+        ObjectC++Flags $(allSources) : $(blend2dFlags) ;
+        ObjectCcFlags $(allSources) : $(blend2dFlags) ;
+        
+        # Add SIMD-specific flags for x86 architectures
+        if $(TARGET_ARCH) = x86_64 || $(TARGET_ARCH) = x86 {
+            # SSE2-specific files (actually need SSE4.1 for some intrinsics)
+            local sse2Sources = 
+                jpegops_sse2.cpp
+                checksum_sse2.cpp
+                matrix_sse2.cpp
+                pixelconverter_sse2.cpp
+                interpolation_sse2.cpp
+                pngops_sse2.cpp
+                simdx86_test_sse2.cpp
+                pipecompiler_test_sse2.cpp
+            ;
+            ObjectC++Flags $(sse2Sources) : -msse4.1 ;
+            
+            # SSE4.2 + PCLMUL specific files  
+            local sse42Sources =
+                checksum_sse4_2.cpp
+                otglyf_sse4_2.cpp
+                simdx86_test_sse4_2.cpp
+            ;
+            ObjectC++Flags $(sse42Sources) : -msse4.2 -mpclmul ;
+            
+            # Other SIMD files
+            ObjectC++Flags matrix_avx.cpp : -mavx ;
+            ObjectC++Flags pixelconverter_ssse3.cpp : -msse4.1 ;
+            ObjectC++Flags pixelconverter_avx2.cpp : -mavx2 ;
+            ObjectC++Flags interpolation_avx2.cpp : -mavx2 ;
+            ObjectC++Flags deflatedecoderfast.cpp : -mssse3 ;
+            ObjectC++Flags simdx86_test_ssse3.cpp : -mssse3 ;
+            ObjectC++Flags simdx86_test_sse4_1.cpp : -msse4.1 ;
+            ObjectC++Flags simdx86_test_avx.cpp : -mavx ;
+            ObjectC++Flags simdx86_test_avx2.cpp : -mavx2 ;
+            ObjectC++Flags pngops_avx.cpp : -mavx ;
+            ObjectC++Flags deflatedecoderfast_avx2.cpp : -mavx2 ;
+            ObjectC++Flags pipecompiler_test_avx2fma.cpp : -mavx2 -mfma ;
+            ObjectC++Flags otglyf_avx2.cpp : -mavx2 ;
+            ObjectC++Flags simdx86_test_avx512.cpp : -mavx512f -mavx512bw -mavx512dq -mavx512vl ;
+            ObjectC++Flags imagescale.cpp : -msse4.1 ;
+            ObjectC++Flags otcff.cpp : -msse4.1 ;
+            ObjectC++Flags pipedefs.cpp : -msse4.1 ;
+            ObjectC++Flags interpolation.cpp : -msse4.1 ;
+            ObjectC++Flags rastercontext.cpp : -msse4.1 ;
+        }
+        
+        # Build static library
+        StaticLibrary [ MultiArchDefaultGristFiles libblend2d.a ] : $(allSources) ;
+        
+        # Set search paths for each group of files using the correct pattern
+        SEARCH on [ FGristFiles $(blend2dCoreSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d ] ;
+        
+        SEARCH on [ FGristFiles $(codecSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d codec ] ;
+        
+        SEARCH on [ FGristFiles $(compressionSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d compression ] ;
+        
+        SEARCH on [ FGristFiles $(opentypeSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d opentype ] ;
+        
+        SEARCH on [ FGristFiles $(pipelineJitSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d pipeline jit ] ;
+        
+        SEARCH on [ FGristFiles $(pipelineSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d pipeline ] ;
+        
+        SEARCH on [ FGristFiles $(pipelineRefSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d pipeline reference ] ;
+        
+        SEARCH on [ FGristFiles $(pixelopsSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d pixelops ] ;
+        
+        SEARCH on [ FGristFiles $(rasterSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d raster ] ;
+        
+        SEARCH on [ FGristFiles $(simdSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d simd ] ;
+        
+        SEARCH on [ FGristFiles $(supportSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d support ] ;
+        
+        SEARCH on [ FGristFiles $(tablesSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d tables ] ;
+        
+        SEARCH on [ FGristFiles $(threadingSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d threading ] ;
+        
+        SEARCH on [ FGristFiles $(unicodeSources) ] 
+            = [ FDirName $(HAIKU_TOP) src libs blend2d src blend2d unicode ] ;
+    }
+}

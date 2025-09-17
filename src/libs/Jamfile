@@ -1,6 +1,8 @@
 SubDir HAIKU_TOP src libs ;
 
 SubInclude HAIKU_TOP src libs agg ;
+SubInclude HAIKU_TOP src libs asmjit ;
+SubInclude HAIKU_TOP src libs blend2d ;
 SubInclude HAIKU_TOP src libs alm ;
 SubInclude HAIKU_TOP src libs bsd ;
 SubInclude HAIKU_TOP src libs compat ;
