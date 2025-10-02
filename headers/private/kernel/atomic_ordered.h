@@ -1,0 +1,473 @@
+/*
+ * Copyright 2024, Haiku Inc. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ *
+ * Authors:
+ *		Haiku Kernel Team
+ *
+ * Modern atomic operations API with explicit memory ordering semantics.
+ * This header provides atomic primitives compatible with C11/C++11 memory
+ * ordering model, but implemented using GCC builtins for kernel compatibility.
+ * No C++11 features required - works with Haiku kernel's C/C++98 environment.
+ */
+#ifndef _KERNEL_ATOMIC_ORDERED_H
+#define _KERNEL_ATOMIC_ORDERED_H
+
+
+#include <SupportDefs.h>
+
+
+/* Memory ordering constants - using Haiku naming with typedef suffix */
+typedef enum {
+	B_MEMORY_ORDER_RELAXED = 0,
+	B_MEMORY_ORDER_CONSUME = 1,
+	B_MEMORY_ORDER_ACQUIRE = 2,
+	B_MEMORY_ORDER_RELEASE = 3,
+	B_MEMORY_ORDER_ACQ_REL = 4,
+	B_MEMORY_ORDER_SEQ_CST = 5
+} memory_order_t;
+
+
+/* Atomic type definitions with proper alignment
+ * Note: These struct wrappers create ABI constraints. Recommendation is to
+ * use raw pointers (int32*, int64*) with _ordered functions instead.
+ * Kept here for documentation purposes only.
+ *
+ * Using GCC __attribute__((aligned)) for kernel compatibility - works in both C and C++
+ * without requiring C++11 alignas or C11 _Alignas */
+typedef struct { volatile int8  value; } __attribute__((aligned(1))) atomic_int8;
+typedef struct { volatile int16 value; } __attribute__((aligned(2))) atomic_int16;
+typedef struct { volatile int32 value; } __attribute__((aligned(4))) atomic_int32;
+typedef struct { volatile int64 value; } __attribute__((aligned(8))) atomic_int64;
+typedef struct { volatile uint8  value; } __attribute__((aligned(1))) atomic_uint8;
+typedef struct { volatile uint16 value; } __attribute__((aligned(2))) atomic_uint16;
+typedef struct { volatile uint32 value; } __attribute__((aligned(4))) atomic_uint32;
+typedef struct { volatile uint64 value; } __attribute__((aligned(8))) atomic_uint64;
+typedef struct { volatile void* value; } __attribute__((aligned(sizeof(void*)))) atomic_ptr;
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Function declarations for old compilers without inline atomic support.
+ * For GCC >= 4.7 and Clang, these are defined as static inline below.
+ * For older compilers, implementations must be provided in atomic.c */
+#if !(__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7) || defined(__clang__))
+
+/* Enhanced atomic functions with memory ordering - Haiku naming style
+ * These use _ordered suffix to distinguish from legacy atomic_set/get API */
+extern void     atomic_store_ordered(int32* value, int32 newValue,
+                                    memory_order_t order);
+extern int32    atomic_load_ordered(int32* value, memory_order_t order);
+extern int32    atomic_exchange_ordered(int32* value, int32 newValue,
+                                       memory_order_t order);
+extern bool     atomic_compare_exchange_weak_ordered(int32* value,
+                                           int32* expected, int32 desired,
+                                           memory_order_t success,
+                                           memory_order_t failure);
+extern bool     atomic_compare_exchange_strong_ordered(int32* value,
+                                             int32* expected, int32 desired,
+                                             memory_order_t success,
+                                             memory_order_t failure);
+
+/* Arithmetic operations with memory ordering */
+extern int32    atomic_fetch_add_ordered(int32* value, int32 addend,
+                                        memory_order_t order);
+extern int32    atomic_fetch_sub_ordered(int32* value, int32 subtrahend,
+                                        memory_order_t order);
+extern int32    atomic_fetch_and_ordered(int32* value, int32 operand,
+                                        memory_order_t order);
+extern int32    atomic_fetch_or_ordered(int32* value, int32 operand,
+                                       memory_order_t order);
+extern int32    atomic_fetch_xor_ordered(int32* value, int32 operand,
+                                        memory_order_t order);
+
+/* 64-bit variants */
+extern void     atomic_store64_ordered(int64* value, int64 newValue,
+                                      memory_order_t order);
+extern int64    atomic_load64_ordered(int64* value, memory_order_t order);
+extern int64    atomic_exchange64_ordered(int64* value, int64 newValue,
+                                         memory_order_t order);
+extern bool     atomic_compare_exchange_weak64_ordered(int64* value,
+                                              int64* expected, int64 desired,
+                                              memory_order_t success,
+                                              memory_order_t failure);
+extern bool     atomic_compare_exchange_strong64_ordered(int64* value,
+                                                int64* expected, int64 desired,
+                                                memory_order_t success,
+                                                memory_order_t failure);
+
+/* 64-bit arithmetic operations with memory ordering */
+extern int64    atomic_fetch_add64_ordered(int64* value, int64 addend,
+                                          memory_order_t order);
+extern int64    atomic_fetch_sub64_ordered(int64* value, int64 subtrahend,
+                                          memory_order_t order);
+extern int64    atomic_fetch_and64_ordered(int64* value, int64 operand,
+                                          memory_order_t order);
+extern int64    atomic_fetch_or64_ordered(int64* value, int64 operand,
+                                         memory_order_t order);
+extern int64    atomic_fetch_xor64_ordered(int64* value, int64 operand,
+                                          memory_order_t order);
+
+/* Pointer variants */
+extern void*    atomic_load_ptr_ordered(void** value, memory_order_t order);
+extern void     atomic_store_ptr_ordered(void** value, void* newValue,
+                                        memory_order_t order);
+extern void*    atomic_exchange_ptr_ordered(void** value, void* newValue,
+                                           memory_order_t order);
+extern bool     atomic_compare_exchange_weak_ptr_ordered(void** value,
+                                                void** expected, void* desired,
+                                                memory_order_t success,
+                                                memory_order_t failure);
+extern bool     atomic_compare_exchange_strong_ptr_ordered(void** value,
+                                                void** expected, void* desired,
+                                                memory_order_t success,
+                                                memory_order_t failure);
+
+/* Fence operations */
+extern void     atomic_thread_fence(memory_order_t order);
+extern void     atomic_signal_fence(memory_order_t order);
+
+#endif /* Old compiler extern declarations */
+
+#ifdef __cplusplus
+}
+#endif
+
+
+/* Inline implementations for GCC >= 4.7 and Clang */
+#if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7) || defined(__clang__)
+
+/* Convert Haiku memory order to GCC atomic order - const for optimization */
+static __inline__ __attribute__((const)) int
+__haiku_to_gcc_order(memory_order_t order)
+{
+	/* Using ternary operators instead of switch for better optimization and
+	 * C++14 compatibility (no constexpr if available) */
+	return (order == B_MEMORY_ORDER_RELAXED) ? __ATOMIC_RELAXED :
+	       (order == B_MEMORY_ORDER_CONSUME) ? __ATOMIC_CONSUME :
+	       (order == B_MEMORY_ORDER_ACQUIRE) ? __ATOMIC_ACQUIRE :
+	       (order == B_MEMORY_ORDER_RELEASE) ? __ATOMIC_RELEASE :
+	       (order == B_MEMORY_ORDER_ACQ_REL) ? __ATOMIC_ACQ_REL :
+	       __ATOMIC_SEQ_CST;
+}
+
+
+/* Normalize failure memory ordering per C++11 standard (§29.6.5)
+ * Failure order cannot be release/acq_rel and cannot be stronger than success */
+static __inline__ __attribute__((const)) int
+__haiku_normalize_failure_order(memory_order_t success, memory_order_t failure)
+{
+	int failure_gcc = __haiku_to_gcc_order(failure);
+	
+	/* C++11 requirement: failure order cannot be release or acq_rel */
+	if (failure == B_MEMORY_ORDER_RELEASE || failure == B_MEMORY_ORDER_ACQ_REL) {
+		failure_gcc = __ATOMIC_ACQUIRE;
+	}
+	
+	/* Failure order cannot be stronger than success order */
+	int success_gcc = __haiku_to_gcc_order(success);
+	if (failure_gcc > success_gcc) {
+		return success_gcc;
+	}
+	
+	return failure_gcc;
+}
+
+
+/* Modern atomic operations with explicit memory ordering */
+static __inline__ void
+atomic_store_ordered(int32* value, int32 newValue, memory_order_t order)
+{
+	__atomic_store_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_load_ordered(int32* value, memory_order_t order)
+{
+	return __atomic_load_n(value, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_exchange_ordered(int32* value, int32 newValue, memory_order_t order)
+{
+	return __atomic_exchange_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_weak_ordered(int32* value, int32* expected, 
+	int32 desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, true,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success, 
+	                                 	failure));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_strong_ordered(int32* value, int32* expected, 
+	int32 desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, false,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success, 
+	                                 	failure));
+}
+
+
+static __inline__ int32
+atomic_fetch_add_ordered(int32* value, int32 addend, memory_order_t order)
+{
+	return __atomic_fetch_add(value, addend, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_fetch_sub_ordered(int32* value, int32 subtrahend, memory_order_t order)
+{
+	return __atomic_fetch_sub(value, subtrahend, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_fetch_and_ordered(int32* value, int32 operand, memory_order_t order)
+{
+	return __atomic_fetch_and(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_fetch_or_ordered(int32* value, int32 operand, memory_order_t order)
+{
+	return __atomic_fetch_or(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int32
+atomic_fetch_xor_ordered(int32* value, int32 operand, memory_order_t order)
+{
+	return __atomic_fetch_xor(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+/* 64-bit variants with explicit memory ordering */
+static __inline__ void
+atomic_store64_ordered(int64* value, int64 newValue, memory_order_t order)
+{
+	__atomic_store_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_load64_ordered(int64* value, memory_order_t order)
+{
+	return __atomic_load_n(value, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_exchange64_ordered(int64* value, int64 newValue, memory_order_t order)
+{
+	return __atomic_exchange_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_weak64_ordered(int64* value, int64* expected, 
+	int64 desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, true,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success, 
+	                                 	failure));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_strong64_ordered(int64* value, int64* expected,
+	int64 desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, false,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success,
+	                                 	failure));
+}
+
+
+/* 64-bit arithmetic operations with explicit memory ordering */
+static __inline__ int64
+atomic_fetch_add64_ordered(int64* value, int64 addend, memory_order_t order)
+{
+	return __atomic_fetch_add(value, addend, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_fetch_sub64_ordered(int64* value, int64 subtrahend, memory_order_t order)
+{
+	return __atomic_fetch_sub(value, subtrahend, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_fetch_and64_ordered(int64* value, int64 operand, memory_order_t order)
+{
+	return __atomic_fetch_and(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_fetch_or64_ordered(int64* value, int64 operand, memory_order_t order)
+{
+	return __atomic_fetch_or(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ int64
+atomic_fetch_xor64_ordered(int64* value, int64 operand, memory_order_t order)
+{
+	return __atomic_fetch_xor(value, operand, __haiku_to_gcc_order(order));
+}
+
+
+/* Pointer variants with explicit memory ordering */
+static __inline__ void*
+atomic_load_ptr_ordered(void** value, memory_order_t order)
+{
+	return __atomic_load_n(value, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ void
+atomic_store_ptr_ordered(void** value, void* newValue, memory_order_t order)
+{
+	__atomic_store_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ void*
+atomic_exchange_ptr_ordered(void** value, void* newValue, memory_order_t order)
+{
+	return __atomic_exchange_n(value, newValue, __haiku_to_gcc_order(order));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_weak_ptr_ordered(void** value, void** expected,
+	void* desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, true,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success,
+	                                 	failure));
+}
+
+
+static __inline__ bool
+atomic_compare_exchange_strong_ptr_ordered(void** value, void** expected,
+	void* desired, memory_order_t success, memory_order_t failure)
+{
+	return __atomic_compare_exchange_n(value, expected, desired, false,
+	                                 __haiku_to_gcc_order(success),
+	                                 __haiku_normalize_failure_order(success,
+	                                 	failure));
+}
+
+
+/* Fence operations */
+static __inline__ void
+atomic_thread_fence(memory_order_t order)
+{
+	__atomic_thread_fence(__haiku_to_gcc_order(order));
+}
+
+
+static __inline__ void
+atomic_signal_fence(memory_order_t order)
+{
+	__atomic_signal_fence(__haiku_to_gcc_order(order));
+}
+
+
+/* Backward compatibility - old API maintains original SEQ_CST semantics
+ * CRITICAL: Do NOT change to relaxed ordering - existing code relies on this!
+ * These functions are defined here to demonstrate the relationship between
+ * the new _ordered API and the legacy API. In practice, these should remain
+ * in SupportDefs.h for ABI compatibility. */
+
+#if 0  /* Disabled - these are already in SupportDefs.h */
+static __inline__ void
+atomic_set(int32* value, int32 newValue)
+{
+	atomic_store_ordered(value, newValue, B_MEMORY_ORDER_SEQ_CST);
+}
+
+
+static __inline__ int32
+atomic_get(int32* value)
+{
+	return atomic_load_ordered(value, B_MEMORY_ORDER_SEQ_CST);
+}
+
+
+static __inline__ int32
+atomic_add(int32* value, int32 addValue)
+{
+	return atomic_fetch_add_ordered(value, addValue, B_MEMORY_ORDER_SEQ_CST);
+}
+
+
+static __inline__ int32
+atomic_and(int32* value, int32 andValue)
+{
+	return atomic_fetch_and_ordered(value, andValue, B_MEMORY_ORDER_SEQ_CST);
+}
+
+
+static __inline__ int32
+atomic_or(int32* value, int32 orValue)
+{
+	return atomic_fetch_or_ordered(value, orValue, B_MEMORY_ORDER_SEQ_CST);
+}
+
+
+static __inline__ int64
+atomic_set64(int64* value, int64 newValue)
+{
+	return __atomic_exchange_n(value, newValue, __ATOMIC_SEQ_CST);
+}
+
+
+static __inline__ int64
+atomic_get64(int64* value)
+{
+	return __atomic_load_n(value, __ATOMIC_SEQ_CST);
+}
+
+
+static __inline__ int64
+atomic_add64(int64* value, int64 addValue)
+{
+	return __atomic_fetch_add(value, addValue, __ATOMIC_SEQ_CST);
+}
+
+
+static __inline__ int64
+atomic_test_and_set64(int64* value, int64 newValue, int64 testAgainst)
+{
+	int64 expected = testAgainst;
+	__atomic_compare_exchange_n(value, &expected, newValue, false,
+	                           __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+	return expected;
+}
+#endif  /* Backward compatibility functions */
+
+#endif /* GCC >= 4.7 */
+
+
+#endif /* _KERNEL_ATOMIC_ORDERED_H */

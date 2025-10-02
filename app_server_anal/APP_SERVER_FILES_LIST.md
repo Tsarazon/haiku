@@ -1,0 +1,275 @@
+# Список файлов App Server в Haiku OS
+## ПОЛНЫЙ ТОЧНЫЙ СПИСОК ВСЕХ 270 ФАЙЛОВ
+
+```
+- [ ] /home/ruslan/haiku/src/servers/app/Angle.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/Angle.h
+- [x] /home/ruslan/haiku/src/servers/app/AppServer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/AppServer.h
+- [ ] /home/ruslan/haiku/src/servers/app/app_server.rdef
+- [x] /home/ruslan/haiku/src/servers/app/BitmapManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/BitmapManager.h
+- [x] /home/ruslan/haiku/src/servers/app/Canvas.cpp
+- [x] /home/ruslan/haiku/src/servers/app/Canvas.h
+- [ ] /home/ruslan/haiku/src/servers/app/CLAUDE.md
+- [ ] /home/ruslan/haiku/src/servers/app/ClickTarget.h
+- [x] /home/ruslan/haiku/src/servers/app/ClientMemoryAllocator.cpp
+- [x] /home/ruslan/haiku/src/servers/app/ClientMemoryAllocator.h
+- [ ] /home/ruslan/haiku/src/servers/app/CursorData.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/CursorManager.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/CursorManager.h
+- [ ] /home/ruslan/haiku/src/servers/app/CursorSet.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/CursorSet.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/Decorator.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/Decorator.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DecorManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DecorManager.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DefaultDecorator.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DefaultDecorator.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DefaultWindowBehaviour.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/DefaultWindowBehaviour.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/MagneticBorder.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/MagneticBorder.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/TabDecorator.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/TabDecorator.h
+- [x] /home/ruslan/haiku/src/servers/app/decorator/WindowBehaviour.cpp
+- [x] /home/ruslan/haiku/src/servers/app/decorator/WindowBehaviour.h
+- [x] /home/ruslan/haiku/src/servers/app/DelayedMessage.cpp
+- [x] /home/ruslan/haiku/src/servers/app/DelayedMessage.h
+- [x] /home/ruslan/haiku/src/servers/app/Desktop.cpp
+- [x] /home/ruslan/haiku/src/servers/app/Desktop.h
+- [ ] /home/ruslan/haiku/src/servers/app/DesktopListener.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/DesktopListener.h
+- [ ] /home/ruslan/haiku/src/servers/app/DesktopSettings.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/DesktopSettings.h
+- [ ] /home/ruslan/haiku/src/servers/app/DesktopSettingsPrivate.h
+- [ ] /home/ruslan/haiku/src/servers/app/DirectWindowInfo.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/DirectWindowInfo.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/AlphaMaskCache.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/AlphaMaskCache.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/AlphaMask.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/AlphaMask.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BBitmapBuffer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BBitmapBuffer.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapBuffer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapBuffer.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapDrawingEngine.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapDrawingEngine.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapHWInterface.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/BitmapHWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/CLAUDE.md
+- [x] /home/ruslan/haiku/src/servers/app/drawing/DrawingEngine.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/DrawingEngine.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/drawing_support.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/drawing_support.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/HWInterface.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/HWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/Jamfile
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/local/AccelerantBuffer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/local/AccelerantBuffer.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/local/AccelerantHWInterface.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/local/AccelerantHWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/local/Jamfile
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/Jamfile
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/NetReceiver.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/NetReceiver.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/NetSender.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/NetSender.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteDrawingEngine.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteDrawingEngine.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteEventStream.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteEventStream.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteHWInterface.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteHWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteMessage.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/RemoteMessage.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/StreamingRingBuffer.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/remote/StreamingRingBuffer.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/DWindowBuffer.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/DWindowBuffer.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/DWindowHWInterface.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/DWindowHWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/ViewHWInterface.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/interface/virtual/ViewHWInterface.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Jamfile
+- [x] /home/ruslan/haiku/src/servers/app/drawing/MallocBuffer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/MallocBuffer.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Overlay.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Overlay.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_clipped_alpha_mask.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_rasterizer_scanline_aa_subpix.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_renderer_region.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_renderer_scanline_subpix.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_scanline_p_subpix_avrg_filtering.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_scanline_p_subpix.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_scanline_storage_subpix.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_scanline_u_subpix_avrg_filtering.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/agg_scanline_u_subpix.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/Painter/AGGTextRenderer.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/Painter/AGGTextRenderer.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/BitmapPainter.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/BitmapPainter.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/DrawBitmapBilinear.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/DrawBitmapGeneric.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/DrawBitmapNearestNeighbor.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/DrawBitmapNoScale.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/bitmap_painter/painter_bilinear_scale.nasm
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/CLAUDE.md
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/defines.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/AggCompOpAdapter.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/CLAUDE.md
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAdd.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAddSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCC.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCCSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCO.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCOSolid.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCOSolidSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaCOSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPC.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPCSolid.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPCSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPO.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPOSolid.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPOSolidSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeAlphaPOSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeBlend.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeBlendSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeCopy.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeCopySolid.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeCopySolidSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeCopySUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeErase.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeEraseSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingMode.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeInvert.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeInvertSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeMax.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeMaxSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeMin.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeMinSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeOver.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeOverSolid.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeOverSolidSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeOverSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeSelect.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeSelectSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeSubtract.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/DrawingModeSubtractSUBPIX.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/PixelFormat.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/drawing_modes/PixelFormat.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/GlobalSubpixelSettings.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/GlobalSubpixelSettings.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/Jamfile
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/NOTES
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/PainterAggInterface.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/Painter/Painter.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/Painter/Painter.h
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/README
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/TODO
+- [ ] /home/ruslan/haiku/src/servers/app/drawing/Painter/Transformable.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/Painter/Transformable.h
+- [x] /home/ruslan/haiku/src/servers/app/drawing/PatternHandler.cpp
+- [x] /home/ruslan/haiku/src/servers/app/drawing/PatternHandler.h
+- [ ] /home/ruslan/haiku/src/servers/app/DrawState.cpp
+- [x] /home/ruslan/haiku/src/servers/app/DrawState.h
+- [x] /home/ruslan/haiku/src/servers/app/EventDispatcher.cpp
+- [x] /home/ruslan/haiku/src/servers/app/EventDispatcher.h
+- [x] /home/ruslan/haiku/src/servers/app/EventStream.cpp
+- [x] /home/ruslan/haiku/src/servers/app/EventStream.h
+- [x] /home/ruslan/haiku/src/servers/app/font/AppFontManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/AppFontManager.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontCache.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontCacheEntry.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontCacheEntry.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontCache.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontEngine.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontEngine.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontFamily.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontFamily.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontManager.h
+- [x] /home/ruslan/haiku/src/servers/app/font/FontStyle.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/FontStyle.h
+- [x] /home/ruslan/haiku/src/servers/app/font/GlobalFontManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/font/GlobalFontManager.h
+- [x] /home/ruslan/haiku/src/servers/app/font/GlyphLayoutEngine.h
+- [x] /home/ruslan/haiku/src/servers/app/InputManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/InputManager.h
+- [ ] /home/ruslan/haiku/src/servers/app/IntPoint.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/IntPoint.h
+- [ ] /home/ruslan/haiku/src/servers/app/IntRect.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/IntRect.h
+- [ ] /home/ruslan/haiku/src/servers/app/Jamfile
+- [ ] /home/ruslan/haiku/src/servers/app/Layer.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/Layer.h
+- [x] /home/ruslan/haiku/src/servers/app/MessageLooper.cpp
+- [x] /home/ruslan/haiku/src/servers/app/MessageLooper.h
+- [x] /home/ruslan/haiku/src/servers/app/MultiLocker.cpp
+- [x] /home/ruslan/haiku/src/servers/app/MultiLocker.h
+- [x] /home/ruslan/haiku/src/servers/app/OffscreenServerWindow.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/OffscreenServerWindow.h
+- [x] /home/ruslan/haiku/src/servers/app/OffscreenWindow.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/OffscreenWindow.h
+- [ ] /home/ruslan/haiku/src/servers/app/PictureBoundingBoxPlayer.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/PictureBoundingBoxPlayer.h
+- [ ] /home/ruslan/haiku/src/servers/app/ProfileMessageSupport.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/ProfileMessageSupport.h
+- [x] /home/ruslan/haiku/src/servers/app/RegionPool.cpp
+- [x] /home/ruslan/haiku/src/servers/app/RegionPool.h
+- [ ] /home/ruslan/haiku/src/servers/app/RenderingBuffer.h
+- [ ] /home/ruslan/haiku/src/servers/app/RGBColor.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/RGBColor.h
+- [x] /home/ruslan/haiku/src/servers/app/ScreenConfigurations.cpp
+- [x] /home/ruslan/haiku/src/servers/app/ScreenConfigurations.h
+- [x] /home/ruslan/haiku/src/servers/app/Screen.cpp
+- [x] /home/ruslan/haiku/src/servers/app/Screen.h
+- [x] /home/ruslan/haiku/src/servers/app/ScreenManager.cpp
+- [x] /home/ruslan/haiku/src/servers/app/ScreenManager.h
+- [x] /home/ruslan/haiku/src/servers/app/ServerApp.cpp
+- [x] /home/ruslan/haiku/src/servers/app/ServerApp.h
+- [x] /home/ruslan/haiku/src/servers/app/ServerBitmap.cpp
+- [x] /home/ruslan/haiku/src/servers/app/ServerBitmap.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerConfig.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerCursor.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/ServerCursor.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerFont.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/ServerFont.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerPicture.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/ServerPicture.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerTokenSpace.h
+- [ ] /home/ruslan/haiku/src/servers/app/ServerWindow.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/ServerWindow.h
+- [ ] /home/ruslan/haiku/src/servers/app/SimpleTransform.h
+- [ ] /home/ruslan/haiku/src/servers/app/stackandtile/Jamfile
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATDecorator.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATDecorator.h
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATGroup.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATGroup.h
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATWindow.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/SATWindow.h
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/StackAndTile.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/StackAndTile.h
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/Stacking.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/Stacking.h
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/Tiling.cpp
+- [x] /home/ruslan/haiku/src/servers/app/stackandtile/Tiling.h
+- [ ] /home/ruslan/haiku/src/servers/app/SystemPalette.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/SystemPalette.h
+- [ ] /home/ruslan/haiku/src/servers/app/test_app_server.rdef
+- [ ] /home/ruslan/haiku/src/servers/app/TestServerLoopAdapter.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/TestServerLoopAdapter.h
+- [x] /home/ruslan/haiku/src/servers/app/View.cpp
+- [x] /home/ruslan/haiku/src/servers/app/View.h
+- [x] /home/ruslan/haiku/src/servers/app/VirtualScreen.cpp
+- [x] /home/ruslan/haiku/src/servers/app/VirtualScreen.h
+- [x] /home/ruslan/haiku/src/servers/app/Window.cpp
+- [x] /home/ruslan/haiku/src/servers/app/Window.h
+- [x] /home/ruslan/haiku/src/servers/app/WindowList.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/WindowList.h
+- [ ] /home/ruslan/haiku/src/servers/app/Workspace.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/Workspace.h
+- [ ] /home/ruslan/haiku/src/servers/app/WorkspacePrivate.h
+- [ ] /home/ruslan/haiku/src/servers/app/WorkspacesView.cpp
+- [ ] /home/ruslan/haiku/src/servers/app/WorkspacesView.h
+```

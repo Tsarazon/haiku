@@ -24,6 +24,11 @@
 #include <vm/vm_page.h>
 
 
+// Adaptive heap sizing (Phase 1.1)
+static size_t sCachedTotalMemory = 0;
+static bool sMemoryCached = false;
+
+
 //#define TRACE_HEAP
 #ifdef TRACE_HEAP
 #	define TRACE(x) dprintf x
@@ -2023,6 +2028,64 @@ deferred_deleter(void *arg, int iteration)
 	// delete the deletables
 	while (DeferredDeletable* deletable = deletables.RemoveHead())
 		delete deletable;
+}
+
+
+//	#pragma mark -
+
+
+// #pragma mark - Adaptive Heap Sizing (Phase 1.1)
+
+
+size_t
+heap_calculate_initial_size(void)
+{
+	if (!sMemoryCached) {
+		// Cache the total memory to avoid repeated syscalls
+		sCachedTotalMemory = (size_t)vm_page_num_pages() * B_PAGE_SIZE;
+		sMemoryCached = true;
+	}
+
+	// Conservative initial allocation - 32MB for typical systems
+	// This provides a reasonable starting point without being aggressive
+	size_t initial_size = 32 * 1024 * 1024;
+
+	// For systems with low memory (< 512MB), use minimum (16MB)
+	if (sCachedTotalMemory < 512 * 1024 * 1024) {
+		initial_size = INITIAL_HEAP_SIZE_MIN;
+	}
+
+	// Clamp to acceptable range
+	if (initial_size < INITIAL_HEAP_SIZE_MIN)
+		initial_size = INITIAL_HEAP_SIZE_MIN;
+	if (initial_size > INITIAL_HEAP_SIZE_MAX)
+		initial_size = INITIAL_HEAP_SIZE_MAX;
+
+	return initial_size;
+}
+
+
+size_t
+heap_calculate_grow_size(size_t current_usage, size_t current_capacity)
+{
+	// Base growth: maximum of 4MB or 12.5% of current usage
+	size_t base_grow = HEAP_GROW_SIZE;
+	size_t adaptive_grow = current_usage / 8;  // 12.5%
+
+	size_t grow_size = (adaptive_grow > base_grow) ? adaptive_grow : base_grow;
+
+	// Limit growth to not exceed maximum heap size
+	size_t remaining = INITIAL_HEAP_SIZE_MAX - current_capacity;
+	if (grow_size > remaining) {
+		grow_size = remaining;
+	}
+
+	// Ensure minimum growth of at least base size if there's room
+	if (grow_size < base_grow && remaining >= base_grow) {
+		grow_size = base_grow;
+	}
+
+	return grow_size;
 }
 
 

@@ -25,6 +25,12 @@
 
 #include <util/ring_buffer.h>
 
+// Phase 5.2: Include support for lock-free MIDI event buffer
+// Memory barriers are needed for proper atomic operations
+#ifdef __KERNEL__
+	#include <arch/atomic.h>
+#endif
+
 /* Three levels of printout for convenience: */
 /* #define DEBUG 1 -- more convenient to define in the code file when needed */
 #define DEBUG_INFO 1
@@ -83,6 +89,9 @@ typedef struct usbmidi_device_info
 	usb_midi_event_packet* buffer;	/* input buffer & base of area */
 	usb_midi_event_packet* out_buffer;	/* above input buffer */
 	size_t inMaxPkt, outMaxPkt;		/* for each of in and out buffers */
+	
+	/* Phase 5.2: Lock-free event buffer for low-latency performance */
+	MIDIEventBuffer* event_buffer;	/* Lock-free buffer for v2 packets */
 
 	const usb_device* dev;
 	uint16 ifno;
@@ -113,7 +122,8 @@ typedef struct usbmidi_port_info
 
 	/* Port-specific variables */
 	char name[40];	/* complete pathname of this port */
-	struct ring_buffer* rbuf;
+	struct ring_buffer* rbuf;	/* Legacy ring buffer (for compatibility) */
+	MIDIEventBuffer* v2_buffer;	/* Phase 5.2: Lock-free v2 event buffer */
 
 	int cable;	/* index of this port */
 	bool has_in, has_out;

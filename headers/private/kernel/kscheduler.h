@@ -98,6 +98,29 @@ int32 _user_get_scheduler_mode(void);
 
 status_t _user_get_loadavg(struct loadavg* info, size_t size);
 
+// NUMA-aware scheduler extensions
+
+// Structure for CPU topology information (C-compatible)
+typedef struct cpu_topology_info {
+	int32	numa_node;
+	int32	core_id;
+	int32	package_id;
+	uint32	cache_line_size;
+	float	relative_performance;	// For heterogeneous CPUs (big.LITTLE)
+} cpu_topology_info;
+
+// Initialize NUMA topology information
+status_t scheduler_init_numa_info(void);
+
+// Get CPU topology information for a specific CPU
+const cpu_topology_info* scheduler_get_cpu_info(int32 cpu);
+
+// Select optimal CPU for thread with NUMA awareness
+int32 scheduler_select_optimal_cpu(struct Thread* thread, int32 preferred_cpu);
+
+// Check if thread should migrate to different CPU
+bool scheduler_should_migrate(struct Thread* thread, int32 target_cpu);
+
 
 #ifdef __cplusplus
 }

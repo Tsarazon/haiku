@@ -46,6 +46,9 @@ const efi_boot_services		*kBootServices;
 const efi_runtime_services	*kRuntimeServices;
 efi_handle kImage;
 
+// EFI System Manager for UEFI 2.8+ features
+static EFISystemManager* sEFIManager = NULL;
+
 
 static uint32 sBootOptions;
 
@@ -240,6 +243,26 @@ efi_main(efi_handle image, efi_system_table *systemTable)
 	kRuntimeServices = systemTable->RuntimeServices;
 
 	call_ctors();
+
+	// Initialize EFI System Manager early for UEFI 2.8+ features
+	status_t status = EFISystemManager::Initialize(image, systemTable);
+	if (status == B_OK) {
+		sEFIManager = EFISystemManager::Get();
+		if (sEFIManager != NULL) {
+			dprintf("EFI: UEFI version %u.%u\n",
+				(sEFIManager->GetUEFIVersion() >> 16) & 0xFFFF,
+				sEFIManager->GetUEFIVersion() & 0xFFFF);
+			if (sEFIManager->IsSecureBootEnabled()) {
+				dprintf("EFI: Secure Boot is ENABLED\n");
+			}
+			if (sEFIManager->IsTPMPresent()) {
+				dprintf("EFI: TPM 2.0 detected\n");
+			}
+		}
+	} else {
+		dprintf("EFI: Warning - System Manager initialization failed: %s\n",
+			strerror(status));
+	}
 
 	console_init();
 	serial_init();

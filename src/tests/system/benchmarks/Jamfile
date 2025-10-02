@@ -19,3 +19,10 @@ SimpleTest execbenchTest :
 SimpleTest forkbenchTest :
 	forkbench.c
 ;
+
+SubDirHdrs $(HAIKU_TOP) headers private kernel ;
+
+BinCommand atomic_bench :
+	atomic_bench.cpp
+	: be kernel $(TARGET_LIBSTDC++)
+;

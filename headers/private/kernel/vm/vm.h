@@ -32,6 +32,11 @@ struct VMPageWiringInfo;
 #define CREATE_AREA_DONT_CLEAR			0x04
 #define CREATE_AREA_PRIORITY_VIP		0x08
 #define CREATE_AREA_DONT_COMMIT_MEMORY	0x10
+// Phase 4.1: Large pages and NUMA support
+#define CREATE_AREA_USE_LARGE_PAGES		0x20
+#define CREATE_AREA_NUMA_LOCAL			0x40
+#define CREATE_AREA_PREFAULT_PAGES		0x80
+#define CREATE_AREA_COW_OPTIMIZED		0x100
 
 // memory/page allocation priorities
 #define VM_PRIORITY_USER	0
@@ -45,6 +50,10 @@ struct VMPageWiringInfo;
 // memory reserves
 #define VM_MEMORY_RESERVE_USER		(VM_PAGE_RESERVE_USER * B_PAGE_SIZE)
 #define VM_MEMORY_RESERVE_SYSTEM	(VM_PAGE_RESERVE_SYSTEM * B_PAGE_SIZE)
+
+// Phase 4.1: Large page sizes
+#define VM_PAGE_SIZE_LARGE			(2 * 1024 * 1024)		// 2MB
+#define VM_PAGE_SIZE_HUGE			(1024 * 1024 * 1024)	// 1GB
 
 
 #ifdef __cplusplus
@@ -190,6 +199,14 @@ area_id _user_clone_area(const char *name, void **_address, uint32 addressSpec,
 status_t _user_reserve_address_range(addr_t* userAddress, uint32 addressSpec,
 			addr_t size);
 status_t _user_unreserve_address_range(addr_t address, addr_t size);
+
+// Phase 4.1: Large pages and NUMA-aware VM API
+area_id vm_create_area_advanced(team_id team, const char* name, void** address,
+			uint32 addressSpec, size_t size, uint32 lock, uint32 protection,
+			uint32 flags, int32 numaNode);
+status_t vm_prefault_area_pages(area_id area, size_t offset, size_t length);
+int32 vm_get_area_numa_node(area_id area);
+bool vm_cpu_supports_large_pages(void);
 
 #ifdef __cplusplus
 }

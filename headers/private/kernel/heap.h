@@ -27,8 +27,11 @@
 
 #else
 
-// allocate 16MB initial heap for the kernel
+// allocate 16MB initial heap for the kernel (legacy compatibility)
 #define INITIAL_HEAP_SIZE			16 * 1024 * 1024
+// Adaptive heap size constraints
+#define INITIAL_HEAP_SIZE_MIN		16 * 1024 * 1024
+#define INITIAL_HEAP_SIZE_MAX		256 * 1024 * 1024
 // grow by another 4MB each time the heap runs out of memory
 #define HEAP_GROW_SIZE				4 * 1024 * 1024
 // allocate a dedicated 1MB area for dynamic growing
@@ -87,6 +90,10 @@ status_t heap_init(addr_t heapBase, size_t heapSize);
 status_t heap_init_post_area();
 status_t heap_init_post_sem();
 status_t heap_init_post_thread();
+
+// Adaptive heap sizing functions (Phase 1.1)
+size_t heap_calculate_initial_size(void);
+size_t heap_calculate_grow_size(size_t current_usage, size_t current_capacity);
 
 #ifdef __cplusplus
 }

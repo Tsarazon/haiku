@@ -50,12 +50,22 @@ create_usbmidi_port(usbmidi_device_info* devinfo,
 	port->open_fd = NULL;
 	port->has_in = has_in;
 	port->has_out = has_out;
+	
+	// Legacy ring buffer for compatibility
 	port->rbuf = create_ring_buffer(1024);
+	
+	// Phase 5.2: Create lock-free v2 event buffer for low-latency
+	// Use default size (256 entries) for typical usage
+	port->v2_buffer = new(std::nothrow) MIDIEventBuffer(MIDI_BUFFER_SIZE_DEFAULT);
+	if (port->v2_buffer == NULL) {
+		DPRINTF_ERR((MY_ID "Failed to allocate v2 event buffer\n"));
+		// Continue with legacy buffer only
+	}
 
 	devinfo->ports[cable] = port;
 
-	DPRINTF_INFO((MY_ID "Created port %p cable %d: %s\n",
-		port, cable, port->name));
+	DPRINTF_INFO((MY_ID "Created port %p cable %d: %s (v2 buffer: %s)\n",
+		port, cable, port->name, port->v2_buffer ? "yes" : "no"));
 
 	return port;
 }
@@ -65,10 +75,19 @@ void
 remove_port(usbmidi_port_info* port)
 {
 	assert(port != NULL);
+	
+	// Clean up legacy ring buffer
 	if (port->rbuf != NULL) {
 		delete_ring_buffer(port->rbuf);
 		port->rbuf = NULL;
 	}
+	
+	// Phase 5.2: Clean up v2 event buffer
+	if (port->v2_buffer != NULL) {
+		delete port->v2_buffer;
+		port->v2_buffer = NULL;
+	}
+	
 	DPRINTF_INFO((MY_ID "remove_port %p done\n", port));
 
 	free(port);
@@ -91,6 +110,9 @@ create_device(const usb_device* dev, uint16 ifno)
 	midiDevice = (usbmidi_device_info*)malloc(sizeof(usbmidi_device_info));
 	if (midiDevice == NULL)
 		return NULL;
+	
+	// Phase 5.2: Initialize event buffer pointer
+	midiDevice->event_buffer = NULL;
 
 	midiDevice->sem_lock = sem = create_sem(1, DRIVER_NAME "_lock");
 	if (sem < 0) {
@@ -199,6 +221,7 @@ interpret_midi_buffer(usbmidi_device_info* midiDevice)
 {
 	usb_midi_event_packet* packet = midiDevice->buffer;
 	size_t bytes_left = midiDevice->actual_length;
+	bigtime_t timestamp = system_time();	// Capture precise timestamp
 
 	/* buffer may have several packets */
 	while (bytes_left >= sizeof(usb_midi_event_packet)) {
@@ -217,7 +240,41 @@ interpret_midi_buffer(usbmidi_device_info* midiDevice)
 			DPRINTF_ERR((MY_ID "received data for port %d but it is closed!\n",
 				packet->cn));
 		} else {
-			ring_buffer_write(port->rbuf, packet->midi, pktlen);
+			// Phase 5.2: Try lock-free v2 buffer first for lower latency
+			if (port->v2_buffer != NULL) {
+				// Create v2 packet with timestamp and priority
+				usb_midi_event_packet_v2 v2packet;
+				v2packet.cin = packet->cin;
+				v2packet.cn = packet->cn;
+				v2packet.midi[0] = packet->midi[0];
+				v2packet.midi[1] = packet->midi[1];
+				v2packet.midi[2] = packet->midi[2];
+				v2packet.timestamp = timestamp;
+				// Calculate priority based on MIDI message type
+				// Real-time messages (0xF8-0xFF) get highest priority
+				if ((packet->midi[0] & 0xF8) == 0xF8)
+					v2packet.priority = 255;	// Real-time
+				else if ((packet->midi[0] & 0xF0) == 0x90)
+					v2packet.priority = 200;	// Note On - high priority
+				else if ((packet->midi[0] & 0xF0) == 0x80)
+					v2packet.priority = 180;	// Note Off - high priority
+				else
+					v2packet.priority = 100;	// Normal priority
+				v2packet.reserved[0] = 0;
+				v2packet.reserved[1] = 0;
+				v2packet.reserved[2] = 0;
+				
+				// Try lock-free write
+				if (!port->v2_buffer->TryWrite(v2packet)) {
+					// Buffer full - fall back to legacy ring buffer
+					DPRINTF_DEBUG((MY_ID "v2 buffer full, using legacy\n"));
+					ring_buffer_write(port->rbuf, packet->midi, pktlen);
+				}
+			} else {
+				// No v2 buffer - use legacy ring buffer
+				ring_buffer_write(port->rbuf, packet->midi, pktlen);
+			}
+			
 			release_sem_etc(port->open_fd->sem_cb, pktlen,
 				B_DO_NOT_RESCHEDULE);
 		}

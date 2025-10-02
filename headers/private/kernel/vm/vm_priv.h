@@ -21,6 +21,11 @@
 #define PAGE_ACCESSED 0x2000
 #define PAGE_PRESENT  0x4000
 
+// Phase 4.1: Internal VM flags for area creation
+#define INTERNAL_VM_LARGE_PAGES		0x10000
+#define INTERNAL_VM_NUMA_NODE_MASK	0xFF000000
+#define INTERNAL_VM_NUMA_NODE_SHIFT	24
+
 
 #ifdef __cplusplus
 extern "C" {

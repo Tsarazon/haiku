@@ -748,6 +748,12 @@ scheduler_init()
 	if (result != B_OK)
 		panic("scheduler_init: failed to initialize scheduler\n");
 
+	// Initialize NUMA topology information
+	result = scheduler_init_numa_info();
+	if (result != B_OK) {
+		dprintf("scheduler_init: NUMA initialization failed, continuing with UMA\n");
+	}
+
 	scheduler_set_operation_mode(SCHEDULER_MODE_LOW_LATENCY);
 
 	init_debug_commands();
