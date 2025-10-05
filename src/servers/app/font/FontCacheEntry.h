@@ -66,29 +66,41 @@ struct SerializedPath {
 		const uint8* commands = buffer + sizeof(SerializedPath);
 		const BLPoint* vertices = (const BLPoint*)(commands + header->commandCount);
 		
+		// Используем отдельный индекс для вершин чтобы избежать проблем с i++
+		size_t vertexIndex = 0;
+		
 		for (uint32 i = 0; i < header->commandCount; i++) {
+			if (vertexIndex >= header->vertexCount)
+				break;
+				
 			switch (commands[i]) {
 				case BL_PATH_CMD_MOVE:
-					path.moveTo(vertices[i].x, vertices[i].y);
+					path.moveTo(vertices[vertexIndex].x, vertices[vertexIndex].y);
+					vertexIndex++;
 					break;
 				case BL_PATH_CMD_ON:
-					path.lineTo(vertices[i].x, vertices[i].y);
+					path.lineTo(vertices[vertexIndex].x, vertices[vertexIndex].y);
+					vertexIndex++;
 					break;
 				case BL_PATH_CMD_QUAD:
 					// Quadratic bezier требует 2 точки
-					if (i + 1 < header->commandCount) {
-						path.quadTo(vertices[i].x, vertices[i].y,
-								   vertices[i+1].x, vertices[i+1].y);
-						i++; // skip next point
+					if (vertexIndex + 1 < header->vertexCount) {
+						path.quadTo(
+							vertices[vertexIndex].x, vertices[vertexIndex].y,
+							vertices[vertexIndex+1].x, vertices[vertexIndex+1].y
+						);
+						vertexIndex += 2;
 					}
 					break;
 				case BL_PATH_CMD_CUBIC:
 					// Cubic bezier требует 3 точки
-					if (i + 2 < header->commandCount) {
-						path.cubicTo(vertices[i].x, vertices[i].y,
-								    vertices[i+1].x, vertices[i+1].y,
-								    vertices[i+2].x, vertices[i+2].y);
-						i += 2; // skip next 2 points
+					if (vertexIndex + 2 < header->vertexCount) {
+						path.cubicTo(
+							vertices[vertexIndex].x, vertices[vertexIndex].y,
+							vertices[vertexIndex+1].x, vertices[vertexIndex+1].y,
+							vertices[vertexIndex+2].x, vertices[vertexIndex+2].y
+						);
+						vertexIndex += 3;
 					}
 					break;
 				case BL_PATH_CMD_CLOSE:
@@ -170,23 +182,28 @@ struct GlyphCache {
 				if (width == 0 || height == 0)
 					return image;
 				
-				if (image.create(width, height, BL_FORMAT_A8) != BL_SUCCESS)
-					return image;
+				BLResult result = image.create(width, height, BL_FORMAT_A8);
+				if (result != BL_SUCCESS)
+					return BLImage(); // Пустой image
 				
 				BLImageData imageData;
-				if (image.makeMutable(&imageData) == BL_SUCCESS) {
-					// Копируем данные
-					uint32 srcStride = width; // A8 формат
-					uint32 dstStride = imageData.stride;
-					
-					uint8* src = data;
-					uint8* dst = (uint8*)imageData.pixelData;
-					
-					for (uint32 y = 0; y < height; y++) {
-						memcpy(dst, src, width);
-						src += srcStride;
-						dst += dstStride;
-					}
+				result = image.makeMutable(&imageData);
+				if (result != BL_SUCCESS) {
+					image.reset(); // ✅ Освобождаем перед возвратом
+					return BLImage();
+				}
+				
+				// Копируем данные
+				uint32 srcStride = width; // A8 формат
+				uint32 dstStride = imageData.stride;
+				
+				uint8* src = data;
+				uint8* dst = (uint8*)imageData.pixelData;
+				
+				for (uint32 y = 0; y < height; y++) {
+					memcpy(dst, src, width);
+					src += srcStride;
+					dst += dstStride;
 				}
 				break;
 			}

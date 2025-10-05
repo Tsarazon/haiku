@@ -174,13 +174,23 @@ private:
 		if (image.empty())
 			return;
 		
+		// КРИТИЧНО: Убедиться, что изображение в формате A8
+		if (image.format() != BL_FORMAT_A8) {
+			fprintf(stderr, "Warning: Glyph image is not A8 format (got %d)\n",
+				image.format());
+			return;
+		}
+		
 		// 2. Вычисляем позицию (учитываем bounds глифа)
 		BLPoint pos(x + glyph->bounds.x0, y + glyph->bounds.y0);
 		
 		// 3. Устанавливаем режим композиции и цвет
 		fRenderer.fContext.save();
 		fRenderer.fContext.setCompOp(BL_COMP_OP_SRC_OVER);
-		fRenderer.fContext.setFillStyle(fRenderer.fColor);
+		
+		// Применяем цвет через fillStyle
+		BLRgba32 color(fRenderer.fColor);
+		fRenderer.fContext.setFillStyle(color);
 		
 		// 4. Рисуем глиф как маску альфа-канала
 		// Для альфа-изображений используем fillMaskI для применения цвета
@@ -188,7 +198,7 @@ private:
 		    glyph->data_type == glyph_data_lcd ||
 		    glyph->data_type == glyph_data_mono) {
 			
-			// Создаём маску из альфа-канала
+			// Рендерим маску с цветом
 			fRenderer.fContext.fillMaskI(
 				BLPointI(int(pos.x), int(pos.y)),
 				image,

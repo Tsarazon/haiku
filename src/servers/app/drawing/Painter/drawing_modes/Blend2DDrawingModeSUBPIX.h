@@ -9,7 +9,7 @@
 #ifndef BLEND2D_DRAWING_MODE_SUBPIX_H
 #define BLEND2D_DRAWING_MODE_SUBPIX_H
 
-#include "Blend2DPixelFormat.h"
+#include "PixelFormat.h"
 #include "Blend2DDrawingMode.h"
 #include "PatternHandler.h"
 #include <blend2d.h>
@@ -36,7 +36,7 @@ subpix_average_coverage(const uint8* covers)
 #define BLEND2D_SUBPIX_HSPAN(mode_name, pixel_func) \
 static void \
 blend_solid_hspan_##mode_name##_subpix(int x, int y, unsigned len, \
-									  const Blend2DPixelFormat::color_type& c, \
+									  const PixelFormat::color_type& c, \
 									  const uint8* covers, \
 									  BLImage* image, BLContext* ctx, \
 									  const PatternHandler* pattern) \
@@ -64,43 +64,43 @@ blend_solid_hspan_##mode_name##_subpix(int x, int y, unsigned len, \
 // Forward declare all pixel functions
 // (These will be defined in Blend2DDrawingModeNative.h and Custom.h)
 static void blend_pixel_copy_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_over_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_add_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_subtract_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_min_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_max_native(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_blend_custom(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_invert_custom(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_select_custom(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 static void blend_pixel_erase_custom(int x, int y,
-	const Blend2DPixelFormat::color_type& c, uint8 cover,
+	const PixelFormat::color_type& c, uint8 cover,
 	BLImage* image, BLContext* ctx, const PatternHandler* pattern);
 
 // Generate SUBPIX variants for all modes using the macro

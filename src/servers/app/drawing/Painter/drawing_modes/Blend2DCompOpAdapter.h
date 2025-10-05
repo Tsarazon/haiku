@@ -9,7 +9,7 @@
 #ifndef BLEND2D_COMP_OP_ADAPTER_H
 #define BLEND2D_COMP_OP_ADAPTER_H
 
-#include "Blend2DPixelFormat.h"
+#include "PixelFormat.h"
 #include "PatternHandler.h"
 #include <blend2d.h>
 
@@ -21,7 +21,7 @@
 template<BLCompOp CompOp>
 class Blend2DCompOpAdapter {
  public:
-	typedef Blend2DPixelFormat::color_type color_type;
+	typedef PixelFormat::color_type color_type;
 
 	// Blend single pixel
 	static void blend_pixel(int x, int y, const color_type& c, uint8 cover,

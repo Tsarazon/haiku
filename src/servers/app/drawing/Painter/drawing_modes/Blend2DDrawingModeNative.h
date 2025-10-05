@@ -10,7 +10,7 @@
 #ifndef BLEND2D_DRAWING_MODE_NATIVE_H
 #define BLEND2D_DRAWING_MODE_NATIVE_H
 
-#include "Blend2DPixelFormat.h"
+#include "PixelFormat.h"
 #include "PatternHandler.h"
 #include <blend2d.h>
 
@@ -106,7 +106,7 @@ blend2d_draw_hspan(int x, int y, unsigned len,
 
 static void
 blend_pixel_copy_native(int x, int y,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -116,7 +116,7 @@ blend_pixel_copy_native(int x, int y,
 
 static void
 blend_hline_copy_native(int x, int y, unsigned len,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -134,7 +134,7 @@ blend_hline_copy_native(int x, int y, unsigned len,
 
 static void
 blend_vline_copy_native(int x, int y, unsigned len,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -152,7 +152,7 @@ blend_vline_copy_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_copy_native(int x, int y, unsigned len,
-							 const Blend2DPixelFormat::color_type& c,
+							 const PixelFormat::color_type& c,
 							 const uint8* covers, BLImage* image,
 							 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -172,7 +172,7 @@ blend_solid_hspan_copy_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_copy_native(int x, int y, unsigned len,
-							 const Blend2DPixelFormat::color_type& c,
+							 const PixelFormat::color_type& c,
 							 const uint8* covers, BLImage* image,
 							 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -192,7 +192,7 @@ blend_solid_vspan_copy_native(int x, int y, unsigned len,
 
 static void
 blend_pixel_over_native(int x, int y,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -202,7 +202,7 @@ blend_pixel_over_native(int x, int y,
 
 static void
 blend_hline_over_native(int x, int y, unsigned len,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -219,7 +219,7 @@ blend_hline_over_native(int x, int y, unsigned len,
 
 static void
 blend_vline_over_native(int x, int y, unsigned len,
-					   const Blend2DPixelFormat::color_type& c,
+					   const PixelFormat::color_type& c,
 					   uint8 cover, BLImage* image, BLContext* ctx,
 					   const PatternHandler* pattern)
 {
@@ -236,7 +236,7 @@ blend_vline_over_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_over_native(int x, int y, unsigned len,
-							 const Blend2DPixelFormat::color_type& c,
+							 const PixelFormat::color_type& c,
 							 const uint8* covers, BLImage* image,
 							 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -255,7 +255,7 @@ blend_solid_hspan_over_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_over_native(int x, int y, unsigned len,
-							 const Blend2DPixelFormat::color_type& c,
+							 const PixelFormat::color_type& c,
 							 const uint8* covers, BLImage* image,
 							 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -275,7 +275,7 @@ blend_solid_vspan_over_native(int x, int y, unsigned len,
 
 static void
 blend_pixel_add_native(int x, int y,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -285,7 +285,7 @@ blend_pixel_add_native(int x, int y,
 
 static void
 blend_hline_add_native(int x, int y, unsigned len,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -302,7 +302,7 @@ blend_hline_add_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_add_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -321,7 +321,7 @@ blend_solid_hspan_add_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_add_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -341,7 +341,7 @@ blend_solid_vspan_add_native(int x, int y, unsigned len,
 
 static void
 blend_pixel_subtract_native(int x, int y,
-						   const Blend2DPixelFormat::color_type& c,
+						   const PixelFormat::color_type& c,
 						   uint8 cover, BLImage* image, BLContext* ctx,
 						   const PatternHandler* pattern)
 {
@@ -351,7 +351,7 @@ blend_pixel_subtract_native(int x, int y,
 
 static void
 blend_hline_subtract_native(int x, int y, unsigned len,
-						   const Blend2DPixelFormat::color_type& c,
+						   const PixelFormat::color_type& c,
 						   uint8 cover, BLImage* image, BLContext* ctx,
 						   const PatternHandler* pattern)
 {
@@ -368,7 +368,7 @@ blend_hline_subtract_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_subtract_native(int x, int y, unsigned len,
-								 const Blend2DPixelFormat::color_type& c,
+								 const PixelFormat::color_type& c,
 								 const uint8* covers, BLImage* image,
 								 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -387,7 +387,7 @@ blend_solid_hspan_subtract_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_subtract_native(int x, int y, unsigned len,
-								 const Blend2DPixelFormat::color_type& c,
+								 const PixelFormat::color_type& c,
 								 const uint8* covers, BLImage* image,
 								 BLContext* ctx, const PatternHandler* pattern)
 {
@@ -407,7 +407,7 @@ blend_solid_vspan_subtract_native(int x, int y, unsigned len,
 
 static void
 blend_pixel_min_native(int x, int y,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -417,7 +417,7 @@ blend_pixel_min_native(int x, int y,
 
 static void
 blend_hline_min_native(int x, int y, unsigned len,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -434,7 +434,7 @@ blend_hline_min_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_min_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -453,7 +453,7 @@ blend_solid_hspan_min_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_min_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -473,7 +473,7 @@ blend_solid_vspan_min_native(int x, int y, unsigned len,
 
 static void
 blend_pixel_max_native(int x, int y,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -483,7 +483,7 @@ blend_pixel_max_native(int x, int y,
 
 static void
 blend_hline_max_native(int x, int y, unsigned len,
-					  const Blend2DPixelFormat::color_type& c,
+					  const PixelFormat::color_type& c,
 					  uint8 cover, BLImage* image, BLContext* ctx,
 					  const PatternHandler* pattern)
 {
@@ -500,7 +500,7 @@ blend_hline_max_native(int x, int y, unsigned len,
 
 static void
 blend_solid_hspan_max_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -519,7 +519,7 @@ blend_solid_hspan_max_native(int x, int y, unsigned len,
 
 static void
 blend_solid_vspan_max_native(int x, int y, unsigned len,
-							const Blend2DPixelFormat::color_type& c,
+							const PixelFormat::color_type& c,
 							const uint8* covers, BLImage* image,
 							BLContext* ctx, const PatternHandler* pattern)
 {
@@ -539,7 +539,7 @@ blend_solid_vspan_max_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_copy_native(int x, int y, unsigned len,
-							   const Blend2DPixelFormat::color_type* colors,
+							   const PixelFormat::color_type* colors,
 							   const uint8* covers, uint8 cover,
 							   BLImage* image, BLContext* ctx,
 							   const PatternHandler* pattern)
@@ -551,7 +551,7 @@ blend_color_hspan_copy_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -568,7 +568,7 @@ blend_color_hspan_copy_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_over_native(int x, int y, unsigned len,
-							   const Blend2DPixelFormat::color_type* colors,
+							   const PixelFormat::color_type* colors,
 							   const uint8* covers, uint8 cover,
 							   BLImage* image, BLContext* ctx,
 							   const PatternHandler* pattern)
@@ -580,7 +580,7 @@ blend_color_hspan_over_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -597,7 +597,7 @@ blend_color_hspan_over_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_add_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -609,7 +609,7 @@ blend_color_hspan_add_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -626,7 +626,7 @@ blend_color_hspan_add_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_subtract_native(int x, int y, unsigned len,
-								   const Blend2DPixelFormat::color_type* colors,
+								   const PixelFormat::color_type* colors,
 								   const uint8* covers, uint8 cover,
 								   BLImage* image, BLContext* ctx,
 								   const PatternHandler* pattern)
@@ -638,7 +638,7 @@ blend_color_hspan_subtract_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -655,7 +655,7 @@ blend_color_hspan_subtract_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_min_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -667,7 +667,7 @@ blend_color_hspan_min_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -684,7 +684,7 @@ blend_color_hspan_min_native(int x, int y, unsigned len,
 
 static void
 blend_color_hspan_max_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -696,7 +696,7 @@ blend_color_hspan_max_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -717,7 +717,7 @@ blend_color_hspan_max_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_copy_native(int x, int y, unsigned len,
-							   const Blend2DPixelFormat::color_type* colors,
+							   const PixelFormat::color_type* colors,
 							   const uint8* covers, uint8 cover,
 							   BLImage* image, BLContext* ctx,
 							   const PatternHandler* pattern)
@@ -729,7 +729,7 @@ blend_color_vspan_copy_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -746,7 +746,7 @@ blend_color_vspan_copy_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_over_native(int x, int y, unsigned len,
-							   const Blend2DPixelFormat::color_type* colors,
+							   const PixelFormat::color_type* colors,
 							   const uint8* covers, uint8 cover,
 							   BLImage* image, BLContext* ctx,
 							   const PatternHandler* pattern)
@@ -758,7 +758,7 @@ blend_color_vspan_over_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -775,7 +775,7 @@ blend_color_vspan_over_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_add_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -787,7 +787,7 @@ blend_color_vspan_add_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -804,7 +804,7 @@ blend_color_vspan_add_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_subtract_native(int x, int y, unsigned len,
-								   const Blend2DPixelFormat::color_type* colors,
+								   const PixelFormat::color_type* colors,
 								   const uint8* covers, uint8 cover,
 								   BLImage* image, BLContext* ctx,
 								   const PatternHandler* pattern)
@@ -816,7 +816,7 @@ blend_color_vspan_subtract_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -833,7 +833,7 @@ blend_color_vspan_subtract_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_min_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -845,7 +845,7 @@ blend_color_vspan_min_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -862,7 +862,7 @@ blend_color_vspan_min_native(int x, int y, unsigned len,
 
 static void
 blend_color_vspan_max_native(int x, int y, unsigned len,
-							  const Blend2DPixelFormat::color_type* colors,
+							  const PixelFormat::color_type* colors,
 							  const uint8* covers, uint8 cover,
 							  BLImage* image, BLContext* ctx,
 							  const PatternHandler* pattern)
@@ -874,7 +874,7 @@ blend_color_vspan_max_native(int x, int y, unsigned len,
 		if (alpha == 0)
 			continue;
 
-		const Blend2DPixelFormat::color_type& c = colors[i];
+		const PixelFormat::color_type& c = colors[i];
 
 		if (alpha == 255) {
 			ctx->fillRect(BLRect(x, y, 1, 1),
@@ -886,6 +886,136 @@ blend_color_vspan_max_native(int x, int y, unsigned len,
 						 BLRgba32(c.r, c.g, c.b, 255));
 			ctx->setGlobalAlpha(prevAlpha);
 		}
+	}
+}
+
+// ============================================================================
+// Vertical line functions for native modes
+// ============================================================================
+
+// B_OP_COPY - blend_vline
+static void
+blend_vline_copy_native(int x, int y, unsigned len,
+						const PixelFormat::color_type& c,
+						uint8 cover, BLImage* image, BLContext* ctx,
+						const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_COPY);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
+	}
+}
+
+// B_OP_OVER - blend_vline
+static void
+blend_vline_over_native(int x, int y, unsigned len,
+						const PixelFormat::color_type& c,
+						uint8 cover, BLImage* image, BLContext* ctx,
+						const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_OVER);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
+	}
+}
+
+// B_OP_ADD - blend_vline
+static void
+blend_vline_add_native(int x, int y, unsigned len,
+					   const PixelFormat::color_type& c,
+					   uint8 cover, BLImage* image, BLContext* ctx,
+					   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_PLUS);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
+	}
+}
+
+// B_OP_SUBTRACT - blend_vline
+static void
+blend_vline_subtract_native(int x, int y, unsigned len,
+							const PixelFormat::color_type& c,
+							uint8 cover, BLImage* image, BLContext* ctx,
+							const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_MINUS);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
+	}
+}
+
+// B_OP_MIN - blend_vline
+static void
+blend_vline_min_native(int x, int y, unsigned len,
+					   const PixelFormat::color_type& c,
+					   uint8 cover, BLImage* image, BLContext* ctx,
+					   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_DARKEN);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
+	}
+}
+
+// B_OP_MAX - blend_vline
+static void
+blend_vline_max_native(int x, int y, unsigned len,
+					   const PixelFormat::color_type& c,
+					   uint8 cover, BLImage* image, BLContext* ctx,
+					   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_LIGHTEN);
+	
+	if (cover == 255) {
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, c.a));
+	} else {
+		double prevAlpha = ctx->globalAlpha();
+		ctx->setGlobalAlpha((cover / 255.0) * (c.a / 255.0));
+		ctx->fillRect(BLRect(x, y, 1, len),
+					 BLRgba32(c.r, c.g, c.b, 255));
+		ctx->setGlobalAlpha(prevAlpha);
 	}
 }
 
