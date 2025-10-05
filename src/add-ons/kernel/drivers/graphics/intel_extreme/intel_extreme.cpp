@@ -600,6 +600,16 @@ status_t
 intel_extreme_init(intel_info &info)
 {
 	CALLED();
+	
+	// Reject GPUs older than Gen 6 (Sandy Bridge, 2011+)
+	if (info.device_type.Generation() < 6) {
+		ERROR("GPU Generation %d is not supported. "
+			"Minimum requirement: Gen 6 (Sandy Bridge, 2011+)\n",
+			info.device_type.Generation());
+		ERROR("Your GPU: %s\n", info.device_identifier);
+		return B_NOT_SUPPORTED;
+	}
+	
 	info.aperture = gGART->map_aperture(info.pci->bus, info.pci->device,
 		info.pci->function, 0, &info.aperture_base);
 	if (info.aperture < B_OK) {
