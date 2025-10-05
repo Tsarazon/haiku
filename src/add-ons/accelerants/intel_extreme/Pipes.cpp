@@ -147,12 +147,10 @@ Pipe::Configure(display_mode* mode)
 	write32(INTEL_DISPLAY_A_PIPE_CONTROL + fPipeOffset, pipeControl);
 	read32(INTEL_DISPLAY_A_PIPE_CONTROL + fPipeOffset);
 
-	if (gInfo->shared_info->device_type.Generation() >= 6) {
-		// According to SandyBridge modesetting sequence, pipe must be enabled
-		// before PLL are configured.
-		addr_t pipeReg = INTEL_DISPLAY_A_PIPE_CONTROL + fPipeOffset;
-		write32(pipeReg, read32(pipeReg) | INTEL_PIPE_ENABLED);
-	}
+	// According to SandyBridge modesetting sequence, pipe must be enabled
+	// before PLL are configured. (Applies to all Gen 6+ hardware)
+	addr_t pipeReg = INTEL_DISPLAY_A_PIPE_CONTROL + fPipeOffset;
+	write32(pipeReg, read32(pipeReg) | INTEL_PIPE_ENABLED);
 }
 
 
@@ -317,12 +315,8 @@ Pipe::ConfigureScalePos(display_mode* target)
 
 	// Set the plane size as well while we're at it (this is independant, we
 	// could have a larger plane and scroll through it).
-	if ((gInfo->shared_info->device_type.Generation() <= 4)
-		|| gInfo->shared_info->device_type.HasDDI()) {
-		// This is "reserved" on G35 and GMA965, but needed on 945 (for which
-		// there is no public documentation), and I assume earlier devices as
-		// well.
-		//
+	// Required for DDI platforms (Gen 6+: Haswell and newer)
+	if (gInfo->shared_info->device_type.HasDDI()) {
 		// IMPORTANT WARNING: height and width are swapped when compared to the other registers!
 		// Be careful when editing this code and don't accidentally swap them!
 		write32(INTEL_DISPLAY_A_IMAGE_SIZE + fPipeOffset,

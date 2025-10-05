@@ -54,7 +54,7 @@ refclk_activate_ilk(bool hasPanel)
 	bool wantsSSC;
 	bool hasCK505;
 	if (gInfo->shared_info->pch_info == INTEL_PCH_IBX) {
-		TRACE("%s: Generation 5 graphics\n", __func__);
+		TRACE("%s: Ibex Peak PCH (first PCH for Gen 6 Sandy Bridge)\n", __func__);
 		//XXX: This should be == vbt display_clock_mode
 		hasCK505 = false;
 		wantsSSC = hasCK505;
@@ -62,7 +62,7 @@ refclk_activate_ilk(bool hasPanel)
 		if (gInfo->shared_info->device_type.Generation() == 6) {
 			TRACE("%s: Generation 6 graphics\n", __func__);
 		} else {
-			TRACE("%s: Generation 7 graphics\n", __func__);
+			TRACE("%s: Generation 7+ graphics\n", __func__);
 		}
 		hasCK505 = false;
 		wantsSSC = true;

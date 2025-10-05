@@ -299,9 +299,7 @@ Port::PipePreference()
 	CALLED();
 	// Ideally we could just return INTEL_PIPE_ANY for all devices by default, but
 	// this doesn't quite work yet. We need to use the BIOS presetup pipes for now.
-	if (gInfo->shared_info->device_type.Generation() < 4)
-		return INTEL_PIPE_ANY;
-
+	// Gen 6+ pipe preference logic
 	// Notes:
 	// - The BIOSes seen sofar do not use PIPE C by default.
 	// - The BIOSes seen sofar program transcoder A to PIPE A, etc.
@@ -1517,7 +1515,8 @@ HDMIPort::IsConnected()
 		return false;
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+	// Gen 6+ uses VBT for port configuration
+	if (deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());
@@ -1549,16 +1548,17 @@ HDMIPort::_PortRegister()
 {
 	// on PCH there's an additional port sandwiched in
 	bool hasPCH = (gInfo->shared_info->pch_info != INTEL_PCH_NONE);
-	bool fourthGen = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
+	// ValleyView is Gen 7 SoC with special HDMI port registers
+	bool isValleyView = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
 
 	switch (PortIndex()) {
 		case INTEL_PORT_B:
-			if (fourthGen)
-				return GEN4_HDMI_PORT_B;
+			if (isValleyView)
+				return GEN4_HDMI_PORT_B;  // Note: GEN4 name is misleading, these are VLV regs
 			return hasPCH ? PCH_HDMI_PORT_B : INTEL_HDMI_PORT_B;
 		case INTEL_PORT_C:
-			if (fourthGen)
-				return GEN4_HDMI_PORT_C;
+			if (isValleyView)
+				return GEN4_HDMI_PORT_C;  // Note: GEN4 name is misleading, these are VLV regs
 			return hasPCH ? PCH_HDMI_PORT_C : INTEL_HDMI_PORT_C;
 		case INTEL_PORT_D:
 			if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_CHV))
@@ -1586,9 +1586,7 @@ pipe_index
 DisplayPort::PipePreference()
 {
 	CALLED();
-	if (gInfo->shared_info->device_type.Generation() <= 4)
-		return INTEL_PIPE_ANY;
-
+	// Gen 6+ pipe preference logic
 	// Notes:
 	// - The BIOSes seen sofar do not use PIPE C by default.
 	// - Looks like BIOS selected Transcoder (A,B,C) is not always same as selected Pipe (A,B,C)
@@ -1694,7 +1692,8 @@ DisplayPort::SetupI2c(i2c_bus *bus)
 	CALLED();
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+	// Gen 6+ uses VBT for port configuration
+	if (deviceConfigCount > 0) {
 		if (!_IsDisplayPortInVBT())
 			return Port::SetupI2c(bus);
 	}
@@ -1715,7 +1714,8 @@ DisplayPort::IsConnected()
 		return false;
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+	// Gen 6+ uses VBT for port configuration
+	if (deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());
@@ -2275,7 +2275,8 @@ DigitalDisplayInterface::SetupI2c(i2c_bus *bus)
 	CALLED();
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+	// Gen 6+ uses VBT for port configuration
+	if (deviceConfigCount > 0) {
 		if (!_IsDisplayPortInVBT())
 			return Port::SetupI2c(bus);
 	}
@@ -2346,7 +2347,8 @@ DigitalDisplayInterface::IsConnected()
 	}
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+	// Gen 6+ uses VBT for port configuration
+	if (deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());
