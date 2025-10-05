@@ -1,908 +1,764 @@
-═══════════════════════════════════════════════════════════════════════════════
-ИНСТРУКЦИЯ ПО РЕФАКТОРИНГУ INTEL iGPU ДРАЙВЕРА HAIKU OS
-УДАЛЕНИЕ ПОДДЕРЖКИ GPU СТАРШЕ GENERATION 6 (SANDY BRIDGE)
-ВЕРСИЯ 2.0 - С ПРОВЕРКОЙ INTEL ДОКУМЕНТАЦИИ
-═══════════════════════════════════════════════════════════════════════════════
+====================================================================
+ИСПРАВЛЕННАЯ ИНСТРУКЦИЯ ПО РЕФАКТОРИНГУ INTEL iGPU ДРАЙВЕРА HAIKU OS
+Удаление поддержки GPU старше Generation 6 (Sandy Bridge 2011+)
+====================================================================
 
-⚠️  КРИТИЧЕСКИЕ ИСПРАВЛЕНИЯ В ЭТОЙ ВЕРСИИ:
-1. FDI используется на Gen 5-8 для ВСЕХ дисплеев, не только VGA
-2. Найдено значительно больше legacy кода в intel_extreme.h
-3. Overlay код нужно обрабатывать осторожнее
-4. Gen 5 (IronLake) ТОЖЕ удаляется, остается только Gen 6+
+⚠️ ВАЖНО: ПОСЛЕ ТЩАТЕЛЬНОГО АНАЛИЗА КОДА И ДОКУМЕНТАЦИИ INTEL ⚠️
 
-═══════════════════════════════════════════════════════════════════════════════
-1. ОБЗОР И КРИТИЧЕСКИЕ ЗАМЕЧАНИЯ
-═══════════════════════════════════════════════════════════════════════════════
+Эта инструкция создана после глубокой проверки кода проекта и официальной
+документации Intel. Учтены все архитектурные особенности Gen 6+.
 
-УДАЛЯЕМЫЕ ПОКОЛЕНИЯ:
-- Gen 2: i830, i845, i855, i865 (INTEL_FAMILY_8xx)
-- Gen 3: i915, i945, G33 (INTEL_GROUP_91x, _94x, Gxx, PIN)
-- Gen 4: i965, G35, G45, GM45 (INTEL_GROUP_96x, G4x)
-- Gen 5: IronLake (INTEL_GROUP_ILK) ← ТОЖЕ УДАЛЯЕМ!
+====================================================================
+КРИТИЧЕСКИЕ НАХОДКИ ПРИ АНАЛИЗЕ
+====================================================================
 
-МИНИМАЛЬНАЯ ПОДДЕРЖКА: Gen 6 (Sandy Bridge, 2011) и новее
+1. **SoC vs PCH архитектура** (КРИТИЧЕСКИ ВАЖНО!):
+   Gen 6+ включает ДВА типа архитектуры:
 
-КЛЮЧЕВЫЕ АРХИТЕКТУРНЫЕ РАЗЛИЧИЯ:
+   a) С PCH (Platform Controller Hub):
+      - Sandy Bridge (Gen 6)
+      - Ivy Bridge (Gen 7) - десктопные/мобильные варианты
+      - Haswell (Gen 7)
+      - Broadwell (Gen 8)
+      - Skylake и новее (Gen 9+)
 
-Gen 5 (IronLake):
-- Первое поколение с PCH (Platform Controller Hub)
-- FDI link впервые появился здесь
-- Но все еще legacy PLL алгоритмы
-- Legacy backlight control
+   b) SoC БЕЗ PCH (System-on-Chip):
+      - ValleyView/Bay Trail (Gen 7!) - Atom SoC
+      - CherryView/Braswell (Gen 8) - Atom SoC
+      - Apollo Lake (Gen 9) - Atom/Pentium/Celeron SoC
+      - Gemini Lake (Gen 9) - Pentium Silver/Celeron SoC
+      - JasperLake (Gen 11) - вероятно SoC
 
-Gen 6+ (Sandy Bridge и новее):
-- Всегда есть PCH
-- FDI используется для ВСЕХ дисплеев (не только VGA!)
-- Упрощенный backlight без legacy mode
-- Новый PLL programming (WRPLL)
-- Современная архитектура interrupt handling
+2. **MCH/ICH регистры НЕЛЬЗЯ удалять!**
+   Они используются SoC чипами (ValleyView, CherryView и др.)
+   Эти чипы имеют pch_info = INTEL_PCH_NONE
 
-⚠️  ВАЖНО ПРО FDI:
-Согласно Intel документации, FDI (Flexible Display Interface) это:
-- Соединение между GPU (в процессоре) и PCH (где физические порты)
-- Основано на DisplayPort стандарте
-- 2 независимых канала по 2.7 Гбит/с
-- Используется в Gen 5, 6, 7, 8 для передачи ВСЕХ display данных к PCH
-- Начиная с Gen 9 (Skylake) переходят на DDI, FDI больше не используется
+3. **mmioIndex корректен для Gen 6+**
+   Все Gen 6+ используют mmioIndex = 0 (проверка >= 3 корректна)
 
-НЕЛЬЗЯ удалять весь FDI код! Он критичен для Gen 6-8.
+====================================================================
+АНАЛИЗ ТЕКУЩЕЙ СТРУКТУРЫ
+====================================================================
 
-═══════════════════════════════════════════════════════════════════════════════
-2. УДАЛЕНИЕ DEVICE IDs (driver.cpp)
-═══════════════════════════════════════════════════════════════════════════════
+1. СИСТЕМА ОПРЕДЕЛЕНИЯ ГЕНЕРАЦИЙ (intel_extreme.h):
 
-ФАЙЛ: src/add-ons/kernel/drivers/graphics/intel_extreme/driver.cpp
-СТРОКИ: ~43-110
+struct DeviceType::Generation():
+- Возвращает 0 для неподдерживаемых GPU (< Gen 6)
+- Возвращает 6-12 для поддерживаемых GPU
+- ВАЖНО: ValleyView возвращает 7, хотя это SoC!
 
-УДАЛИТЬ все device entries ДО Sandy Bridge:
+Текущие семейства (Gen 6+):
+- INTEL_FAMILY_SER5 (0x00080000) - Intel Series 5 (Gen 6-8 с PCH)
+- INTEL_FAMILY_SOC0 (0x00200000) - Atom SOC (БЕЗ PCH!)
+- INTEL_FAMILY_LAKE (0x00400000) - Intel Lakes (Gen 9+)
 
-const struct supported_device {
-	uint32		device_id;
-	int32		type;
-	const char*	name;
-} kSupportedDevices[] = {
-	// ═══════════ УДАЛИТЬ ВСЁ ОТ СЮДА ═══════════
-	
-	// Gen 2
-	{0x3577, INTEL_GROUP_83x, "i830GM"},
-	{0x2562, INTEL_GROUP_83x, "i845G"},
-	{0x2572, INTEL_GROUP_85x, "i865G"},
-	{0x3582, INTEL_GROUP_85x, "i855G"},
-	{0x358e, INTEL_GROUP_85x, "i855G"},
-	
-	// Gen 3
-	{0x2582, INTEL_MODEL_915, "i915G"},
-	{0x258a, INTEL_MODEL_915, "i915"},
-	{0x2592, INTEL_MODEL_915M, "i915GM"},
-	{0x2792, INTEL_MODEL_915, "i910"},
-	{0x2772, INTEL_MODEL_945, "i945G"},
-	{0x27a2, INTEL_MODEL_945M, "i945GM"},
-	{0x27ae, INTEL_MODEL_945M, "i945GME"},
-	{0x2972, INTEL_MODEL_965, "i946G"},
-	{0x2982, INTEL_MODEL_965, "G35"},
-	{0x2992, INTEL_MODEL_965, "i965Q"},
-	{0x29a2, INTEL_MODEL_965, "i965G"},
-	{0x2a02, INTEL_MODEL_965M, "i965GM"},
-	{0x2a12, INTEL_MODEL_965M, "i965GME"},
-	{0x29b2, INTEL_MODEL_G33, "G33G"},
-	{0x29c2, INTEL_MODEL_G33, "Q35G"},
-	{0x29d2, INTEL_MODEL_G33, "Q33G"},
-	
-	// Gen 4
-	{0x2a42, INTEL_MODEL_GM45, "GM45"},
-	{0x2e02, INTEL_MODEL_G45, "IGD"},
-	{0x2e12, INTEL_MODEL_G45, "Q45"},
-	{0x2e22, INTEL_MODEL_G45, "G45"},
-	{0x2e32, INTEL_MODEL_G45, "G41"},
-	{0x2e42, INTEL_MODEL_G45, "B43"},
-	{0x2e92, INTEL_MODEL_G45, "B43"},
-	{0xa001, INTEL_MODEL_PINE, "Atom D4xx"},
-	{0xa002, INTEL_MODEL_PINE, "Atom D5xx"},
-	{0xa011, INTEL_MODEL_PINEM, "Atom N4xx"},
-	{0xa012, INTEL_MODEL_PINEM, "Atom N5xx"},
-	
-	// Gen 5 - ТОЖЕ УДАЛЯЕМ
-	{0x0042, INTEL_MODEL_ILKG, "IronLake Desktop"},
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},  // дубликаты
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},
-	
-	// ═══════════ ДО СЮДА ═══════════
-	
-	// ОСТАВИТЬ: Gen 6+
-	{0x0102, INTEL_MODEL_SNBG, "SandyBridge Desktop GT1"},
-	// ... остальные Gen 6+
-};
+Текущие группы (Gen 6+):
+- INTEL_GROUP_SNB - SandyBridge (Gen 6, с PCH)
+- INTEL_GROUP_IVB - IvyBridge (Gen 7, с PCH)
+- INTEL_GROUP_HAS - Haswell (Gen 7, с PCH)
+- INTEL_GROUP_VLV - ValleyView (Gen 7, SoC БЕЗ PCH!)
+- INTEL_GROUP_CHV - CherryView (Gen 8, SoC БЕЗ PCH!)
+- INTEL_GROUP_BDW - Broadwell (Gen 8, с PCH)
+- INTEL_GROUP_SKY - SkyLake (Gen 9, с PCH)
+- INTEL_GROUP_KBY - KabyLake (Gen 9, с PCH)
+- и т.д.
 
-═══════════════════════════════════════════════════════════════════════════════
-3. УДАЛЕНИЕ LEGACY DEFINES (intel_extreme.h)
-═══════════════════════════════════════════════════════════════════════════════
+====================================================================
+ЗАДАЧИ ПО РЕФАКТОРИНГУ
+====================================================================
 
-ФАЙЛ: headers/private/graphics/intel_extreme/intel_extreme.h
+ЗАДАЧА 1: ОЧИСТКА HEADER ФАЙЛОВ
+--------------------------------
 
-СЕКЦИЯ 1: FAMILY/GROUP/MODEL DEFINES (строки ~26-78)
+Файл: headers/private/graphics/intel_extreme/intel_extreme.h
 
-УДАЛИТЬ:
-// ═══ УДАЛИТЬ ═══
-#define INTEL_FAMILY_8xx	0x00020000	// Second Gen
-#define INTEL_FAMILY_9xx	0x00040000	// Third Gen +
+1.1. Удалить устаревшие семейства (если есть):
+   - Искать: INTEL_FAMILY_8xx, INTEL_FAMILY_9xx
+   - Искать: INTEL_GROUP_G4x
+   - УДАЛИТЬ если найдены
 
-#define INTEL_GROUP_83x		(INTEL_FAMILY_8xx  | 0x0010)
-#define INTEL_GROUP_85x		(INTEL_FAMILY_8xx  | 0x0020)
-#define INTEL_GROUP_91x		(INTEL_FAMILY_9xx  | 0x0010)
-#define INTEL_GROUP_94x		(INTEL_FAMILY_9xx  | 0x0020)
-#define INTEL_GROUP_96x		(INTEL_FAMILY_9xx  | 0x0040)
-#define INTEL_GROUP_Gxx		(INTEL_FAMILY_9xx  | 0x0080)
-#define INTEL_GROUP_G4x		(INTEL_FAMILY_9xx  | 0x0100)
-#define INTEL_GROUP_PIN		(INTEL_FAMILY_9xx  | 0x0200)
-#define INTEL_GROUP_ILK		(INTEL_FAMILY_SER5 | 0x0010)  // IronLake УДАЛИТЬ!
+1.2. DeviceType::Generation() - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+   Функция корректна для Gen 6+
 
-#define INTEL_MODEL_915		(INTEL_GROUP_91x)
-#define INTEL_MODEL_915M	(INTEL_GROUP_91x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_945		(INTEL_GROUP_94x)
-#define INTEL_MODEL_945M	(INTEL_GROUP_94x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_965		(INTEL_GROUP_96x)
-#define INTEL_MODEL_965M	(INTEL_GROUP_96x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_G33		(INTEL_GROUP_Gxx)
-#define INTEL_MODEL_G45		(INTEL_GROUP_G4x)
-#define INTEL_MODEL_GM45	(INTEL_GROUP_G4x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_PINE	(INTEL_GROUP_PIN)
-#define INTEL_MODEL_PINEM	(INTEL_GROUP_PIN | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_ILKG	(INTEL_GROUP_ILK)
-#define INTEL_MODEL_ILKGM	(INTEL_GROUP_ILK | INTEL_TYPE_MOBILE)
-// ═══ ДО СЮДА ═══
+1.3. DeviceType::SupportsHDMI() - ПРОВЕРИТЬ:
+   - Если упоминается INTEL_GROUP_G4x - УДАЛИТЬ эту проверку
+   - Код должен быть:
+   ```cpp
+   bool SupportsHDMI() const
+   {
+       return InFamily(INTEL_FAMILY_SER5) || InFamily(INTEL_FAMILY_SOC0)
+           || InFamily(INTEL_FAMILY_LAKE);
+   }
+   ```
 
-ОСТАВИТЬ только Gen 6+:
-#define INTEL_FAMILY_SER5	0x00080000  // Intel5 Series (для Gen 6+)
-#define INTEL_FAMILY_SOC0	0x00200000  // Atom SOC
-#define INTEL_FAMILY_LAKE	0x00400000  // Intel Lakes
+1.4. MCH/ICH и PCH регистры - ОСТАВИТЬ ВСЕ!
+   - MCH_* и ICH_* определения НУЖНЫ для SoC чипов
+   - PCH_* определения нужны для PCH платформ
+   - НЕ УДАЛЯТЬ эти определения!
 
-#define INTEL_GROUP_SNB		(INTEL_FAMILY_SER5 | 0x0020)  // ← МИНИМУМ
-#define INTEL_GROUP_IVB		(INTEL_FAMILY_SER5 | 0x0040)
-// ... и т.д. для Gen 7+
+1.5. Комментарии в регистрах:
+   - Найти упоминания "i965 and up only", "Gen 3", "Gen 4", "Gen 5"
+   - ЗАМЕНИТЬ на: "Gen 6+ (Sandy Bridge 2011 and newer)"
 
-СЕКЦИЯ 2: GRAPHICS MEMORY CONTROL REGISTERS (строки ~600-750)
 
-УДАЛИТЬ все legacy stolen memory defines:
+ЗАДАЧА 2: DRIVER.CPP - СПИСОК УСТРОЙСТВ
+----------------------------------------
 
-// ═══ УДАЛИТЬ ВСЁ ЭТО ═══
-// models i830 and up
-#define i830_LOCAL_MEMORY_ONLY			0x10
-#define i830_STOLEN_512K				0x20
-#define i830_STOLEN_1M					0x30
-#define i830_STOLEN_8M					0x40
-#define i830_FRAME_BUFFER_64M			0x01
-#define i830_FRAME_BUFFER_128M			0x00
+Файл: src/add-ons/kernel/drivers/graphics/intel_extreme/driver.cpp
 
-// models i855 and up
-#define i855_STOLEN_MEMORY_1M			0x10
-#define i855_STOLEN_MEMORY_4M			0x20
-#define i855_STOLEN_MEMORY_8M			0x30
-#define i855_STOLEN_MEMORY_16M			0x40
-#define i855_STOLEN_MEMORY_32M			0x50
-#define i855_STOLEN_MEMORY_48M			0x60
-#define i855_STOLEN_MEMORY_64M			0x70
-#define i855_STOLEN_MEMORY_128M			0x80
-#define i855_STOLEN_MEMORY_256M			0x90
+2.1. Массив kSupportedDevices (строки ~44):
+   - Текущий список начинается с Gen 6 (Sandy Bridge)
+   - ПРОВЕРИТЬ: нет ли старых device ID
+   - Список корректен, НИЧЕГО НЕ МЕНЯТЬ
 
-// G4x
-#define G4X_STOLEN_MEMORY_96MB			0xa0
-#define G4X_STOLEN_MEMORY_160MB			0xb0
-#define G4X_STOLEN_MEMORY_224MB			0xc0
-#define G4X_STOLEN_MEMORY_352MB			0xd0
-// ═══ ДО СЮДА ═══
+2.2. Комментарии в kSupportedDevices:
+   - Найти закомментированный ValleyView (#if 0 ... #endif)
+   - ОСТАВИТЬ закомментированным или ПРОВЕРИТЬ поддержку
 
-ОСТАВИТЬ только SNB (Gen 6) и новее:
-#define SNB_STOLEN_MEMORY_MASK			0xf8
-#define SNB_STOLEN_MEMORY_32MB			(1 << 3)
-// ... и т.д.
 
-СЕКЦИЯ 3: GTT (Graphics Translation Table) DEFINES (строки ~820-850)
+ЗАДАЧА 3: INTEL_EXTREME.CPP - ИНИЦИАЛИЗАЦИЯ
+--------------------------------------------
 
-УДАЛИТЬ:
-// ═══ УДАЛИТЬ ВСЁ ЭТО ═══
-#define i915_GTT_BASE					0x1c
-#define i830_GTT_BASE					0x10000
-#define i830_GTT_SIZE					0x20000
-#define i965_GTT_BASE					0x80000
-#define i965_GTT_SIZE					0x80000
-#define i965_GTT_128K					(2 << 1)
-#define i965_GTT_256K					(1 << 1)
-#define i965_GTT_512K					(0 << 1)
-#define G33_GTT_1M						(1 << 8)
-#define G33_GTT_2M						(2 << 8)
-#define G4X_GTT_NONE					0x000
-#define G4X_GTT_1M_NO_IVT				0x100
-#define G4X_GTT_2M_NO_IVT				0x300
-#define G4X_GTT_2M_IVT					0x900
-#define G4X_GTT_3M_IVT					0xa00
-#define G4X_GTT_4M_IVT					0xb00
-#define i965_GTT_MASK					0x000e
-#define G33_GTT_MASK					0x0300
-#define G4X_GTT_MASK					0x0f00
-// ═══ ДО СЮДА ═══
+Файл: src/add-ons/kernel/drivers/graphics/intel_extreme/intel_extreme.cpp
 
-ОСТАВИТЬ только SNB+ defines:
-#define SNB_GTT_SIZE_MASK				(3 << 8)
-#define SNB_GTT_SIZE_NONE				(0 << 8)
-#define SNB_GTT_SIZE_1MB				(1 << 8)
-#define SNB_GTT_SIZE_2MB				(2 << 8)
-#define BDW_GTT_SIZE_MASK				(3 << 6)
-// и т.д.
+3.1. Проверка минимальной генерации - ОСТАВИТЬ:
+   ```cpp
+   if (info.device_type.Generation() < 6) {
+       ERROR("GPU Generation %d is not supported. "
+           "Minimum requirement: Gen 6 (Sandy Bridge, 2011+)\n",
+           info.device_type.Generation());
+       ERROR("Your GPU: %s\n", info.device_identifier);
+       return B_NOT_SUPPORTED;
+   }
+   ```
 
-СЕКЦИЯ 4: LEGACY BACKLIGHT REGISTER (строка ~860)
+3.2. MMIO Index - МОЖНО УПРОСТИТЬ (опционально):
+   БЫЛО:
+   ```cpp
+   int mmioIndex = 1;
+   if (info.device_type.Generation() >= 3) {
+       mmioIndex = 0;
+   }
+   ```
 
-УДАЛИТЬ:
-// ═══ УДАЛИТЬ ═══
-#define LEGACY_BACKLIGHT_BRIGHTNESS		0xf4  // Gen2, i915GM, i945GM
-// ═══ ДО СЮДА ═══
+   СТАЛО:
+   ```cpp
+   // Gen 6+ always uses index 0 for MMIO mapping
+   int mmioIndex = 0;
+   ```
 
-СЕКЦИЯ 5: DeviceType::Generation() METHOD (строки ~264-290)
+3.3. Register blocks setup - **НЕ УДАЛЯТЬ ELSE БЛОК!**
+   Код на строках ~270-310:
+   ```cpp
+   if (hasPCH) {
+       // PCH based platforms (SandyBridge, IvyBridge, Haswell, etc.)
+       blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)] = PCH_NORTH_SHARED_REGISTER_BASE;
+       // ... и т.д.
+   } else {
+       // SoC platforms WITHOUT PCH (ValleyView, CherryView, Apollo Lake, etc.)
+       blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)] = MCH_SHARED_REGISTER_BASE;
+       // ... и т.д.
+   }
+   ```
 
-УПРОСТИТЬ:
+   ДЕЙСТВИЕ:
+   - ОСТАВИТЬ ОБА блока (if и else)
+   - ОБНОВИТЬ комментарии:
+     - if блок: "// PCH based platforms (Gen 6+: Sandy Bridge, Ivy Bridge, Haswell, Broadwell, Skylake, etc.)"
+     - else блок: "// SoC platforms WITHOUT PCH (Gen 6+: ValleyView, CherryView, Apollo Lake, Gemini Lake, etc.)"
 
-int Generation() const
+3.4. ValleyView display offset (строки ~310):
+   ```cpp
+   if (info.device_type.InGroup(INTEL_GROUP_VLV)) {
+       blocks[REGISTER_BLOCK(REGS_SOUTH_SHARED)] += VLV_DISPLAY_BASE;
+       blocks[REGISTER_BLOCK(REGS_SOUTH_TRANSCODER_PORT)] += VLV_DISPLAY_BASE;
+   }
+   ```
+   ОСТАВИТЬ КАК ЕСТЬ - это специфика ValleyView SoC
+
+
+ЗАДАЧА 4: ACCELERANT.CPP - БАЗОВАЯ ЛОГИКА
+------------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/accelerant.cpp
+
+4.1. Функция init_common() - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+   Комментарий "Gen 6+: No 3D context allocation needed" корректен
+
+4.2. Функция intel_get_accelerant_device_info() - ОСТАВИТЬ
+   Комментарий "Gen 6+ naming" корректен
+
+
+ЗАДАЧА 5: MODE.CPP - УПРАВЛЕНИЕ РЕЖИМАМИ
+-----------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/mode.cpp
+
+5.1. Функция get_color_space_format() - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+
+5.2. Функция set_frame_buffer_registers() (строки ~110-140):
+   КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ:
+
+   БЫЛО:
+   ```cpp
+   if (sharedInfo.device_type.InFamily(INTEL_FAMILY_SER5)
+       || sharedInfo.device_type.InFamily(INTEL_FAMILY_LAKE)
+       || sharedInfo.device_type.InFamily(INTEL_FAMILY_SOC0)) {
+       // ... код для Gen 6+ ...
+   } else {
+       // Старый код для Gen < 6
+       write32(INTEL_DISPLAY_A_BASE + offset, ...);
+   }
+   ```
+
+   СТАЛО:
+   ```cpp
+   // Gen 6+ display offset handling
+   // All supported GPUs should fall into this category
+   if (sharedInfo.device_type.InFamily(INTEL_FAMILY_SER5)
+       || sharedInfo.device_type.InFamily(INTEL_FAMILY_LAKE)
+       || sharedInfo.device_type.InFamily(INTEL_FAMILY_SOC0)) {
+       if (sharedInfo.device_type.InGroup(INTEL_GROUP_HAS)) {
+           write32(INTEL_DISPLAY_A_OFFSET_HAS + offset,
+               ((uint32)mode.v_display_start << 16)
+                   | (uint32)mode.h_display_start);
+           read32(INTEL_DISPLAY_A_OFFSET_HAS + offset);
+       } else {
+           write32(INTEL_DISPLAY_A_BASE + offset,
+               mode.v_display_start * sharedInfo.bytes_per_row
+               + mode.h_display_start * bytes_per_pixel);
+           read32(INTEL_DISPLAY_A_BASE + offset);
+       }
+       write32(INTEL_DISPLAY_A_SURFACE + offset, sharedInfo.frame_buffer_offset);
+       read32(INTEL_DISPLAY_A_SURFACE + offset);
+   } else {
+       // This should never happen on Gen 6+ hardware
+       ERROR("%s: Unsupported device family for framebuffer setup! "
+           "Device type: 0x%x\n", __func__, sharedInfo.device_type.type);
+   }
+   ```
+
+5.3. Функция limit_modes_for_gen3_lvds() - УДАЛИТЬ:
+   ```cpp
+   // УДАЛИТЬ эту функцию полностью
+   static bool
+   limit_modes_for_gen3_lvds(display_mode* mode)
+   {
+       ...
+   }
+   ```
+
+5.4. Функция create_mode_list() (строки ~170-250):
+   БЫЛО:
+   ```cpp
+   if (gInfo->shared_info->device_type.Generation() >= 4) {
+       supportedSpaces = kSupportedSpaces;
+       colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
+   } else {
+       supportedSpaces = NULL;
+       colorSpaceCount = 0;
+   }
+   ```
+
+   СТАЛО:
+   ```cpp
+   // Gen 6+ doesn't support B_RGB15, use custom colorspace list
+   supportedSpaces = kSupportedSpaces;
+   colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
+   ```
+
+   И УДАЛИТЬ:
+   ```cpp
+   // УДАЛИТЬ эту проверку и вызов
+   check_display_mode_hook limitModes = NULL;
+   if (gInfo->shared_info->device_type.Generation() < 4)
+       limitModes = limit_modes_for_gen3_lvds;
+   ```
+
+
+ЗАДАЧА 6: PLL.CPP - PLL АЛГОРИТМЫ
+----------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/pll.cpp
+
+6.1. Комментарии в начале файла - ОСТАВИТЬ:
+   "Gen 6+ uses completely different PLL algorithms" - корректен
+
+6.2. Функция refclk_activate_ilk():
+   - Проверяет pch_info == INTEL_PCH_IBX (это IronLake - Gen 5!)
+   - АНАЛИЗ: Функция используется для настройки reference clock на Gen 6+
+   - ДЕЙСТВИЕ: ОСТАВИТЬ функцию, но ОБНОВИТЬ комментарий:
+
+   БЫЛО:
+   ```cpp
+   if (gInfo->shared_info->pch_info == INTEL_PCH_IBX) {
+       TRACE("%s: Generation 5 graphics\n", __func__);
+       ...
+   }
+   ```
+
+   СТАЛО:
+   ```cpp
+   if (gInfo->shared_info->pch_info == INTEL_PCH_IBX) {
+       TRACE("%s: Ibex Peak PCH (first PCH for Gen 6 Sandy Bridge)\n", __func__);
+       ...
+   }
+   ```
+
+
+ЗАДАЧА 7: HOOKS.CPP - OVERLAY ПОДДЕРЖКА
+----------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/hooks.cpp
+
+7.1. Overlay hooks (строки ~167):
+   ```cpp
+   case B_ALLOCATE_OVERLAY_BUFFER:
+       // TODO: overlay doesn't seem to work on these chips (Gen 6+)
+       if (gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_SER5)
+           || gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_SOC0))
+           return NULL;
+       return (void*)intel_allocate_overlay_buffer;
+   ```
+   ОСТАВИТЬ КАК ЕСТЬ - это известная проблема
+
+
+ЗАДАЧА 8: OVERLAY.CPP - OVERLAY ФУНКЦИИ
+----------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/overlay.cpp
+
+8.1. Функция intel_overlay_supported_spaces() - ОСТАВИТЬ
+
+8.2. Функция intel_allocate_overlay_buffer():
+   - Ищет проверки: IsModel(INTEL_MODEL_965)
+   - INTEL_MODEL_965 это Gen 4 (i965)
+   - ДЕЙСТВИЕ: УДАЛИТЬ весь код связанный с INTEL_MODEL_965
+
+
+ЗАДАЧА 9: ENGINE.CPP - 2D УСКОРЕНИЕ
+------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/engine.cpp
+
+9.1. Функция intel_wait_engine_idle():
+   ```cpp
+   // Skylake acc engine not yet functional (stalls)
+   if (gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_LAKE)
+           || gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_SOC0)) {
+       return;
+   }
+   ```
+   ОСТАВИТЬ КАК ЕСТЬ - это временный workaround
+
+
+ЗАДАЧА 10: PIPES.CPP - УПРАВЛЕНИЕ PIPES
+----------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/Pipes.cpp
+
+10.1. Конструктор Pipe::Pipe():
+   - Комментарий "Program gen5(+) style panelfitter"
+   - ЗАМЕНИТЬ НА: "// Program Gen 6+ style panelfitter"
+
+10.2. Функция Pipe::Configure():
+   БЫЛО:
+   ```cpp
+   if (gInfo->shared_info->device_type.Generation() >= 6) {
+       // According to SandyBridge modesetting sequence...
+       // ... код ...
+   }
+   ```
+
+   СТАЛО:
+   ```cpp
+   // According to SandyBridge modesetting sequence, pipe must be enabled
+   // before PLL are configured. (Applies to all Gen 6+ hardware)
+   // ... код без if блока ...
+   ```
+
+10.3. Функция Pipe::ConfigureScalePos():
+   БЫЛО:
+   ```cpp
+   if ((gInfo->shared_info->device_type.Generation() <= 4)
+       || gInfo->shared_info->device_type.HasDDI()) {
+       write32(INTEL_DISPLAY_A_IMAGE_SIZE + fPipeOffset, ...);
+   }
+   ```
+
+   СТАЛО:
+   ```cpp
+   // Required for DDI platforms (Gen 6+: Haswell and newer)
+   if (gInfo->shared_info->device_type.HasDDI()) {
+       write32(INTEL_DISPLAY_A_IMAGE_SIZE + fPipeOffset,
+           ((uint32)(target->timing.v_display - 1) << 16)
+           | ((uint32)target->timing.h_display - 1));
+   }
+   ```
+
+
+ЗАДАЧА 11: PORTS.CPP - УПРАВЛЕНИЕ ПОРТАМИ
+------------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/Ports.cpp
+
+11.1. Функция Port::SetupI2c():
+   БЫЛО:
+   ```cpp
+   if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
+   ```
+
+   СТАЛО:
+   ```cpp
+   // Gen 6+ uses VBT for port configuration
+   if (deviceConfigCount > 0) {
+   ```
+
+11.2. Функция Port::IsConnected():
+   То же изменение - убрать проверку Generation() >= 6
+
+11.3. Функция DisplayPort::PipePreference():
+   БЫЛО:
+   ```cpp
+   if (gInfo->shared_info->device_type.Generation() <= 4)
+       return INTEL_PIPE_ANY;
+   ```
+
+   ДЕЙСТВИЕ: УДАЛИТЬ эту проверку, она никогда не выполнится для Gen 6+
+
+11.4. Функция Port::_DDCPin() - имеет else блок в конце:
+   ПРОВЕРИТЬ: если else содержит switch для старых генераций - УДАЛИТЬ
+   ОСТАВИТЬ: если else для Gen 6+ SoC чипов
+
+11.5. HDMIPort::_PortRegister():
+   ```cpp
+   bool fourthGen = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
+   ```
+
+   КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ:
+   - Переменная называется "fourthGen" но это НЕПРАВИЛЬНО!
+   - INTEL_GROUP_VLV это ValleyView - Gen 7!
+   - ДЕЙСТВИЕ: ПЕРЕИМЕНОВАТЬ переменную:
+
+   БЫЛО:
+   ```cpp
+   bool fourthGen = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
+   ```
+
+   СТАЛО:
+   ```cpp
+   // ValleyView is Gen 7 SoC with special port registers
+   bool isValleyView = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
+   ```
+
+   И заменить все использования fourthGen на isValleyView
+
+
+ЗАДАЧА 12: FLEXIBLEDISPLAYINTERFACE.CPP - FDI
+----------------------------------------------
+
+Файл: src/add-ons/accelerants/intel_extreme/FlexibleDisplayInterface.cpp
+
+12.1. Функции FDI Train - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+   Код корректен для Gen 6+ с PCH
+
+
+ЗАДАЧА 13: POWER.CPP - УПРАВЛЕНИЕ ПИТАНИЕМ
+-------------------------------------------
+
+Файл: src/add-ons/kernel/drivers/graphics/intel_extreme/power.cpp
+
+13.1. Функция intel_en_gating() - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+   Комментарий "Gen 6+ clock gating" корректен
+
+13.2. Функция intel_en_downclock() - ОСТАВИТЬ БЕЗ ИЗМЕНЕНИЙ
+   Код корректен для Gen 6+
+
+
+====================================================================
+ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ
+====================================================================
+
+ГЛОБАЛЬНЫЙ ПОИСК ПО ПРОЕКТУ:
+
+1. Поиск: "Generation\(\).*<.*[345]"
+   - Удалить или заменить логику
+
+2. Поиск: "Generation\(\).*<=.*[345]"
+   - Удалить или заменить логику
+
+3. Поиск: "Generation\(\).*==.*[2345]"
+   - Удалить код для этих генераций
+
+4. Поиск: "INTEL_GROUP_G4x"
+   - Если существует - УДАЛИТЬ
+
+5. Поиск комментариев: "gen[2345]", "Gen [2-5]", "i965"
+   - Обновить комментарии
+
+6. Поиск: "i8xx", "i9xx", "gen3", "gen4", "gen5" в комментариях
+   - Обновить или удалить
+
+7. Поиск: "INTEL_MODEL_965"
+   - УДАЛИТЬ определение и все использования
+
+
+====================================================================
+ВАЖНЫЕ ЗАМЕЧАНИЯ ДЛЯ РЕФАКТОРИНГА
+====================================================================
+
+⚠️ КРИТИЧЕСКИЕ ОГРАНИЧЕНИЯ:
+
+1. **НЕ УДАЛЯТЬ MCH/ICH регистры!**
+   Они нужны для SoC платформ (ValleyView, CherryView, Apollo Lake, etc.)
+
+2. **Не менять логику register blocks setup**
+   Код корректно различает PCH и non-PCH платформы
+
+3. **ValleyView/CherryView это Gen 7-8, но SoC!**
+   Не путать с обычными Gen 7-8 с PCH (Ivy Bridge, Haswell)
+
+4. **fourthGen переменная неправильно названа**
+   Она проверяет ValleyView (Gen 7), не Gen 4
+
+5. **Сохранять API/ABI совместимость**
+   - НЕ изменять публичные структуры
+   - НЕ менять размеры структур shared_info
+   - НЕ удалять функции из публичного API
+
+6. **Apollo Lake / Gemini Lake**
+   - Это Gen 9 SoC без PCH
+   - Используют Gen9 LP graphics
+   - Модель INTEL_MODEL_KBYM
+
+====================================================================
+ПЛАН ВЫПОЛНЕНИЯ
+====================================================================
+
+ЭТАП 1: ПОДГОТОВКА
+-------------------
+1. Создать ветку: git checkout -b refactor-remove-gen-lt-6
+2. Создать backup
+3. Собрать текущую версию для тестирования
+
+ЭТАП 2: ВЫПОЛНЕНИЕ ЗАДАЧ (по порядку)
+--------------------------------------
+1. ЗАДАЧА 1: Header файлы
+2. ЗАДАЧА 2: Driver.cpp
+3. ЗАДАЧА 3: Intel_extreme.cpp (ОСТОРОЖНО с register blocks!)
+4. ЗАДАЧА 4: Accelerant.cpp
+5. ЗАДАЧА 5: Mode.cpp
+6. ЗАДАЧА 6: Pll.cpp
+7. ЗАДАЧА 7-8: Hooks.cpp, Overlay.cpp
+8. ЗАДАЧА 9: Engine.cpp
+9. ЗАДАЧА 10: Pipes.cpp
+10. ЗАДАЧА 11: Ports.cpp (переименовать fourthGen!)
+11. ЗАДАЧА 12: FlexibleDisplayInterface.cpp
+12. ЗАДАЧА 13: Power.cpp
+
+ЭТАП 3: ГЛОБАЛЬНАЯ ОЧИСТКА
+---------------------------
+1. Выполнить все проверки из "ДОПОЛНИТЕЛЬНЫЕ ПРОВЕРКИ"
+2. Удалить INTEL_MODEL_965 и подобные старые модели
+3. Обновить комментарии
+4. Проверить на dead code
+
+ЭТАП 4: КОМПИЛЯЦИЯ И ТЕСТИРОВАНИЕ
+----------------------------------
+1. Собрать драйвер
+2. Проверить warnings
+3. Тестировать на Gen 6+ hardware
+4. Проверить что драйвер отказывает Gen < 6
+
+====================================================================
+ПРИМЕРЫ КОНКРЕТНЫХ ИЗМЕНЕНИЙ
+====================================================================
+
+ПРИМЕР 1: НЕ УДАЛЯТЬ register blocks (intel_extreme.cpp)
+---------------------------------------------------------
+
+НЕПРАВИЛЬНО:
+```cpp
+// ❌ НЕ ДЕЛАТЬ ТАК!
+if (hasPCH) {
+    blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)] = PCH_NORTH_SHARED_REGISTER_BASE;
+    // ...
+}
+// Удалили else блок - ОШИБКА!
+```
+
+ПРАВИЛЬНО:
+```cpp
+// ✅ ПРАВИЛЬНО:
+if (hasPCH) {
+    // PCH based platforms (Gen 6+: Sandy Bridge, Ivy Bridge, Haswell, etc.)
+    blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)] = PCH_NORTH_SHARED_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_NORTH_PIPE_AND_PORT)] = PCH_NORTH_PIPE_AND_PORT_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_NORTH_PLANE_CONTROL)] = PCH_NORTH_PLANE_CONTROL_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_SOUTH_SHARED)] = PCH_SOUTH_SHARED_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_SOUTH_TRANSCODER_PORT)] = PCH_SOUTH_TRANSCODER_AND_PORT_REGISTER_BASE;
+} else {
+    // SoC platforms WITHOUT PCH (Gen 6+: ValleyView, CherryView, Apollo Lake, Gemini Lake)
+    blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)] = MCH_SHARED_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_NORTH_PIPE_AND_PORT)] = MCH_PIPE_AND_PORT_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_NORTH_PLANE_CONTROL)] = MCH_PLANE_CONTROL_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_SOUTH_SHARED)] = ICH_SHARED_REGISTER_BASE;
+    blocks[REGISTER_BLOCK(REGS_SOUTH_TRANSCODER_PORT)] = ICH_PORT_REGISTER_BASE;
+}
+
+// ValleyView needs special display base offset
+if (info.device_type.InGroup(INTEL_GROUP_VLV)) {
+    blocks[REGISTER_BLOCK(REGS_SOUTH_SHARED)] += VLV_DISPLAY_BASE;
+    blocks[REGISTER_BLOCK(REGS_SOUTH_TRANSCODER_PORT)] += VLV_DISPLAY_BASE;
+}
+```
+
+ПРИМЕР 2: Переименование fourthGen (Ports.cpp)
+-----------------------------------------------
+
+БЫЛО:
+```cpp
+addr_t
+HDMIPort::_PortRegister()
 {
-	// ═══ ДОБАВИТЬ ПРОВЕРКУ В НАЧАЛЕ ═══
-	// Не поддерживаем Gen < 6
-	if (InFamily(0x00020000) || InFamily(0x00040000)) {
-		// INTEL_FAMILY_8xx или INTEL_FAMILY_9xx
-		return 0;  // Неподдерживаемое поколение
-	}
-	if (InGroup(INTEL_GROUP_ILK)) {
-		return 0;  // Gen 5 не поддерживается
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ═══ УДАЛИТЬ legacy detection ═══
-	if (InFamily(INTEL_FAMILY_8xx))
-		return 2;
-	if (InGroup(INTEL_GROUP_91x) || InGroup(INTEL_GROUP_94x)
-			|| IsModel(INTEL_MODEL_G33) || InGroup(INTEL_GROUP_PIN))
-		return 3;
-	if (InFamily(INTEL_FAMILY_9xx))
-		return 4;
-	if (InGroup(INTEL_GROUP_ILK))
-		return 5;
-	// ═══ ДО СЮДА - УДАЛИТЬ ВСЁ ЭТО ═══
-	
-	// ОСТАВИТЬ только Gen 6+:
-	if (InGroup(INTEL_GROUP_SNB))
-		return 6;
-	if (InFamily(INTEL_FAMILY_SER5) || InGroup(INTEL_GROUP_VLV))
-		return 7;
-	if (InGroup(INTEL_GROUP_CHV) || InGroup(INTEL_GROUP_BDW))
-		return 8;
-	if (InFamily(INTEL_FAMILY_LAKE))
-		return 9;
-	if (InGroup(INTEL_GROUP_JSL))
-		return 11;
-	if (InGroup(INTEL_GROUP_TGL) || InGroup(INTEL_GROUP_ALD))
-		return 12;
+    bool hasPCH = (gInfo->shared_info->pch_info != INTEL_PCH_NONE);
+    bool fourthGen = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
 
-	return 0;  // Unknown = error
+    switch (PortIndex()) {
+        case INTEL_PORT_B:
+            if (fourthGen)
+                return GEN4_HDMI_PORT_B;
+            return hasPCH ? PCH_HDMI_PORT_B : INTEL_HDMI_PORT_B;
+        case INTEL_PORT_C:
+            if (fourthGen)
+                return GEN4_HDMI_PORT_C;
+            return hasPCH ? PCH_HDMI_PORT_C : INTEL_HDMI_PORT_C;
+        // ...
+    }
 }
+```
 
-СЕКЦИЯ 6: OVERLAY HARDWARE DEFINES (строки ~1850-1870)
-
-ИЗМЕНИТЬ функцию intel_uses_physical_overlay:
-
-// ═══ БЫЛО ═══
-inline bool
-intel_uses_physical_overlay(intel_shared_info &info)
+СТАЛО:
+```cpp
+addr_t
+HDMIPort::_PortRegister()
 {
-	return !info.device_type.InGroup(INTEL_GROUP_Gxx);
-}
+    bool hasPCH = (gInfo->shared_info->pch_info != INTEL_PCH_NONE);
+    // ValleyView is Gen 7 SoC with special HDMI port registers
+    bool isValleyView = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
 
-// ═══ СТАЛО ═══
-inline bool
-intel_uses_physical_overlay(intel_shared_info &info)
+    switch (PortIndex()) {
+        case INTEL_PORT_B:
+            if (isValleyView)
+                return GEN4_HDMI_PORT_B;  // Note: GEN4 name is misleading, these are VLV regs
+            return hasPCH ? PCH_HDMI_PORT_B : INTEL_HDMI_PORT_B;
+        case INTEL_PORT_C:
+            if (isValleyView)
+                return GEN4_HDMI_PORT_C;  // Note: GEN4 name is misleading, these are VLV regs
+            return hasPCH ? PCH_HDMI_PORT_C : INTEL_HDMI_PORT_C;
+        case INTEL_PORT_D:
+            if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_CHV))
+                return CHV_HDMI_PORT_D;
+            return hasPCH ? PCH_HDMI_PORT_D : 0;
+        default:
+            return 0;
+    }
+}
+```
+
+ПРИМЕР 3: Удаление limit_modes_for_gen3_lvds (mode.cpp)
+--------------------------------------------------------
+
+УДАЛИТЬ полностью:
+```cpp
+// ❌ УДАЛИТЬ ЭТУ ФУНКЦИЮ
+static bool
+limit_modes_for_gen3_lvds(display_mode* mode)
 {
-	// Gen 6+ всегда использует physical overlay
-	// (i965/INTEL_GROUP_Gxx был Gen 4, который мы удалили)
-	return true;
+    if (gInfo->shared_info->panel_timing.h_display < mode->timing.h_display)
+        return false;
+    if (gInfo->shared_info->panel_timing.v_display < mode->timing.v_display)
+        return false;
+    return true;
 }
-
-СЕКЦИЯ 7: intel_shared_info STRUCTURE (строки ~1600-1750)
-
-УДАЛИТЬ legacy pll_info:
-
-struct intel_shared_info {
-	// ... другие поля ...
-	
-	// ═══ УДАЛИТЬ ═══
-	struct pll_info	pll_info;  // Legacy PLL не используется в Gen 6+
-	// ═══ ДО СЮДА ═══
-	
-	// ОСТАВИТЬ:
-	uint32	reference_frequency;  // Для WRPLL calculations (Gen 6+)
-	
-	// ... остальные поля ...
-};
-
-═══════════════════════════════════════════════════════════════════════════════
-4. УДАЛЕНИЕ LEGACY PLL КОДА
-═══════════════════════════════════════════════════════════════════════════════
-
-ФАЙЛ: src/add-ons/accelerants/intel_extreme/pll.cpp
-
-Gen 6+ использует совершенно другие алгоритмы (WRPLL), поэтому весь
-старый divider-based код можно удалить.
-
-УДАЛИТЬ ПОЛНОСТЬЮ (строки ~30-550):
-
-// ═══ УДАЛИТЬ ВСЁ ЭТО ═══
-static pll_limits kLimits85x = { ... };
-static pll_limits kLimits9xxSdvo = { ... };
-static pll_limits kLimits9xxLvds = { ... };
-static pll_limits kLimitsPinSdvo = { ... };
-static pll_limits kLimitsPinLvds = { ... };
-static pll_limits kLimitsG4xSdvo = { ... };
-static pll_limits kLimitsG4xLvdsSingle = { ... };
-static pll_limits kLimitsG4xLvdsDual = { ... };
-static pll_limits kLimitsG4xHdmi = { ... };
-static pll_limits kLimitsIlkDac = { ... };
-static pll_limits kLimitsIlkLvdsSingle = { ... };
-static pll_limits kLimitsIlkLvdsDual = { ... };
-static pll_limits kLimitsIlkLvdsSingle100 = { ... };
-static pll_limits kLimitsIlkLvdsDual100 = { ... };
-
-static bool lvds_dual_link(display_timing* current) { ... }
-static bool valid_pll_divisors(...) { ... }
-static void compute_pll_p2(...) { ... }
-static uint32 compute_pll_m(pll_divisors* divisors) { ... }
-static uint32 compute_pll_p(pll_divisors* divisors) { ... }
-static void compute_dpll_9xx(...) { ... }
-static void compute_dpll_g4x(...) { ... }
-
-void compute_pll_divisors(display_timing* current, pll_divisors* divisors, 
-	bool isLVDS)
-{
-	// ВЕСЬ ЭТОТ КОД - УДАЛИТЬ
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_PIN)) {
-		if (isLVDS)
-			memcpy(&limits, &kLimitsPinLvds, sizeof(pll_limits));
-		else
-			memcpy(&limits, &kLimitsPinSdvo, sizeof(pll_limits));
-	} else if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_85x)) {
-		memcpy(&limits, &kLimits85x, sizeof(pll_limits));
-	} else if (gInfo->shared_info->device_type.Generation() == 4 ...) {
-		compute_dpll_g4x(current, divisors, isLVDS);
-		return;
-	} else {
-		compute_dpll_9xx(current, divisors, isLVDS);
-		return;
-	}
-	// И ВСЁ ОСТАЛЬНОЕ В ЭТОЙ ФУНКЦИИ
-}
-// ═══ ДО СЮДА ═══
-
-ОСТАВИТЬ только:
-- hsw_ddi_calculate_wrpll() (Gen 7-8)
-- skl_ddi_calculate_wrpll() (Gen 9-11)
-- ComputeHdmiDpll() (Gen 12+)
-- ComputeDisplayPortDpll() (Gen 12+)
-- ProgramPLL() (Gen 12+)
-
-УДАЛИТЬ в headers/private/graphics/common/pll.h:
-
-// ═══ УДАЛИТЬ ═══
-struct pll_divisors {
-	uint32 p, p1, p2;
-	uint32 n;
-	uint32 m, m1, m2;
-	uint32 post3;
-};
-
-struct pll_limits {
-	struct {
-		uint32 min, max;
-	} dot, vco, n, m, m1, m2, p, p1, p2;
-	
-	uint32 min_vco;
-	uint32 max_vco;
-	uint32 dot_limit;
-};
-// ═══ ДО СЮДА ═══
-
-═══════════════════════════════════════════════════════════════════════════════
-5. УПРОЩЕНИЕ BACKLIGHT КОДА
-═══════════════════════════════════════════════════════════════════════════════
-
-ФАЙЛ: src/add-ons/accelerants/intel_extreme/mode.cpp
-
-ФУНКЦИЯ intel_set_brightness() - УДАЛИТЬ legacy mode:
-
-status_t
-intel_set_brightness(float brightness)
-{
-	CALLED();
-	
-	if (brightness < 0 || brightness > 1)
-		return B_BAD_VALUE;
-
-	// ═══ УДАЛИТЬ legacy detection ═══
-	bool legacyMode = false;
-	if (gInfo->shared_info->device_type.Generation() == 2
-		|| gInfo->shared_info->device_type.IsModel(INTEL_MODEL_915M)
-		|| gInfo->shared_info->device_type.IsModel(INTEL_MODEL_945M)) {
-		legacyMode = (tmp & BLM_LEGACY_MODE) != 0;
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ═══ УДАЛИТЬ Gen < 4 special handling ═══
-	uint32 mask;
-	uint32 shift;
-	if (gInfo->shared_info->device_type.Generation() < 4) {
-		mask = 0xfffe;
-		shift = 1;
-		period = tmp >> 17;
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ═══ УДАЛИТЬ legacy LPC register writes ═══
-	if (legacyMode) {
-		uint8 lpc = duty / 0xff + 1;
-		duty /= lpc;
-		intel_brightness_legacy brightnessLegacy;
-		brightnessLegacy.magic = INTEL_PRIVATE_DATA_MAGIC;
-		brightnessLegacy.lpc = lpc;
-		ioctl(gInfo->device, INTEL_SET_BRIGHTNESS_LEGACY, &brightnessLegacy,
-			sizeof(brightnessLegacy));
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ЗАМЕНИТЬ всё на упрощенный Gen 6+ код:
-	uint32_t period;
-	
-	if (gInfo->shared_info->pch_info >= INTEL_PCH_CNP) {
-		period = read32(intel_get_backlight_register(true));
-	} else {
-		// Gen 6-9: стандартный режим
-		uint32 tmp = read32(intel_get_backlight_register(true));
-		period = tmp >> 16;
-	}
-	
-	uint32_t duty = (uint32_t)(period * brightness);
-	duty = std::max(duty, (uint32_t)gInfo->shared_info->min_brightness);
-	
-	write32(intel_get_backlight_register(false), duty);
-	
-	return B_OK;
-}
-
-АНАЛОГИЧНО упростить intel_get_brightness().
-
-УДАЛИТЬ ioctl handlers для legacy backlight:
-
-ФАЙЛ: headers/private/graphics/intel_extreme/intel_extreme.h
-
-// ═══ УДАЛИТЬ ═══
-enum {
-	// ... другие
-	INTEL_GET_BRIGHTNESS_LEGACY,  // ← УДАЛИТЬ
-	INTEL_SET_BRIGHTNESS_LEGACY   // ← УДАЛИТЬ
-};
-
-struct intel_brightness_legacy {  // ← УДАЛИТЬ СТРУКТУРУ
-	uint32 	magic;
-	uint8	lpc;
-};
-// ═══ ДО СЮДА ═══
-
-═══════════════════════════════════════════════════════════════════════════════
-6. FDI КОД - НЕ УДАЛЯТЬ, НО УПРОСТИТЬ
-═══════════════════════════════════════════════════════════════════════════════
-
-⚠️  КРИТИЧЕСКИ ВАЖНО: FDI используется в Gen 6-8 для ВСЕХ дисплеев!
-
-ФАЙЛ: src/add-ons/accelerants/intel_extreme/FlexibleDisplayInterface.cpp
-
-НЕ УДАЛЯТЬ FDI код полностью, но можно упростить:
-
-В FDILink::PreTrain() - УДАЛИТЬ только IronLake-specific части:
-
-status_t
-FDILink::PreTrain(display_timing* target, uint32* linkBandwidth,
-	uint32* lanes, uint32* bitsPerPixel)
-{
-	// ═══ УДАЛИТЬ Gen 5 specific ═══
-	// IronLake имел всегда-включенный RX PLL
-	if (gInfo->shared_info->device_type.Generation() == 5) {
-		// Special IronLake handling
-		// ...
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ОСТАВИТЬ весь остальной FDI код для Gen 6-8
-}
-
-В Pipes.cpp - ОСТАВИТЬ FDI initialization для Gen 6-8:
-
-// НЕ УДАЛЯТЬ этот код!
-if (gInfo->shared_info->pch_info != INTEL_PCH_NONE
-	&& gInfo->shared_info->device_type.Generation() <= 8) {
-	// FDI нужен для Gen 6-8
-	fFDILink = new(std::nothrow) FDILink(pipeIndex);
-}
-
-═══════════════════════════════════════════════════════════════════════════════
-7. ОБНОВЛЕНИЕ КОДА ИНИЦИАЛИЗАЦИИ
-═══════════════════════════════════════════════════════════════════════════════
-
-ФАЙЛ: src/add-ons/kernel/drivers/graphics/intel_extreme/intel_extreme.cpp
-
-ФУНКЦИЯ intel_extreme_init() - ДОБАВИТЬ ранний reject:
-
-status_t
-intel_extreme_init(intel_info &info)
-{
-	CALLED();
-	
-	// ═══ ДОБАВИТЬ В НАЧАЛЕ ═══
-	if (info.device_type.Generation() < 6) {
-		ERROR("GPU Generation %d is not supported. "
-			"Minimum requirement: Gen 6 (Sandy Bridge, 2011+)\n",
-			info.device_type.Generation());
-		ERROR("Your GPU: %s\n", info.device_identifier);
-		return B_NOT_SUPPORTED;
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// Остальной код инициализации...
-}
-
-УДАЛИТЬ mmioIndex detection (строки ~180-186):
-
-// ═══ БЫЛО ═══
-int mmioIndex = 1;
-if (info.device_type.Generation() >= 3) {
-	mmioIndex = 0;
-}
-
-// ═══ СТАЛО ═══
-// Gen 6+ всегда использует index 0 для MMIO
-int mmioIndex = 0;
-
-═══════════════════════════════════════════════════════════════════════════════
-8. POWER MANAGEMENT QUIRKS
-═══════════════════════════════════════════════════════════════════════════════
-
-ФАЙЛ: src/add-ons/kernel/drivers/graphics/intel_extreme/power.cpp
-
-ФУНКЦИЯ intel_en_gating() - УДАЛИТЬ все legacy quirks:
-
-status_t
-intel_en_gating(intel_info &info)
-{
-	CALLED();
-	
-	// ═══ УДАЛИТЬ ВСЁ ЭТО ═══
-	if (info.pci->device_id == 0x2a02 || info.pci->device_id == 0x2a12) {
-		TRACE("i965GM/i965GME quirk\n");
-		write32(info, 0x6204, (1L << 29));
-	} else if (info.device_type.InGroup(INTEL_GROUP_ILK)) {
-		TRACE("IronLake clock gating\n");
-		write32(info, 0x42020, (1L << 7) | (1L << 5));
-	} else if (info.device_type.InGroup(INTEL_GROUP_G4x)) {
-		TRACE("G4x clock gating\n");
-		write32(info, 0x6204, 0);
-		write32(info, 0x6208, (1L << 9) | (1L << 7) | (1L << 6));
-		write32(info, 0x6210, 0);
-		uint32 gateValue = (1L << 28) | (1L << 3) | (1L << 2);
-		if ((info.device_type.type & INTEL_TYPE_MOBILE) == INTEL_TYPE_MOBILE) {
-			TRACE("G4x mobile clock gating\n");
-			gateValue |= 1L << 18;
-		}
-		write32(info, 0x6200, gateValue);
-	} else {
-		TRACE("i965 quirk\n");
-		write32(info, 0x6204, (1L << 29) | (1L << 23));
-	}
-	// ═══ ДО СЮДА ═══
-	
-	// ОСТАВИТЬ только Gen 6+ код:
-	if (info.device_type.InGroup(INTEL_GROUP_SNB)) {
-		TRACE("SandyBridge clock gating\n");
-		write32(info, 0x42020, (1L << 28) | (1L << 7) | (1L << 5));
-	} else if (info.device_type.InGroup(INTEL_GROUP_IVB)) {
-		TRACE("IvyBridge clock gating\n");
-		write32(info, 0x42020, (1L << 28));
-	} else if (info.device_type.InGroup(INTEL_GROUP_VLV)) {
-		TRACE("ValleyView clock gating\n");
-		write32(info, VLV_DISPLAY_BASE + 0x6200, (1L << 28));
-	}
-	write32(info, 0x7408, 0x10);
-	
-	return B_OK;
-}
-
-ФУНКЦИЯ intel_en_downclock() - УДАЛИТЬ IronLake check:
-
-status_t
-intel_en_downclock(intel_info &info)
-{
-	CALLED();
-
-	// ═══ БЫЛО ═══
-	if (!info.device_type.InGroup(INTEL_GROUP_SNB)
-		&& !info.device_type.InGroup(INTEL_GROUP_IVB)) {
-		TRACE("%s: Downclocking not supported on this chipset.\n", __func__);
-		return B_NOT_ALLOWED;
-	}
-	
-	// ═══ СТАЛО (проверка уже не нужна, т.к. минимум Gen 6) ═══
-	// Gen 6+ всегда поддерживает downclocking
-	// ... остальной код
-}
-
-═══════════════════════════════════════════════════════════════════════════════
-9. УПРОЩЕНИЕ OVERLAY КОДА
-═══════════════════════════════════════════════════════════════════════════════
-
-ФАЙЛ: src/add-ons/accelerants/intel_extreme/overlay.cpp
-
-⚠️  ОСТОРОЖНО: Gen 6+ может использовать overlay по-другому!
-
-ФУНКЦИЯ intel_allocate_overlay_buffer() - упростить alignment:
-
-// ═══ БЫЛО ═══
-int32 alignment = 0x3f;
-if (sharedInfo.device_type.IsModel(INTEL_MODEL_965))
-	alignment = 0xff;
-
-// ═══ СТАЛО ═══
-// Gen 6+ использует стандартный 64-byte alignment
-int32 alignment = 0x3f;
-
-УДАЛИТЬ i965 state allocation:
-
-// ═══ УДАЛИТЬ ═══
-if (sharedInfo.device_type.IsModel(INTEL_MODEL_965)) {
-	status = intel_allocate_memory(INTEL_i965_OVERLAY_STATE_SIZE,
-		B_APERTURE_NON_RESERVED, overlay->state_base);
-	// ...
-}
-// ═══ ДО СЮДА ═══
-
-ФУНКЦИЯ intel_overlay_supported_spaces():
-
-// ═══ БЫЛО ═══
-const uint32*
-intel_overlay_supported_spaces(const display_mode* mode)
-{
-	static const uint32 kSupportedSpaces[] = {B_RGB15, B_RGB16, B_RGB32,
-		B_YCbCr422, 0};
-	static const uint32 kSupportedi965Spaces[] = {B_YCbCr422, 0};
-	
-	if (sharedInfo.device_type.InGroup(INTEL_GROUP_96x))
-		return kSupportedi965Spaces;
-	return kSupportedSpaces;
-}
-
-// ═══ СТАЛО ═══
-const uint32*
-intel_overlay_supported_spaces(const display_mode* mode)
-{
-	// Gen 6+ поддерживает все форматы
-	static const uint32 kSupportedSpaces[] = {B_RGB15, B_RGB16, B_RGB32,
-		B_YCbCr422, 0};
-	return kSupportedSpaces;
-}
-
-═══════════════════════════════════════════════════════════════════════════════
-10. ГЛОБАЛЬНАЯ ОЧИСТКА ВСЕХ ПРОВЕРОК Generation() < 6
-═══════════════════════════════════════════════════════════════════════════════
-
-КОМАНДЫ ДЛЯ ПОИСКА:
-
-grep -rn "device_type.Generation() < 4" src/
-grep -rn "device_type.Generation() < 5" src/
-grep -rn "device_type.Generation() < 6" src/
-grep -rn "device_type.Generation() == 2" src/
-grep -rn "device_type.Generation() == 3" src/
-grep -rn "device_type.Generation() == 4" src/
-grep -rn "device_type.Generation() == 5" src/
-grep -rn "IsModel(INTEL_MODEL_915" src/
-grep -rn "IsModel(INTEL_MODEL_945" src/
-grep -rn "IsModel(INTEL_MODEL_965" src/
-grep -rn "InGroup(INTEL_GROUP_G4x" src/
-grep -rn "InGroup(INTEL_GROUP_ILK" src/
-
-ДЛЯ КАЖДОГО НАЙДЕННОГО:
-- Если проверка на Gen < 6: УДАЛИТЬ весь if блок
-- Если проверка на Gen >= 6: УДАЛИТЬ условие, оставить тело
-
-ПРИМЕРЫ:
-
-ПРИМЕР 1 (mode.cpp):
-// ═══ БЫЛО ═══
-if (gInfo->shared_info->device_type.Generation() < 4) {
-	period >>= 1;
-	duty >>= 1;
-}
-
-// ═══ СТАЛО ═══
-// УДАЛИТЬ полностью - этот код для Gen < 4
-
-ПРИМЕР 2 (Pipes.cpp):
-// ═══ БЫЛО ═══
-if (gInfo->shared_info->device_type.Generation() >= 6) {
-	// настройка для Gen 6+
-	configure_modern_way();
-}
-
-// ═══ СТАЛО ═══
-// Удалить проверку, всегда Gen 6+
-configure_modern_way();
-
-ПРИМЕР 3 (mode.cpp):
-// ═══ БЫЛО ═══
+```
+
+И в create_mode_list():
+```cpp
+// ❌ УДАЛИТЬ:
 check_display_mode_hook limitModes = NULL;
 if (gInfo->shared_info->device_type.Generation() < 4)
-	limitModes = limit_modes_for_gen3_lvds;
+    limitModes = limit_modes_for_gen3_lvds;
+```
 
-// ═══ СТАЛО ═══
-// УДАЛИТЬ полностью, т.к. функция limit_modes_for_gen3_lvds больше не нужна
+ПРИМЕР 4: Упрощение color space selection (mode.cpp)
+-----------------------------------------------------
 
-═══════════════════════════════════════════════════════════════════════════════
-11. УДАЛЕНИЕ LEGACY ФУНКЦИЙ
-═══════════════════════════════════════════════════════════════════════════════
+БЫЛО:
+```cpp
+const color_space kSupportedSpaces[] = {B_RGB32_LITTLE, B_RGB16_LITTLE, B_CMAP8};
+const color_space* supportedSpaces;
+int colorSpaceCount;
 
-ФАЙЛ: src/add-ons/accelerants/intel_extreme/mode.cpp
-
-УДАЛИТЬ ПОЛНОСТЬЮ функцию limit_modes_for_gen3_lvds():
-
-// ═══ УДАЛИТЬ ПОЛНОСТЬЮ ═══
-static bool
-limit_modes_for_gen3_lvds(const display_mode *mode)
-{
-	// FIXME do this only for that display
-	if (gInfo->shared_info->panel_timing.h_display < mode->timing.h_display)
-		return false;
-	if (gInfo->shared_info->panel_timing.v_display < mode->timing.v_display)
-		return false;
-	return true;
+if (gInfo->shared_info->device_type.Generation() >= 4) {
+    supportedSpaces = kSupportedSpaces;
+    colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
+} else {
+    supportedSpaces = NULL;
+    colorSpaceCount = 0;
 }
-// ═══ ДО СЮДА ═══
+```
 
-УДАЛИТЬ все вызовы этой функции в create_mode_list().
+СТАЛО:
+```cpp
+// Gen 6+ doesn't support B_RGB15, use custom colorspace list
+const color_space kSupportedSpaces[] = {B_RGB32_LITTLE, B_RGB16_LITTLE, B_CMAP8};
+const color_space* supportedSpaces = kSupportedSpaces;
+int colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
+```
 
-═══════════════════════════════════════════════════════════════════════════════
-12. CHECKLIST ДЛЯ CLAUDE CODE
-═══════════════════════════════════════════════════════════════════════════════
+====================================================================
+КОНТРОЛЬНЫЙ СПИСОК ФИНАЛЬНОЙ ПРОВЕРКИ
+====================================================================
 
-ФАЗА 1 - ПОДГОТОВКА И VALIDATION:
-[ ] 1. Добавить early validation в intel_extreme_init() (reject Gen < 6)
-[ ] 2. Протестировать, что старые GPU корректно отвергаются
-[ ] 3. Создать backup/branch перед массовыми изменениями
+□ Все упоминания Gen 2, 3, 4, 5 удалены из кода (кроме комментариев о минимальных требованиях)
+□ Функция limit_modes_for_gen3_lvds() удалена
+□ Все проверки Generation() < 6 удалены (кроме intel_extreme.cpp:init)
+□ Все проверки Generation() <= 5 удалены
+□ Все проверки Generation() == [2-5] удалены
+□ INTEL_MODEL_965 удален
+□ **MCH/ICH register blocks НЕ УДАЛЕНЫ** (нужны для SoC!)
+□ **Register blocks setup оставлен с if/else** (нужен для PCH vs SoC)
+□ fourthGen переименован в isValleyView
+□ Комментарии обновлены и точны
+□ Код компилируется без ошибок
+□ Код компилируется без warnings
+□ Драйвер корректно работает на Gen 6+ PCH hardware
+□ Драйвер корректно работает на Gen 6+ SoC hardware (ValleyView, Apollo Lake)
+□ Драйвер корректно отказывает на Gen < 6 hardware
 
-ФАЗА 2 - УДАЛЕНИЕ DEVICE IDs И DEFINES:
-[ ] 4. Удалить device entries Gen 2-5 из driver.cpp (строки 43-110)
-[ ] 5. Удалить INTEL_FAMILY_8xx, INTEL_FAMILY_9xx defines
-[ ] 6. Удалить INTEL_GROUP_83x через INTEL_GROUP_ILK
-[ ] 7. Удалить INTEL_MODEL_915 через INTEL_MODEL_ILKGM
-[ ] 8. Упростить DeviceType::Generation()
-[ ] 9. Проверить компиляцию
+====================================================================
+ВАЖНАЯ ИНФОРМАЦИЯ ПРО АРХИТЕКТУРУ INTEL GPU
+====================================================================
 
-ФАЗА 3 - REGISTER DEFINITIONS:
-[ ] 10. Удалить i830/i855 stolen memory defines из intel_extreme.h
-[ ] 11. Удалить G4X stolen memory defines
-[ ] 12. Удалить i830/i965/G33/G4x GTT defines
-[ ] 13. Удалить LEGACY_BACKLIGHT_BRIGHTNESS define
-[ ] 14. Проверить компиляцию
+Gen 6+ РАЗДЕЛЯЕТСЯ НА ДВА ТИПА:
 
-ФАЗА 4 - PLL КОД:
-[ ] 15. Удалить все legacy pll_limits structures из pll.cpp
-[ ] 16. Удалить compute_dpll_9xx(), compute_dpll_g4x()
-[ ] 17. Удалить compute_pll_divisors() полностью
-[ ] 18. Удалить pll_divisors struct из pll.h
-[ ] 19. Удалить pll_info из intel_shared_info
-[ ] 20. Проверить компиляцию
+1. **С PCH (Platform Controller Hub)**:
+   - Sandy Bridge (Gen 6) - PCH_IBX
+   - Ivy Bridge (Gen 7) - PCH_CPT/PPT
+   - Haswell (Gen 7) - PCH_LPT/WPT
+   - Broadwell (Gen 8) - PCH_LPT
+   - Skylake+ (Gen 9+) - PCH_SPT/CNP/ICP/TGP/etc.
 
-ФАЗА 5 - BACKLIGHT:
-[ ] 21. Упростить intel_set_brightness() (убрать legacy mode)
-[ ] 22. Упростить intel_get_brightness() (убрать legacy mode)
-[ ] 23. Удалить INTEL_GET/SET_BRIGHTNESS_LEGACY ioctls
-[ ] 24. Удалить intel_brightness_legacy struct
-[ ] 25. Проверить компиляцию
+2. **SoC БЕЗ PCH (System-on-Chip)**:
+   - ValleyView/Bay Trail (Gen 7) - INTEL_PCH_NONE
+   - CherryView/Braswell (Gen 8) - INTEL_PCH_NONE
+   - Apollo Lake (Gen 9) - INTEL_PCH_NONE или специфический PCH
+   - Gemini Lake (Gen 9) - INTEL_PCH_CNP или INTEL_PCH_NONE
+   - JasperLake (Gen 11) - INTEL_PCH_JSP
 
-ФАЗА 6 - POWER И QUIRKS:
-[ ] 26. Очистить intel_en_gating() от Gen < 6 quirks
-[ ] 27. Упростить intel_en_downclock()
-[ ] 28. Проверить компиляцию
+SoC чипы используют MCH/ICH register layout, а не PCH layout!
 
-ФАЗА 7 - OVERLAY:
-[ ] 29. Упростить intel_allocate_overlay_buffer()
-[ ] 30. Упростить intel_overlay_supported_spaces()
-[ ] 31. Удалить i965 state allocation
-[ ] 32. Изменить intel_uses_physical_overlay() на return true
-[ ] 33. Проверить компиляцию
-
-ФАЗА 8 - ИНИЦИАЛИЗАЦИЯ:
-[ ] 34. Упростить mmioIndex (всегда 0)
-[ ] 35. Проверить FDI initialization (НЕ УДАЛЯТЬ для Gen 6-8!)
-[ ] 36. Проверить компиляцию
-
-ФАЗА 9 - ГЛОБАЛЬНАЯ ОЧИСТКА:
-[ ] 37. Найти все "Generation() < 4" и удалить
-[ ] 38. Найти все "Generation() < 5" и удалить
-[ ] 39. Найти все "Generation() < 6" и удалить
-[ ] 40. Найти все "Generation() == 2/3/4/5" и удалить
-[ ] 41. Найти все IsModel(INTEL_MODEL_915/945/965/G45) и удалить
-[ ] 42. Найти все InGroup(INTEL_GROUP_ILK) и удалить
-[ ] 43. Удалить limit_modes_for_gen3_lvds()
-[ ] 44. Проверить компиляцию
-
-ФАЗА 10 - ФИНАЛИЗАЦИЯ:
-[ ] 45. Запустить полную компиляцию без ошибок
-[ ] 46. Проверить warnings
-[ ] 47. Создать тестовые случаи
-[ ] 48. Обновить документацию
-
-═══════════════════════════════════════════════════════════════════════════════
-13. ВАЖНЫЕ ЗАМЕЧАНИЯ И CAVEATS
-═══════════════════════════════════════════════════════════════════════════════
-
-1. ⚠️  FDI КРИТИЧЕСКИ ВАЖЕН ДЛЯ GEN 6-8!
-   - НЕ удалять FlexibleDisplayInterface.cpp
-   - НЕ удалять FDI register defines
-   - Только упростить IronLake-specific части
-   
-2. ABI COMPATIBILITY:
-   - intel_shared_info используется между kernel и accelerant
-   - При удалении полей добавлять reserved padding
-   - Или переименовывать в _reserved_*
-   
-3. PCH HANDLING:
-   - Gen 6+ всегда имеет PCH
-   - Можно убрать проверки "if (hasPCH)" внутри Gen 6+ кода
-   - Но сохранить для определения типа PCH
-   
-4. INTERRUPT HANDLING:
-   - Gen 6-7: legacy registers
-   - Gen 8+: новая схема
-   - Gen 11+: еще одна схема
-   - ВСЕ три пути должны остаться!
-
-5. OVERLAY:
-   - Gen 6+ может не использовать hardware overlay вообще
-   - Проверить, нужен ли он
-   - Возможно стоит deprecate весь overlay код
-
-6. TESTING:
-   - Минимум: SandyBridge (Gen 6)
-   - Желательно: IvyBridge (Gen 7), Haswell (Gen 7.5)
-   - Обязательно: Проверить FDI на Gen 6-8
-
-═══════════════════════════════════════════════════════════════════════════════
-14. МЕТРИКИ УДАЛЕНИЯ
-═══════════════════════════════════════════════════════════════════════════════
-
-ОЦЕНОЧНЫЕ ЦИФРЫ:
-
-driver.cpp:           ~110 строк (device IDs)
-intel_extreme.h:      ~200 строк (defines + stolen memory + GTT)
-pll.cpp:              ~650 строк (legacy algorithms)
-mode.cpp:             ~180 строк (backlight + mode limits)
-overlay.cpp:          ~90 строк (i965 special cases)
-power.cpp:            ~70 строк (quirks)
-intel_extreme.cpp:    ~40 строк (init + mmio)
-FlexibleDisplayInterface.cpp: ~30 строк (только IronLake части)
-
-ИТОГО: ~1370 строк legacy кода
-ПЛЮС: все условные проверки Generation() по всему проекту
-
-ОЦЕНКА: ~1500-1700 строк удаления
-        ~18-22% уменьшение размера драйвера
-
-═══════════════════════════════════════════════════════════════════════════════
-КОНЕЦ ИНСТРУКЦИИ (ВЕРСИЯ 2.0)
-═══════════════════════════════════════════════════════════════════════════════
-
-Эта версия инструкции исправлена с учетом:
-✅ Правильного понимания роли FDI (критичен для Gen 6-8)
-✅ Более полного анализа intel_extreme.h
-✅ Удаления Gen 5 (IronLake) тоже
-✅ Более детального списка мест для изменений
-✅ Проверки по официальной документации Intel
+====================================================================
+КОНЕЦ ИСПРАВЛЕННОЙ ИНСТРУКЦИИ
+====================================================================

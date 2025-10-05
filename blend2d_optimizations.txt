@@ -1,1226 +1,642 @@
 ================================================================================
-BLEND2D DRAWING MODES OPTIMIZATION - COMPLETE PATCH
+HAIKU APP SERVER: AGG → BLEND2D MIGRATION - COMPLETION INSTRUCTIONS
 ================================================================================
 
-Цель: Оптимизация drawing modes без изменения PatternHandler
-Проблема: Pixel-by-pixel rendering → batch operations
-Подход: Helper functions для паттернов через temporary buffer
+PROJECT STATUS: 80% Complete - Critical Issues Remaining
+TARGET: Full AGG removal from Haiku OS codebase
+TIMELINE: Priority 1 tasks = 2 weeks, Priority 2 = 1 month, Priority 3 = 2 months
 
 ================================================================================
-ФАЙЛ 1: src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeHelpers.h
+CRITICAL ISSUE #1: Custom Drawing Modes Use Direct Pixel Access
 ================================================================================
 
-/*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Helper functions for efficient Blend2D drawing mode rendering.
- * Pattern-agnostic - works with existing PatternHandler.
- */
+PROBLEM LOCATION:
+- src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeCustom.h
 
-#ifndef BLEND2D_DRAWING_MODE_HELPERS_H
-#define BLEND2D_DRAWING_MODE_HELPERS_H
+AFFECTED MODES:
+- B_OP_BLEND (averaging: (src + dst) / 2)
+- B_OP_INVERT (RGB inversion: 255 - dst)
+- B_OP_SELECT (conditional color swap based on pattern)
+- B_OP_ERASE (pattern-based conditional erase)
 
-#include "PixelFormat.h"
-#include "PatternHandler.h"
-#include <blend2d.h>
+ISSUE DESCRIPTION:
+Current implementation uses get_pixel_ptr() to directly access BLImage pixel
+data via makeMutable(), bypassing Blend2D's rendering pipeline. This causes:
+- Loss of hardware acceleration
+- Violation of Blend2D abstraction
+- Potential race conditions
+- Performance degradation
 
-// ============================================================================
-// BATCH SOLID COLOR RENDERING
-// ============================================================================
-
-namespace Blend2DHelpers {
-
-// Batch render solid color span with coverage array
-// Groups runs with same coverage for efficiency
-static inline void
-render_solid_hspan_batch(int x, int y, unsigned len,
-                         const rgb_color& color,
-                         const uint8* covers,
-                         BLContext* ctx, BLCompOp compOp)
+EXAMPLE OF PROBLEMATIC CODE:
+```cpp
+static inline uint32_t*
+get_pixel_ptr(BLImage* image, int x, int y, BLImageData* data)
 {
-    if (len == 0) return;
-    
-    ctx->setCompOp(compOp);
-    
-    unsigned i = 0;
-    while (i < len) {
-        // Skip zero coverage
-        while (i < len && covers[i] == 0)
-            i++;
-        if (i >= len)
-            break;
-        
-        // Find run with same coverage
-        uint8 cover = covers[i];
-        unsigned start = i;
-        
-        while (i < len && covers[i] == cover)
-            i++;
-        
-        unsigned runLen = i - start;
-        
-        // Render entire run with one API call
-        if (cover == 255) {
-            ctx->fillRect(BLRect(x + start, y, runLen, 1),
-                         BLRgba32(color.red, color.green, color.blue, 
-                                 color.alpha));
-        } else {
-            double prevAlpha = ctx->globalAlpha();
-            ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0));
-            ctx->fillRect(BLRect(x + start, y, runLen, 1),
-                         BLRgba32(color.red, color.green, color.blue, 255));
-            ctx->setGlobalAlpha(prevAlpha);
-        }
+    if (!data->pixelData) {
+        BLResult result = image->makeMutable(data);  // ❌ BYPASSES PIPELINE
     }
+    uint32_t* pixels = (uint32_t*)data->pixelData;
+    int stride = data->stride / 4;
+    return &pixels[y * stride + x];
+}
+```
+
+SOLUTION STRATEGY:
+Implement these modes using Blend2D's proper rendering pipeline:
+
+OPTION 1: Use Offscreen Compositing (Recommended)
+1. Create temporary BLImage with same dimensions as target region
+2. Render to offscreen buffer
+3. Apply custom operation via BLContext with appropriate BLCompOp
+4. Composite result back to main buffer
+
+OPTION 2: Use BLContext Custom Rendering
+Research if Blend2D supports custom compositing operators that could be
+registered for these modes.
+
+IMPLEMENTATION TASKS:
+
+Task 1.1: Implement B_OP_BLEND via offscreen compositing
+```cpp
+// Pseudocode:
+static void blend_pixel_blend_native(int x, int y, ...) {
+    // 1. Create offscreen 1x1 BLImage
+    // 2. Get destination pixel via BLContext::blitImage
+    // 3. Average colors: (src + dst) / 2
+    // 4. Write result via BLContext::fillRect with BL_COMP_OP_SRC_COPY
+}
+```
+
+Task 1.2: Implement B_OP_INVERT via shader/filter if possible
+Research: Does Blend2D support color inversion filters?
+Fallback: Use offscreen compositing
+
+Task 1.3: Implement B_OP_SELECT and B_OP_ERASE
+These require pattern checking - may need hybrid approach
+
+Task 1.4: Performance testing
+Compare new implementations vs current direct access approach
+Target: <5% performance degradation
+
+================================================================================
+CRITICAL ISSUE #2: Excessive Debug Output in Production Code
+================================================================================
+
+PROBLEM LOCATION:
+- All files contain fprintf(stderr, ...) calls
+- Most prevalent in:
+  - src/servers/app/drawing/Painter/Painter.cpp
+  - src/servers/app/drawing/Painter/Blend2dTextRenderer.cpp
+  - src/servers/app/drawing/Painter/bitmap_painter/BitmapPainter.cpp
+  - src/servers/app/font/FontEngine.cpp
+
+ISSUE DESCRIPTION:
+Every Blend2D API call that can fail has an fprintf error message. Problems:
+- fprintf is blocking and slow
+- Spams stderr in production builds
+- No way to disable without recompiling
+- Makes logs unreadable
+
+EXAMPLE OF PROBLEMATIC CODE:
+```cpp
+BLResult result = fContext.fillPath(path);
+if (result != BL_SUCCESS) {
+    fprintf(stderr, "Painter::_FillPath() failed: %d\n", (int)result);
+}
+```
+
+SOLUTION:
+Create unified debug logging system
+
+IMPLEMENTATION TASKS:
+
+Task 2.1: Create debug logging header
+File: src/servers/app/drawing/Painter/Blend2dDebug.h
+```cpp
+#ifndef BLEND2D_DEBUG_H
+#define BLEND2D_DEBUG_H
+
+#ifdef DEBUG
+    #include <Debug.h>
+    #define BLEND2D_ERROR(x...) debug_printf("[Blend2D ERROR] " x)
+    #define BLEND2D_WARNING(x...) debug_printf("[Blend2D WARN] " x)
+    #define BLEND2D_TRACE(x...) debug_printf("[Blend2D] " x)
+#else
+    #define BLEND2D_ERROR(x...)
+    #define BLEND2D_WARNING(x...)
+    #define BLEND2D_TRACE(x...)
+#endif
+
+#define BLEND2D_CHECK(expr, action) \
+    do { \
+        BLResult _result = (expr); \
+        if (_result != BL_SUCCESS) { \
+            BLEND2D_ERROR("%s:%d: %s failed with code %d\n", \
+                __FILE__, __LINE__, #expr, (int)_result); \
+            action; \
+        } \
+    } while (0)
+
+#endif // BLEND2D_DEBUG_H
+```
+
+Task 2.2: Replace all fprintf calls with new macros
+Pattern:
+```cpp
+// Before:
+if (result != BL_SUCCESS) {
+    fprintf(stderr, "Warning: operation failed: %d\n", (int)result);
 }
 
-// ============================================================================
-// PATTERN RENDERING VIA TEMPORARY BUFFER
-// ============================================================================
+// After:
+BLEND2D_CHECK(result, /* recovery action */);
+```
 
-// Maximum span length for stack allocation
-// 256 pixels * 4 bytes = 1KB stack usage (safe)
-static const unsigned MAX_STACK_SPAN = 256;
+Affected files (search for "fprintf.*Blend2D" or "fprintf.*result"):
+- Painter.cpp (~30 occurrences)
+- Blend2dTextRenderer.cpp (~10 occurrences)
+- BitmapPainter.cpp (~15 occurrences)
+- FontEngine.cpp (~5 occurrences)
+- PixelFormat.cpp (~3 occurrences)
 
-// Render pattern into temporary buffer, then blit to context
-// This avoids pixel-by-pixel API calls while keeping PatternHandler clean
-static inline void
-render_pattern_hspan(int x, int y, unsigned len,
-                    const PatternHandler* pattern,
-                    const uint8* covers,
-                    BLContext* ctx, BLCompOp compOp)
-{
-    if (len == 0) return;
-    
-    // Use stack allocation for small spans, heap for large
-    uint32_t stackBuffer[MAX_STACK_SPAN];
-    uint32_t* heapBuffer = nullptr;
-    uint32_t* pixels = nullptr;
-    
-    if (len <= MAX_STACK_SPAN) {
-        pixels = stackBuffer;
-    } else {
-        heapBuffer = new(std::nothrow) uint32_t[len];
-        if (!heapBuffer) {
-            // Fallback to slow path on allocation failure
-            for (unsigned i = 0; i < len; i++) {
-                if (covers[i] == 0)
-                    continue;
-                rgb_color c = pattern->ColorAt(x + i, y);
-                if (covers[i] == 255) {
-                    ctx->fillRect(BLRect(x + i, y, 1, 1),
-                                 BLRgba32(c.red, c.green, c.blue, c.alpha));
-                } else {
-                    double prevAlpha = ctx->globalAlpha();
-                    ctx->setGlobalAlpha((covers[i] / 255.0) * (c.alpha / 255.0));
-                    ctx->fillRect(BLRect(x + i, y, 1, 1),
-                                 BLRgba32(c.red, c.green, c.blue, 255));
-                    ctx->setGlobalAlpha(prevAlpha);
-                }
-            }
-            return;
+Task 2.3: Add logging levels to DesktopSettings
+Allow runtime control of debug output verbosity
+
+================================================================================
+PERFORMANCE ISSUE #1: SerializedPath Overhead
+================================================================================
+
+PROBLEM LOCATION:
+- src/servers/app/font/FontCacheEntry.h
+- struct SerializedPath
+
+ISSUE DESCRIPTION:
+Vector glyphs are serialized to byte buffer, then deserialized on every render:
+
+```cpp
+struct SerializedPath {
+    uint32 commandCount;
+    uint32 vertexCount;
+    // Followed by: uint8 commands[] + BLPoint vertices[]
+
+    static BLPath Deserialize(const uint8* buffer) {
+        BLPath path;
+        // Copy all commands and vertices - EXPENSIVE!
+        for (uint32 i = 0; i < commandCount; i++) {
+            // Build path from scratch each time
         }
-        pixels = heapBuffer;
+        return path;
     }
-    
-    // Fill buffer with pattern colors + apply coverage
-    for (unsigned i = 0; i < len; i++) {
-        rgb_color c = pattern->ColorAt(x + i, y);
-        
-        // Apply coverage to alpha
-        uint8 alpha = (c.alpha * covers[i]) / 255;
-        
-        // Store as BGRA32 (Blend2D native format)
-        pixels[i] = (uint32_t(alpha) << 24) |
-                    (uint32_t(c.red) << 16) |
-                    (uint32_t(c.green) << 8) |
-                    uint32_t(c.blue);
-    }
-    
-    // Create temporary BLImage from buffer (zero-copy read-only)
-    BLImage tempImage;
-    BLResult result = tempImage.createFromData(
-        len, 1,                    // width x height
-        BL_FORMAT_PRGB32,          // premultiplied RGBA
-        pixels,                    // data
-        len * 4,                   // stride
-        BL_DATA_ACCESS_READ,       // read-only
-        nullptr, nullptr           // no cleanup needed
-    );
-    
-    if (result == BL_SUCCESS) {
-        ctx->setCompOp(compOp);
-        ctx->blitImage(BLPoint(x, y), tempImage);
-    }
-    
-    // Cleanup heap allocation if used
-    delete[] heapBuffer;
-}
-
-// Same as above but with single coverage value (not array)
-static inline void
-render_pattern_hspan_uniform(int x, int y, unsigned len,
-                             const PatternHandler* pattern,
-                             uint8 cover,
-                             BLContext* ctx, BLCompOp compOp)
-{
-    if (len == 0 || cover == 0)
-        return;
-    
-    // Use stack allocation for small spans, heap for large
-    uint32_t stackBuffer[MAX_STACK_SPAN];
-    uint32_t* heapBuffer = nullptr;
-    uint32_t* pixels = nullptr;
-    
-    if (len <= MAX_STACK_SPAN) {
-        pixels = stackBuffer;
-    } else {
-        heapBuffer = new(std::nothrow) uint32_t[len];
-        if (!heapBuffer) {
-            // Fallback to slow path
-            for (unsigned i = 0; i < len; i++) {
-                rgb_color c = pattern->ColorAt(x + i, y);
-                if (cover == 255) {
-                    ctx->fillRect(BLRect(x + i, y, 1, 1),
-                                 BLRgba32(c.red, c.green, c.blue, c.alpha));
-                } else {
-                    double prevAlpha = ctx->globalAlpha();
-                    ctx->setGlobalAlpha((cover / 255.0) * (c.alpha / 255.0));
-                    ctx->fillRect(BLRect(x + i, y, 1, 1),
-                                 BLRgba32(c.red, c.green, c.blue, 255));
-                    ctx->setGlobalAlpha(prevAlpha);
-                }
-            }
-            return;
-        }
-        pixels = heapBuffer;
-    }
-    
-    // Fill buffer with pattern colors + apply coverage
-    for (unsigned i = 0; i < len; i++) {
-        rgb_color c = pattern->ColorAt(x + i, y);
-        uint8 alpha = (c.alpha * cover) / 255;
-        
-        pixels[i] = (uint32_t(alpha) << 24) |
-                    (uint32_t(c.red) << 16) |
-                    (uint32_t(c.green) << 8) |
-                    uint32_t(c.blue);
-    }
-    
-    // Create temporary BLImage and blit
-    BLImage tempImage;
-    BLResult result = tempImage.createFromData(
-        len, 1, BL_FORMAT_PRGB32, pixels, len * 4,
-        BL_DATA_ACCESS_READ, nullptr, nullptr);
-    
-    if (result == BL_SUCCESS) {
-        ctx->setCompOp(compOp);
-        ctx->blitImage(BLPoint(x, y), tempImage);
-    }
-    
-    delete[] heapBuffer;
-}
-
-// ============================================================================
-// BATCH PIXEL ACCESS FOR CUSTOM MODES
-// ============================================================================
-
-// Get mutable pixel access once for entire span
-// Much more efficient than calling makeMutable() per pixel
-class BatchPixelAccess {
-public:
-    BatchPixelAccess(BLImage* image)
-        : fImage(image)
-        , fPixels(nullptr)
-        , fStride(0)
-        , fValid(false)
-    {
-        BLImageData data;
-        BLResult result = fImage->makeMutable(&data);
-        if (result == BL_SUCCESS) {
-            fPixels = (uint32_t*)data.pixelData;
-            fStride = data.stride / 4;
-            fValid = true;
-        }
-    }
-    
-    inline bool IsValid() const { return fValid; }
-    
-    inline uint32_t* PixelAt(int x, int y) const {
-        return &fPixels[y * fStride + x];
-    }
-    
-private:
-    BLImage* fImage;
-    uint32_t* fPixels;
-    int fStride;
-    bool fValid;
 };
+```
 
-} // namespace Blend2DHelpers
+PERFORMANCE IMPACT:
+- Deserialization happens on EVERY glyph render
+- For complex glyphs (CJK, Emoji): 50-200 path commands
+- Overhead: ~5-10 microseconds per glyph
 
-#endif // BLEND2D_DRAWING_MODE_HELPERS_H
+SOLUTION OPTIONS:
 
+OPTION A: Cache BLPath directly (Recommended)
+```cpp
+struct GlyphCache {
+    mutable BLPath cachedPath;  // Cache the BLPath object
+    mutable BLImage cachedImage;
 
-================================================================================
-ФАЙЛ 2: src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeNative.h
-================================================================================
+    // Thread safety: use atomic flag or lock
+    mutable std::atomic<bool> pathInitialized;
+};
+```
 
-/*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Native Blend2D drawing modes - OPTIMIZED VERSION
- * Uses batch rendering helpers for 10-100x performance improvement
- */
+OPTION B: Use BLPath reference counting
+Research: Does BLPath support shallow copy/COW?
+If yes, cache reference-counted path
 
-#ifndef BLEND2D_DRAWING_MODE_NATIVE_H
-#define BLEND2D_DRAWING_MODE_NATIVE_H
+OPTION C: Keep serialization but optimize
+- Use BLPath::addPath() to clone
+- Pre-allocate capacity in Deserialize()
 
-#include "PixelFormat.h"
-#include "PatternHandler.h"
-#include "Blend2DDrawingModeHelpers.h"
-#include <blend2d.h>
+IMPLEMENTATION TASKS:
 
-// ============================================================================
-// SINGLE PIXEL HELPERS (unchanged - only used for single pixels)
-// ============================================================================
+Task 3.1: Benchmark current implementation
+Create test that renders 1000 complex glyphs, measure time
 
-static inline void
-blend2d_draw_pixel(int x, int y, const rgb_color& color, uint8 cover,
-                  BLContext* ctx, BLCompOp compOp)
-{
-    ctx->setCompOp(compOp);
-    
-    if (cover == 255) {
-        ctx->fillRect(BLRect(x, y, 1, 1),
-                     BLRgba32(color.red, color.green, color.blue, color.alpha));
-    } else {
-        double prevAlpha = ctx->globalAlpha();
-        ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0));
-        ctx->fillRect(BLRect(x, y, 1, 1),
-                     BLRgba32(color.red, color.green, color.blue, 255));
-        ctx->setGlobalAlpha(prevAlpha);
-    }
-}
+Task 3.2: Implement OPTION A with thread safety
+Add mutex to GlyphCache or use atomic flags
 
-// ============================================================================
-// MACRO FOR GENERATING ALL 8 FUNCTIONS FOR A DRAWING MODE
-// ============================================================================
+Task 3.3: Benchmark improved implementation
+Target: 50% reduction in glyph rendering overhead
 
-#define GENERATE_NATIVE_MODE_FUNCTIONS(mode_name, compop) \
-    /* 1. blend_pixel - single pixel */ \
-    static void \
-    blend_pixel_##mode_name##_native(int x, int y, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        rgb_color color = pattern->ColorAt(x, y); \
-        blend2d_draw_pixel(x, y, color, cover, ctx, compop); \
-    } \
-    \
-    /* 2. blend_hline - horizontal line with uniform coverage */ \
-    static void \
-    blend_hline_##mode_name##_native(int x, int y, unsigned len, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            /* Fast path: solid color */ \
-            rgb_color color = pattern->HighColor(); \
-            ctx->setCompOp(compop); \
-            if (cover == 255) { \
-                ctx->fillRect(BLRect(x, y, len, 1), \
-                             BLRgba32(color.red, color.green, color.blue, \
-                                     color.alpha)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0)); \
-                ctx->fillRect(BLRect(x, y, len, 1), \
-                             BLRgba32(color.red, color.green, color.blue, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } else { \
-            /* Pattern: use helper with temporary buffer */ \
-            Blend2DHelpers::render_pattern_hspan_uniform(x, y, len, pattern, \
-                                                         cover, ctx, compop); \
-        } \
-    } \
-    \
-    /* 3. blend_vline - vertical line */ \
-    static void \
-    blend_vline_##mode_name##_native(int x, int y, unsigned len, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            rgb_color color = pattern->HighColor(); \
-            ctx->setCompOp(compop); \
-            if (cover == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, len), \
-                             BLRgba32(color.red, color.green, color.blue, \
-                                     color.alpha)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, len), \
-                             BLRgba32(color.red, color.green, color.blue, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } else { \
-            /* Pattern: render pixel by pixel for vertical (rare case) */ \
-            for (unsigned i = 0; i < len; i++, y++) { \
-                rgb_color color = pattern->ColorAt(x, y); \
-                blend2d_draw_pixel(x, y, color, cover, ctx, compop); \
-            } \
-        } \
-    } \
-    \
-    /* 4. blend_solid_hspan - horizontal span with coverage array */ \
-    static void \
-    blend_solid_hspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type& c, \
-                                           const uint8* covers, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            /* Fast path: batch render with grouped runs */ \
-            rgb_color color = pattern->HighColor(); \
-            Blend2DHelpers::render_solid_hspan_batch(x, y, len, color, \
-                                                     covers, ctx, compop); \
-        } else { \
-            /* Pattern: use helper with temporary buffer */ \
-            Blend2DHelpers::render_pattern_hspan(x, y, len, pattern, \
-                                                 covers, ctx, compop); \
-        } \
-    } \
-    \
-    /* 5. blend_solid_vspan - vertical span */ \
-    static void \
-    blend_solid_vspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type& c, \
-                                           const uint8* covers, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, y++, covers++) { \
-            if (*covers == 0) \
-                continue; \
-            rgb_color color = pattern->ColorAt(x, y); \
-            blend2d_draw_pixel(x, y, color, *covers, ctx, compop); \
-        } \
-    } \
-    \
-    /* 6. blend_color_hspan - horizontal span with color array */ \
-    static void \
-    blend_color_hspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type* colors, \
-                                           const uint8* covers, uint8 cover, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, x++) { \
-            uint8 alpha = covers ? covers[i] : cover; \
-            if (alpha == 0) \
-                continue; \
-            const PixelFormat::color_type& pixelColor = colors[i]; \
-            if (alpha == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, \
-                                     pixelColor.a)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((alpha / 255.0) * (pixelColor.a / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } \
-    } \
-    \
-    /* 7. blend_color_vspan - vertical span with color array */ \
-    static void \
-    blend_color_vspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type* colors, \
-                                           const uint8* covers, uint8 cover, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, y++) { \
-            uint8 alpha = covers ? covers[i] : cover; \
-            if (alpha == 0) \
-                continue; \
-            const PixelFormat::color_type& pixelColor = colors[i]; \
-            if (alpha == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, \
-                                     pixelColor.a)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((alpha / 255.0) * (pixelColor.a / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } \
-    }
-
-// ============================================================================
-// GENERATE ALL NATIVE DRAWING MODES
-// ============================================================================
-
-GENERATE_NATIVE_MODE_FUNCTIONS(copy, BL_COMP_OP_SRC_COPY)
-GENERATE_NATIVE_MODE_FUNCTIONS(over, BL_COMP_OP_SRC_OVER)
-GENERATE_NATIVE_MODE_FUNCTIONS(add, BL_COMP_OP_PLUS)
-GENERATE_NATIVE_MODE_FUNCTIONS(subtract, BL_COMP_OP_MINUS)
-GENERATE_NATIVE_MODE_FUNCTIONS(min, BL_COMP_OP_DARKEN)
-GENERATE_NATIVE_MODE_FUNCTIONS(max, BL_COMP_OP_LIGHTEN)
-
-#undef GENERATE_NATIVE_MODE_FUNCTIONS
-
-#endif // BLEND2D_DRAWING_MODE_NATIVE_H
-
+Task 3.4: Update FontCacheEntry::CreateGlyph
+Remove serialization for outline glyphs if caching BLPath directly
 
 ================================================================================
-ФАЙЛ 3: src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeAlpha.h
+PERFORMANCE ISSUE #2: Color Space Conversion in BitmapPainter
 ================================================================================
 
-/*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Porter-Duff alpha compositing modes - OPTIMIZED VERSION
- */
+PROBLEM LOCATION:
+- src/servers/app/drawing/Painter/bitmap_painter/BitmapPainter.cpp
+- Method: _ConvertColorSpace()
 
-#ifndef BLEND2D_DRAWING_MODE_ALPHA_H
-#define BLEND2D_DRAWING_MODE_ALPHA_H
+ISSUE DESCRIPTION:
+Double memory copy for color space conversion:
+1. Allocate temporary BBitmap
+2. Convert to RGBA32 via ImportBits()
+3. Copy to BLImage
 
-#include "PixelFormat.h"
-#include "PatternHandler.h"
-#include "Blend2DDrawingModeHelpers.h"
-#include <blend2d.h>
+```cpp
+void _ConvertColorSpace(BLImage& outImage) {
+    BBitmap* conversionBitmap = new BBitmap(...);  // ❌ ALLOCATION
+    conversionBitmap->ImportBits(...);              // ❌ COPY 1
+    // Then copy to BLImage                         // ❌ COPY 2
+}
+```
 
-// Forward declare helper from Native.h
-static inline void blend2d_draw_pixel(int x, int y, const rgb_color& color,
-                                     uint8 cover, BLContext* ctx, BLCompOp compOp);
+SOLUTION:
+Use Blend2D's format conversion directly
 
-// ============================================================================
-// MACRO FOR PORTER-DUFF OPERATORS
-// ============================================================================
+IMPLEMENTATION TASKS:
 
-#define GENERATE_PORTER_DUFF_FUNCTIONS(mode_name, compop) \
-    /* 1. blend_pixel */ \
-    static void \
-    blend_pixel_##mode_name##_native(int x, int y, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        rgb_color color = pattern->ColorAt(x, y); \
-        blend2d_draw_pixel(x, y, color, cover, ctx, compop); \
-    } \
-    \
-    /* 2. blend_hline */ \
-    static void \
-    blend_hline_##mode_name##_native(int x, int y, unsigned len, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            rgb_color color = pattern->HighColor(); \
-            ctx->setCompOp(compop); \
-            if (cover == 255) { \
-                ctx->fillRect(BLRect(x, y, len, 1), \
-                             BLRgba32(color.red, color.green, color.blue, \
-                                     color.alpha)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0)); \
-                ctx->fillRect(BLRect(x, y, len, 1), \
-                             BLRgba32(color.red, color.green, color.blue, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } else { \
-            Blend2DHelpers::render_pattern_hspan_uniform(x, y, len, pattern, \
-                                                         cover, ctx, compop); \
-        } \
-    } \
-    \
-    /* 3. blend_vline */ \
-    static void \
-    blend_vline_##mode_name##_native(int x, int y, unsigned len, \
-                                     const PixelFormat::color_type& c, \
-                                     uint8 cover, BLImage* image, BLContext* ctx, \
-                                     const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            rgb_color color = pattern->HighColor(); \
-            ctx->setCompOp(compop); \
-            if (cover == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, len), \
-                             BLRgba32(color.red, color.green, color.blue, \
-                                     color.alpha)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((cover / 255.0) * (color.alpha / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, len), \
-                             BLRgba32(color.red, color.green, color.blue, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } else { \
-            for (unsigned i = 0; i < len; i++, y++) { \
-                rgb_color color = pattern->ColorAt(x, y); \
-                blend2d_draw_pixel(x, y, color, cover, ctx, compop); \
-            } \
-        } \
-    } \
-    \
-    /* 4. blend_solid_hspan */ \
-    static void \
-    blend_solid_hspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type& c, \
-                                           const uint8* covers, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        if (pattern->IsSolid()) { \
-            rgb_color color = pattern->HighColor(); \
-            Blend2DHelpers::render_solid_hspan_batch(x, y, len, color, \
-                                                     covers, ctx, compop); \
-        } else { \
-            Blend2DHelpers::render_pattern_hspan(x, y, len, pattern, \
-                                                 covers, ctx, compop); \
-        } \
-    } \
-    \
-    /* 5. blend_solid_vspan */ \
-    static void \
-    blend_solid_vspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type& c, \
-                                           const uint8* covers, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, y++, covers++) { \
-            if (*covers == 0) \
-                continue; \
-            rgb_color color = pattern->ColorAt(x, y); \
-            blend2d_draw_pixel(x, y, color, *covers, ctx, compop); \
-        } \
-    } \
-    \
-    /* 6. blend_color_hspan */ \
-    static void \
-    blend_color_hspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type* colors, \
-                                           const uint8* covers, uint8 cover, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, x++) { \
-            uint8 alpha = covers ? covers[i] : cover; \
-            if (alpha == 0) \
-                continue; \
-            const PixelFormat::color_type& pixelColor = colors[i]; \
-            if (alpha == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, \
-                                     pixelColor.a)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((alpha / 255.0) * (pixelColor.a / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } \
-    } \
-    \
-    /* 7. blend_color_vspan */ \
-    static void \
-    blend_color_vspan_##mode_name##_native(int x, int y, unsigned len, \
-                                           const PixelFormat::color_type* colors, \
-                                           const uint8* covers, uint8 cover, \
-                                           BLImage* image, BLContext* ctx, \
-                                           const PatternHandler* pattern) \
-    { \
-        ctx->setCompOp(compop); \
-        for (unsigned i = 0; i < len; i++, y++) { \
-            uint8 alpha = covers ? covers[i] : cover; \
-            if (alpha == 0) \
-                continue; \
-            const PixelFormat::color_type& pixelColor = colors[i]; \
-            if (alpha == 255) { \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, \
-                                     pixelColor.a)); \
-            } else { \
-                double prevAlpha = ctx->globalAlpha(); \
-                ctx->setGlobalAlpha((alpha / 255.0) * (pixelColor.a / 255.0)); \
-                ctx->fillRect(BLRect(x, y, 1, 1), \
-                             BLRgba32(pixelColor.r, pixelColor.g, pixelColor.b, 255)); \
-                ctx->setGlobalAlpha(prevAlpha); \
-            } \
-        } \
-    }
+Task 4.1: Research BLImage format conversion API
+Check if Blend2D can convert between formats in-place
 
-// ============================================================================
-// GENERATE ALL PORTER-DUFF ALPHA MODES
-// ============================================================================
+Task 4.2: Implement direct conversion
+Eliminate BBitmap intermediate
 
-GENERATE_PORTER_DUFF_FUNCTIONS(src_in, BL_COMP_OP_SRC_IN)
-GENERATE_PORTER_DUFF_FUNCTIONS(src_out, BL_COMP_OP_SRC_OUT)
-GENERATE_PORTER_DUFF_FUNCTIONS(src_atop, BL_COMP_OP_SRC_ATOP)
-GENERATE_PORTER_DUFF_FUNCTIONS(dst_over, BL_COMP_OP_DST_OVER)
-GENERATE_PORTER_DUFF_FUNCTIONS(dst_in, BL_COMP_OP_DST_IN)
-GENERATE_PORTER_DUFF_FUNCTIONS(dst_out, BL_COMP_OP_DST_OUT)
-GENERATE_PORTER_DUFF_FUNCTIONS(dst_atop, BL_COMP_OP_DST_ATOP)
-GENERATE_PORTER_DUFF_FUNCTIONS(xor, BL_COMP_OP_XOR)
-GENERATE_PORTER_DUFF_FUNCTIONS(clear, BL_COMP_OP_CLEAR)
-GENERATE_PORTER_DUFF_FUNCTIONS(difference, BL_COMP_OP_DIFFERENCE)
-
-#undef GENERATE_PORTER_DUFF_FUNCTIONS
-
-#endif // BLEND2D_DRAWING_MODE_ALPHA_H
-
+Task 4.3: Benchmark
+Measure impact on bitmap drawing performance
 
 ================================================================================
-ФАЙЛ 4: src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeCustom.h
+IMPROVEMENT #1: Subpixel Rendering Quality
 ================================================================================
 
-/*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Custom drawing modes - OPTIMIZED VERSION
- * Uses BatchPixelAccess for efficient direct pixel manipulation
- */
+PROBLEM LOCATION:
+- src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeSUBPIX.h
+- Function: subpix_average_coverage()
 
-#ifndef BLEND2D_DRAWING_MODE_CUSTOM_H
-#define BLEND2D_DRAWING_MODE_CUSTOM_H
-
-#include "PixelFormat.h"
-#include "Blend2DDrawingMode.h"
-#include "Blend2DDrawingModeHelpers.h"
-#include "PatternHandler.h"
-#include "drawing_support.h"
-#include <blend2d.h>
-
-// ============================================================================
-// B_OP_BLEND - Averaging: (src + dst) / 2
-// ============================================================================
-
-static void
-blend_pixel_blend_custom(int x, int y,
-                        const PixelFormat::color_type& c,
-                        uint8 cover, BLImage* image, BLContext* ctx,
-                        const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    uint32_t* p = pixels.PixelAt(x, y);
-    rgb_color color = pattern->ColorAt(x, y);
-    
-    // Extract destination (BGRA format)
-    uint8_t dst_b = (*p) & 0xFF;
-    uint8_t dst_g = (*p >> 8) & 0xFF;
-    uint8_t dst_r = (*p >> 16) & 0xFF;
-    
-    // Average
-    uint8_t avg_r = (color.red + dst_r) / 2;
-    uint8_t avg_g = (color.green + dst_g) / 2;
-    uint8_t avg_b = (color.blue + dst_b) / 2;
-    
-    if (cover == 255) {
-        *p = 0xFF000000 | (avg_r << 16) | (avg_g << 8) | avg_b;
-    } else {
-        // Blend with coverage
-        uint8_t final_r = (avg_r * cover + dst_r * (255 - cover)) / 255;
-        uint8_t final_g = (avg_g * cover + dst_g * (255 - cover)) / 255;
-        uint8_t final_b = (avg_b * cover + dst_b * (255 - cover)) / 255;
-        *p = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
-    }
-}
-
-static void
-blend_hline_blend_custom(int x, int y, unsigned len,
-                        const PixelFormat::color_type& c,
-                        uint8 cover, BLImage* image, BLContext* ctx,
-                        const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++) {
-        blend_pixel_blend_custom(x + i, y, c, cover, image, ctx, pattern);
-    }
-}
-
-static void
-blend_solid_hspan_blend_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type& c,
-                               const uint8* covers, BLImage* image,
-                               BLContext* ctx, const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, x++, covers++) {
-        if (*covers == 0)
-            continue;
-        blend_pixel_blend_custom(x, y, c, *covers, image, ctx, pattern);
-    }
-}
-
-static void
-blend_solid_vspan_blend_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type& c,
-                               const uint8* covers, BLImage* image,
-                               BLContext* ctx, const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++, covers++) {
-        if (*covers == 0)
-            continue;
-        blend_pixel_blend_custom(x, y, c, *covers, image, ctx, pattern);
-    }
-}
-
-static void
-blend_vline_blend_custom(int x, int y, unsigned len,
-                        const PixelFormat::color_type& c,
-                        uint8 cover, BLImage* image, BLContext* ctx,
-                        const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++) {
-        blend_pixel_blend_custom(x, y, c, cover, image, ctx, pattern);
-    }
-}
-
-static void
-blend_color_hspan_blend_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type* colors,
-                               const uint8* covers, uint8 cover,
-                               BLImage* image, BLContext* ctx,
-                               const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, x++) {
-        uint8 alpha = covers ? covers[i] : cover;
-        if (alpha == 0)
-            continue;
-        blend_pixel_blend_custom(x, y, colors[i], alpha, image, ctx, pattern);
-    }
-}
-
-static void
-blend_color_vspan_blend_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type* colors,
-                               const uint8* covers, uint8 cover,
-                               BLImage* image, BLContext* ctx,
-                               const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++) {
-        uint8 alpha = covers ? covers[i] : cover;
-        if (alpha == 0)
-            continue;
-        blend_pixel_blend_custom(x, y, colors[i], alpha, image, ctx, pattern);
-    }
-}
-
-// ============================================================================
-// B_OP_INVERT - Invert RGB: 255 - dst
-// ============================================================================
-
-static void
-blend_pixel_invert_custom(int x, int y,
-                         const PixelFormat::color_type& c,
-                         uint8 cover, BLImage* image, BLContext* ctx,
-                         const PatternHandler* pattern)
-{
-    if (!pattern->IsHighColor(x, y))
-        return;
-    
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    uint32_t* p = pixels.PixelAt(x, y);
-    
-    // Invert
-    uint8_t r = 255 - ((*p >> 16) & 0xFF);
-    uint8_t g = 255 - ((*p >> 8) & 0xFF);
-    uint8_t b = 255 - ((*p) & 0xFF);
-    
-    if (cover == 255) {
-        *p = 0xFF000000 | (r << 16) | (g << 8) | b;
-    } else {
-        uint8_t dst_r = (*p >> 16) & 0xFF;
-        uint8_t dst_g = (*p >> 8) & 0xFF;
-        uint8_t dst_b = (*p) & 0xFF;
-        
-        uint8_t final_r = (r * cover + dst_r * (255 - cover)) / 255;
-        uint8_t final_g = (g * cover + dst_g * (255 - cover)) / 255;
-        uint8_t final_b = (b * cover + dst_b * (255 - cover)) / 255;
-        *p = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
-    }
-}
-
-static void
-blend_hline_invert_custom(int x, int y, unsigned len,
-                         const PixelFormat::color_type& c,
-                         uint8 cover, BLImage* image, BLContext* ctx,
-                         const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++) {
-        blend_pixel_invert_custom(x + i, y, c, cover, image, ctx, pattern);
-    }
-}
-
-static void
-blend_solid_hspan_invert_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type& c,
-                               const uint8* covers, BLImage* image,
-                               BLContext* ctx, const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, x++, covers++) {
-        if (*covers == 0)
-            continue;
-        blend_pixel_invert_custom(x, y, c, *covers, image, ctx, pattern);
-    }
-}
-
-static void
-blend_solid_vspan_invert_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type& c,
-                               const uint8* covers, BLImage* image,
-                               BLContext* ctx, const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++, covers++) {
-        if (*covers == 0)
-            continue;
-        blend_pixel_invert_custom(x, y, c, *covers, image, ctx, pattern);
-    }
-}
-
-static void
-blend_vline_invert_custom(int x, int y, unsigned len,
-                         const PixelFormat::color_type& c,
-                         uint8 cover, BLImage* image, BLContext* ctx,
-                         const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++) {
-        blend_pixel_invert_custom(x, y, c, cover, image, ctx, pattern);
-    }
-}
-
-static void
-blend_color_hspan_invert_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type* colors,
-                               const uint8* covers, uint8 cover,
-                               BLImage* image, BLContext* ctx,
-                               const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, x++) {
-        uint8 alpha = covers ? covers[i] : cover;
-        if (alpha == 0)
-            continue;
-        blend_pixel_invert_custom(x, y, colors[i], alpha, image, ctx, pattern);
-    }
-}
-
-static void
-blend_color_vspan_invert_custom(int x, int y, unsigned len,
-                               const PixelFormat::color_type* colors,
-                               const uint8* covers, uint8 cover,
-                               BLImage* image, BLContext* ctx,
-                               const PatternHandler* pattern)
-{
-    Blend2DHelpers::BatchPixelAccess pixels(image);
-    if (!pixels.IsValid())
-        return;
-    
-    for (unsigned i = 0; i < len; i++, y++) {
-        uint8 alpha = covers ? covers[i] : cover;
-        if (alpha == 0)
-            continue;
-        blend_pixel_invert_custom(x, y, colors[i], alpha, image, ctx, pattern);
-    }
-}
-
-// ============================================================================
-// B_OP_SELECT and B_OP_ERASE
-// (Similar pattern - omitted for brevity, use same BatchPixelAccess approach)
-// ============================================================================
-
-// ... (остальные функции select/erase аналогично с BatchPixelAccess)
-
-#endif // BLEND2D_DRAWING_MODE_CUSTOM_H
-
-
-================================================================================
-ФАЙЛ 5: src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeSUBPIX.h
-================================================================================
-
-/*
- * Copyright 2025, Haiku, Inc. All rights reserved.
- * Distributed under the terms of the MIT License.
- *
- * Subpixel rendering - OPTIMIZED VERSION
- * Uses perceptual weighting (ITU-R BT.709 luma coefficients)
- */
-
-#ifndef BLEND2D_DRAWING_MODE_SUBPIX_H
-#define BLEND2D_DRAWING_MODE_SUBPIX_H
-
-#include "PixelFormat.h"
-#include "Blend2DDrawingMode.h"
-#include "PatternHandler.h"
-#include <blend2d.h>
-
-// ============================================================================
-// PERCEPTUAL SUBPIXEL COVERAGE AVERAGING
-// ============================================================================
-
-// ITU-R BT.709 luma coefficients for perceptually correct averaging
-// More accurate than simple (R+G+B)/3
+CURRENT IMPLEMENTATION:
+```cpp
 static inline uint8
-subpix_average_coverage_perceptual(const uint8* covers)
+subpix_average_coverage(const uint8* covers)
 {
-    // covers[0] = R, covers[1] = G, covers[2] = B
-    // Weights: R=0.2126, G=0.7152, B=0.0722
-    // Integer approximation: (77*R + 150*G + 29*B + 128) >> 8
-    return (covers[0] * 77 + covers[1] * 150 + covers[2] * 29 + 128) >> 8;
+    return (covers[0] + covers[1] + covers[2]) / 3;  // Simple average
 }
+```
 
-// Alternative: simple averaging (faster but less accurate)
+ISSUE:
+Simple averaging doesn't match human perception. Green contributes more to
+perceived brightness than red or blue.
+
+SOLUTION:
+Use perceptually-weighted averaging (same as FontEngine LCD conversion):
+
+```cpp
 static inline uint8
-subpix_average_coverage_simple(const uint8* covers)
+subpix_average_coverage(const uint8* covers)
 {
-    return (covers[0] + covers[1] + covers[2]) / 3;
+    // Perceptual weights: R=0.299, G=0.587, B=0.114
+    return (covers[0] * 299 + covers[1] * 587 + covers[2] * 114) / 1000;
 }
+```
 
-// Choose which to use (can be made configurable)
-#define SUBPIX_AVERAGE subpix_average_coverage_perceptual
+IMPLEMENTATION TASK:
 
-// ============================================================================
-// SUBPIX WRAPPER MACRO
-// ============================================================================
+Task 5.1: Update subpix_average_coverage() function
+File: Blend2DDrawingModeSUBPIX.h, line ~30
 
-#define BLEND2D_SUBPIX_HSPAN(mode_name, pixel_func) \
-static void \
-blend_solid_hspan_##mode_name##_subpix(int x, int y, unsigned len, \
-                                      const PixelFormat::color_type& c, \
-                                      const uint8* covers, \
-                                      BLImage* image, BLContext* ctx, \
-                                      const PatternHandler* pattern) \
-{ \
-    unsigned pixelCount = len / 3; \
-    \
-    for (unsigned i = 0; i < pixelCount; i++, x++) { \
-        uint8 avgCover = SUBPIX_AVERAGE(covers); \
-        covers += 3; \
-        \
-        if (avgCover == 0) \
-            continue; \
-        \
-        pixel_func(x, y, c, avgCover, image, ctx, pattern); \
-    } \
+Task 5.2: Visual testing
+Compare before/after screenshots of LCD text rendering
+
+================================================================================
+IMPROVEMENT #2: Verify Alpha Masking Support
+================================================================================
+
+PROBLEM LOCATION:
+- src/servers/app/drawing/Painter/PainterInterface.h
+- Fields: fMaskedUnpackedScanline, fClippedAlphaMask
+
+ISSUE:
+These fields are stubs from AGG migration:
+```cpp
+void* fMaskedUnpackedScanline;  // AGG leftover?
+void* fClippedAlphaMask;        // AGG leftover?
+```
+
+But Painter.cpp uses them:
+```cpp
+if (state->GetAlphaMask() != NULL) {
+    fInternal.fMaskedUnpackedScanline = state->GetAlphaMask()->Scanline();
+    fInternal.fClippedAlphaMask = state->GetAlphaMask()->Mask();
 }
+```
 
-// ============================================================================
-// FORWARD DECLARATIONS
-// ============================================================================
+QUESTIONS:
+1. Is alpha masking actually working?
+2. Should these use Blend2D's mask API instead?
+3. Or are they unused and can be removed?
 
-static void blend_pixel_copy_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
+IMPLEMENTATION TASKS:
 
-static void blend_pixel_over_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
+Task 6.1: Trace usage of alpha masks
+Search codebase for SetAlphaMask/GetAlphaMask usage
 
-static void blend_pixel_add_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
+Task 6.2: Test alpha masking functionality
+Create test case with semi-transparent shapes
 
-static void blend_pixel_subtract_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_min_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_max_native(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_blend_custom(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_invert_custom(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_select_custom(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-static void blend_pixel_erase_custom(int x, int y,
-    const PixelFormat::color_type& c, uint8 cover,
-    BLImage* image, BLContext* ctx, const PatternHandler* pattern);
-
-// ============================================================================
-// GENERATE SUBPIX VARIANTS
-// ============================================================================
-
-BLEND2D_SUBPIX_HSPAN(copy, blend_pixel_copy_native)
-BLEND2D_SUBPIX_HSPAN(over, blend_pixel_over_native)
-BLEND2D_SUBPIX_HSPAN(add, blend_pixel_add_native)
-BLEND2D_SUBPIX_HSPAN(subtract, blend_pixel_subtract_native)
-BLEND2D_SUBPIX_HSPAN(min, blend_pixel_min_native)
-BLEND2D_SUBPIX_HSPAN(max, blend_pixel_max_native)
-BLEND2D_SUBPIX_HSPAN(blend, blend_pixel_blend_custom)
-BLEND2D_SUBPIX_HSPAN(invert, blend_pixel_invert_custom)
-BLEND2D_SUBPIX_HSPAN(select, blend_pixel_select_custom)
-BLEND2D_SUBPIX_HSPAN(erase, blend_pixel_erase_custom)
-
-#undef BLEND2D_SUBPIX_HSPAN
-
-#endif // BLEND2D_DRAWING_MODE_SUBPIX_H
-
+Task 6.3: Implement proper Blend2D masking if broken
+Use BLContext::clipToRect() with alpha or BLContext::setCompOp() with masks
 
 ================================================================================
-ИТОГОВЫЕ ФАЙЛЫ ДЛЯ ПАТЧА
+IMPROVEMENT #3: Pattern Support Verification
 ================================================================================
 
-1. Новый файл:
-   src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeHelpers.h
+PROBLEM:
+Verify all BeOS/Haiku patterns work correctly with Blend2D
 
-2. ЗАМЕНИТЬ существующий:
-   src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeNative.h
+PATTERNS TO TEST:
+- B_SOLID_HIGH ✅ (known working)
+- B_SOLID_LOW ✅ (known working)
+- B_MIXED_COLORS (checkerboard)
+- B_TILED_BITMAP
+- Custom 8x8 patterns
 
-3. ЗАМЕНИТЬ существующий:
-   src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeAlpha.h
+IMPLEMENTATION TASKS:
 
-4. ЗАМЕНИТЬ существующий:
-   src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeCustom.h
+Task 7.1: Create pattern test application
+Draw all pattern types side by side
 
-5. ЗАМЕНИТЬ существующий:
-   src/servers/app/drawing/Painter/drawing_modes/Blend2DDrawingModeSUBPIX.h
+Task 7.2: Verify PatternHandler implementation
+File: src/servers/app/drawing/PatternHandler.h
+Check if all pattern types are handled
 
-================================================================================
-ОЖИДАЕМЫЙ ПРИРОСТ ПРОИЗВОДИТЕЛЬНОСТИ
-================================================================================
-
-1. Solid colors (horizontal spans):
-   - ДО:  1000 пикселей = 1000 API вызовов
-   - ПОСЛЕ: 1000 пикселей = ~10-50 API вызовов (grouped runs)
-   - ПРИРОСТ: 20-100x
-
-2. Pattern rendering:
-   - ДО:  1000 пикселей = 1000 ColorAt() + 1000 fillRect()
-   - ПОСЛЕ: 1000 пикселей = 1000 ColorAt() + 1 blitImage()
-   - ПРИРОСТ: ~10x
-
-3. Custom modes (direct pixel access):
-   - ДО:  1000 пикселей = 1000 makeMutable() вызовов (COW)
-   - ПОСЛЕ: 1000 пикселей = 1 makeMutable() + прямой доступ
-   - ПРИРОСТ: ~100x
-
-4. Subpixel rendering:
-   - Улучшена точность (perceptual weighting)
-   - Производительность та же
+Task 7.3: Test with BView pattern drawing
+Ensure compatibility with existing apps
 
 ================================================================================
-ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ
+TESTING REQUIREMENTS
 ================================================================================
 
-1. После применения патча:
-   - Запустить тесты на простых фигурах (прямоугольники, линии)
-   - Проверить рендеринг текста с паттернами
-   - Профилировать hot paths
+UNIT TESTS NEEDED:
 
-2. Для B_OP_SELECT и B_OP_ERASE:
-   - В Custom.h файле остались только B_OP_BLEND и B_OP_INVERT
-   - Нужно добавить аналогичные функции для SELECT/ERASE
-   - Шаблон тот же - использовать BatchPixelAccess
+Test Suite 1: Drawing Modes
+- File: tests/servers/app/drawing/DrawingModesTest.cpp
+- Tests:
+  * All 6 native modes (COPY, OVER, ADD, SUBTRACT, MIN, MAX)
+  * All 15 Porter-Duff alpha modes
+  * All 4 custom modes (BLEND, INVERT, SELECT, ERASE)
+  * Subpixel rendering for all modes
 
-3. Потенциальные проблемы:
-   - Stack overflow при очень больших spans (>256 px паттерн)
-     Решение: heap allocation работает автоматически
-   - Thread safety для BatchPixelAccess
-     Решение: локальный объект на стеке, безопасно
+Test Suite 2: Primitives
+- File: tests/servers/app/drawing/PrimitivesTest.cpp
+- Tests:
+  * Lines (straight, diagonal, anti-aliased)
+  * Rectangles (filled, stroked, rounded)
+  * Ellipses (filled, stroked, rotated)
+  * Polygons (convex, concave, self-intersecting)
+  * Bezier curves (quadratic, cubic)
+  * Arcs (all quadrants)
+
+Test Suite 3: Text Rendering
+- File: tests/servers/app/font/TextRenderingTest.cpp
+- Tests:
+  * ASCII text (all styles: Regular, Bold, Italic)
+  * Unicode (Latin Extended, Greek, Cyrillic)
+  * CJK (Chinese, Japanese, Korean)
+  * Emoji (color, monochrome)
+  * RTL text (Arabic, Hebrew)
+  * Font fallbacks
+  * Subpixel rendering (grayscale vs LCD)
+
+Test Suite 4: Bitmap Operations
+- File: tests/servers/app/drawing/BitmapTest.cpp
+- Tests:
+  * Bitmap drawing (all color spaces)
+  * Bitmap scaling (nearest, bilinear)
+  * Bitmap tiling (B_TILE_BITMAP flag)
+  * Alpha channel handling
+  * Color space conversions
+
+Test Suite 5: Transformations
+- File: tests/servers/app/drawing/TransformTest.cpp
+- Tests:
+  * Translation
+  * Rotation (0°, 45°, 90°, 180°, 270°)
+  * Scaling (uniform, non-uniform)
+  * Shearing
+  * Combined transformations
+  * Nested transformations
+
+Test Suite 6: Clipping
+- File: tests/servers/app/drawing/ClippingTest.cpp
+- Tests:
+  * Rectangular clipping
+  * Complex region clipping
+  * Nested clipping
+  * Transformed clipping regions
+
+Test Suite 7: Gradients
+- File: tests/servers/app/drawing/GradientTest.cpp
+- Tests:
+  * Linear gradients (all directions)
+  * Radial gradients
+  * Radial focus gradients
+  * Diamond gradients
+  * Conic gradients
+  * Multi-stop gradients
+  * Gradient transformations
+
+INTEGRATION TESTS:
+
+Test App 1: BView Drawing Compatibility
+- Create app that uses all BView drawing primitives
+- Compare output with reference screenshots
+- Verify no visual regressions
+
+Test App 2: Performance Benchmark
+- Measure rendering time for:
+  * 10,000 lines
+  * 1,000 filled rectangles
+  * 100 complex polygons
+  * 1,000 glyphs (ASCII + CJK)
+  * Large bitmap scaling
+- Compare with AGG baseline (if available)
+- Target: Within 10% of AGG performance
+
+Test App 3: Real Application Test
+- Run Haiku's native applications:
+  * Terminal (text rendering)
+  * WebPositive (complex layout)
+  * StyledEdit (text editing)
+  * ShowImage (image display)
+  * Tracker (icon rendering)
+- Verify no visual glitches
+- Check for performance issues
 
 ================================================================================
-КАК ПРИМЕНИТЬ ПАТЧ
+ARCHITECTURE CLEANUP (PRIORITY 3)
 ================================================================================
 
-1. Создать новый файл Blend2DDrawingModeHelpers.h
-2. Скопировать содержимое в него
-3. Заменить 4 существующих файла на новые версии
-4. В PixelFormat.cpp убедиться что #include правильные:
-   
-   #include "Blend2DDrawingModeHelpers.h"  // Добавить!
-   #include "Blend2DDrawingModeNative.h"
-   #include "Blend2DDrawingModeAlpha.h"
-   #include "Blend2DDrawingModeCustom.h"
-   #include "Blend2DDrawingModeSUBPIX.h"
+SIMPLIFICATION OPPORTUNITIES:
 
-5. Пересобрать проект
-6. Тестировать!
+1. PixelFormat Layer
+   Current: PixelFormat wraps Blend2D, maintains function pointers
+   Question: Is this layer still necessary after full AGG removal?
+   Action: Consider direct BLContext usage in Painter
+
+2. PainterInterface
+   Current: Contains legacy AGG type stubs
+   Action: Remove all rasterizer/scanline/renderer_base stubs from defines.h
+
+3. FontCacheEntry
+   Current: Maintains separate cache from Blend2D
+   Question: Can we use BLGlyphBuffer and Blend2D's font caching?
+   Action: Research Blend2D font caching capabilities
 
 ================================================================================
-END OF PATCH
+DOCUMENTATION REQUIREMENTS
 ================================================================================
+
+DOCUMENTATION TO CREATE:
+
+1. Migration Guide (docs/develop/app_server/blend2d_migration.md)
+   - Overview of AGG → Blend2D changes
+   - API differences
+   - Performance characteristics
+   - Known issues and workarounds
+
+2. Drawing Modes Reference (docs/develop/app_server/blend2d_drawing_modes.md)
+   - Complete reference of all modes
+   - Blend2D implementation details
+   - Performance notes
+
+3. Developer Guide (docs/develop/app_server/blend2d_development.md)
+   - How to add new drawing primitives
+   - Debug logging usage
+   - Performance optimization tips
+   - Common pitfalls
+
+4. Testing Guide (docs/develop/app_server/blend2d_testing.md)
+   - How to run test suites
+   - Creating visual regression tests
+   - Performance benchmarking procedures
+
+================================================================================
+CODE QUALITY IMPROVEMENTS
+================================================================================
+
+IMPROVEMENTS TO IMPLEMENT:
+
+1. Error Handling
+   - Replace all fprintf() with BLEND2D_CHECK macro
+   - Add proper error recovery paths
+   - Document expected vs exceptional failures
+
+2. Comments
+   - Add high-level comments to each complex function
+   - Document why certain Blend2D APIs are used
+   - Explain any workarounds
+
+3. Code Organization
+   - Group related functions together
+   - Use consistent naming conventions
+   - Remove dead code (AGG remnants)
+
+4. Performance Annotations
+   - Mark hot paths with comments
+   - Document algorithmic complexity
+   - Add optimization notes
+
+================================================================================
+TIMELINE AND PRIORITIES
+================================================================================
+
+WEEK 1-2 (CRITICAL - MUST COMPLETE):
+✅ Fix custom drawing modes (Issue #1)
+✅ Implement debug logging system (Issue #2)
+✅ Create basic test suite
+✅ Visual verification testing
+
+WEEK 3-4 (HIGH PRIORITY):
+✅ Optimize SerializedPath (Performance Issue #1)
+✅ Fix color conversion (Performance Issue #2)
+✅ Improve subpixel rendering (Improvement #1)
+✅ Verify alpha masking (Improvement #2)
+
+MONTH 2 (MEDIUM PRIORITY):
+✅ Complete all unit tests
+✅ Performance benchmarking
+✅ Pattern support verification
+✅ Integration testing with real apps
+
+MONTH 3 (LOW PRIORITY - CLEANUP):
+✅ Architecture simplification
+✅ Documentation creation
+✅ Code quality improvements
+✅ Final polish
+
+================================================================================
+SUCCESS CRITERIA
+================================================================================
+
+MIGRATION IS COMPLETE WHEN:
+✅ All AGG code removed from Haiku codebase
+✅ All 200+ unit tests passing
+✅ No visual regressions in test applications
+✅ Performance within 10% of AGG baseline
+✅ No crashes in 24-hour stress test
+✅ All native Haiku apps working correctly
+✅ Documentation complete and reviewed
+✅ Code review approved by Haiku core team
+
+================================================================================
+CLAUDE CODE USAGE INSTRUCTIONS
+================================================================================
+
+TO USE THIS DOCUMENT WITH CLAUDE CODE:
+
+1. Start with Priority 1 tasks (Week 1-2):
+   $ claude code --task "Fix B_OP_BLEND using offscreen compositing"
+   $ claude code --task "Create Blend2dDebug.h logging system"
+   $ claude code --task "Replace all fprintf with BLEND2D_CHECK macro"
+
+2. For each task:
+   - Read relevant sections from this document
+   - Analyze affected source files
+   - Implement solution
+   - Create unit test
+   - Run test suite
+   - Commit changes
+
+3. Testing workflow:
+   $ claude code --task "Create DrawingModesTest.cpp with all mode tests"
+   $ cd haiku/build
+   $ jam -q DrawingModesTest
+   $ ./DrawingModesTest
+
+4. Documentation workflow:
+   $ claude code --task "Create blend2d_migration.md documentation"
+
+5. For complex issues requiring research:
+   $ claude code --research "Blend2D custom compositing operators API"
+   $ claude code --research "BLPath reference counting and COW behavior"
+
+6. For code reviews:
+   $ claude code --review "src/servers/app/drawing/Painter/drawing_modes/"
+
+================================================================================
+CONTACT AND SUPPORT
+================================================================================
+
+For questions or issues with this migration:
+- Haiku Development mailing list
+- #haiku IRC channel on OFTC
+- Haiku bug tracker (for bugs)
+
+This migration is a community effort. Feel free to ask for help!
+
+================================================================================
+END OF INSTRUCTIONS
+================================================================================
+Last Updated: 2025-01-XX
+Version: 1.0
+Maintainer: Haiku App Server Team

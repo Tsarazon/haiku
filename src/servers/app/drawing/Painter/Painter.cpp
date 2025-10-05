@@ -8,6 +8,7 @@
  */
 
 #include "Painter.h"
+#include "Blend2dDebug.h"
 
 #include <new>
 #include <stdio.h>
@@ -120,7 +121,7 @@ Painter::AttachToBuffer(RenderingBuffer* buffer)
 		);
 
 		if (!success) {
-			fprintf(stderr, "Painter::AttachToBuffer() - Failed to attach\n");
+			BLEND2D_ERROR("Painter::AttachToBuffer() - Failed to attach\n");
 			return;
 		}
 
@@ -213,10 +214,7 @@ Painter::ConstrainClipping(const BRegion* region)
 				   bounds.Width() + 1, bounds.Height() + 1)
 		);
 		
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "Painter::ConstrainClipping() - "
-					"setClipRect failed: %d\n", (int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 	}
 }
 
@@ -1417,9 +1415,7 @@ Painter::_StrokePath(const BLPath& path, cap_mode capMode) const
 		strokeOptions
 	);
 
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_StrokePath() failed: %d\n", (int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 
 	return _Clipped(_BoundingBox(transformedPath));
 }
@@ -1442,9 +1438,7 @@ Painter::_FillPath(const BLPath& path) const
 		BLRgba32(color.red, color.green, color.blue, color.alpha)
 	);
 
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_FillPath() failed: %d\n", (int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 
 	return _Clipped(_BoundingBox(transformedPath));
 }
@@ -1528,10 +1522,7 @@ Painter::_ApplyLinearGradient(const BLPath& path,
 	_MakeGradient(blGradient, gradient);
 
 	BLResult result = fInternal.fBLContext.fillPath(path, blGradient);
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_ApplyLinearGradient() failed: %d\n",
-				(int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 }
 
 void
@@ -1549,10 +1540,7 @@ Painter::_ApplyRadialGradient(const BLPath& path,
 	_MakeGradient(blGradient, gradient);
 
 	BLResult result = fInternal.fBLContext.fillPath(path, blGradient);
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_ApplyRadialGradient() failed: %d\n",
-				(int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 }
 
 void
@@ -1570,10 +1558,7 @@ Painter::_ApplyRadialFocusGradient(const BLPath& path,
 	_MakeGradient(blGradient, gradient);
 
 	BLResult result = fInternal.fBLContext.fillPath(path, blGradient);
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_ApplyRadialFocusGradient() failed: %d\n",
-				(int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 }
 
 void
@@ -1593,10 +1578,7 @@ Painter::_ApplyDiamondGradient(const BLPath& path,
 	_MakeGradient(blGradient, gradient);
 
 	BLResult result = fInternal.fBLContext.fillPath(path, blGradient);
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_ApplyDiamondGradient() failed: %d\n",
-				(int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 }
 
 void
@@ -1613,10 +1595,7 @@ Painter::_ApplyConicGradient(const BLPath& path,
 	_MakeGradient(blGradient, gradient);
 
 	BLResult result = fInternal.fBLContext.fillPath(path, blGradient);
-	if (result != BL_SUCCESS) {
-		fprintf(stderr, "Painter::_ApplyConicGradient() failed: %d\n",
-				(int)result);
-	}
+	BLEND2D_CHECK_WARN(result);
 }
 
 void

@@ -6,6 +6,7 @@
  * All rights reserved. Distributed under the terms of the MIT License.
  */
 #include "BitmapPainter.h"
+#include "Blend2dDebug.h"
 
 #include <Bitmap.h>
 
@@ -55,7 +56,7 @@ Painter::BitmapPainter::BitmapPainter(const Painter* painter,
 	if (result == BL_SUCCESS) {
 		fStatus = B_OK;
 	} else {
-		fprintf(stderr, "BitmapPainter::BitmapPainter() - createFromData failed: %d\n", (int)result);
+		BLEND2D_ERROR("BitmapPainter::BitmapPainter() - createFromData failed: %d\n", (int)result);
 	}
 }
 
@@ -99,21 +100,15 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 		// Bilinear filtering for quality scaling
 		result = ctx.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY, 
 					BL_RENDERING_QUALITY_ANTIALIAS);
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::Draw() - setHint(RENDERING_QUALITY) failed: %d\n", (int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
 					BL_PATTERN_QUALITY_BILINEAR);
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::Draw() - setHint(PATTERN_QUALITY_BILINEAR) failed: %d\n", (int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 	} else {
 		// Nearest neighbor for pixel-perfect graphics (no smoothing)
 		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
 					BL_PATTERN_QUALITY_NEAREST);
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::Draw() - setHint(PATTERN_QUALITY_NEAREST) failed: %d\n", (int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 	}
 
 	// Setup composition operator (SRC_COPY, SRC_OVER, etc.)
@@ -142,9 +137,7 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 			fDestinationRect.Width() + 1,
 			fDestinationRect.Height() + 1
 		), pattern);
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::Draw() - fillRect with pattern failed: %d\n", (int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 		
 	} else {
 		// ===== NORMAL MODE (NON-TILING) =====
@@ -179,11 +172,7 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 		// blitImage automatically performs scaling if srcArea != dstRect
 		// Filter quality is determined by hints set above
 		result = ctx.blitImage(dstRect, workingImage, srcArea);
-		
-		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::Draw() - blitImage failed: %d\n", 
-					(int)result);
-		}
+		BLEND2D_CHECK_WARN(result);
 	}
 }
 
@@ -336,7 +325,7 @@ Painter::BitmapPainter::_ConvertColorSpace(BLImage& outImage)
 	);
 	
 	if (conversionBitmap == NULL) {
-		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
+		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
 			"out of memory\n");
 		outImage = fBLImage;
 		return;
@@ -357,7 +346,7 @@ Painter::BitmapPainter::_ConvertColorSpace(BLImage& outImage)
 	);
 	
 	if (err < B_OK) {
-		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
+		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
 			"conversion failed: %s\n", strerror(err));
 		outImage = fBLImage;
 		return;
@@ -401,14 +390,14 @@ Painter::BitmapPainter::_ConvertColorSpace(BLImage& outImage)
 		BLImageData dstData;
 		result = outImage.getData(&dstData);
 		if (result != BL_SUCCESS) {
-			fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - getData failed: %d\n", (int)result);
+			BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - getData failed: %d\n", (int)result);
 			outImage = fBLImage;
 			return;
 		}
 		memcpy(dstData.pixelData, conversionBitmap->Bits(),
 			conversionBitmap->BitsLength());
 	} else {
-		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
+		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
 		"BLImage creation failed: %d\n", (int)result);
 		outImage = fBLImage;
 	}

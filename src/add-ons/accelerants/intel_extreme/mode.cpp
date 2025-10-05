@@ -128,6 +128,7 @@ set_frame_buffer_registers(uint32 offset)
 	uint32 bytes_per_pixel = (sharedInfo.bits_per_pixel + 7) / 8;
 
 	// Gen 6+ display offset handling
+	// All supported GPUs should fall into this category
 	if (sharedInfo.device_type.InFamily(INTEL_FAMILY_SER5)
 		|| sharedInfo.device_type.InFamily(INTEL_FAMILY_LAKE)
 		|| sharedInfo.device_type.InFamily(INTEL_FAMILY_SOC0)) {
@@ -146,10 +147,9 @@ set_frame_buffer_registers(uint32 offset)
 		write32(INTEL_DISPLAY_A_SURFACE + offset, sharedInfo.frame_buffer_offset);
 		read32(INTEL_DISPLAY_A_SURFACE + offset);
 	} else {
-		write32(INTEL_DISPLAY_A_BASE + offset, sharedInfo.frame_buffer_offset
-			+ mode.v_display_start * sharedInfo.bytes_per_row
-			+ mode.h_display_start * bytes_per_pixel);
-		read32(INTEL_DISPLAY_A_BASE + offset);
+		// This should never happen on Gen 6+ hardware
+		ERROR("%s: Unsupported device family for framebuffer setup! "
+			"Device type: 0x%x\n", __func__, sharedInfo.device_type.Type());
 	}
 }
 
@@ -163,21 +163,6 @@ set_frame_buffer_base()
 	set_frame_buffer_registers(INTEL_DISPLAY_OFFSET);
 }
 
-
-static bool
-limit_modes_for_gen3_lvds(display_mode* mode)
-{
-	// Filter out modes with resolution higher than the internal LCD can
-	// display.
-	// FIXME do this only for that display. The whole display mode logic
-	// needs to be adjusted to know which display we're talking about.
-	if (gInfo->shared_info->panel_timing.h_display < mode->timing.h_display)
-		return false;
-	if (gInfo->shared_info->panel_timing.v_display < mode->timing.v_display)
-		return false;
-
-	return true;
-}
 
 /*!	Creates the initial mode list of the primary accelerant.
 	It's called from intel_init_accelerant().
@@ -210,28 +195,18 @@ create_mode_list(void)
 	display_mode* list;
 	uint32 count = 0;
 
+	// Gen 6+ doesn't support B_RGB15, use custom colorspace list
 	const color_space kSupportedSpaces[] = {B_RGB32_LITTLE, B_RGB16_LITTLE,
 		B_CMAP8};
-	const color_space* supportedSpaces;
-	int colorSpaceCount;
-
-	if (gInfo->shared_info->device_type.Generation() >= 4) {
-		// No B_RGB15, use our custom colorspace list
-		supportedSpaces = kSupportedSpaces;
-		colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
-	} else {
-		supportedSpaces = NULL;
-		colorSpaceCount = 0;
-	}
+	const color_space* supportedSpaces = kSupportedSpaces;
+	int colorSpaceCount = B_COUNT_OF(kSupportedSpaces);
 
 	// If no EDID, but have vbt from driver, use that mode
 	if (!gInfo->has_edid && gInfo->shared_info->got_vbt) {
 		// We could not read any EDID info. Fallback to creating a list with
 		// only the mode set up by the BIOS.
 
-		check_display_mode_hook limitModes = NULL;
-		if (gInfo->shared_info->device_type.Generation() < 4)
-			limitModes = limit_modes_for_gen3_lvds;
+		// Gen 6+ doesn't need mode limiting (removed limit_modes_for_gen3_lvds)
 
 		display_mode mode;
 		mode.timing = gInfo->shared_info->panel_timing;
@@ -244,7 +219,7 @@ create_mode_list(void)
 
 		// TODO: support lower modes via scaling and windowing
 		gInfo->mode_list_area = create_display_modes("intel extreme modes", NULL, &mode, 1,
-			supportedSpaces, colorSpaceCount, limitModes, &list, &count);
+			supportedSpaces, colorSpaceCount, NULL, &list, &count);
 	} else {
 		// Otherwise return the 'real' list of modes
 		gInfo->mode_list_area = create_display_modes("intel extreme modes",
