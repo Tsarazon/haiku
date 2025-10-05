@@ -13,6 +13,7 @@
 #include <stdio.h>
 
 // Include all drawing mode implementations
+#include "Blend2DDrawingModeHelpers.h"
 #include "Blend2DDrawingModeNative.h"
 #include "Blend2DDrawingModeAlpha.h"
 #include "Blend2DDrawingModeCustom.h"
