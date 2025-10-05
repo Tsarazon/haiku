@@ -382,13 +382,8 @@ Port::_SetI2CSignals(void* cookie, int clock, int data)
 	addr_t ioRegister = (addr_t)cookie;
 	uint32 value;
 
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_83x)) {
-		// on these chips, the reserved values are fixed
-		value = 0;
-	} else {
-		// on all others, we have to preserve them manually
-		value = read32(ioRegister) & I2C_RESERVED;
-	}
+	// Gen 6+: preserve reserved bits manually (removed Gen 2-3 fixed values)
+	value = read32(ioRegister) & I2C_RESERVED;
 
 	// if we send clk or data, we always send low logic level;
 	// if we want to send high level, we actually receive and let the
@@ -1292,13 +1287,6 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	uint32 lvds = read32(_PortRegister())
 		| LVDS_PORT_EN | LVDS_A0A2_CLKA_POWER_UP;
 
-	if (gInfo->shared_info->device_type.Generation() == 4) {
-		// LVDS_A3_POWER_UP == 24bpp
-		// otherwise, 18bpp
-		if ((lvds & LVDS_A3_POWER_MASK) != LVDS_A3_POWER_UP)
-			lvds |= LVDS_18BIT_DITHER;
-	}
-
 	// LVDS on PCH needs set before display enable
 	if (gInfo->shared_info->pch_info == INTEL_PCH_CPT) {
 		lvds &= ~PORT_TRANS_SEL_MASK;
@@ -1334,7 +1322,7 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 
 	uint32 extraPLLFlags = 0;
 
-	// DPLL mode LVDS for i915+
+	// DPLL mode LVDS (Gen 6+ always uses this)
 	if (gInfo->shared_info->device_type.Generation() >= 3)
 		extraPLLFlags |= DISPLAY_PLL_MODE_LVDS | DISPLAY_PLL_2X_CLOCK;
 
@@ -1347,8 +1335,7 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 		extraPLLFlags);
 
 	if (gInfo->shared_info->device_type.Generation() != 4) {
-		// G45: no need to power the panel off
-		// Power on Panel
+		// Gen 6+: Power on Panel (Gen 4 G45 check obsolete)
 		write32(panelControl,
 			read32(panelControl) | PANEL_CONTROL_POWER_TARGET_ON);
 		read32(panelControl);
@@ -1376,17 +1363,10 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 		}
 		// TODO do we need to do anything on later generations?
 	} else {
-		if (gInfo->shared_info->device_type.Generation() == 4
-			|| gInfo->shared_info->device_type.Generation() == 3) {
-			// Bypass the panel fitter
-			uint32 panelFitterControl = read32(INTEL_PANEL_FIT_CONTROL);
-			panelFitterControl &= ~PANEL_FITTER_ENABLED;
-			write32(INTEL_PANEL_FIT_CONTROL, panelFitterControl);
-		} else {
-			// We don't need to do anything more for later generations, the
-			// scaling is handled at the transcoder level. We may want to
-			// configure dithering, but the code below ignores the previous
-			// value in the register and may mess things up so we should do
+		// Gen 6+: We don't need to do anything more, the
+		// scaling is handled at the transcoder level. We may want to
+		// configure dithering, but the code below ignores the previous
+		// value in the register and may mess things up so we should do
 			// this in a safeer way. For now, assume the BIOS did the right
 			// thing.
 #if 0

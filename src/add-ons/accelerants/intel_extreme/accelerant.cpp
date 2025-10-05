@@ -134,14 +134,7 @@ init_common(int device, bool isClone)
 			+ gInfo->shared_info->overlay_offset);
 	}
 
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_96x)) {
-		// allocate some extra memory for the 3D context
-		if (intel_allocate_memory(INTEL_i965_3D_CONTEXT_SIZE,
-				B_APERTURE_NON_RESERVED, gInfo->context_base) == B_OK) {
-			gInfo->context_offset = gInfo->context_base
-				- (addr_t)gInfo->shared_info->graphics_memory;
-		}
-	}
+	// Gen 6+: No 3D context allocation needed (Gen 4 i965 code removed)
 
 	gInfo->pipe_count = 0;
 
@@ -617,11 +610,8 @@ intel_get_accelerant_device_info(accelerant_device_info* info)
 
 	DeviceType* type = &gInfo->shared_info->device_type;
 
-	if (type->InFamily(INTEL_FAMILY_8xx))
-		strcpy(info->name, "Intel Extreme");
-	else if (type->InFamily(INTEL_FAMILY_9xx))
-		strcpy(info->name, "Intel GMA");
-	else if (type->InFamily(INTEL_FAMILY_SOC0))
+	// Gen 6+ naming (removed Gen < 6: INTEL_FAMILY_8xx, INTEL_FAMILY_9xx)
+	if (type->InFamily(INTEL_FAMILY_SOC0))
 		strcpy(info->name, "Intel Atom");
 	else if (type->InFamily(INTEL_FAMILY_SER5))
 		strcpy(info->name, "Intel HD/Iris");

@@ -309,15 +309,6 @@ Pipe::ConfigureScalePos(display_mode* target)
 		return;
 	}
 
-	if (gInfo->shared_info->device_type.Generation() < 6) {
-		// FIXME check on which generations this register exists
-		// (it appears it would be available only for cursor planes, not
-		// display planes)
-		// Since we set the plane to be the same size as the display, we can
-		// just show it starting at top-left.
-		write32(INTEL_DISPLAY_A_POS + fPipeOffset, 0);
-	}
-
 	// The only thing that really matters: set the image size and let the
 	// panel fitter or the transcoder worry about the rest
 	write32(INTEL_DISPLAY_A_PIPE_SIZE + fPipeOffset,
@@ -421,15 +412,12 @@ Pipe::ConfigureClocks(const pll_divisors& divisors, uint32 pixelClock,
 
 	float refFreq = gInfo->shared_info->pll_info.reference_frequency / 1000.0f;
 
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_96x)) {
-		float adjusted = ((refFreq * divisors.m) / divisors.n) / divisors.p;
-		uint32 pixelMultiply = uint32(adjusted / (pixelClock / 1000.0f));
-		write32(pllMD, (0 << 24) | ((pixelMultiply - 1) << 8));
-	}
+	// Gen 6+ PLL programming (removed Gen 4 i965 pixel multiply code)
 
 	// XXX: For now we assume no LVDS downclocking and program the same divisor
 	// value to both divisor 0 (standard) and 1 (reduced divisor)
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_PIN)) {
+	// Gen 6+ divisor programming (removed Pineview-specific code)
+	if (false) {
 		write32(pllDivisorA, (((1 << divisors.n) << DISPLAY_PLL_N_DIVISOR_SHIFT)
 				& DISPLAY_PLL_IGD_N_DIVISOR_MASK)
 			| (((divisors.m2 - 2) << DISPLAY_PLL_M2_DIVISOR_SHIFT)
@@ -457,19 +445,12 @@ Pipe::ConfigureClocks(const pll_divisors& divisors, uint32 pixelClock,
 	//      zero there. It does not influence it though.
 	uint32 pll = DISPLAY_PLL_ENABLED | DISPLAY_PLL_NO_VGA_CONTROL | extraFlags;
 
+	// Gen 6+ PLL configuration (removed Gen < 6 Pineview and i965 code)
 	if (gInfo->shared_info->device_type.Generation() >= 3) {
-		// p1 divisor << 1 , 1-8
-		if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_PIN)) {
-			pll |= ((1 << (divisors.p1 - 1))
-					<< DISPLAY_PLL_IGD_POST1_DIVISOR_SHIFT)
-				& DISPLAY_PLL_IGD_POST1_DIVISOR_MASK;
-		} else {
-			pll |= ((1 << (divisors.p1 - 1))
-					<< DISPLAY_PLL_POST1_DIVISOR_SHIFT)
-				& DISPLAY_PLL_9xx_POST1_DIVISOR_MASK;
-		//	pll |= ((divisors.p1 - 1) << DISPLAY_PLL_POST1_DIVISOR_SHIFT)
-		//		& DISPLAY_PLL_9xx_POST1_DIVISOR_MASK;
-		}
+		// p1 divisor << 1 , 1-8 (Gen 6+ uses this path)
+		pll |= ((1 << (divisors.p1 - 1))
+				<< DISPLAY_PLL_POST1_DIVISOR_SHIFT)
+			& DISPLAY_PLL_9xx_POST1_DIVISOR_MASK;
 
 		// Also configure the FP0 divisor on SandyBridge
 		if (gInfo->shared_info->device_type.Generation() == 6) {
@@ -481,9 +462,9 @@ Pipe::ConfigureClocks(const pll_divisors& divisors, uint32 pixelClock,
 		if (divisors.p2 == 5 || divisors.p2 == 7)
 			pll |= DISPLAY_PLL_DIVIDE_HIGH;
 
-		if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_96x))
-			pll |= 6 << DISPLAY_PLL_PULSE_PHASE_SHIFT;
+		// Gen 6+ (removed i965 pulse phase code)
 	} else {
+		// Gen < 3 not supported
 		if (divisors.p2 != 5 && divisors.p2 != 7)
 			pll |= DISPLAY_PLL_DIVIDE_4X;
 
@@ -647,11 +628,7 @@ Pipe::Enable(bool enable)
 	} else {
 		write32(planeReg, read32(planeReg) & ~DISPLAY_CONTROL_ENABLED);
 		wait_for_vblank();
-		//Sandy+: when link training is to be done re-enable this line but otherwise don't touch!
-		//GMA(Q45): must disable PIPE or DPLL programming fails.
-		if (gInfo->shared_info->device_type.Generation() <= 5) {
-			write32(pipeReg, read32(pipeReg) & ~INTEL_PIPE_ENABLED);
-		}
+		// Gen 6+: When link training is to be done re-enable pipe, but otherwise don't touch!
 	}
 
 	// flush the eventually cached PCI bus writes

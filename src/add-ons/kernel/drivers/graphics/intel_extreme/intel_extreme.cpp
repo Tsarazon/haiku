@@ -225,8 +225,8 @@ intel_get_interrupt_mask(intel_info& info, pipe_index pipe, bool enable)
 	// previous interrupt register of course also had a different mapping.
 
 	if (pipe == INTEL_PIPE_A) {
-		if (info.device_type.InGroup(INTEL_GROUP_SNB)
-				|| info.device_type.InGroup(INTEL_GROUP_ILK))
+		// Gen 6+ vblank interrupt mapping
+		if (info.device_type.InGroup(INTEL_GROUP_SNB))
 			mask |= PCH_INTERRUPT_VBLANK_PIPEA_SNB;
 		else if (hasPCH)
 			mask |= PCH_INTERRUPT_VBLANK_PIPEA;
@@ -235,8 +235,8 @@ intel_get_interrupt_mask(intel_info& info, pipe_index pipe, bool enable)
 	}
 
 	if (pipe == INTEL_PIPE_B) {
-		if (info.device_type.InGroup(INTEL_GROUP_SNB)
-				|| info.device_type.InGroup(INTEL_GROUP_ILK))
+		// Gen 6+ vblank interrupt mapping
+		if (info.device_type.InGroup(INTEL_GROUP_SNB))
 			mask |= PCH_INTERRUPT_VBLANK_PIPEB_SNB;
 		else if (hasPCH)
 			mask |= PCH_INTERRUPT_VBLANK_PIPEB;
@@ -767,19 +767,12 @@ intel_extreme_init(intel_info &info)
 	// Pull VBIOS info for later use
 	info.shared_info->got_vbt = parse_vbt_from_bios(info.shared_info);
 
-	/* at least 855gm can't drive more than one head at time */
-	if (info.device_type.InFamily(INTEL_FAMILY_8xx))
-		info.shared_info->single_head_locked = 1;
+	// Gen 6+ PLL configuration (removed Gen 2 single head lock and Gen 3-5 PLL settings)
 
 	if (info.device_type.InFamily(INTEL_FAMILY_SER5)) {
 		info.shared_info->pll_info.reference_frequency = 120000;// 120 MHz
 		info.shared_info->pll_info.max_frequency = 350000;
 			// 350 MHz RAM DAC speed
-		info.shared_info->pll_info.min_frequency = 20000;		// 20 MHz
-	} else if (info.device_type.InFamily(INTEL_FAMILY_9xx)) {
-		info.shared_info->pll_info.reference_frequency = 96000;	// 96 MHz
-		info.shared_info->pll_info.max_frequency = 400000;
-			// 400 MHz RAM DAC speed
 		info.shared_info->pll_info.min_frequency = 20000;		// 20 MHz
 	} else if (info.device_type.HasDDI() && (info.device_type.Generation() <= 8)) {
 		info.shared_info->pll_info.reference_frequency = 135000;// 135 MHz
@@ -871,13 +864,8 @@ intel_extreme_init(intel_info &info)
 	init_interrupt_handler(info);
 
 	if (hasPCH) {
-		if (info.device_type.Generation() == 5) {
-			info.shared_info->fdi_link_frequency = (read32(info, FDI_PLL_BIOS_0)
-				& FDI_PLL_FB_CLOCK_MASK) + 2;
-			info.shared_info->fdi_link_frequency *= 100;
-		} else {
-			info.shared_info->fdi_link_frequency = 2700;
-		}
+		// Gen 6+ FDI link frequency
+		info.shared_info->fdi_link_frequency = 2700;
 		if (info.shared_info->pch_info >= INTEL_PCH_CNP) {
 			// TODO read/write info.shared_info->hraw_clock
 		} else {
@@ -921,9 +909,8 @@ intel_extreme_init(intel_info &info)
 	} else if (info.device_type.InGroup(INTEL_GROUP_SNB)
 		|| info.device_type.InGroup(INTEL_GROUP_IVB)) {
 		info.shared_info->hw_cdclk = 400000;
-	} else if (info.device_type.InGroup(INTEL_GROUP_ILK)) {
-		info.shared_info->hw_cdclk = 450000;
 	}
+	// Gen 6+ only: IronLake (450000) removed
 	TRACE("%s: hw_cdclk: %" B_PRIu32 " kHz\n", __func__, info.shared_info->hw_cdclk);
 
 	TRACE("%s: completed successfully!\n", __func__);

@@ -98,15 +98,8 @@ get_color_space_format(const display_mode &mode, uint32 &colorMode,
 static bool
 sanitize_display_mode(display_mode& mode)
 {
+	// Gen 6+ pixel count (removed Gen < 6 even pixel count requirement)
 	uint16 pixelCount = 1;
-	// Older cards require pixel count to be even
-	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_Gxx)
-			|| gInfo->shared_info->device_type.InGroup(INTEL_GROUP_96x)
-			|| gInfo->shared_info->device_type.InGroup(INTEL_GROUP_94x)
-			|| gInfo->shared_info->device_type.InGroup(INTEL_GROUP_91x)
-			|| gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_8xx)) {
-		pixelCount = 2;
-	}
 
 	display_constraints constraints = {
 		// resolution
@@ -134,10 +127,8 @@ set_frame_buffer_registers(uint32 offset)
 	display_mode &mode = sharedInfo.current_mode;
 	uint32 bytes_per_pixel = (sharedInfo.bits_per_pixel + 7) / 8;
 
-	if (sharedInfo.device_type.InGroup(INTEL_GROUP_96x)
-		|| sharedInfo.device_type.InGroup(INTEL_GROUP_G4x)
-		|| sharedInfo.device_type.InGroup(INTEL_GROUP_ILK)
-		|| sharedInfo.device_type.InFamily(INTEL_FAMILY_SER5)
+	// Gen 6+ display offset handling
+	if (sharedInfo.device_type.InFamily(INTEL_FAMILY_SER5)
 		|| sharedInfo.device_type.InFamily(INTEL_FAMILY_LAKE)
 		|| sharedInfo.device_type.InFamily(INTEL_FAMILY_SOC0)) {
 		if (sharedInfo.device_type.InGroup(INTEL_GROUP_HAS)) {

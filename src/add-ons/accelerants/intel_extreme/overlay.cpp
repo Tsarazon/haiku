@@ -322,14 +322,11 @@ intel_overlay_count(const display_mode* mode)
 const uint32*
 intel_overlay_supported_spaces(const display_mode* mode)
 {
+	// Gen 6+ overlay color space support
 	static const uint32 kSupportedSpaces[] = {B_RGB15, B_RGB16, B_RGB32,
 		B_YCbCr422, 0};
-	static const uint32 kSupportedi965Spaces[] = {B_YCbCr422, 0};
-	intel_shared_info &sharedInfo = *gInfo->shared_info;
 
-	if (sharedInfo.device_type.InGroup(INTEL_GROUP_96x))
-		return kSupportedi965Spaces;
-
+	// Gen 6+ supports same as legacy (removed i965-specific limitation)
 	return kSupportedSpaces;
 }
 
@@ -631,16 +628,11 @@ intel_configure_overlay(overlay_token overlayToken,
 		// the result will be wrong, too.
 		registers->source_width_rgb = right - left;
 		registers->source_height_rgb = bottom - top;
-		if (gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_8xx)) {
-			registers->source_bytes_per_row_rgb = (((overlay->buffer_offset
-				+ (view->width << 1) + 0x1f) >> 5)
-				- (overlay->buffer_offset >> 5) - 1) << 2;
-		} else {
-			int yaddress = overlay->buffer_offset;
-			int yswidth = view->width << 1;
-			registers->source_bytes_per_row_rgb = (((((yaddress
-				+ yswidth + 0x3f) >> 6) - (yaddress >> 6)) << 1) - 1) << 2;
-		}
+		// Gen 6+ RGB source bytes calculation (removed Gen 2 formula)
+		int yaddress = overlay->buffer_offset;
+		int yswidth = view->width << 1;
+		registers->source_bytes_per_row_rgb = (((((yaddress
+			+ yswidth + 0x3f) >> 6) - (yaddress >> 6)) << 1) - 1) << 2;
 
 		// horizontal scaling
 		registers->scale_rgb.horizontal_downscale_factor
