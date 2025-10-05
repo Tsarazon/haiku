@@ -321,4 +321,158 @@ blend_solid_vspan_erase_custom(int x, int y, unsigned len,
 	}
 }
 
+// ============================================================================
+// Color array span functions for custom modes
+// ============================================================================
+
+// B_OP_BLEND - blend_color_hspan
+static void
+blend_color_hspan_blend_custom(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	BLImageData data;
+	data.pixelData = nullptr;
+	
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_blend_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_BLEND - blend_color_vspan
+static void
+blend_color_vspan_blend_custom(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	BLImageData data;
+	data.pixelData = nullptr;
+	
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_blend_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_INVERT - blend_color_hspan
+static void
+blend_color_hspan_invert_custom(int x, int y, unsigned len,
+								const Blend2DPixelFormat::color_type* colors,
+								const uint8* covers, uint8 cover,
+								BLImage* image, BLContext* ctx,
+								const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_invert_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_INVERT - blend_color_vspan
+static void
+blend_color_vspan_invert_custom(int x, int y, unsigned len,
+								const Blend2DPixelFormat::color_type* colors,
+								const uint8* covers, uint8 cover,
+								BLImage* image, BLContext* ctx,
+								const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_invert_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_SELECT - blend_color_hspan
+static void
+blend_color_hspan_select_custom(int x, int y, unsigned len,
+								const Blend2DPixelFormat::color_type* colors,
+								const uint8* covers, uint8 cover,
+								BLImage* image, BLContext* ctx,
+								const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_select_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_SELECT - blend_color_vspan
+static void
+blend_color_vspan_select_custom(int x, int y, unsigned len,
+								const Blend2DPixelFormat::color_type* colors,
+								const uint8* covers, uint8 cover,
+								BLImage* image, BLContext* ctx,
+								const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_select_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_ERASE - blend_color_hspan
+static void
+blend_color_hspan_erase_custom(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_erase_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
+// B_OP_ERASE - blend_color_vspan
+static void
+blend_color_vspan_erase_custom(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+		
+		const Blend2DPixelFormat::color_type& c = colors[i];
+		blend_pixel_erase_custom(x, y, c, alpha, image, ctx, pattern);
+	}
+}
+
 #endif // BLEND2D_DRAWING_MODE_CUSTOM_H

@@ -533,4 +533,360 @@ blend_solid_vspan_max_native(int x, int y, unsigned len,
 	}
 }
 
+// ============================================================================
+// blend_color_hspan functions - horizontal span with color array
+// ============================================================================
+
+static void
+blend_color_hspan_copy_native(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_COPY);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_hspan_over_native(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_OVER);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_hspan_add_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_PLUS);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_hspan_subtract_native(int x, int y, unsigned len,
+								   const Blend2DPixelFormat::color_type* colors,
+								   const uint8* covers, uint8 cover,
+								   BLImage* image, BLContext* ctx,
+								   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_MINUS);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_hspan_min_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_DARKEN);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_hspan_max_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_LIGHTEN);
+
+	for (unsigned i = 0; i < len; i++, x++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+// ============================================================================
+// blend_color_vspan functions - vertical span with color array
+// ============================================================================
+
+static void
+blend_color_vspan_copy_native(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_COPY);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_vspan_over_native(int x, int y, unsigned len,
+							   const Blend2DPixelFormat::color_type* colors,
+							   const uint8* covers, uint8 cover,
+							   BLImage* image, BLContext* ctx,
+							   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_SRC_OVER);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_vspan_add_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_PLUS);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_vspan_subtract_native(int x, int y, unsigned len,
+								   const Blend2DPixelFormat::color_type* colors,
+								   const uint8* covers, uint8 cover,
+								   BLImage* image, BLContext* ctx,
+								   const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_MINUS);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_vspan_min_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_DARKEN);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
+static void
+blend_color_vspan_max_native(int x, int y, unsigned len,
+							  const Blend2DPixelFormat::color_type* colors,
+							  const uint8* covers, uint8 cover,
+							  BLImage* image, BLContext* ctx,
+							  const PatternHandler* pattern)
+{
+	ctx->setCompOp(BL_COMP_OP_LIGHTEN);
+
+	for (unsigned i = 0; i < len; i++, y++) {
+		uint8 alpha = covers ? covers[i] : cover;
+		if (alpha == 0)
+			continue;
+
+		const Blend2DPixelFormat::color_type& c = colors[i];
+
+		if (alpha == 255) {
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, c.a));
+		} else {
+			double prevAlpha = ctx->globalAlpha();
+			ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+			ctx->fillRect(BLRect(x, y, 1, 1),
+						 BLRgba32(c.r, c.g, c.b, 255));
+			ctx->setGlobalAlpha(prevAlpha);
+		}
+	}
+}
+
 #endif // BLEND2D_DRAWING_MODE_NATIVE_H

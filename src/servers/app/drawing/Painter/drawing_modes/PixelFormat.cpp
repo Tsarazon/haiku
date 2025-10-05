@@ -133,12 +133,12 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_copy_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_copy_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_copy_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_copy_native;
+			fBlendColorVSpan = blend_color_vspan_copy_native;
 			break;
 
-		// ====================================================================
-		// B_OP_OVER - Source over (default blending)
+			// ====================================================================
+			// B_OP_OVER - Source over (default blending)
 		// ====================================================================
 		case B_OP_OVER:
 			fBlendPixel = blend_pixel_over_native;
@@ -147,8 +147,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_over_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_over_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_over_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_over_native;
+			fBlendColorVSpan = blend_color_vspan_over_native;
 			break;
 
 		// ====================================================================
@@ -161,8 +161,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_add_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_add_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_add_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_add_native;
+			fBlendColorVSpan = blend_color_vspan_add_native;
 			break;
 
 		// ====================================================================
@@ -175,8 +175,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_subtract_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_subtract_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_subtract_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_subtract_native;
+			fBlendColorVSpan = blend_color_vspan_subtract_native;
 			break;
 
 		// ====================================================================
@@ -189,8 +189,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_min_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_min_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_min_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_min_native;
+			fBlendColorVSpan = blend_color_vspan_min_native;
 			break;
 
 		// ====================================================================
@@ -203,8 +203,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_max_native;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_max_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_max_native;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_max_native;
+			fBlendColorVSpan = blend_color_vspan_max_native;
 			break;
 
 		// ====================================================================
@@ -217,8 +217,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_blend_custom;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_blend_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_blend_custom;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_blend_custom;
+			fBlendColorVSpan = blend_color_vspan_blend_custom;
 			break;
 
 		// ====================================================================
@@ -231,8 +231,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_invert_custom;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_invert_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_invert_custom;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_invert_custom;
+			fBlendColorVSpan = blend_color_vspan_invert_custom;
 			break;
 
 		// ====================================================================
@@ -245,8 +245,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_select_custom;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_select_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_select_custom;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_select_custom;
+			fBlendColorVSpan = blend_color_vspan_select_custom;
 			break;
 
 		// ====================================================================
@@ -259,8 +259,8 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 			fBlendSolidHSpan = blend_solid_hspan_erase_custom;
 			fBlendSolidHSpanSubpix = blend_solid_hspan_erase_subpix;
 			fBlendSolidVSpan = blend_solid_vspan_erase_custom;
-			fBlendColorHSpan = blend_color_hspan_empty; // TODO
-			fBlendColorVSpan = blend_color_vspan_empty; // TODO
+			fBlendColorHSpan = blend_color_hspan_erase_custom;
+			fBlendColorVSpan = blend_color_vspan_erase_custom;
 			break;
 
 		// ====================================================================

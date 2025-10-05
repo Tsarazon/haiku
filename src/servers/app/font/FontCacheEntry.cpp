@@ -150,7 +150,6 @@ FontCacheEntry::HasGlyphs(const char* utf8String, ssize_t glyphCount) const
 		return false;
 
 	uint32 charCode;
-	const char* start = utf8String;
 
 	for (ssize_t i = 0; i < glyphCount; i++) {
 		charCode = UTF8ToCharCode(&utf8String);
@@ -251,7 +250,7 @@ FontCacheEntry::GenerateSignature(char* signature, size_t signatureSize,
 {
 	glyph_rendering renderingType = _RenderTypeFor(font, forceVector);
 
-	snprintf(signature, signatureSize, "%s-%d-%.1f-%s-%s",
+	snprintf(signature, signatureSize, "%s-%u-%.1f-%s-%s",
 		font.GetFamilyAndStyle(),
 		font.Face(),
 		font.Size(),

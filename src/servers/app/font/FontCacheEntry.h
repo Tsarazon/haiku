@@ -48,17 +48,14 @@ struct SerializedPath {
 		uint8* commands = buffer + sizeof(SerializedPath);
 		BLPoint* vertices = (BLPoint*)(commands + header->commandCount);
 		
-		size_t index = 0;
-		BLPath::VertexData vertexData;
-		BLPath::const_iterator it = path.begin();
-		BLPath::const_iterator end = path.end();
+		// Use BLPath direct access methods
+		size_t cmdCount = path.size();
+		const uint8* cmds = path.commandData();
+		const BLPoint* vtx = path.vertexData();
 		
-		while (it != end) {
-			vertexData = *it;
-			commands[index] = vertexData.cmd;
-			vertices[index] = BLPoint(vertexData.x, vertexData.y);
-			++it;
-			++index;
+		for (size_t i = 0; i < cmdCount; i++) {
+			commands[i] = cmds[i];
+			vertices[i] = vtx[i];
 		}
 	}
 	
