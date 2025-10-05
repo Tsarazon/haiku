@@ -820,8 +820,6 @@ intel_extreme_init(intel_info &info)
 		info.shared_info->pll_info.min_frequency = 25000;		// 25 MHz
 	}
 
-	info.shared_info->pll_info.divisor_register = INTEL_DISPLAY_A_PLL_DIVISOR_0;
-
 #ifdef __HAIKU__
 	strlcpy(info.shared_info->device_identifier, info.device_identifier,
 		sizeof(info.shared_info->device_identifier));

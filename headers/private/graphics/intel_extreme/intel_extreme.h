@@ -26,23 +26,12 @@
 #define INTEL_MODEL_MASK	0x00ffffff
 #define INTEL_TYPE_MASK		0x0000000f
 
-// families
-#define INTEL_FAMILY_8xx	0x00020000	// Second Gen
-#define INTEL_FAMILY_9xx	0x00040000	// Third Gen +
+// families (Gen 6+ only)
 #define INTEL_FAMILY_SER5	0x00080000	// Intel5 Series
 #define INTEL_FAMILY_SOC0	0x00200000  // Atom SOC
 #define INTEL_FAMILY_LAKE	0x00400000	// Intel Lakes
 
-// groups
-#define INTEL_GROUP_83x		(INTEL_FAMILY_8xx  | 0x0010)
-#define INTEL_GROUP_85x		(INTEL_FAMILY_8xx  | 0x0020)
-#define INTEL_GROUP_91x		(INTEL_FAMILY_9xx  | 0x0010)
-#define INTEL_GROUP_94x		(INTEL_FAMILY_9xx  | 0x0020)
-#define INTEL_GROUP_96x		(INTEL_FAMILY_9xx  | 0x0040)
-#define INTEL_GROUP_Gxx		(INTEL_FAMILY_9xx  | 0x0080)
-#define INTEL_GROUP_G4x		(INTEL_FAMILY_9xx  | 0x0100)
-#define INTEL_GROUP_PIN		(INTEL_FAMILY_9xx  | 0x0200)  // PineView
-#define INTEL_GROUP_ILK		(INTEL_FAMILY_SER5 | 0x0010)  // IronLake
+// groups (Gen 6+ only, minimum: Sandy Bridge)
 #define INTEL_GROUP_SNB		(INTEL_FAMILY_SER5 | 0x0020)  // SandyBridge
 #define INTEL_GROUP_IVB		(INTEL_FAMILY_SER5 | 0x0040)  // IvyBridge
 #define INTEL_GROUP_HAS		(INTEL_FAMILY_SER5 | 0x0080)  // Haswell
@@ -56,22 +45,9 @@
 #define INTEL_GROUP_JSL		(INTEL_FAMILY_LAKE | 0x0100)  // JasperLake
 #define INTEL_GROUP_TGL		(INTEL_FAMILY_LAKE | 0x0200)  // TigerLake
 #define INTEL_GROUP_ALD		(INTEL_FAMILY_LAKE | 0x0400)  // AlderLake
-// models
+// models (Gen 6+ only, minimum: Sandy Bridge)
 #define INTEL_TYPE_SERVER	0x0004
 #define INTEL_TYPE_MOBILE	0x0008
-#define INTEL_MODEL_915		(INTEL_GROUP_91x)
-#define INTEL_MODEL_915M	(INTEL_GROUP_91x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_945		(INTEL_GROUP_94x)
-#define INTEL_MODEL_945M	(INTEL_GROUP_94x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_965		(INTEL_GROUP_96x)
-#define INTEL_MODEL_965M	(INTEL_GROUP_96x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_G33		(INTEL_GROUP_Gxx)
-#define INTEL_MODEL_G45		(INTEL_GROUP_G4x)
-#define INTEL_MODEL_GM45	(INTEL_GROUP_G4x | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_PINE	(INTEL_GROUP_PIN)
-#define INTEL_MODEL_PINEM	(INTEL_GROUP_PIN | INTEL_TYPE_MOBILE)
-#define INTEL_MODEL_ILKG	(INTEL_GROUP_ILK)
-#define INTEL_MODEL_ILKGM	(INTEL_GROUP_ILK | INTEL_TYPE_MOBILE)
 #define INTEL_MODEL_SNBG	(INTEL_GROUP_SNB)
 #define INTEL_MODEL_SNBGM	(INTEL_GROUP_SNB | INTEL_TYPE_MOBILE)
 #define INTEL_MODEL_SNBGS	(INTEL_GROUP_SNB | INTEL_TYPE_SERVER)
@@ -220,15 +196,7 @@ struct DeviceType {
 
 	int Generation() const
 	{
-		if (InFamily(INTEL_FAMILY_8xx))
-			return 2;
-		if (InGroup(INTEL_GROUP_91x) || InGroup(INTEL_GROUP_94x)
-				|| IsModel(INTEL_MODEL_G33) || InGroup(INTEL_GROUP_PIN))
-			return 3;
-		if (InFamily(INTEL_FAMILY_9xx))
-			return 4;
-		if (InGroup(INTEL_GROUP_ILK))
-			return 5;
+		// Gen 6+ only (Sandy Bridge 2011 and newer)
 		if (InGroup(INTEL_GROUP_SNB))
 			return 6;
 		if (InFamily(INTEL_FAMILY_SER5) || InGroup(INTEL_GROUP_VLV))
@@ -242,7 +210,7 @@ struct DeviceType {
 		if (InFamily(INTEL_FAMILY_LAKE))
 			return 9;
 
-		// Generation 0 means something is wrong :-)
+		// Generation 0 = unsupported (< Gen 6)
 		return 0;
 	}
 };
@@ -273,12 +241,11 @@ enum pch_info {
 	INTEL_PCH_NOP
 };
 
-// info about PLL on graphics card
+// info about PLL on graphics card (Gen 6+ only)
 struct pll_info {
 	uint32			reference_frequency;
 	uint32			max_frequency;
 	uint32			min_frequency;
-	uint32			divisor_register;
 };
 
 struct ring_buffer {
@@ -578,37 +545,10 @@ struct intel_brightness_legacy {
 // PCI bridge memory management
 #define INTEL_GRAPHICS_MEMORY_CONTROL	0x52		// i830+
 
-	// GGC - (G)MCH Graphics Control Register
+	// GGC - (G)MCH Graphics Control Register (Gen 6+ only)
 #define MEMORY_CONTROL_ENABLED			0x0004
 #define MEMORY_MASK						0x0001
 #define STOLEN_MEMORY_MASK				0x00f0
-#define i965_GTT_MASK					0x000e
-#define G33_GTT_MASK					0x0300
-#define G4X_GTT_MASK					0x0f00	// GGMS (GSM Memory Size) mask
-
-// models i830 and up
-#define i830_LOCAL_MEMORY_ONLY			0x10
-#define i830_STOLEN_512K				0x20
-#define i830_STOLEN_1M					0x30
-#define i830_STOLEN_8M					0x40
-#define i830_FRAME_BUFFER_64M			0x01
-#define i830_FRAME_BUFFER_128M			0x00
-
-// models i855 and up
-#define i855_STOLEN_MEMORY_1M			0x10
-#define i855_STOLEN_MEMORY_4M			0x20
-#define i855_STOLEN_MEMORY_8M			0x30
-#define i855_STOLEN_MEMORY_16M			0x40
-#define i855_STOLEN_MEMORY_32M			0x50
-#define i855_STOLEN_MEMORY_48M			0x60
-#define i855_STOLEN_MEMORY_64M			0x70
-#define i855_STOLEN_MEMORY_128M			0x80
-#define i855_STOLEN_MEMORY_256M			0x90
-
-#define G4X_STOLEN_MEMORY_96MB			0xa0	// GMS - Graphics Mode Select
-#define G4X_STOLEN_MEMORY_160MB			0xb0
-#define G4X_STOLEN_MEMORY_224MB			0xc0
-#define G4X_STOLEN_MEMORY_352MB			0xd0
 
 // SandyBridge (SNB)
 
@@ -686,29 +626,11 @@ struct intel_brightness_legacy {
 #define BDW_GTT_SIZE_8MB				(3 << 6)
 
 // Gen2, i915GM, i945GM
-#define LEGACY_BACKLIGHT_BRIGHTNESS		0xf4
-
-// graphics page translation table
+// graphics page translation table (Gen 6+ only)
 #define INTEL_PAGE_TABLE_CONTROL		0x02020
 #define PAGE_TABLE_ENABLED				0x00000001
 #define INTEL_PAGE_TABLE_ERROR			0x02024
 #define INTEL_HARDWARE_STATUS_PAGE		0x02080
-#define i915_GTT_BASE					0x1c
-#define i830_GTT_BASE					0x10000	// (- 0x2ffff)
-#define i830_GTT_SIZE					0x20000
-#define i965_GTT_BASE					0x80000	// (- 0xfffff)
-#define i965_GTT_SIZE					0x80000
-#define i965_GTT_128K					(2 << 1)
-#define i965_GTT_256K					(1 << 1)
-#define i965_GTT_512K					(0 << 1)
-#define G33_GTT_1M						(1 << 8)
-#define G33_GTT_2M						(2 << 8)
-#define G4X_GTT_NONE					0x000	// GGMS - GSM Memory Size
-#define G4X_GTT_1M_NO_IVT				0x100	// no Intel Virtualization Tech.
-#define G4X_GTT_2M_NO_IVT				0x300
-#define G4X_GTT_2M_IVT					0x900	// with Intel Virt. Tech.
-#define G4X_GTT_3M_IVT					0xa00
-#define G4X_GTT_4M_IVT					0xb00
 
 
 #define GTT_ENTRY_VALID					0x01

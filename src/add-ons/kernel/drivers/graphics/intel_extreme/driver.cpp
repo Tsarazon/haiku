@@ -42,48 +42,7 @@ const struct supported_device {
 	int32		type;
 	const char*	name;
 } kSupportedDevices[] = {
-	{0x3577, INTEL_GROUP_83x, "i830GM"},
-	{0x2562, INTEL_GROUP_83x, "i845G"},
-
-	{0x2572, INTEL_GROUP_85x, "i865G"},
-	{0x3582, INTEL_GROUP_85x, "i855G"},
-	{0x358e, INTEL_GROUP_85x, "i855G"},
-
-	{0x2582, INTEL_MODEL_915, "i915G"},
-	{0x258a, INTEL_MODEL_915, "i915"},
-	{0x2592, INTEL_MODEL_915M, "i915GM"},
-	{0x2792, INTEL_MODEL_915, "i910"},
-	{0x2772, INTEL_MODEL_945, "i945G"},
-	{0x27a2, INTEL_MODEL_945M, "i945GM"},
-	{0x27ae, INTEL_MODEL_945M, "i945GME"},
-	{0x2972, INTEL_MODEL_965, "i946G"},
-	{0x2982, INTEL_MODEL_965, "G35"},
-	{0x2992, INTEL_MODEL_965, "i965Q"},
-	{0x29a2, INTEL_MODEL_965, "i965G"},
-	{0x2a02, INTEL_MODEL_965M, "i965GM"},
-	{0x2a12, INTEL_MODEL_965M, "i965GME"},
-	{0x29b2, INTEL_MODEL_G33, "G33G"},
-	{0x29c2, INTEL_MODEL_G33, "Q35G"},
-	{0x29d2, INTEL_MODEL_G33, "Q33G"},
-
-	{0x2a42, INTEL_MODEL_GM45, "GM45"},
-	{0x2e02, INTEL_MODEL_G45, "IGD"},
-	{0x2e12, INTEL_MODEL_G45, "Q45"},
-	{0x2e22, INTEL_MODEL_G45, "G45"},
-	{0x2e32, INTEL_MODEL_G45, "G41"},
-	{0x2e42, INTEL_MODEL_G45, "B43"},
-	{0x2e92, INTEL_MODEL_G45, "B43"},
-
-	{0xa001, INTEL_MODEL_PINE, "Atom D4xx"},
-	{0xa002, INTEL_MODEL_PINE, "Atom D5xx"},
-	{0xa011, INTEL_MODEL_PINEM, "Atom N4xx"},
-	{0xa012, INTEL_MODEL_PINEM, "Atom N5xx"},
-
-	{0x0042, INTEL_MODEL_ILKG, "IronLake Desktop"},
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},
-	{0x0046, INTEL_MODEL_ILKGM, "IronLake Mobile"},
-
+	// Gen 6+ only (Sandy Bridge 2011 and newer)
 	{0x0102, INTEL_MODEL_SNBG, "SandyBridge Desktop GT1"},
 	{0x0112, INTEL_MODEL_SNBG, "SandyBridge Desktop GT2"},
 	{0x0122, INTEL_MODEL_SNBG, "SandyBridge Desktop GT2+"},
