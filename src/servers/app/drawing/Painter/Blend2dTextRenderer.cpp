@@ -150,7 +150,7 @@ public:
 
 			case glyph_data_outline:
 				// Векторный глиф
-				_RenderVectorGlyph(entry, transformedX, transformedY);
+				_RenderVectorGlyph(glyph, transformedX, transformedY);
 				break;
 
 			default:
@@ -168,40 +168,59 @@ public:
 private:
 	void _RenderBitmapGlyph(const GlyphCache* glyph, double x, double y)
 	{
-		// TODO: Восстановить BLImage из glyph->data
-		// и отрендерить через fRenderer.fContext.blitImage()
+		// 1. Получаем BLImage из glyph используя существующий метод
+		BLImage image = glyph->GetImage();
 		
-		// Для Blend2D нужно создать BLImage из glyph->data
-		// Формат зависит от glyph->data_type
+		if (image.empty())
+			return;
 		
-		// Пример для gray8/lcd:
-		// BLImage image;
-		// if (image.create(width, height, BL_FORMAT_A8) == BL_SUCCESS) {
-		//     BLImageData imageData;
-		//     image.makeMutable(&imageData);
-		//     memcpy(imageData.pixelData, glyph->data, dataSize);
-		//     
-		//     fRenderer.fContext.save();
-		//     fRenderer.fContext.setFillStyle(fRenderer.fColor);
-		//     fRenderer.fContext.blitImage(BLPoint(x + glyph->bounds.x0, 
-		//                                           y + glyph->bounds.y0), image);
-		//     fRenderer.fContext.restore();
-		// }
+		// 2. Вычисляем позицию (учитываем bounds глифа)
+		BLPoint pos(x + glyph->bounds.x0, y + glyph->bounds.y0);
+		
+		// 3. Устанавливаем режим композиции и цвет
+		fRenderer.fContext.save();
+		fRenderer.fContext.setCompOp(BL_COMP_OP_SRC_OVER);
+		fRenderer.fContext.setFillStyle(fRenderer.fColor);
+		
+		// 4. Рисуем глиф как маску альфа-канала
+		// Для альфа-изображений используем fillMaskI для применения цвета
+		if (glyph->data_type == glyph_data_gray8 || 
+		    glyph->data_type == glyph_data_lcd ||
+		    glyph->data_type == glyph_data_mono) {
+			
+			// Создаём маску из альфа-канала
+			fRenderer.fContext.fillMaskI(
+				BLPointI(int(pos.x), int(pos.y)),
+				image,
+				BLRectI(0, 0, image.width(), image.height())
+			);
+		}
+		
+		fRenderer.fContext.restore();
 	}
 
-	void _RenderVectorGlyph(FontCacheEntry* entry, double x, double y)
+	void _RenderVectorGlyph(const GlyphCache* glyph, double x, double y)
 	{
-		// TODO: Восстановить BLPath из данных глифа
-		// и отрендерить через fRenderer.fContext.fillPath()
+		// 1. Получаем BLPath из glyph используя существующий метод
+		BLPath path = glyph->GetPath();
 		
-		// Для Blend2D нужно получить BLPath из entry
-		// const BLPath& path = entry->GetPath();
-		// 
-		// fRenderer.fContext.save();
-		// fRenderer.fContext.translate(x, y);
-		// fRenderer.fContext.setFillStyle(fRenderer.fColor);
-		// fRenderer.fContext.fillPath(path);
-		// fRenderer.fContext.restore();
+		if (path.empty())
+			return;
+		
+		// 2. Применяем трансляцию для позиционирования глифа
+		BLMatrix2D matrix = BLMatrix2D::makeTranslation(x, y);
+		
+		// 3. Если есть трансформация, комбинируем её
+		if (!fTransform.IsIdentity()) {
+			matrix.postTransform(fTransform.Matrix());
+		}
+		
+		// 4. Рендерим путь
+		fRenderer.fContext.save();
+		fRenderer.fContext.setMatrix(matrix);
+		fRenderer.fContext.setFillStyle(fRenderer.fColor);
+		fRenderer.fContext.fillPath(path);
+		fRenderer.fContext.restore();
 	}
 
 	void _DrawHorizontalLine(float y)

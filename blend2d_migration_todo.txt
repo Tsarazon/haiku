@@ -1,0 +1,1137 @@
+# AGG to Blend2D Migration - TODO List
+
+## Status Overview
+
+**Progress: ~70% Complete**
+
+### ✅ Completed Components
+
+- [x] Font Engine (FontEngine.cpp/h) - BLPath, BLImage
+- [x] Font Cache (FontCacheEntry.cpp/h) - BLPath serialization
+- [x] Glyph Layout Engine (GlyphLayoutEngine.h)
+- [x] ServerFont (ServerFont.cpp/h)
+- [x] Transformable (Transformable.cpp/h) - BLMatrix2D
+- [x] BitmapPainter (BitmapPainter.cpp/h)
+- [x] Drawing Modes Infrastructure:
+  - [x] Blend2DDrawingMode.h (base macros)
+  - [x] Blend2DDrawingModeNative.h (COPY, OVER, ADD, SUBTRACT, MIN, MAX)
+  - [x] Blend2DDrawingModeCustom.h (BLEND, INVERT, SELECT, ERASE)
+  - [x] Blend2DDrawingModeSUBPIX.h
+  - [x] PixelFormat.cpp/h
+
+---
+
+## 🔴 PRIORITY 0: defines.h Migration (DO THIS FIRST!)
+
+**Files:** `src/servers/app/drawing/Painter/defines.h`
+
+### ⚠️ CRITICAL: Do NOT rename this file! Keep the name `defines.h`
+
+### Current Status
+Full of AGG types:
+```cpp
+#include <agg_alpha_mask_u8.h>
+#include <agg_rasterizer_outline.h>
+#include <agg_rasterizer_scanline_aa.h>
+// ... много других AGG includes
+
+typedef PixelFormat pixfmt;
+typedef agg::renderer_region<pixfmt> renderer_base;
+typedef agg::scanline_u8 scanline_unpacked_type;
+typedef agg::rasterizer_scanline_aa<> rasterizer_type;
+// ... много других AGG typedefs
+```
+
+### Task 0.1: Replace defines.h Content
+
+**Complete new version of defines.h:**
+
+```cpp
+/*
+ * Copyright 2005-2006, Stephan Aßmus <superstippi@gmx.de>.
+ * Copyright 2008, Andrej Spielmann <andrej.spielmann@seh.ox.ac.uk>.
+ * Copyright 2025, Haiku Blend2D Migration
+ * All rights reserved. Distributed under the terms of the MIT License.
+ *
+ * Global definitions for the Painter framework - Blend2D backend
+ */
+
+#ifndef DEFINES_H
+#define DEFINES_H
+
+#include <blend2d.h>
+#include <GraphicsDefs.h>
+
+// Forward declarations
+class PatternHandler;
+
+// ============================================================================
+// Pixel Format
+// ============================================================================
+
+// Note: We keep using our custom PixelFormat wrapper class which now
+// uses Blend2D internally instead of directly typedef'ing BL types
+#include "drawing_modes/PixelFormat.h"
+
+typedef PixelFormat pixfmt;
+
+// ============================================================================
+// Renderer Base (deprecated, but kept for compatibility during migration)
+// ============================================================================
+
+// In Blend2D we don't have a separate "renderer_base" concept.
+// The BLContext handles both rendering and base operations.
+// This is a stub for compatibility during migration.
+struct renderer_base {
+    renderer_base(pixfmt& format)
+        : fPixelFormat(&format)
+    {
+    }
+
+    // Compatibility stubs - these should not be used in new code
+    unsigned width() const { return fPixelFormat->width(); }
+    unsigned height() const { return fPixelFormat->height(); }
+
+    pixfmt* fPixelFormat;
+};
+
+// ============================================================================
+// Scanline Types (deprecated - Blend2D doesn't use scanlines)
+// ============================================================================
+
+// These are kept as empty stubs for compatibility during migration.
+// Blend2D handles rasterization internally via BLContext.
+// DO NOT USE THESE IN NEW CODE!
+
+struct scanline_unpacked_type {
+    // Empty stub - Blend2D doesn't expose scanlines
+};
+
+struct scanline_packed_type {
+    // Empty stub - Blend2D doesn't expose scanlines
+};
+
+struct scanline_packed_subpix_type {
+    // Empty stub - not needed with Blend2D
+};
+
+struct scanline_unpacked_subpix_type {
+    // Empty stub - not needed with Blend2D
+};
+
+struct scanline_unpacked_masked_type {
+    // Empty stub - masking handled differently in Blend2D
+};
+
+// ============================================================================
+// Rasterizer Types (deprecated - Blend2D uses BLContext)
+// ============================================================================
+
+// These are kept as empty stubs for compatibility during migration.
+// In Blend2D, all rasterization is done through BLContext methods.
+// DO NOT USE THESE IN NEW CODE!
+
+struct rasterizer_type {
+    void reset() {}
+    void add_path(const BLPath&) {}
+    void clip_box(int, int, int, int) {}
+    void filling_rule(int) {}
+    void gamma(float) {}
+};
+
+struct rasterizer_subpix_type {
+    void reset() {}
+    void add_path(const BLPath&) {}
+    void clip_box(int, int, int, int) {}
+    void filling_rule(int) {}
+};
+
+// ============================================================================
+// Renderer Types (deprecated - Blend2D uses BLContext)
+// ============================================================================
+
+// These are kept as empty stubs for compatibility during migration.
+// DO NOT USE THESE IN NEW CODE!
+
+struct renderer_type {
+    renderer_type(renderer_base&) {}
+    void color(const BLRgba32&) {}
+};
+
+struct renderer_bin_type {
+    renderer_bin_type(renderer_base&) {}
+    void color(const BLRgba32&) {}
+};
+
+struct renderer_subpix_type {
+    renderer_subpix_type(renderer_base&) {}
+    void color(const BLRgba32&) {}
+};
+
+// ============================================================================
+// Drawing Mode Constants
+// ============================================================================
+
+#define ALIASED_DRAWING 0
+
+// ============================================================================
+// Helper Functions for Migration
+// ============================================================================
+
+// These can be used during migration to convert between old AGG patterns
+// and new Blend2D patterns
+
+inline BLCompOp blend2d_comp_op_for_drawing_mode(drawing_mode mode,
+    source_alpha srcAlpha, alpha_function alphaFunc)
+{
+    switch (mode) {
+        case B_OP_COPY:
+            return BL_COMP_OP_SRC_COPY;
+        case B_OP_OVER:
+            return BL_COMP_OP_SRC_OVER;
+        case B_OP_ADD:
+            return BL_COMP_OP_PLUS;
+        case B_OP_SUBTRACT:
+            return BL_COMP_OP_MINUS;
+        case B_OP_MIN:
+            return BL_COMP_OP_DARKEN;
+        case B_OP_MAX:
+            return BL_COMP_OP_LIGHTEN;
+        case B_OP_ALPHA:
+            // Handle different alpha modes
+            if (alphaFunc == B_ALPHA_OVERLAY)
+                return BL_COMP_OP_SRC_OVER;
+            // Add other alpha modes as needed
+            return BL_COMP_OP_SRC_OVER;
+        default:
+            return BL_COMP_OP_SRC_OVER;
+    }
+}
+
+inline BLStrokeCap blend2d_stroke_cap_for(cap_mode mode)
+{
+    switch (mode) {
+        case B_BUTT_CAP:
+            return BL_STROKE_CAP_BUTT;
+        case B_SQUARE_CAP:
+            return BL_STROKE_CAP_SQUARE;
+        case B_ROUND_CAP:
+            return BL_STROKE_CAP_ROUND;
+        default:
+            return BL_STROKE_CAP_BUTT;
+    }
+}
+
+inline BLStrokeJoin blend2d_stroke_join_for(join_mode mode)
+{
+    switch (mode) {
+        case B_MITER_JOIN:
+            return BL_STROKE_JOIN_MITER_CLIP;
+        case B_ROUND_JOIN:
+            return BL_STROKE_JOIN_ROUND;
+        case B_BEVEL_JOIN:
+        case B_BUTT_JOIN:
+        case B_SQUARE_JOIN:
+            return BL_STROKE_JOIN_BEVEL;
+        default:
+            return BL_STROKE_JOIN_MITER_CLIP;
+    }
+}
+
+// ============================================================================
+// Migration Notes
+// ============================================================================
+
+/*
+ * IMPORTANT MIGRATION NOTES:
+ *
+ * 1. Scanline-based rendering is DEPRECATED
+ *    - Old AGG way: rasterizer.add_path() + render_scanlines()
+ *    - New Blend2D way: context.fillPath() or context.strokePath()
+ *
+ * 2. Separate renderer objects are DEPRECATED
+ *    - Old AGG way: multiple renderer objects (fRenderer, fRendererBin, etc.)
+ *    - New Blend2D way: single BLContext does everything
+ *
+ * 3. Manual rasterization is DEPRECATED
+ *    - Old AGG way: fRasterizer.reset(), add_path(), render
+ *    - New Blend2D way: context handles this internally
+ *
+ * 4. Pattern handling is DIFFERENT
+ *    - Old AGG way: PatternHandler integrated with scanline rendering
+ *    - New Blend2D way: Use BLPattern or custom drawing via PixelFormat
+ *
+ * 5. The stub types (renderer_base, rasterizer_type, etc.) are ONLY for
+ *    compatibility during migration. They should be removed once migration
+ *    is complete!
+ */
+
+#endif // DEFINES_H
+```
+
+### Task 0.2: Update PainterAggInterface.h to NOT use deprecated types
+
+**After updating defines.h, update PainterAggInterface.h:**
+
+```cpp
+struct PainterAggInterface {
+    PainterAggInterface(PatternHandler& patternHandler)
+        :
+        fImage(),
+        fContext(),
+        fPatternHandler(&patternHandler)
+    {
+    }
+
+    // Blend2D core objects
+    BLImage                     fImage;
+    BLContext                   fContext;
+    PatternHandler*             fPatternHandler;
+
+    // Path storage (replaces AGG path_storage)
+    BLPath                      fPath;
+
+    // DO NOT use these deprecated AGG-compatibility types:
+    // - NO scanlines
+    // - NO rasterizers
+    // - NO renderers
+    // Use BLContext methods directly instead!
+};
+```
+
+### Task 0.3: Verification Checklist
+
+After updating defines.h, verify:
+
+- [ ] File compiles without errors
+- [ ] No AGG includes remain in defines.h
+- [ ] All stub types are clearly marked as deprecated
+- [ ] Helper functions are present for migration
+- [ ] PainterAggInterface uses only BLContext
+- [ ] PixelFormat still works (it's included from defines.h)
+
+### Why This is Priority 0
+
+**This MUST be done before other Painter migration work because:**
+
+1. **Painter.h includes defines.h** - it needs the types
+2. **PainterAggInterface.h includes defines.h** - it depends on typedefs
+3. **All drawing code references these types**
+4. Cleaning up defines.h makes the rest of migration clearer
+
+**Migration order:**
+```
+defines.h (Priority 0)
+    ↓
+PainterAggInterface.h (Priority 3)
+    ↓
+Painter.cpp (Priority 2)
+```
+
+---
+
+## 🔴 PRIORITY 1: Blend2dTextRenderer Implementation
+
+**Files:** `src/servers/app/drawing/Painter/Blend2dTextRenderer.cpp`
+
+### Current Status
+```cpp
+void _RenderBitmapGlyph(...) {
+    // TODO: Восстановить BLImage из glyph->data
+}
+
+void _RenderVectorGlyph(...) {
+    // TODO: Восстановить BLPath из данных глифа
+}
+```
+
+### Task 1.1: Implement `_RenderBitmapGlyph`
+
+**Location:** `Blend2dTextRenderer::StringRenderer::_RenderBitmapGlyph`
+
+**What to do:**
+```cpp
+void _RenderBitmapGlyph(const GlyphCache* glyph, double x, double y)
+{
+    // 1. Get BLImage from glyph using existing method
+    BLImage image = glyph->GetImage();
+
+    if (image.empty())
+        return;
+
+    // 2. Calculate position (account for glyph bounds)
+    BLPoint pos(x + glyph->bounds.x0, y + glyph->bounds.y0);
+
+    // 3. Set composition mode and color
+    fRenderer.fContext.setCompOp(BL_COMP_OP_SRC_OVER);
+    fRenderer.fContext.setFillStyle(fRenderer.fColor);
+
+    // 4. Blit the glyph image
+    // For alpha images, we need to use the image as a mask
+    if (glyph->data_type == glyph_data_gray8 ||
+        glyph->data_type == glyph_data_lcd ||
+        glyph->data_type == glyph_data_mono) {
+
+        // Create a mask from the alpha channel
+        fRenderer.fContext.fillMaskI(
+            BLPointI(int(pos.x), int(pos.y)),
+            image,
+            BLRectI(0, 0, image.width(), image.height())
+        );
+    }
+}
+```
+
+**Testing:**
+1. Test with regular text (gray8 glyphs)
+2. Test with LCD subpixel text
+3. Test with monochrome glyphs
+4. Verify color is applied correctly
+
+### Task 1.2: Implement `_RenderVectorGlyph`
+
+**Location:** `Blend2dTextRenderer::StringRenderer::_RenderVectorGlyph`
+
+**What to do:**
+```cpp
+void _RenderVectorGlyph(FontCacheEntry* entry, double x, double y)
+{
+    // 1. The entry parameter is not used - we need the glyph instead
+    // This function signature might need to be changed to receive
+    // const GlyphCache* glyph instead
+
+    // If we have access to the glyph:
+    BLPath path = glyph->GetPath();
+
+    if (path.empty())
+        return;
+
+    // 2. Apply translation to position the glyph
+    BLMatrix2D matrix = BLMatrix2D::makeTranslation(x, y);
+
+    // 3. If there's a transform, combine it
+    if (!fTransform.IsIdentity()) {
+        matrix.postTransform(fTransform.Matrix());
+    }
+
+    // 4. Render the path
+    fRenderer.fContext.save();
+    fRenderer.fContext.setMatrix(matrix);
+    fRenderer.fContext.setFillStyle(fRenderer.fColor);
+    fRenderer.fContext.fillPath(path);
+    fRenderer.fContext.restore();
+}
+```
+
+**Note:** The function signature in StringRenderer::ConsumeGlyph passes `FontCacheEntry* entry` but we need the actual glyph. You may need to:
+
+1. Change the call in ConsumeGlyph to pass the glyph
+2. OR get the glyph from the cache inside _RenderVectorGlyph
+
+**Testing:**
+1. Test with rotated text
+2. Test with scaled text
+3. Test with large font sizes (vectors)
+4. Verify transformations are applied correctly
+
+### Task 1.3: Fix Function Signatures
+
+**Problem:** `ConsumeGlyph` calls:
+```cpp
+_RenderVectorGlyph(entry, transformedX, transformedY);
+```
+
+But `_RenderVectorGlyph` needs the glyph, not the entry.
+
+**Solution:**
+```cpp
+// In ConsumeGlyph, change:
+case glyph_data_outline:
+    // Change from:
+    _RenderVectorGlyph(entry, transformedX, transformedY);
+
+    // To:
+    _RenderVectorGlyph(glyph, transformedX, transformedY);
+
+// And update the function signature:
+void _RenderVectorGlyph(const GlyphCache* glyph, double x, double y)
+```
+
+---
+
+## 🔴 PRIORITY 2: Painter Migration to Blend2D
+
+**Files:** `src/servers/app/drawing/Painter/Painter.cpp`, `Painter.h`
+
+### Current Status
+Still using AGG throughout:
+```cpp
+#include <agg_bezier_arc.h>
+#include <agg_bounding_rect.h>
+#include <agg_conv_clip_polygon.h>
+// ... много других AGG includes
+```
+
+### Task 2.1: Replace AGG Includes
+
+**What to remove:**
+```cpp
+// DELETE these includes:
+#include <agg_bezier_arc.h>
+#include <agg_bounding_rect.h>
+#include <agg_conv_clip_polygon.h>
+#include <agg_conv_curve.h>
+#include <agg_conv_stroke.h>
+#include <agg_ellipse.h>
+#include <agg_image_accessors.h>
+#include <agg_path_storage.h>
+#include <agg_pixfmt_rgba.h>
+#include <agg_rounded_rect.h>
+#include <agg_span_allocator.h>
+#include <agg_span_image_filter_rgba.h>
+#include <agg_span_interpolator_linear.h>
+#include <agg_rendering_buffer.h>
+#include <agg_trans_affine.h>
+```
+
+**What to add:**
+```cpp
+#include <blend2d.h>
+#include "Blend2dTextRenderer.h"
+```
+
+### Task 2.2: Replace Member Variables
+
+**In Painter class, change:**
+
+```cpp
+// OLD (DELETE):
+mutable AGGTextRenderer fTextRenderer;
+mutable PainterAggInterface fInternal;
+
+// NEW (ADD):
+mutable Blend2dTextRenderer fTextRenderer;
+BLImage fImage;
+BLContext fContext;
+```
+
+### Task 2.3: Replace Path Operations
+
+**Pattern to follow:**
+
+```cpp
+// OLD AGG way:
+fPath.remove_all();
+fPath.move_to(x, y);
+fPath.line_to(x2, y2);
+fCurve.approximation_scale(2.0);
+
+// NEW Blend2D way:
+BLPath path;
+path.moveTo(x, y);
+path.lineTo(x2, y2);
+// No approximation scale needed - Blend2D handles this
+```
+
+**Example function to migrate - `StrokeLine`:**
+
+```cpp
+// OLD:
+void Painter::StrokeLine(BPoint a, BPoint b)
+{
+    CHECK_CLIPPING_NO_RETURN
+
+    _Align(&a, false);
+    _Align(&b, false);
+
+    fPath.remove_all();
+    fPath.move_to(a.x, a.y);
+    fPath.line_to(b.x, b.y);
+
+    return _StrokePath(fPath);
+}
+
+// NEW:
+void Painter::StrokeLine(BPoint a, BPoint b)
+{
+    CHECK_CLIPPING_NO_RETURN
+
+    _Align(&a, false);
+    _Align(&b, false);
+
+    BLPath path;
+    path.moveTo(a.x, a.y);
+    path.lineTo(b.x, b.y);
+
+    return _StrokePath(path);
+}
+```
+
+### Task 2.4: Replace Rasterization
+
+**OLD AGG rasterization:**
+```cpp
+template<class VertexSource>
+BRect Painter::_RasterizePath(VertexSource& path) const
+{
+    fRasterizer.reset();
+    fRasterizer.add_path(path);
+    agg::render_scanlines(fRasterizer, fPackedScanline, fRenderer);
+    return _Clipped(_BoundingBox(path));
+}
+```
+
+**NEW Blend2D approach:**
+```cpp
+BRect Painter::_StrokePath(const BLPath& path) const
+{
+    if (!fValidClipping)
+        return BRect(0, 0, -1, -1);
+
+    fContext.save();
+
+    // Setup stroke parameters
+    fContext.setStrokeWidth(fPenSize);
+    fContext.setStrokeCap(blend2d_stroke_cap_for(fLineCapMode));
+    fContext.setStrokeJoin(blend2d_stroke_join_for(fLineJoinMode));
+    fContext.setStrokeMiterLimit(fMiterLimit);
+
+    // Setup style from pattern
+    fContext.setStrokeStyle(_GetStrokeColor());
+
+    // Apply transform if needed
+    if (!fIdentityTransform)
+        fContext.setMatrix(fTransform.Matrix());
+
+    // Stroke the path
+    fContext.strokePath(path);
+
+    fContext.restore();
+
+    // Get bounding box
+    BLBox bounds;
+    path.getBoundingBox(&bounds);
+    return _Clipped(BRect(bounds.x0, bounds.y0, bounds.x1, bounds.y1));
+}
+```
+
+**Note:** Helper functions like `blend2d_stroke_cap_for` are already defined in updated defines.h!
+
+### Task 2.5: Gradient Support
+
+**OLD AGG gradient:**
+```cpp
+typedef agg::span_gradient<agg::rgba8, interpolator_type,
+    GradientFunction, color_array_type> span_gradient_type;
+```
+
+**NEW Blend2D approach:**
+
+```cpp
+BRect Painter::_FillPath(const BLPath& path, const BGradient& gradient)
+{
+    if (!fValidClipping)
+        return BRect(0, 0, -1, -1);
+
+    BLGradient blGradient;
+
+    switch (gradient.GetType()) {
+        case BGradient::TYPE_LINEAR: {
+            const BGradientLinear& linear =
+                static_cast<const BGradientLinear&>(gradient);
+
+            BLLinearGradientValues values;
+            values.x0 = linear.Start().x;
+            values.y0 = linear.Start().y;
+            values.x1 = linear.End().x;
+            values.y1 = linear.End().y;
+
+            blGradient.setType(BL_GRADIENT_TYPE_LINEAR);
+            blGradient.setValues(values);
+            break;
+        }
+
+        case BGradient::TYPE_RADIAL: {
+            const BGradientRadial& radial =
+                static_cast<const BGradientRadial&>(gradient);
+
+            BLRadialGradientValues values;
+            values.x0 = radial.Center().x;
+            values.y0 = radial.Center().y;
+            values.r0 = radial.Radius();
+
+            blGradient.setType(BL_GRADIENT_TYPE_RADIAL);
+            blGradient.setValues(values);
+            break;
+        }
+
+        // TODO: Add other gradient types
+    }
+
+    // Add color stops
+    for (int i = 0; i < gradient.CountColorStops(); i++) {
+        BGradient::ColorStop* stop = gradient.ColorStopAtFast(i);
+        blGradient.addStop(
+            stop->offset / 255.0,
+            BLRgba32(stop->color.red, stop->color.green,
+                    stop->color.blue, stop->color.alpha)
+        );
+    }
+
+    fContext.save();
+    fContext.setFillStyle(blGradient);
+    fContext.fillPath(path);
+    fContext.restore();
+
+    BLBox bounds;
+    path.getBoundingBox(&bounds);
+    return _Clipped(BRect(bounds.x0, bounds.y0, bounds.x1, bounds.y1));
+}
+```
+
+### Task 2.6: Functions to Migrate (in order)
+
+1. **Basic shapes (no gradients):**
+   - [ ] `StrokeLine`
+   - [ ] `StrokeRect`
+   - [ ] `FillRect` (solid color)
+   - [ ] `StrokeEllipse` / `FillEllipse`
+   - [ ] `StrokeArc` / `FillArc`
+
+2. **Complex shapes:**
+   - [ ] `StrokeTriangle` / `FillTriangle`
+   - [ ] `DrawPolygon` / `FillPolygon`
+   - [ ] `DrawBezier` / `FillBezier`
+   - [ ] `DrawShape` / `FillShape`
+
+3. **Gradient versions:**
+   - [ ] `FillRect` (gradient)
+   - [ ] `FillTriangle` (gradient)
+   - [ ] `FillPolygon` (gradient)
+   - [ ] `FillEllipse` (gradient)
+   - [ ] All other Fill* functions
+
+4. **Text rendering:**
+   - [ ] `DrawString` - should already work with Blend2dTextRenderer
+   - [ ] `BoundingBox` - should already work
+
+5. **Helper functions:**
+   - [ ] `_StrokePath` template
+   - [ ] `_FillPath` template
+   - [ ] `_RasterizePath` template
+   - [ ] All `_MakeGradient` functions
+
+---
+
+## 🟡 PRIORITY 3: Rename PainterAggInterface
+
+**Files:**
+- `src/servers/app/drawing/Painter/PainterAggInterface.h`
+- All files that include it
+
+### Task 3.1: Create New File
+
+**Create:** `Blend2DPainterInterface.h`
+
+```cpp
+#ifndef BLEND2D_PAINTER_INTERFACE_H
+#define BLEND2D_PAINTER_INTERFACE_H
+
+#include <blend2d.h>
+#include "PatternHandler.h"
+
+struct Blend2DPainterInterface {
+    Blend2DPainterInterface(PatternHandler& patternHandler)
+        : fImage(),
+          fContext(),
+          fPatternHandler(&patternHandler)
+    {
+    }
+
+    BLImage                 fImage;
+    BLContext               fContext;
+    PatternHandler*         fPatternHandler;
+
+    // Initialize with target buffer
+    bool Init(RenderingBuffer* buffer) {
+        if (buffer == NULL || buffer->ColorSpace() != B_RGBA32)
+            return false;
+
+        BLResult result = fImage.createFromData(
+            buffer->Width(),
+            buffer->Height(),
+            BL_FORMAT_PRGB32,
+            buffer->Bits(),
+            buffer->BytesPerRow(),
+            BL_DATA_ACCESS_RW
+        );
+
+        if (result != BL_SUCCESS)
+            return false;
+
+        result = fContext.begin(fImage);
+        return result == BL_SUCCESS;
+    }
+
+    void Reset() {
+        fContext.end();
+        fImage.reset();
+    }
+};
+
+#endif // BLEND2D_PAINTER_INTERFACE_H
+```
+
+### Task 3.2: Update Painter
+
+**In Painter.h:**
+```cpp
+// OLD:
+#include "PainterAggInterface.h"
+mutable PainterAggInterface fInternal;
+
+// NEW:
+#include "Blend2DPainterInterface.h"
+mutable Blend2DPainterInterface fInternal;
+```
+
+### Task 3.3: Update Painter.cpp
+
+**In `AttachToBuffer`:**
+```cpp
+void Painter::AttachToBuffer(RenderingBuffer* buffer)
+{
+    if (buffer == NULL)
+        return;
+
+    if (!fInternal.Init(buffer)) {
+        fAttached = false;
+        fValidClipping = false;
+        return;
+    }
+
+    fAttached = true;
+    fValidClipping = fClippingRegion != NULL
+        && fClippingRegion->Frame().IsValid();
+
+    _SetRendererColor(fPatternHandler.HighColor());
+}
+```
+
+**In `DetachFromBuffer`:**
+```cpp
+void Painter::DetachFromBuffer()
+{
+    fInternal.Reset();
+    fAttached = false;
+    fValidClipping = false;
+}
+```
+
+### Task 3.4: Delete Old File
+
+After migration is complete:
+```bash
+rm src/servers/app/drawing/Painter/PainterAggInterface.h
+```
+
+---
+
+## 🟡 PRIORITY 4: Complete Drawing Modes
+
+**Files:** All `Blend2DDrawingMode*.h` files
+
+### Task 4.1: Implement Missing `blend_color_hspan`
+
+**Template to follow:**
+
+```cpp
+static void
+blend_color_hspan_MODENAME(int x, int y, unsigned len,
+                           const PixelFormat::color_type* colors,
+                           const uint8* covers, uint8 cover,
+                           BLImage* image, BLContext* ctx,
+                           const PatternHandler* pattern)
+{
+    ctx->setCompOp(BL_COMP_OP_XXX); // Set appropriate mode
+
+    for (unsigned i = 0; i < len; i++, x++) {
+        uint8 alpha = covers ? covers[i] : cover;
+        if (alpha == 0)
+            continue;
+
+        const color_type& c = colors[i];
+
+        if (alpha == 255) {
+            ctx->fillRect(BLRect(x, y, 1, 1),
+                         BLRgba32(c.r, c.g, c.b, c.a));
+        } else {
+            double prevAlpha = ctx->globalAlpha();
+            ctx->setGlobalAlpha((alpha / 255.0) * (c.a / 255.0));
+            ctx->fillRect(BLRect(x, y, 1, 1),
+                         BLRgba32(c.r, c.g, c.b, 255));
+            ctx->setGlobalAlpha(prevAlpha);
+        }
+    }
+}
+```
+
+**Add to these files:**
+- [ ] Blend2DDrawingModeNative.h (all 6 modes)
+- [ ] Blend2DDrawingModeCustom.h (all 4 modes)
+
+### Task 4.2: Implement Missing `blend_color_vspan`
+
+**Same pattern as hspan, but iterate over y:**
+
+```cpp
+static void
+blend_color_vspan_MODENAME(int x, int y, unsigned len,
+                           const PixelFormat::color_type* colors,
+                           const uint8* covers, uint8 cover,
+                           BLImage* image, BLContext* ctx,
+                           const PatternHandler* pattern)
+{
+    // Same as hspan but increment y instead of x
+}
+```
+
+### Task 4.3: Implement Missing `blend_vline`
+
+**Currently missing in several modes:**
+
+```cpp
+static void
+blend_vline_MODENAME(int x, int y, unsigned len,
+                     const PixelFormat::color_type& c,
+                     uint8 cover, BLImage* image, BLContext* ctx,
+                     const PatternHandler* pattern)
+{
+    if (pattern->IsSolid()) {
+        rgb_color color = pattern->HighColor();
+        blend2d_draw_vline(x, y, len, color, cover, ctx, BL_COMP_OP_XXX);
+    } else {
+        // Pattern - draw pixel by pixel
+        for (unsigned i = 0; i < len; i++, y++) {
+            rgb_color color = pattern->ColorAt(x, y);
+            blend2d_draw_pixel(x, y, color, cover, ctx, BL_COMP_OP_XXX);
+        }
+    }
+}
+```
+
+### Task 4.4: Update PixelFormat.cpp
+
+**Add all missing function pointers:**
+
+```cpp
+void PixelFormat::SetDrawingMode(drawing_mode mode, ...)
+{
+    switch (mode) {
+        case B_OP_COPY:
+            fBlendPixel = blend_pixel_copy_native;
+            fBlendHLine = blend_hline_copy_native;
+            fBlendVLine = blend_vline_copy_native;  // ADD THIS
+            fBlendSolidHSpan = blend_solid_hspan_copy_native;
+            fBlendSolidHSpanSubpix = blend_solid_hspan_copy_subpix;
+            fBlendSolidVSpan = blend_solid_vspan_copy_native;
+            fBlendColorHSpan = blend_color_hspan_copy_native;  // ADD THIS
+            fBlendColorVSpan = blend_color_vspan_copy_native;  // ADD THIS
+            break;
+
+        // ... repeat for all modes
+    }
+}
+```
+
+---
+
+## 🟢 PRIORITY 5: Testing & Cleanup
+
+### Task 5.1: Unit Tests
+
+**Create test file:** `src/tests/servers/app/Painter_test.cpp`
+
+```cpp
+// Test basic shapes
+void TestStrokeLine();
+void TestFillRect();
+void TestStrokeEllipse();
+
+// Test gradients
+void TestLinearGradient();
+void TestRadialGradient();
+
+// Test text
+void TestTextRendering();
+void TestSubpixelText();
+
+// Test drawing modes
+void TestDrawingModes();
+void TestAlphablending();
+```
+
+### Task 5.2: Memory Leak Checks
+
+**Use valgrind:**
+```bash
+valgrind --leak-check=full ./app_server
+```
+
+**Check for:**
+- [ ] BLImage/BLContext cleanup
+- [ ] Font cache cleanup
+- [ ] Pattern cleanup
+
+### Task 5.3: Performance Testing
+
+**Compare AGG vs Blend2D:**
+```cpp
+// Benchmark code
+bigtime_t start = system_time();
+for (int i = 0; i < 10000; i++) {
+    painter.FillRect(rect);
+}
+bigtime_t end = system_time();
+printf("Time: %lld µs\n", end - start);
+```
+
+### Task 5.4: Code Cleanup
+
+**Remove all AGG remnants:**
+```bash
+# Find remaining AGG references
+grep -r "agg::" src/servers/app/
+grep -r "AGG" src/servers/app/
+grep -r "#include <agg_" src/servers/app/
+
+# Find TODO comments
+grep -r "TODO.*Blend2D" src/servers/app/
+grep -r "TODO.*AGG" src/servers/app/
+```
+
+---
+
+## 📝 Migration Checklist
+
+### Phase 0: Infrastructure (Week 0) ⚠️ CRITICAL
+- [ ] Task 0.1: Rewrite defines.h content (Blend2D types)
+- [ ] Task 0.2: Update PainterAggInterface to not use deprecated types
+- [ ] Task 0.3: Verify defines.h works correctly
+- [ ] Test compilation after defines.h update
+
+### Phase 1: Text Rendering (Week 1)
+- [ ] Task 1.1: Implement `_RenderBitmapGlyph`
+- [ ] Task 1.2: Implement `_RenderVectorGlyph`
+- [ ] Task 1.3: Fix function signatures
+- [ ] Test text rendering with various fonts
+- [ ] Test subpixel rendering
+
+### Phase 2: Painter Core (Weeks 2-3)
+- [ ] Task 2.1: Replace AGG includes
+- [ ] Task 2.2: Replace member variables
+- [ ] Task 2.3: Replace path operations (5 functions)
+- [ ] Task 2.4: Replace rasterization
+- [ ] Task 2.5: Implement gradient support
+- [ ] Task 2.6: Migrate all drawing functions (20+ functions)
+
+### Phase 3: Infrastructure (Week 4)
+- [ ] Task 3.1: Create Blend2DPainterInterface.h
+- [ ] Task 3.2: Update Painter.h
+- [ ] Task 3.3: Update Painter.cpp
+- [ ] Task 3.4: Delete PainterAggInterface.h
+
+### Phase 4: Drawing Modes (Week 5)
+- [ ] Task 4.1: Implement all `blend_color_hspan` (10 functions)
+- [ ] Task 4.2: Implement all `blend_color_vspan` (10 functions)
+- [ ] Task 4.3: Implement missing `blend_vline` (3 functions)
+- [ ] Task 4.4: Update PixelFormat.cpp
+
+### Phase 5: Testing (Week 6)
+- [ ] Task 5.1: Create unit tests
+- [ ] Task 5.2: Memory leak checks
+- [ ] Task 5.3: Performance testing
+- [ ] Task 5.4: Code cleanup
+
+---
+
+## 🚀 Quick Start Guide
+
+**To begin migration:**
+
+0. **START HERE - defines.h (Priority 0):**
+   ```bash
+   claude-code "Rewrite defines.h to use Blend2D types instead of AGG following MIGRATION_TODO.md Task 0.1"
+   ```
+
+1. **Then Priority 1 (Text Rendering):**
+   ```bash
+   claude-code "Implement _RenderBitmapGlyph in Blend2dTextRenderer.cpp following MIGRATION_TODO.md Task 1.1"
+   ```
+
+2. **Then move to Priority 2 (Painter):**
+   ```bash
+   claude-code "Replace AGG includes in Painter.cpp with Blend2D following MIGRATION_TODO.md Task 2.1"
+   ```
+
+3. **Continue through priorities sequentially**
+
+---
+
+## 📚 Reference Documentation
+
+### Blend2D API
+- [BLContext Reference](https://blend2d.com/doc/group__blend2d__api__context.html)
+- [BLPath Reference](https://blend2d.com/doc/group__blend2d__api__path.html)
+- [BLImage Reference](https://blend2d.com/doc/group__blend2d__api__image.html)
+- [BLGradient Reference](https://blend2d.com/doc/group__blend2d__api__gradient.html)
+
+### Haiku API
+- [BView Drawing](https://www.haiku-os.org/docs/api/classBView.html)
+- [Font System](https://www.haiku-os.org/docs/api/classBFont.html)
+- [Pattern Documentation](https://www.haiku-os.org/docs/api/GraphicsDefs_8h.html)
+
+---
+
+## ⚠️ Common Pitfalls
+
+1. **Coordinate Systems:**
+   - AGG uses top-left origin, Blend2D too
+   - But AGG's scanline goes bottom-up in some cases
+   - Always test with simple rectangles first
+
+2. **Memory Management:**
+   - BLImage/BLContext need proper begin()/end()
+   - Don't forget to call fContext.end() in DetachFromBuffer
+
+3. **Color Formats:**
+   - AGG uses rgba8
+   - Blend2D uses BLRgba32 (same memory layout)
+   - But blending math may differ slightly
+
+4. **Pattern Handling:**
+   - Blend2D has native pattern support
+   - But Haiku's patterns are custom
+   - Keep using PatternHandler for compatibility
+
+5. **Text Rendering:**
+   - Glyph cache must be thread-safe
+   - BLPath serialization must preserve all data
+   - LCD subpixel needs special handling
+
+6. **defines.h stub types:**
+   - The deprecated stub types (scanline, rasterizer, renderer) are ONLY for compatibility
+   - DO NOT use them in new code
+   - They should be removed once migration is complete
+
+---
+
+## 📞 Support
+
+If you encounter issues:
+1. Check this TODO file
+2. Review Blend2D documentation
+3. Check existing Haiku code patterns
+4. Ask for clarification
+
+Good luck! 🚀
