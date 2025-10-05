@@ -1,0 +1,406 @@
+# Blend2D Drawing Modes Migration Guide
+
+This document provides complete instructions for migrating Haiku's drawing modes from AGG to Blend2D.
+
+## Overview
+
+Haiku has **11 drawing modes** defined in `GraphicsDefs.h`:
+- B_OP_COPY, B_OP_OVER, B_OP_ERASE, B_OP_INVERT, B_OP_SELECT
+- B_OP_ALPHA, B_OP_MIN, B_OP_MAX, B_OP_ADD, B_OP_SUBTRACT, B_OP_BLEND
+
+These map to three implementation categories:
+1. **Native Blend2D operators** (7 modes) - direct mapping to BLCompOp
+2. **Custom pixel manipulation** (4 modes) - require direct buffer access
+3. **Subpixel rendering** - all SUBPIX variants use Simple Grayscale Averaging
+
+## Drawing Modes Classification
+
+### 1. Native Blend2D Operations (7 modes)
+
+These map directly to Blend2D's built-in composition operators:
+
+| Haiku Mode | Blend2D Operator | BLCompOp Value | Notes |
+|------------|------------------|----------------|-------|
+| B_OP_COPY | BL_COMP_OP_SRC_COPY | 1 | Direct copy |
+| B_OP_OVER | BL_COMP_OP_SRC_OVER | 0 | Porter-Duff source over (default) |
+| B_OP_ADD | BL_COMP_OP_PLUS | 12 | Additive blending |
+| B_OP_SUBTRACT | BL_COMP_OP_MINUS | 13 | Subtractive blending |
+| B_OP_MIN | BL_COMP_OP_DARKEN | 18 | Choose darker pixel |
+| B_OP_MAX | BL_COMP_OP_LIGHTEN | 19 | Choose lighter pixel |
+| B_OP_ALPHA | Various Porter-Duff | 2-11 | See Alpha Modes section |
+
+**Implementation:** Set `ctx.setCompOp(BLCompOp)` before rendering operations.
+
+### 2. Custom Pixel Manipulation (4 modes)
+
+These require direct pixel buffer access and custom processing:
+
+| Haiku Mode | Operation | Implementation Approach |
+|------------|-----------|------------------------|
+| B_OP_BLEND | `(src + dst) / 2` | Read both buffers, average RGB channels |
+| B_OP_SELECT | Conditional color swap | Pattern evaluation + conditional write |
+| B_OP_INVERT | `255 - dst` | Read destination, invert RGB channels |
+| B_OP_ERASE | Pattern-based conditional | Use BL_COMP_OP_DST_OUT with alpha mask |
+
+**Performance:** 20-60 million pixels/sec single-threaded, 2-10ms for 1920×1080.
+
+### 3. Alpha Modes (Porter-Duff Operators)
+
+B_OP_ALPHA with different source_alpha and alpha_function modes:
+
+| AGG Mode | Blend2D Operator | Notes |
+|----------|------------------|-------|
+| AlphaCC (Constant Composite) | BL_COMP_OP_SRC_OVER + globalAlpha | Use pattern HighColor.alpha |
+| AlphaCO (Constant Overlay) | BL_COMP_OP_SRC_OVER + globalAlpha | BLEND16 variant |
+| AlphaPC (Pixel Composite) | BL_COMP_OP_SRC_OVER | Per-pixel alpha from pattern |
+| AlphaPO (Pixel Overlay) | BL_COMP_OP_SRC_OVER | BLEND16 variant |
+
+**Additional Porter-Duff modes** (from AggCompOpAdapter):
+- SOURCE_IN → BL_COMP_OP_SRC_IN (2)
+- SOURCE_OUT → BL_COMP_OP_SRC_OUT (3)
+- SOURCE_ATOP → BL_COMP_OP_SRC_ATOP (4)
+- DST_OVER → BL_COMP_OP_DST_OVER (5)
+- DST_IN → BL_COMP_OP_DST_IN (7)
+- DST_OUT → BL_COMP_OP_DST_OUT (8)
+- DST_ATOP → BL_COMP_OP_DST_ATOP (9)
+- XOR → BL_COMP_OP_XOR (10)
+- CLEAR → BL_COMP_OP_CLEAR (11)
+- DIFFERENCE → BL_COMP_OP_DIFFERENCE (27)
+
+### 4. Subpixel Rendering (SUBPIX variants)
+
+**All SUBPIX modes use Simple Grayscale Averaging:**
+
+Instead of separate R/G/B subpixel alpha values, compute:
+```cpp
+uint8 alpha_avg = (covers[0] + covers[1] + covers[2]) / 3;
+```
+
+Then use the standard (non-SUBPIX) drawing mode with this averaged alpha.
+
+**Rationale:** Blend2D doesn't support per-channel subpixel rendering. This simple averaging provides acceptable results for LCD subpixel anti-aliasing while keeping implementation clean.
+
+## File Structure
+
+Consolidate 40+ AGG files into 7 Blend2D files:
+
+```
+drawing_modes/
+├── Blend2DDrawingMode.h              # Base macros and utilities
+├── Blend2DPixelFormat.h              # Pixel format abstraction (header)
+├── Blend2DPixelFormat.cpp            # Pixel format implementation
+├── Blend2DCompOpAdapter.h            # Adapter for Porter-Duff operators (NEW!)
+├── Blend2DDrawingModeNative.h        # Simple native operations (Copy, Over, Add, etc.)
+├── Blend2DDrawingModeCustom.h        # Custom pixel operations (4 modes)
+└── Blend2DDrawingModeSUBPIX.h        # Subpixel rendering (grayscale averaging)
+```
+
+**Delete after migration complete:**
+- All `DrawingMode*.h` files (40+ files)
+- `AggCompOpAdapter.h` (AGG version)
+- `PixelFormat.h/cpp` (AGG version)
+
+## Implementation Details
+
+### Native Operations (Blend2DDrawingModeNative.h)
+
+```cpp
+// Example: B_OP_ADD implementation
+void blend_pixel_add_native(int x, int y, const color_type& c, uint8 cover,
+                           BLContext* ctx, const PatternHandler* pattern)
+{
+    ctx->setCompOp(BL_COMP_OP_PLUS);
+    rgb_color color = pattern->ColorAt(x, y);
+    
+    if (cover == 255) {
+        // Full coverage - direct draw
+        ctx->fillRect(BLRect(x, y, 1, 1), BLRgba32(color.red, color.green, color.blue, color.alpha));
+    } else {
+        // Partial coverage - use globalAlpha
+        double prevAlpha = ctx->globalAlpha();
+        ctx->setGlobalAlpha(cover / 255.0);
+        ctx->fillRect(BLRect(x, y, 1, 1), BLRgba32(color.red, color.green, color.blue, color.alpha));
+        ctx->setGlobalAlpha(prevAlpha);
+    }
+}
+```
+
+**Key principle:** Use Blend2D's composition operators for all standard blending.
+
+### Custom Operations (Blend2DDrawingModeCustom.h)
+
+```cpp
+// Example: B_OP_BLEND (averaging) implementation
+void blend_pixel_blend_custom(int x, int y, const color_type& c, uint8 cover,
+                              BLImage* image, const PatternHandler* pattern)
+{
+    BLImageData imageData;
+    image->makeMutable(&imageData);
+    
+    uint32_t* pixels = (uint32_t*)imageData.pixelData;
+    int stride = imageData.stride / 4;
+    
+    rgb_color color = pattern->ColorAt(x, y);
+    uint32_t* p = &pixels[y * stride + x];
+    
+    // Extract destination pixel
+    uint8_t dst_r = (*p >> 16) & 0xFF;
+    uint8_t dst_g = (*p >> 8) & 0xFF;
+    uint8_t dst_b = *p & 0xFF;
+    
+    // Average with source
+    uint8_t avg_r = (color.red + dst_r) / 2;
+    uint8_t avg_g = (color.green + dst_g) / 2;
+    uint8_t avg_b = (color.blue + dst_b) / 2;
+    
+    if (cover == 255) {
+        *p = 0xFF000000 | (avg_r << 16) | (avg_g << 8) | avg_b;
+    } else {
+        // Blend with coverage
+        uint8_t final_r = (avg_r * cover + dst_r * (255 - cover)) / 255;
+        uint8_t final_g = (avg_g * cover + dst_g * (255 - cover)) / 255;
+        uint8_t final_b = (avg_b * cover + dst_b * (255 - cover)) / 255;
+        *p = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
+    }
+}
+
+// Example: B_OP_INVERT implementation
+void blend_pixel_invert_custom(int x, int y, const color_type& c, uint8 cover,
+                               BLImage* image, const PatternHandler* pattern)
+{
+    if (!pattern->IsHighColor(x, y))
+        return;
+        
+    BLImageData imageData;
+    image->makeMutable(&imageData);
+    
+    uint32_t* pixels = (uint32_t*)imageData.pixelData;
+    int stride = imageData.stride / 4;
+    uint32_t* p = &pixels[y * stride + x];
+    
+    uint8_t r = 255 - ((*p >> 16) & 0xFF);
+    uint8_t g = 255 - ((*p >> 8) & 0xFF);
+    uint8_t b = 255 - (*p & 0xFF);
+    
+    if (cover == 255) {
+        *p = 0xFF000000 | (r << 16) | (g << 8) | b;
+    } else {
+        uint8_t dst_r = (*p >> 16) & 0xFF;
+        uint8_t dst_g = (*p >> 8) & 0xFF;
+        uint8_t dst_b = *p & 0xFF;
+        
+        uint8_t final_r = (r * cover + dst_r * (255 - cover)) / 255;
+        uint8_t final_g = (g * cover + dst_g * (255 - cover)) / 255;
+        uint8_t final_b = (b * cover + dst_b * (255 - cover)) / 255;
+        *p = 0xFF000000 | (final_r << 16) | (final_g << 8) | final_b;
+    }
+}
+
+// Example: B_OP_ERASE implementation (using Blend2D native approach)
+void blend_pixel_erase_native(int x, int y, const color_type& c, uint8 cover,
+                              BLContext* ctx, const PatternHandler* pattern)
+{
+    if (!pattern->IsHighColor(x, y))
+        return;
+        
+    // Use DST_OUT composition: keeps destination where source is transparent
+    ctx->setCompOp(BL_COMP_OP_DST_OUT);
+    
+    rgb_color color = pattern->LowColor();
+    if (cover == 255) {
+        ctx->fillRect(BLRect(x, y, 1, 1), BLRgba32(color.red, color.green, color.blue, 255));
+    } else {
+        double prevAlpha = ctx->globalAlpha();
+        ctx->setGlobalAlpha(cover / 255.0);
+        ctx->fillRect(BLRect(x, y, 1, 1), BLRgba32(color.red, color.green, color.blue, 255));
+        ctx->setGlobalAlpha(prevAlpha);
+    }
+}
+```
+
+**Key principle:** Access pixel buffers directly only when Blend2D operators can't achieve the effect.
+
+### Subpixel Operations (Blend2DDrawingModeSUBPIX.h)
+
+```cpp
+// Example: Any SUBPIX mode implementation
+void blend_solid_hspan_subpix(int x, int y, unsigned len,
+                              const color_type& c, const uint8* covers,
+                              BLContext* ctx, const PatternHandler* pattern)
+{
+    // Convert 3 subpixel covers (R, G, B) to single grayscale alpha
+    for (unsigned i = 0; i < len; i++, x++) {
+        uint8_t alpha_avg = (covers[0] + covers[1] + covers[2]) / 3;
+        
+        // Use standard drawing mode with averaged alpha
+        rgb_color color = pattern->ColorAt(x, y);
+        
+        double prevAlpha = ctx->globalAlpha();
+        ctx->setGlobalAlpha(alpha_avg / 255.0);
+        ctx->fillRect(BLRect(x, y, 1, 1), BLRgba32(color.red, color.green, color.blue, color.alpha));
+        ctx->setGlobalAlpha(prevAlpha);
+        
+        covers += 3;
+    }
+}
+```
+
+**Key principle:** All SUBPIX variants use the same grayscale averaging approach.
+
+## Blend2D Pixel Access API
+
+### Reading Pixel Data (Immutable)
+
+```cpp
+BLImageData data;
+image.getData(&data);
+
+const uint32_t* pixels = (const uint32_t*)data.pixelData;
+int stride = data.stride / 4;  // Convert bytes to pixels
+
+// Access pixel at (x, y)
+uint32_t pixel = pixels[y * stride + x];
+```
+
+### Writing Pixel Data (Mutable)
+
+```cpp
+BLImageData data;
+image.makeMutable(&data);  // Triggers copy-on-write if shared
+
+uint32_t* pixels = (uint32_t*)data.pixelData;
+int stride = data.stride / 4;
+
+// Modify pixel at (x, y)
+pixels[y * stride + x] = 0xFF000000 | (r << 16) | (g << 8) | b;
+```
+
+### CRITICAL: BLContext Flush Before Pixel Access
+
+```cpp
+ctx.end();  // End rendering context
+
+// Now safe to access pixels
+BLImageData data;
+image.makeMutable(&data);
+// ... manipulate pixels ...
+
+// Resume rendering if needed
+ctx.begin(image);
+```
+
+**Warning:** Never access pixel data while a BLContext is active. Always call `ctx.end()` first.
+
+## Migration Strategy
+
+### Phase 1: Create Blend2D Structure
+1. Create `Blend2DDrawingMode.h` with base macros
+2. Create `Blend2DPixelFormat.h/cpp` with BLContext integration
+3. Port `PatternHandler` to work with Blend2D
+
+### Phase 2: Implement Native Operations
+1. Create `Blend2DDrawingModeNative.h`
+2. Implement all 7 native modes using `setCompOp()`
+3. Implement all alpha variants (AlphaCC, AlphaCO, AlphaPC, AlphaPO)
+4. Add Porter-Duff operators (SRC_IN, DST_OUT, etc.)
+
+### Phase 3: Implement Custom Operations
+1. Create `Blend2DDrawingModeCustom.h`
+2. Implement B_OP_BLEND (averaging)
+3. Implement B_OP_INVERT
+4. Implement B_OP_SELECT (conditional swap)
+5. Implement B_OP_ERASE (try native DST_OUT first, fallback to custom if needed)
+
+### Phase 4: Implement Subpixel Rendering
+1. Create `Blend2DDrawingModeSUBPIX.h`
+2. Implement grayscale averaging helper
+3. Create SUBPIX variants for all modes using averaged alpha
+
+### Phase 5: Integration and Testing
+1. Update `Blend2DPixelFormat::SetDrawingMode()` to dispatch to new implementations
+2. Add `#ifdef USE_BLEND2D_BACKEND` switches
+3. Test each mode visually against AGG reference
+4. Benchmark performance
+
+### Phase 6: Cleanup
+1. Remove all AGG DrawingMode*.h files
+2. Remove AGG PixelFormat.h/cpp
+3. Remove AggCompOpAdapter.h
+4. Update build system to exclude AGG drawing modes
+
+## Performance Expectations
+
+| Operation Type | Performance | Notes |
+|---------------|-------------|-------|
+| Native Blend2D | 200-800 MP/s | Full JIT optimization |
+| Custom pixel ops | 20-60 MP/s | Simple arithmetic |
+| Custom with SIMD | 80-200 MP/s | Manual optimization |
+| 1920×1080 frame | 2-10ms custom | Acceptable for interactive |
+
+## Testing Checklist
+
+For each drawing mode, verify:
+- [ ] Correct visual output compared to AGG
+- [ ] Pattern handling (solid colors, gradients, bitmaps)
+- [ ] Coverage blending (partial alpha)
+- [ ] Edge cases (cover=0, cover=255)
+- [ ] High/low color pattern evaluation
+- [ ] Subpixel variant produces acceptable text rendering
+- [ ] Performance within acceptable bounds
+
+## Known Limitations
+
+1. **No true subpixel rendering:** Grayscale averaging is approximate but visually acceptable
+2. **Custom operations slower:** 5-10x slower than native, but still <10ms per HD frame
+3. **No BLContext during pixel access:** Must end context before direct manipulation
+
+## Reference: Complete BLCompOp Enum
+
+```cpp
+BL_COMP_OP_SRC_OVER = 0,      // Default
+BL_COMP_OP_SRC_COPY = 1,      // Copy
+BL_COMP_OP_SRC_IN = 2,        // Porter-Duff
+BL_COMP_OP_SRC_OUT = 3,       // Porter-Duff
+BL_COMP_OP_SRC_ATOP = 4,      // Porter-Duff
+BL_COMP_OP_DST_OVER = 5,      // Porter-Duff
+BL_COMP_OP_DST_COPY = 6,      // [nop]
+BL_COMP_OP_DST_IN = 7,        // Porter-Duff
+BL_COMP_OP_DST_OUT = 8,       // Porter-Duff - useful for masking
+BL_COMP_OP_DST_ATOP = 9,      // Porter-Duff
+BL_COMP_OP_XOR = 10,          // Porter-Duff
+BL_COMP_OP_CLEAR = 11,        // Porter-Duff
+BL_COMP_OP_PLUS = 12,         // Add
+BL_COMP_OP_MINUS = 13,        // Subtract
+BL_COMP_OP_MODULATE = 14,     // SVG (not needed for Haiku)
+BL_COMP_OP_MULTIPLY = 15,     // SVG (not needed for Haiku)
+BL_COMP_OP_SCREEN = 16,       // SVG (not needed for Haiku)
+BL_COMP_OP_OVERLAY = 17,      // SVG (not needed for Haiku)
+BL_COMP_OP_DARKEN = 18,       // Min
+BL_COMP_OP_LIGHTEN = 19,      // Max
+// 20-28: Advanced blend modes (COLOR_DODGE, etc.) - not needed for Haiku
+```
+
+**Operators 20-28 are SVG/Photoshop blend modes not used in Haiku's drawing_mode API.**
+
+## Questions & Troubleshooting
+
+**Q: Why not use SIMD for custom operations?**
+A: Start with simple scalar code. Add SIMD only if profiling shows it's needed.
+
+**Q: Can we avoid pixel manipulation entirely?**
+A: No. Blend2D doesn't support averaging, inversion, or conditional operations natively.
+
+**Q: What about B_OP_ERASE?**
+A: Try BL_COMP_OP_DST_OUT with alpha mask first. Fall back to pixel manipulation if needed.
+
+**Q: How to handle pattern tiling in custom ops?**
+A: Use `pattern->ColorAt(x, y)` which handles tiling automatically.
+
+**Q: Performance too slow?**
+A: Batch operations, use multi-threading, or add SIMD. But 2-10ms per HD frame is usually fine.
+
+---
+
+**Document Version:** 1.0  
+**Last Updated:** 2025-10-04  
+**Status:** Complete migration guide for Claude Code
