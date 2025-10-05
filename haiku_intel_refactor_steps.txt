@@ -1,0 +1,124 @@
+
+Find intel_set_brightness() function location
+
+Read intel_set_brightness() function completely
+
+Remove legacy mode detection from intel_set_brightness()
+
+Remove Gen < 4 period/duty calculations from intel_set_brightness()
+
+Remove legacy LPC register writes from intel_set_brightness()
+
+Simplify intel_set_brightness() to Gen 6+ only code
+
+Find intel_get_brightness() function location
+
+Read intel_get_brightness() function completely
+
+Remove legacy mode from intel_get_brightness()
+
+Remove Gen < 4 calculations from intel_get_brightness()
+
+Find INTEL_GET_BRIGHTNESS_LEGACY ioctl definition
+
+Remove INTEL_GET_BRIGHTNESS_LEGACY from enum
+
+Find INTEL_SET_BRIGHTNESS_LEGACY ioctl definition
+
+Remove INTEL_SET_BRIGHTNESS_LEGACY from enum
+
+Find intel_brightness_legacy struct definition
+
+Remove intel_brightness_legacy struct completely
+
+Find intel_en_gating() function in power.cpp
+
+Read intel_en_gating() function completely
+
+Remove i965GM/i965GME quirk from intel_en_gating()
+
+Remove IronLake clock gating from intel_en_gating()
+
+Remove G4x clock gating from intel_en_gating()
+
+Remove i965 quirk from intel_en_gating()
+
+Keep only Gen 6+ code in intel_en_gating()
+
+Find intel_en_downclock() function in power.cpp
+
+Read intel_en_downclock() function completely
+
+Remove or simplify Gen check in intel_en_downclock()
+
+Find intel_allocate_overlay_buffer() in overlay.cpp
+
+Read intel_allocate_overlay_buffer() completely
+
+Simplify alignment to standard 64-byte in overlay buffer
+
+Remove i965 state allocation from overlay buffer
+
+Find intel_overlay_supported_spaces() in overlay.cpp
+
+Read intel_overlay_supported_spaces() completely
+
+Remove i965-specific color space check
+
+Return full color space support for Gen 6+
+
+Find intel_uses_physical_overlay() in intel_extreme.h
+
+Read intel_uses_physical_overlay() function
+
+Change intel_uses_physical_overlay() to always return true
+
+Find mmioIndex initialization in intel_extreme_init()
+
+Read mmioIndex code section
+
+Change mmioIndex to always be 0 for Gen 6+
+
+Find FDI initialization code in Pipes.cpp
+
+Verify FDI is used for Gen 6-8 (DO NOT REMOVE!)
+
+Find all 'Generation() < 4' with grep
+
+Remove each 'Generation() < 4' check one by one
+
+Find all 'Generation() < 5' with grep
+
+Remove each 'Generation() < 5' check one by one
+
+Find all 'Generation() < 6' with grep
+
+Remove each 'Generation() < 6' check one by one
+
+Find all 'Generation() == 2' with grep
+
+Remove each 'Generation() == 2' check
+
+Find all 'Generation() == 3' with grep
+
+Remove each 'Generation() == 3' check
+
+Find all 'Generation() == 4' with grep
+
+Remove each 'Generation() == 4' check
+
+Find all 'Generation() == 5' with grep
+
+Remove each 'Generation() == 5' check
+
+Find all InGroup(INTEL_GROUP_ILK) with grep
+
+Remove each InGroup(INTEL_GROUP_ILK) check one by one
+
+Find limit_modes_for_gen3_lvds() function in mode.cpp
+
+Read limit_modes_for_gen3_lvds() function
+
+Remove limit_modes_for_gen3_lvds() function completely
+
+Remove all calls to limit_modes_for_gen3_lvds()
