@@ -1,5 +1,5 @@
 /*
- * Copyright 2021-2022, Haiku, Inc. All rights reserved.
+ * Copyright 2021-2025, Haiku, Inc. All rights reserved.
  * Released under the terms of the MIT License.
 */
 
@@ -25,17 +25,39 @@
 #endif
 
 
+static uint32 sCPUCount = 0;
+
+
 void
 arch_smp_register_cpu(platform_cpu_info** cpu)
 {
-        dprintf("TODO: arch_smp_register_cpu()\n");
+	TRACE(("arch_smp_register_cpu: CPU #%lu\n", sCPUCount));
+
+	if (sCPUCount >= SMP_MAX_CPUS) {
+		dprintf("arch_smp_register_cpu: WARNING: Too many CPUs (max %d)\n",
+			SMP_MAX_CPUS);
+		*cpu = NULL;
+		return;
+	}
+
+	// Allocate CPU info structure
+	static platform_cpu_info sCPUInfos[SMP_MAX_CPUS];
+	*cpu = &sCPUInfos[sCPUCount];
+
+	// Initialize basic CPU info
+	memset(*cpu, 0, sizeof(platform_cpu_info));
+
+	sCPUCount++;
+
+	TRACE(("arch_smp_register_cpu: registered CPU #%lu\n", sCPUCount - 1));
 }
 
 
 int
 arch_smp_get_current_cpu(void)
 {
-	// One cpu for now.
+	// TODO: Read MPIDR_EL1 and match against registered CPUs
+	// For now, assume boot CPU is always CPU 0
 	return 0;
 }
 
@@ -43,16 +65,30 @@ arch_smp_get_current_cpu(void)
 void
 arch_smp_init_other_cpus(void)
 {
-	// One cpu for now.
-	gKernelArgs.num_cpus = 1;
-	return;
+	// Set actual CPU count from FDT parsing
+	gKernelArgs.num_cpus = sCPUCount;
+
+	if (sCPUCount == 0) {
+		// No CPUs found via FDT, assume single CPU
+		dprintf("WARNING: No CPUs found via FDT, assuming single CPU\n");
+		gKernelArgs.num_cpus = 1;
+
+		// Set MPIDR for boot CPU (read from hardware)
+		uint64 mpidr;
+		asm("mrs %0, mpidr_el1" : "=r"(mpidr));
+		gKernelArgs.arch_args.cpu_mpidr[0] = mpidr;
+	}
+
+	dprintf("arch_smp_init_other_cpus: found %lu CPU(s)\n", gKernelArgs.num_cpus);
 }
 
 
 void
 arch_smp_boot_other_cpus(uint32 pml4, uint64 kernelEntry, addr_t virtKernelArgs)
 {
-	// One cpu for now.
+	// Secondary CPUs will be started by kernel via PSCI
+	// Bootloader just passes MPIDR values to kernel
+	TRACE(("arch_smp_boot_other_cpus: %lu CPUs registered\n", sCPUCount));
 }
 
 
@@ -75,5 +111,6 @@ arch_smp_add_safemode_menus(Menu *menu)
 void
 arch_smp_init(void)
 {
-	// One cpu for now.
+	// Nothing to do here, CPUs are registered via FDT parsing
+	TRACE(("arch_smp_init\n"));
 }

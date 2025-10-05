@@ -89,14 +89,34 @@ arch_cpu_sync_icache(void *address, size_t len)
 void
 arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
 {
-	arch_cpu_global_TLB_invalidate();
+	// Use TLBI VAE1 for each page in range
+	for (addr_t va = start; va < end; va += B_PAGE_SIZE) {
+		uint64_t page = va >> 12;
+		asm volatile(
+			"dsb ishst\n"
+			"tlbi vae1, %0\n"
+			"dsb ish\n"
+			"isb"
+			:: "r"(page) : "memory");
+	}
 }
 
 
 void
 arch_cpu_invalidate_TLB_list(addr_t pages[], int num_pages)
 {
-	arch_cpu_global_TLB_invalidate();
+	// Invalidate each page in the list
+	for (int i = 0; i < num_pages; i++) {
+		uint64_t page = pages[i] >> 12;
+		asm volatile(
+			"dsb ishst\n"
+			"tlbi vae1, %0"
+			:: "r"(page) : "memory");
+	}
+	asm volatile(
+		"dsb ish\n"
+		"isb"
+		::: "memory");
 }
 
 
@@ -115,5 +135,32 @@ arch_cpu_global_TLB_invalidate(void)
 void
 arch_cpu_user_TLB_invalidate(void)
 {
+	// Invalidate user TLB entries only (ASID-based)
 	arch_cpu_global_TLB_invalidate();
+}
+
+
+void
+arch_cpu_memory_read_barrier(void)
+{
+	asm volatile("dsb ld" ::: "memory");
+}
+
+
+void
+arch_cpu_memory_write_barrier(void)
+{
+	asm volatile("dsb st" ::: "memory");
+}
+
+
+void
+arch_cpu_idle(void)
+{
+	// Enable IRQ, wait for interrupt, then disable IRQ
+	asm volatile(
+		"msr daifclr, #2\n"  // Enable IRQ (clear I bit in DAIF)
+		"wfi\n"              // Wait for interrupt
+		"msr daifset, #2"    // Disable IRQ (set I bit in DAIF)
+		::: "memory");
 }

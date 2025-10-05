@@ -35,6 +35,12 @@ typedef struct {
 	uart_info	uart;
 	intc_info	interrupt_controller;
 
+	// SMP support - MPIDR values for each CPU
+	uint64 cpu_mpidr[SMP_MAX_CPUS];
+
+	// PSCI method: 0=none, 1=SMC, 2=HVC
+	uint32 psci_method;
+
 } _PACKED arch_kernel_args;
 
 #endif	/* KERNEL_ARCH_ARM64_KERNEL_ARGS_H */

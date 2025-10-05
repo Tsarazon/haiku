@@ -34,11 +34,16 @@ KernelMergeObject kernel_arch_arm64.o :
 	generic_msi.cpp
 
     # Serial UART and drivers
-	debug_uart.cpp
-	debug_uart_8250.cpp
+    debug_uart.cpp
+    debug_uart_8250.cpp
 #	arch_uart_8250_omap.cpp
-	arch_uart_pl011.cpp
-	arch_uart_linflex.cpp
+    arch_uart_pl011.cpp
+    arch_uart_linflex.cpp
+
+	# Platform-specific support
+	arch_bcm2712_init.cpp
+	bcm2712_device_tree.cpp
+	bcm2712_timer.cpp
 
 	:
 	$(TARGET_KERNEL_PIC_CCFLAGS) -Wno-unused

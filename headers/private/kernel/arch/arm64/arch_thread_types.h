@@ -23,6 +23,9 @@ struct arch_thread {
 
 	// used to track interrupts on this thread
 	struct iframe_stack	iframes;
+
+	// user iframe for signal handling
+	struct iframe* userFrame;
 };
 
 struct arch_team {

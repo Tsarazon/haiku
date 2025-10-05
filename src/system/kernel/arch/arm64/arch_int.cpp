@@ -213,9 +213,24 @@ public:
 			arm64_push_iframe(&fThread->arch_info.iframes, iframe);
 		else
 			arm64_push_iframe(&gBootFrameStack, iframe);
+		
+		// Set userFrame if coming from user mode (EL0)
+		if (fThread && (iframe->spsr & PSR_M_MASK) == PSR_M_EL0t) {
+			fThread->arch_info.userFrame = iframe;
+			thread_at_kernel_entry(system_time());
+		}
 	}
 
 	virtual ~IFrameScope() {
+		// Clear userFrame and handle thread exit
+		if (fThread && fThread->arch_info.userFrame != NULL) {
+			// Check for syscall restart
+			if ((fThread->flags & THREAD_FLAGS_RESTART_SYSCALL) != 0) {
+				// Syscall restart will be handled by syscall handler
+			}
+			fThread->arch_info.userFrame = NULL;
+		}
+		
 		// pop iframe
 		if (fThread)
 			arm64_pop_iframe(&fThread->arch_info.iframes);

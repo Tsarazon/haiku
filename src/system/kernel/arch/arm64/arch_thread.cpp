@@ -146,7 +146,30 @@ arch_thread_enter_userspace(Thread *thread, addr_t entry,
 bool
 arch_on_signal_stack(Thread *thread)
 {
-	return false;
+	iframe* frame = thread->arch_info.userFrame;
+	if (frame == NULL) {
+		panic("arch_on_signal_stack(): No user iframe!");
+		return false;
+	}
+
+	return frame->sp >= thread->signal_stack_base
+		&& frame->sp < thread->signal_stack_base + thread->signal_stack_size;
+}
+
+
+static uint8*
+get_signal_stack(Thread* thread, struct iframe* frame,
+	struct sigaction* action, size_t spaceNeeded)
+{
+	// use the alternate signal stack if we should and can
+	if (thread->signal_stack_enabled
+		&& (action->sa_flags & SA_ONSTACK) != 0
+		&& (frame->sp < thread->signal_stack_base
+			|| frame->sp >= thread->signal_stack_base + thread->signal_stack_size)) {
+		addr_t stackTop = thread->signal_stack_base + thread->signal_stack_size;
+		return (uint8*)ROUNDDOWN(stackTop - spaceNeeded, 16);
+	}
+	return (uint8*)ROUNDDOWN(frame->sp - spaceNeeded, 16);
 }
 
 
@@ -154,15 +177,82 @@ status_t
 arch_setup_signal_frame(Thread *thread, struct sigaction *sa,
 	struct signal_frame_data *signalFrameData)
 {
-	panic("arch_setup_signal_frame");
-	return B_ERROR;
+	iframe* frame = thread->arch_info.userFrame;
+	if (frame == NULL) {
+		panic("arch_setup_signal_frame(): No user iframe!");
+		return B_ERROR;
+	}
+
+	// Fill signal context - save all registers
+	for (int i = 0; i < 29; i++)
+		signalFrameData->context.uc_mcontext.x[i] = frame->x[i];
+	signalFrameData->context.uc_mcontext.lr = frame->lr;
+	signalFrameData->context.uc_mcontext.sp = frame->sp;
+	signalFrameData->context.uc_mcontext.elr = frame->elr;
+	signalFrameData->context.uc_mcontext.spsr = frame->spsr;
+
+	// Save FPU state
+	memcpy(&signalFrameData->context.uc_mcontext.fp_q,
+		&frame->fpu.q, sizeof(frame->fpu.q));
+	signalFrameData->context.uc_mcontext.fpsr = frame->fpu.fpsr;
+	signalFrameData->context.uc_mcontext.fpcr = frame->fpu.fpcr;
+
+	// Set stack info
+	signal_get_user_stack(frame->sp, &signalFrameData->context.uc_stack);
+
+	// Get signal stack location
+	uint8* userStack = get_signal_stack(thread, frame, sa,
+		sizeof(*signalFrameData));
+
+	// Copy signal frame data to user stack
+	status_t res = user_memcpy(userStack, signalFrameData,
+		sizeof(*signalFrameData));
+	if (res < B_OK)
+		return res;
+
+	// Get signal handler wrapper from commpage
+	addr_t commpageAdr = (addr_t)thread->team->commpage_address;
+	addr_t signalHandlerAddr;
+	ASSERT(user_memcpy(&signalHandlerAddr,
+		&((addr_t*)commpageAdr)[COMMPAGE_ENTRY_ARM64_SIGNAL_HANDLER],
+		sizeof(signalHandlerAddr)) >= B_OK);
+	signalHandlerAddr += commpageAdr;
+
+	// Setup frame to call signal handler wrapper
+	frame->lr = frame->elr;  // Save return address
+	frame->sp = (addr_t)userStack;
+	frame->elr = signalHandlerAddr;
+	frame->x[0] = frame->sp;  // Pass signal_frame_data* as argument
+
+	return B_OK;
 }
 
 
 int64
 arch_restore_signal_frame(struct signal_frame_data* signalFrameData)
 {
-	return 0;
+	Thread* thread = thread_get_current_thread();
+	iframe* frame = thread->arch_info.userFrame;
+	if (frame == NULL) {
+		panic("arch_restore_signal_frame(): No user iframe!");
+		return B_ERROR;
+	}
+
+	// Restore all registers from signal context
+	for (int i = 0; i < 29; i++)
+		frame->x[i] = signalFrameData->context.uc_mcontext.x[i];
+	frame->lr = signalFrameData->context.uc_mcontext.lr;
+	frame->sp = signalFrameData->context.uc_mcontext.sp;
+	frame->elr = signalFrameData->context.uc_mcontext.elr;
+	frame->spsr = signalFrameData->context.uc_mcontext.spsr;
+
+	// Restore FPU state
+	memcpy(&frame->fpu.q, &signalFrameData->context.uc_mcontext.fp_q,
+		sizeof(frame->fpu.q));
+	frame->fpu.fpsr = signalFrameData->context.uc_mcontext.fpsr;
+	frame->fpu.fpcr = signalFrameData->context.uc_mcontext.fpcr;
+
+	return (int64)frame->x[0];
 }
 
 
