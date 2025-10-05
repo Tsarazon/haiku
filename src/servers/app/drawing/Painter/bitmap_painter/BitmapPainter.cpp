@@ -52,8 +52,11 @@ Painter::BitmapPainter::BitmapPainter(const Painter* painter,
 		nullptr               // userData
 	);
 
-	if (result == BL_SUCCESS)
+	if (result == BL_SUCCESS) {
 		fStatus = B_OK;
+	} else {
+		fprintf(stderr, "BitmapPainter::BitmapPainter() - createFromData failed: %d\n", (int)result);
+	}
 }
 
 
@@ -91,16 +94,26 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 	BLContext& ctx = fPainter->fInternal.fBLContext;
 
 	// CRITICAL: Setup image filtering quality hints
+	BLResult result;
 	if ((fOptions & B_FILTER_BITMAP_BILINEAR) != 0) {
 		// Bilinear filtering for quality scaling
-		ctx.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY, 
+		result = ctx.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY, 
 					BL_RENDERING_QUALITY_ANTIALIAS);
-		ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "BitmapPainter::Draw() - setHint(RENDERING_QUALITY) failed: %d\n", (int)result);
+		}
+		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
 					BL_PATTERN_QUALITY_BILINEAR);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "BitmapPainter::Draw() - setHint(PATTERN_QUALITY_BILINEAR) failed: %d\n", (int)result);
+		}
 	} else {
 		// Nearest neighbor for pixel-perfect graphics (no smoothing)
-		ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
+		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
 					BL_PATTERN_QUALITY_NEAREST);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "BitmapPainter::Draw() - setHint(PATTERN_QUALITY_NEAREST) failed: %d\n", (int)result);
+		}
 	}
 
 	// Setup composition operator (SRC_COPY, SRC_OVER, etc.)
@@ -123,12 +136,15 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 		pattern.setMatrix(matrix);
 		
 		// Fill rectangle with pattern
-		ctx.fillRect(BLRect(
+		result = ctx.fillRect(BLRect(
 			fDestinationRect.left,
 			fDestinationRect.top,
 			fDestinationRect.Width() + 1,
 			fDestinationRect.Height() + 1
 		), pattern);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "BitmapPainter::Draw() - fillRect with pattern failed: %d\n", (int)result);
+		}
 		
 	} else {
 		// ===== NORMAL MODE (NON-TILING) =====
@@ -162,7 +178,7 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 		
 		// blitImage automatically performs scaling if srcArea != dstRect
 		// Filter quality is determined by hints set above
-		BLResult result = ctx.blitImage(dstRect, workingImage, srcArea);
+		result = ctx.blitImage(dstRect, workingImage, srcArea);
 		
 		if (result != BL_SUCCESS) {
 			fprintf(stderr, "BitmapPainter::Draw() - blitImage failed: %d\n", 
@@ -383,12 +399,17 @@ Painter::BitmapPainter::_ConvertColorSpace(BLImage& outImage)
 	if (result == BL_SUCCESS) {
 		// Copy pixel data
 		BLImageData dstData;
-		outImage.getData(&dstData);
+		result = outImage.getData(&dstData);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - getData failed: %d\n", (int)result);
+			outImage = fBLImage;
+			return;
+		}
 		memcpy(dstData.pixelData, conversionBitmap->Bits(),
 			conversionBitmap->BitsLength());
 	} else {
 		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
-			"BLImage creation failed\n");
+		"BLImage creation failed: %d\n", (int)result);
 		outImage = fBLImage;
 	}
 }

@@ -46,14 +46,17 @@ struct PainterInterface {
 	{
 		// Создаем изображение
 		BLResult result = fBLImage.create(width, height, BL_FORMAT_PRGB32);
-		if (result != BL_SUCCESS)
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::Init() - fBLImage.create failed: %d\n", (int)result);
 			return false;
+		}
 
 		fImageValid = true;
 
 		// Инициализируем контекст
 		result = fBLContext.begin(fBLImage);
 		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::Init() - fBLContext.begin failed: %d\n", (int)result);
 			fBLImage.reset();
 			fImageValid = false;
 			return false;
@@ -62,9 +65,16 @@ struct PainterInterface {
 		fContextValid = true;
 
 		// Настройки по умолчанию
-		fBLContext.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY,
+		result = fBLContext.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY,
 						   BL_RENDERING_QUALITY_ANTIALIAS);
-		fBLContext.setCompOp(BL_COMP_OP_SRC_OVER);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::Init() - setHint failed: %d\n", (int)result);
+		}
+		
+		result = fBLContext.setCompOp(BL_COMP_OP_SRC_OVER);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::Init() - setCompOp failed: %d\n", (int)result);
+		}
 
 		return true;
 	}
@@ -78,22 +88,28 @@ struct PainterInterface {
 			fContextValid = false;
 		}
 
-		// Создаем BLImage из внешнего буфера
+		// Создаем BLImage из внешнего буфера с zero-copy
 		BLResult result = fBLImage.createFromData(
 			width, height,
 			BL_FORMAT_PRGB32,
 			bits,
-			bytesPerRow
+			bytesPerRow,
+			BL_DATA_ACCESS_RW,  // ✅ Read-Write без копирования
+			nullptr,            // destroyFunc
+			nullptr             // userData
 		);
 
-		if (result != BL_SUCCESS)
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::AttachToBuffer() - createFromData failed: %d\n", (int)result);
 			return false;
+		}
 
 		fImageValid = true;
 
 		// Инициализируем контекст
 		result = fBLContext.begin(fBLImage);
 		if (result != BL_SUCCESS) {
+			fprintf(stderr, "PainterInterface::AttachToBuffer() - fBLContext.begin failed: %d\n", (int)result);
 			fBLImage.reset();
 			fImageValid = false;
 			return false;

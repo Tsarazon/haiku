@@ -82,7 +82,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 		double x = int26p6_to_dbl(v_start.x);
 		double y = int26p6_to_dbl(v_start.y);
 		if (flip_y) y = -y;
-		path.moveTo(x, y);
+		BLResult result = path.moveTo(x, y);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: path.moveTo failed in decompose_ft_outline: %d\n", (int)result);
+			return false;
+		}
 
 		while (point < limit) {
 			point++;
@@ -94,7 +98,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 					x = int26p6_to_dbl(point->x);
 					y = int26p6_to_dbl(point->y);
 					if (flip_y) y = -y;
-					path.lineTo(x, y);
+					BLResult result = path.lineTo(x, y);
+					if (result != BL_SUCCESS) {
+						fprintf(stderr, "Warning: path.lineTo failed: %d\n", (int)result);
+						return false;
+					}
 					continue;
 				}
 
@@ -120,7 +128,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 							double x2 = int26p6_to_dbl(vec.x);
 							double y2 = int26p6_to_dbl(vec.y);
 							if (flip_y) { y1 = -y1; y2 = -y2; }
-							path.quadTo(x1, y1, x2, y2);
+							BLResult result = path.quadTo(x1, y1, x2, y2);
+							if (result != BL_SUCCESS) {
+								fprintf(stderr, "Warning: path.quadTo failed (case 1): %d\n", (int)result);
+								return false;
+							}
 							continue;
 						}
 
@@ -135,7 +147,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 						double x2 = int26p6_to_dbl(v_middle.x);
 						double y2 = int26p6_to_dbl(v_middle.y);
 						if (flip_y) { y1 = -y1; y2 = -y2; }
-						path.quadTo(x1, y1, x2, y2);
+						BLResult result = path.quadTo(x1, y1, x2, y2);
+						if (result != BL_SUCCESS) {
+							fprintf(stderr, "Warning: path.quadTo failed (case 2): %d\n", (int)result);
+							return false;
+						}
 
 						v_control = vec;
 						goto Do_Conic;
@@ -146,7 +162,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 					double x2 = int26p6_to_dbl(v_start.x);
 					double y2 = int26p6_to_dbl(v_start.y);
 					if (flip_y) { y1 = -y1; y2 = -y2; }
-					path.quadTo(x1, y1, x2, y2);
+					BLResult result = path.quadTo(x1, y1, x2, y2);
+					if (result != BL_SUCCESS) {
+						fprintf(stderr, "Warning: path.quadTo failed (case 3): %d\n", (int)result);
+						return false;
+					}
 					goto Close;
 				}
 
@@ -176,7 +196,11 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 						double x3 = int26p6_to_dbl(vec.x);
 						double y3 = int26p6_to_dbl(vec.y);
 						if (flip_y) { y1 = -y1; y2 = -y2; y3 = -y3; }
-						path.cubicTo(x1, y1, x2, y2, x3, y3);
+						BLResult result = path.cubicTo(x1, y1, x2, y2, x3, y3);
+						if (result != BL_SUCCESS) {
+							fprintf(stderr, "Warning: path.cubicTo failed (case 1): %d\n", (int)result);
+							return false;
+						}
 						continue;
 					}
 
@@ -187,13 +211,21 @@ decompose_ft_outline_to_blend2d(const FT_Outline& outline, bool flip_y,
 					double x3 = int26p6_to_dbl(v_start.x);
 					double y3 = int26p6_to_dbl(v_start.y);
 					if (flip_y) { y1 = -y1; y2 = -y2; y3 = -y3; }
-					path.cubicTo(x1, y1, x2, y2, x3, y3);
+					BLResult result = path.cubicTo(x1, y1, x2, y2, x3, y3);
+					if (result != BL_SUCCESS) {
+						fprintf(stderr, "Warning: path.cubicTo failed (case 2): %d\n", (int)result);
+						return false;
+					}
 					goto Close;
 				}
 			}
 		}
 
-		path.close();
+		BLResult result = path.close();
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: path.close failed: %d\n", (int)result);
+			// Не fatal - продолжаем
+		}
 	Close:
 		first = last + 1;
 	}
@@ -211,12 +243,19 @@ convert_ft_bitmap_to_blend2d(const FT_Bitmap& bitmap, bool flip_y,
 
 	if (bitmap.pixel_mode == FT_PIXEL_MODE_MONO) {
 		// Монохромный bitmap - 1 бит на пиксель
-		if (image.create(bitmap.width, bitmap.rows, BL_FORMAT_A8) != BL_SUCCESS)
+		BLResult result = image.create(bitmap.width, bitmap.rows, BL_FORMAT_A8);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.create failed in MONO mode: %d\n", (int)result);
 			return image;
+		}
 
 		BLImageData imageData;
-		if (image.getData(&imageData) != BL_SUCCESS)
+		result = image.getData(&imageData);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.getData failed in MONO mode: %d\n", (int)result);
+			image.reset();
 			return BLImage();
+		}
 
 		uint8_t* dst = static_cast<uint8_t*>(imageData.pixelData);
 		intptr_t dstStride = imageData.stride;
@@ -242,12 +281,19 @@ convert_ft_bitmap_to_blend2d(const FT_Bitmap& bitmap, bool flip_y,
 
 	} else if (bitmap.pixel_mode == FT_PIXEL_MODE_GRAY) {
 		// Grayscale bitmap
-		if (image.create(bitmap.width, bitmap.rows, BL_FORMAT_A8) != BL_SUCCESS)
+		BLResult result = image.create(bitmap.width, bitmap.rows, BL_FORMAT_A8);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.create failed in GRAY mode: %d\n", (int)result);
 			return image;
+		}
 
 		BLImageData imageData;
-		if (image.getData(&imageData) != BL_SUCCESS)
+		result = image.getData(&imageData);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.getData failed in GRAY mode: %d\n", (int)result);
+			image.reset();
 			return BLImage();
+		}
 
 		uint8_t* dst = static_cast<uint8_t*>(imageData.pixelData);
 		intptr_t dstStride = imageData.stride;
@@ -270,12 +316,19 @@ convert_ft_bitmap_to_blend2d(const FT_Bitmap& bitmap, bool flip_y,
 		// Формула: alpha = 0.299*R + 0.587*G + 0.114*B
 		
 		unsigned int width = bitmap.width / 3;
-		if (image.create(width, bitmap.rows, BL_FORMAT_A8) != BL_SUCCESS)
+		BLResult result = image.create(width, bitmap.rows, BL_FORMAT_A8);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.create failed in LCD mode: %d\n", (int)result);
 			return image;
+		}
 
 		BLImageData imageData;
-		if (image.getData(&imageData) != BL_SUCCESS)
+		result = image.getData(&imageData);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: image.getData failed in LCD mode: %d\n", (int)result);
+			image.reset();
 			return BLImage();
+		}
 
 		uint8_t* dst = static_cast<uint8_t*>(imageData.pixelData);
 		intptr_t dstStride = imageData.stride;

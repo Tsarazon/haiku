@@ -185,12 +185,27 @@ private:
 		BLPoint pos(x + glyph->bounds.x0, y + glyph->bounds.y0);
 		
 		// 3. Устанавливаем режим композиции и цвет
-		fRenderer.fContext.save();
-		fRenderer.fContext.setCompOp(BL_COMP_OP_SRC_OVER);
+		BLResult result = fRenderer.fContext.save();
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: fContext.save() failed: %d\n", (int)result);
+			return;
+		}
+		
+		result = fRenderer.fContext.setCompOp(BL_COMP_OP_SRC_OVER);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setCompOp failed: %d\n", (int)result);
+			fRenderer.fContext.restore();
+			return;
+		}
 		
 		// Применяем цвет через fillStyle
 		BLRgba32 color(fRenderer.fColor);
-		fRenderer.fContext.setFillStyle(color);
+		result = fRenderer.fContext.setFillStyle(color);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setFillStyle failed: %d\n", (int)result);
+			fRenderer.fContext.restore();
+			return;
+		}
 		
 		// 4. Рисуем глиф как маску альфа-канала
 		// Для альфа-изображений используем fillMaskI для применения цвета
@@ -199,11 +214,14 @@ private:
 		    glyph->data_type == glyph_data_mono) {
 			
 			// Рендерим маску с цветом
-			fRenderer.fContext.fillMaskI(
+			result = fRenderer.fContext.fillMaskI(
 				BLPointI(int(pos.x), int(pos.y)),
 				image,
 				BLRectI(0, 0, image.width(), image.height())
 			);
+			if (result != BL_SUCCESS) {
+				fprintf(stderr, "Warning: fillMaskI failed: %d\n", (int)result);
+			}
 		}
 		
 		fRenderer.fContext.restore();
@@ -226,10 +244,31 @@ private:
 		}
 		
 		// 4. Рендерим путь
-		fRenderer.fContext.save();
-		fRenderer.fContext.setMatrix(matrix);
-		fRenderer.fContext.setFillStyle(fRenderer.fColor);
-		fRenderer.fContext.fillPath(path);
+		BLResult result = fRenderer.fContext.save();
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: fContext.save() failed in vector glyph: %d\n", (int)result);
+			return;
+		}
+		
+		result = fRenderer.fContext.setMatrix(matrix);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setMatrix failed: %d\n", (int)result);
+			fRenderer.fContext.restore();
+			return;
+		}
+		
+		result = fRenderer.fContext.setFillStyle(fRenderer.fColor);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setFillStyle failed in vector glyph: %d\n", (int)result);
+			fRenderer.fContext.restore();
+			return;
+		}
+		
+		result = fRenderer.fContext.fillPath(path);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: fillPath failed: %d\n", (int)result);
+		}
+		
 		fRenderer.fContext.restore();
 	}
 
@@ -242,12 +281,34 @@ private:
 		fTransform.Transform(&right);
 
 		BLPath path;
-		path.moveTo(left.x, left.y);
-		path.lineTo(right.x, right.y);
+		BLResult result = path.moveTo(left.x, left.y);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: path.moveTo failed: %d\n", (int)result);
+			return;
+		}
+		
+		result = path.lineTo(right.x, right.y);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: path.lineTo failed: %d\n", (int)result);
+			return;
+		}
 
-		fRenderer.fContext.setStrokeWidth(fRenderer.fFont.Size() / 12.0f);
-		fRenderer.fContext.setStrokeStyle(fRenderer.fColor);
-		fRenderer.fContext.strokePath(path);
+		result = fRenderer.fContext.setStrokeWidth(fRenderer.fFont.Size() / 12.0f);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setStrokeWidth failed: %d\n", (int)result);
+			return;
+		}
+		
+		result = fRenderer.fContext.setStrokeStyle(fRenderer.fColor);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: setStrokeStyle failed: %d\n", (int)result);
+			return;
+		}
+		
+		result = fRenderer.fContext.strokePath(path);
+		if (result != BL_SUCCESS) {
+			fprintf(stderr, "Warning: strokePath failed: %d\n", (int)result);
+		}
 	}
 
 private:
