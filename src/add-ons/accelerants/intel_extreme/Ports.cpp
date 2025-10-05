@@ -1085,10 +1085,7 @@ pipe_index
 LVDSPort::PipePreference()
 {
 	CALLED();
-	// Older devices have hardcoded pipe/port mappings, so just use that
-	if (gInfo->shared_info->device_type.Generation() < 4)
-		return INTEL_PIPE_B;
-
+	// Gen 6+ LVDS pipe preference
 	// Ideally we could just return INTEL_PIPE_ANY for the newer devices, but
 	// this doesn't quite work yet.
 
@@ -1138,34 +1135,8 @@ LVDSPort::IsConnected()
 			return false;
 		}
 		// TODO: Skip if eDP support
-	} else if (gInfo->shared_info->device_type.Generation() <= 4) {
-		// Older generations don't have LVDS detection. If not mobile skip.
-		if (!gInfo->shared_info->device_type.IsMobile()) {
-			TRACE("LVDS: Skipping LVDS detection due to gen and not mobile\n");
-			return false;
-		}
-		// If mobile, try to grab EDID
-		// Linux seems to look at lid status for LVDS port detection
-		// If we don't get EDID, we can use vbios native mode or vesa?
-		if (!HasEDID()) {
-			if (gInfo->shared_info->has_vesa_edid_info) {
-				TRACE("LVDS: Using VESA edid info\n");
-				memcpy(&fEDIDInfo, &gInfo->shared_info->vesa_edid_info,
-					sizeof(edid1_info));
-				if (fEDIDState != B_OK) {
-					fEDIDState = B_OK;
-					// HasEDID now true
-					edid_dump(&fEDIDInfo);
-				}
-			} else if (gInfo->shared_info->got_vbt) {
-				TRACE("LVDS: No EDID, but force enabled as we have a VBT\n");
-				return true;
-			} else {
-				TRACE("LVDS: Couldn't find any valid EDID!\n");
-				return false;
-			}
-		}
 	}
+	// Gen 6+ SoC (without PCH) LVDS detection removed - not applicable
 
 	// Try getting EDID, as the LVDS port doesn't overlap with anything else,
 	// we don't run the risk of getting someone else's data.
@@ -1348,17 +1319,7 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	fPipe->ConfigureTimings(target, !needsScaling);
 
 	if (needsScaling) {
-		if (gInfo->shared_info->device_type.Generation() <= 4) {
-			// Enable panel fitter in automatic mode. It will figure out
-			// the scaling ratios automatically.
-			uint32 panelFitterControl = read32(INTEL_PANEL_FIT_CONTROL);
-			panelFitterControl |= PANEL_FITTER_ENABLED;
-			panelFitterControl &= ~(PANEL_FITTER_SCALING_MODE_MASK
-				| PANEL_FITTER_PIPE_MASK);
-			panelFitterControl |= PANEL_FITTER_PIPE_B;
-			// LVDS is always on pipe B.
-			write32(INTEL_PANEL_FIT_CONTROL, panelFitterControl);
-		}
+		// Gen 6+ panel fitter configuration removed - handled at transcoder level
 		// TODO do we need to do anything on later generations?
 	} else {
 		// Gen 6+: We don't need to do anything more, the
@@ -2002,13 +1963,10 @@ DisplayPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 		return B_ERROR;
 	}
 
+	// Gen 6+ display port configuration
 	status_t result = B_OK;
-	if (gInfo->shared_info->device_type.Generation() <= 4) {
-		fPipe->ConfigureTimings(target);
-		result = _SetPortLinkGen4(target->timing);
-	} else {
-		display_timing hardwareTarget = target->timing;
-		bool needsScaling = false;
+	display_timing hardwareTarget = target->timing;
+	bool needsScaling = false;
 		if ((PortIndex() == INTEL_PORT_A)
 			&& (gInfo->shared_info->device_type.IsMobile() || _IsEDPPort())) {
 			// For internal panels, we may need to set the timings according to the panel
@@ -2113,7 +2071,6 @@ DisplayPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 			// Keep monitor at native mode and scale image to that
 			fPipe->ConfigureScalePos(target);
 		}
-	}
 
 	// Set fCurrentMode to our set display mode
 	memcpy(&fCurrentMode, target, sizeof(display_mode));
