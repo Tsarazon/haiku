@@ -26,10 +26,11 @@
 #define INTEL_MODEL_MASK	0x00ffffff
 #define INTEL_TYPE_MASK		0x0000000f
 
+// MINIMUM SUPPORT: Gen 6 (Sandy Bridge, 2011+)
 // families (Gen 6+ only)
-#define INTEL_FAMILY_SER5	0x00080000	// Intel5 Series
-#define INTEL_FAMILY_SOC0	0x00200000  // Atom SOC
-#define INTEL_FAMILY_LAKE	0x00400000	// Intel Lakes
+#define INTEL_FAMILY_SER5	0x00080000	// Intel5 Series (Gen 6-7: SNB, IVB, HAS)
+#define INTEL_FAMILY_SOC0	0x00200000  // Atom SOC (Gen 7-8: VLV, CHV, BDW)
+#define INTEL_FAMILY_LAKE	0x00400000	// Intel Lakes (Gen 9+: SKL, KBL, CFL, etc)
 
 // groups (Gen 6+ only, minimum: Sandy Bridge)
 #define INTEL_GROUP_SNB		(INTEL_FAMILY_SER5 | 0x0020)  // SandyBridge
@@ -184,8 +185,13 @@ struct DeviceType {
 
 	bool SupportsHDMI() const
 	{
-		return InGroup(INTEL_GROUP_G4x) || InFamily(INTEL_FAMILY_SER5)
-			|| InFamily(INTEL_FAMILY_SOC0);
+		// Gen 6+: All supported devices have HDMI support
+		// Gen 6 (SNB): INTEL_FAMILY_SER5
+		// Gen 7+ (IVB, HAS, VLV, CHV, BDW): INTEL_FAMILY_SER5 + INTEL_FAMILY_SOC0
+		// Gen 8+ (SKY and newer): INTEL_FAMILY_LAKE
+		return InFamily(INTEL_FAMILY_SER5)
+			|| InFamily(INTEL_FAMILY_SOC0)
+			|| InFamily(INTEL_FAMILY_LAKE);
 	}
 
 	bool HasDDI() const
@@ -196,21 +202,29 @@ struct DeviceType {
 
 	int Generation() const
 	{
-		// Gen 6+ only (Sandy Bridge 2011 and newer)
+		// MINIMUM SUPPORT: Gen 6 (Sandy Bridge, 2011+)
+		// Returns 0 for unsupported hardware (< Gen 6)
+
 		if (InGroup(INTEL_GROUP_SNB))
 			return 6;
+
 		if (InFamily(INTEL_FAMILY_SER5) || InGroup(INTEL_GROUP_VLV))
 			return 7;
+
 		if (InGroup(INTEL_GROUP_CHV) || InGroup(INTEL_GROUP_BDW))
 			return 8;
-		if (InGroup(INTEL_GROUP_JSL))
-			return 11;
-		if (InGroup(INTEL_GROUP_TGL) || InGroup(INTEL_GROUP_ALD))
-			return 12;
-		if (InFamily(INTEL_FAMILY_LAKE))
-			return 9;
 
-		// Generation 0 = unsupported (< Gen 6)
+		if (InFamily(INTEL_FAMILY_LAKE)) {
+			// Gen 9-10 detection for LAKE family
+			if (InGroup(INTEL_GROUP_JSL))
+				return 11;
+			if (InGroup(INTEL_GROUP_TGL) || InGroup(INTEL_GROUP_ALD))
+				return 12;
+			// Default LAKE family (SKY, KBY, CFL, CML)
+			return 9;
+		}
+
+		// Generation 0 = explicitly unsupported (< Gen 6)
 		return 0;
 	}
 };

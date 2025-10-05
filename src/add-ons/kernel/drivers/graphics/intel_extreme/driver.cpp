@@ -6,6 +6,12 @@
  *		Axel Dörfler, axeld@pinc-software.de
  */
 
+/*
+ * Intel Extreme Graphics Driver - Kernel Driver Component
+ *
+ * SUPPORTED: Gen 6+ (Sandy Bridge 2011 and newer)
+ * Device detection checks kSupportedDevices[] array
+ */
 
 #include "driver.h"
 #include "device.h"
@@ -66,12 +72,10 @@ const struct supported_device {
 	{0x0a2e, INTEL_MODEL_HASM, "Haswell ULT GT3 Mobile"},
 	{0x0d26, INTEL_MODEL_HASM, "Haswell CRW GT3 Mobile"},
 
-#if 0
 	{0x0f30, INTEL_MODEL_VLVM, "ValleyView Mobile"},
 	{0x0f31, INTEL_MODEL_VLVM, "ValleyView Mobile"},
 	{0x0f32, INTEL_MODEL_VLVM, "ValleyView Mobile"},
 	{0x0f33, INTEL_MODEL_VLVM, "ValleyView Mobile"},
-#endif
 
 	{0x1606, INTEL_MODEL_BDWM, "Broadwell GT1 ULT"},
 	{0x160b, INTEL_MODEL_BDWM, "Broadwell GT1 Iris"},

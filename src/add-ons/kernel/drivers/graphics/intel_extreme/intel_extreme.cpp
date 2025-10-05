@@ -8,6 +8,12 @@
  *		Adrien Destugues, pulkomandy@pulkomandy.tk
  */
 
+/*
+ * Intel Extreme Graphics Driver - Initialization & Core
+ *
+ * SUPPORTED: Gen 6+ (Sandy Bridge 2011 and newer)
+ * Gen < 6 devices are rejected in intel_extreme_init()
+ */
 
 #include "intel_extreme.h"
 
@@ -601,12 +607,14 @@ intel_extreme_init(intel_info &info)
 {
 	CALLED();
 	
-	// Reject GPUs older than Gen 6 (Sandy Bridge, 2011+)
-	if (info.device_type.Generation() < 6) {
-		ERROR("GPU Generation %d is not supported. "
-			"Minimum requirement: Gen 6 (Sandy Bridge, 2011+)\n",
-			info.device_type.Generation());
-		ERROR("Your GPU: %s\n", info.device_identifier);
+	// CRITICAL: Gen 6+ only check
+	int generation = info.device_type.Generation();
+	if (generation < 6) {
+		ERROR("========================================\n");
+		ERROR("Intel GPU NOT SUPPORTED\n");
+		ERROR("Device: %s (Gen %d)\n", info.device_identifier, generation);
+		ERROR("Required: Gen 6+ (Sandy Bridge 2011+)\n");
+		ERROR("========================================\n");
 		return B_NOT_SUPPORTED;
 	}
 	
@@ -680,7 +688,7 @@ intel_extreme_init(intel_info &info)
 
 	// setup the register blocks for the different architectures
 	if (hasPCH) {
-		// PCH based platforms (IronLake through ultra-low-power Broadwells)
+		// PCH based platforms (Gen 6-8: Sandy Bridge through Broadwell)
 		blocks[REGISTER_BLOCK(REGS_NORTH_SHARED)]
 			= PCH_NORTH_SHARED_REGISTER_BASE;
 		blocks[REGISTER_BLOCK(REGS_NORTH_PIPE_AND_PORT)]
@@ -910,7 +918,7 @@ intel_extreme_init(intel_info &info)
 		|| info.device_type.InGroup(INTEL_GROUP_IVB)) {
 		info.shared_info->hw_cdclk = 400000;
 	}
-	// Gen 6+ only: IronLake (450000) removed
+	// CDCLK initialized for Gen 6+
 	TRACE("%s: hw_cdclk: %" B_PRIu32 " kHz\n", __func__, info.shared_info->hw_cdclk);
 
 	TRACE("%s: completed successfully!\n", __func__);
