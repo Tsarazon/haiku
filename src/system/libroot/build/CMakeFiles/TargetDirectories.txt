@@ -1,7 +1,0 @@
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/libroot_cross_compile.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/edit_cache.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/rebuild_cache.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/list_install_components.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/install.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/install/local.dir
-/home/ruslan/haiku/src/system/libroot/build/CMakeFiles/install/strip.dir
