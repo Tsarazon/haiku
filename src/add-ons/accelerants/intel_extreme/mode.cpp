@@ -304,6 +304,92 @@ intel_propose_display_mode(display_mode* target, const display_mode* low,
 }
 
 
+static status_t
+_AllocateFrameBuffer(intel_shared_info& info, uint32 bytesPerRow,
+	uint32 virtualHeight, addr_t& base)
+{
+	// Free old framebuffer
+	intel_free_memory(info.frame_buffer);
+
+	// Allocate new framebuffer
+	if (intel_allocate_memory(bytesPerRow * virtualHeight, 0, base) < B_OK) {
+		// Try to restore framebuffer for previous mode
+		if (intel_allocate_memory(info.current_mode.virtual_height
+				* info.bytes_per_row, 0, base) == B_OK) {
+			info.frame_buffer = base;
+			info.frame_buffer_offset = base - (addr_t)info.graphics_memory;
+			set_frame_buffer_base();
+		}
+
+		ERROR("%s: Failed to allocate framebuffer\n", __func__);
+		return B_NO_MEMORY;
+	}
+
+	// Clear framebuffer
+	memset((uint8*)base, 0, bytesPerRow * virtualHeight);
+
+	info.frame_buffer = base;
+	info.frame_buffer_offset = base - (addr_t)info.graphics_memory;
+
+	return B_OK;
+}
+
+
+static status_t
+_ConfigurePortsForMode(display_mode* target, uint32 colorMode)
+{
+	status_t firstError = B_OK;
+	uint32 portsConfigured = 0;
+
+	// Configure all connected ports
+	for (uint32 i = 0; i < gInfo->port_count; i++) {
+		if (gInfo->ports[i] == NULL)
+			continue;
+		if (!gInfo->ports[i]->IsConnected())
+			continue;
+
+		status_t status = gInfo->ports[i]->SetDisplayMode(target, colorMode);
+
+		if (status == B_OK) {
+			portsConfigured++;
+			TRACE("%s: Port %s configured\n", __func__,
+				gInfo->ports[i]->PortName());
+		} else {
+			ERROR("%s: Failed to configure port %s: %s\n",
+				__func__, gInfo->ports[i]->PortName(), strerror(status));
+
+			if (firstError == B_OK)
+				firstError = status;
+		}
+	}
+
+	if (portsConfigured == 0) {
+		ERROR("%s: Failed to configure any ports\n", __func__);
+		return firstError != B_OK ? firstError : B_ERROR;
+	}
+
+	TRACE("%s: Configured %u of %u ports\n", __func__,
+		portsConfigured, gInfo->port_count);
+
+	return B_OK;
+}
+
+
+static void
+_ConfigureBytesPerRow(intel_shared_info& info, uint32 bytesPerRow)
+{
+	// Configure bytes per row for all pipes
+	// TODO: rework when we get multiple head support with different resolutions
+	if (info.device_type.InFamily(INTEL_FAMILY_LAKE)) {
+		write32(INTEL_DISPLAY_A_BYTES_PER_ROW, bytesPerRow >> 6);
+		write32(INTEL_DISPLAY_B_BYTES_PER_ROW, bytesPerRow >> 6);
+	} else {
+		write32(INTEL_DISPLAY_A_BYTES_PER_ROW, bytesPerRow);
+		write32(INTEL_DISPLAY_B_BYTES_PER_ROW, bytesPerRow);
+	}
+}
+
+
 status_t
 intel_set_display_mode(display_mode* mode)
 {
@@ -328,37 +414,15 @@ intel_set_display_mode(display_mode* mode)
 	intel_shared_info &sharedInfo = *gInfo->shared_info;
 	Autolock locker(sharedInfo.accelerant_lock);
 
-	// First register dump
-	//dump_registers();
-
-	// TODO: This may not be neccesary
+	// Turn off display for mode switch
 	set_display_power_mode(B_DPMS_OFF);
 
-	// free old and allocate new frame buffer in graphics memory
-
-	intel_free_memory(sharedInfo.frame_buffer);
-
+	// Allocate new framebuffer
 	addr_t base;
-	if (intel_allocate_memory(bytesPerRow * target.virtual_height, 0,
-			base) < B_OK) {
-		// oh, how did that happen? Unfortunately, there is no really good way
-		// back. Try to restore a framebuffer for the previous mode, at least.
-		if (intel_allocate_memory(sharedInfo.current_mode.virtual_height
-				* sharedInfo.bytes_per_row, 0, base) == B_OK) {
-			sharedInfo.frame_buffer = base;
-			sharedInfo.frame_buffer_offset = base
-				- (addr_t)sharedInfo.graphics_memory;
-			set_frame_buffer_base();
-		}
-
-		ERROR("%s: Failed to allocate framebuffer !\n", __func__);
-		return B_NO_MEMORY;
-	}
-
-	// clear frame buffer before using it
-	memset((uint8*)base, 0, bytesPerRow * target.virtual_height);
-	sharedInfo.frame_buffer = base;
-	sharedInfo.frame_buffer_offset = base - (addr_t)sharedInfo.graphics_memory;
+	status_t status = _AllocateFrameBuffer(sharedInfo, bytesPerRow,
+		target.virtual_height, base);
+	if (status != B_OK)
+		return status;
 
 #if 0
 	if ((gInfo->head_mode & HEAD_MODE_TESTING) != 0) {
@@ -440,45 +504,29 @@ intel_set_display_mode(display_mode* mode)
 	}
 #endif
 
-	// make sure VGA display is disabled
+	// Disable VGA display
 	write32(INTEL_VGA_DISPLAY_CONTROL, VGA_DISPLAY_DISABLED);
 	read32(INTEL_VGA_DISPLAY_CONTROL);
 
-	// Go over each port and set the display mode
-	for (uint32 i = 0; i < gInfo->port_count; i++) {
-		if (gInfo->ports[i] == NULL)
-			continue;
-		if (!gInfo->ports[i]->IsConnected())
-			continue;
-
-		status_t status = gInfo->ports[i]->SetDisplayMode(&target, colorMode);
-		if (status != B_OK)
-			ERROR("%s: Unable to set display mode!\n", __func__);
+	// Configure all ports for the new mode
+	status = _ConfigurePortsForMode(&target, colorMode);
+	if (status != B_OK) {
+		ERROR("%s: Port configuration failed\n", __func__);
+		set_display_power_mode(sharedInfo.dpms_mode);
+		return status;
 	}
 
-	TRACE("%s: Port configuration completed successfully!\n", __func__);
-
-	// We set the same color mode across all pipes
+	// Set color mode across all pipes
 	program_pipe_color_modes(colorMode);
 
-	// TODO: This may not be neccesary (see DPMS OFF at top)
+	// Restore display power
 	set_display_power_mode(sharedInfo.dpms_mode);
 
-	// Changing bytes per row seems to be ignored if the plane/pipe is turned
-	// off
+	// Configure bytes per row
+	// Note: Changing bytes per row is ignored if pipe/plane is turned off
+	_ConfigureBytesPerRow(sharedInfo, bytesPerRow);
 
-	// Always set both pipes, just in case
-	// TODO rework this when we get multiple head support with different
-	// resolutions
-	if (sharedInfo.device_type.InFamily(INTEL_FAMILY_LAKE)) {
-		write32(INTEL_DISPLAY_A_BYTES_PER_ROW, bytesPerRow >> 6);
-		write32(INTEL_DISPLAY_B_BYTES_PER_ROW, bytesPerRow >> 6);
-	} else {
-		write32(INTEL_DISPLAY_A_BYTES_PER_ROW, bytesPerRow);
-		write32(INTEL_DISPLAY_B_BYTES_PER_ROW, bytesPerRow);
-	}
-
-	// update shared info
+	// Update shared info
 	sharedInfo.current_mode = target;
 	sharedInfo.bytes_per_row = bytesPerRow;
 	sharedInfo.bits_per_pixel = bitsPerPixel;
