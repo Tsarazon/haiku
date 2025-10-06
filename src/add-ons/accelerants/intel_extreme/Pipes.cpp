@@ -59,55 +59,106 @@ program_pipe_color_modes(uint32 colorMode)
 // #pragma mark - Pipe
 
 
+namespace {
+	// Constants for pipe offsets
+	constexpr uint32 PIPE_A_OFFSET = 0x0000;
+	constexpr uint32 PIPE_B_OFFSET = 0x1000;
+	constexpr uint32 PIPE_C_OFFSET = 0x2000;
+	constexpr uint32 PIPE_D_OFFSET = 0xF000;
+
+	// Map pipe index -> offset
+	inline uint32 GetPipeOffset(pipe_index index)
+	{
+		switch (index) {
+			case INTEL_PIPE_A: return PIPE_A_OFFSET;
+			case INTEL_PIPE_B: return PIPE_B_OFFSET;
+			case INTEL_PIPE_C: return PIPE_C_OFFSET;
+			case INTEL_PIPE_D: return PIPE_D_OFFSET;
+			default:
+				ERROR("Invalid pipe index %d\n", index);
+				return 0;
+		}
+	}
+
+	// Map pipe index -> plane offset
+	inline uint32 GetPlaneOffset(pipe_index index)
+	{
+		switch (index) {
+			case INTEL_PIPE_A: return 0;
+			case INTEL_PIPE_B: return INTEL_PLANE_OFFSET;
+			case INTEL_PIPE_C: return INTEL_PLANE_OFFSET * 2;
+			case INTEL_PIPE_D: return 0;  // Pipe D has no plane offset
+			default:
+				ERROR("Invalid pipe index %d\n", index);
+				return 0;
+		}
+	}
+
+	// Check if FDI link is needed for this configuration
+	inline bool NeedsFDILink(const intel_shared_info& info)
+	{
+		return (info.pch_info != INTEL_PCH_NONE)
+			&& (info.device_type.Generation() <= 8);
+	}
+
+	// Check if PanelFitter is needed
+	inline bool NeedsPanelFitter(const intel_shared_info& info)
+	{
+		// PanelFitter exists on all GPUs with PCH
+		return (info.pch_info != INTEL_PCH_NONE);
+	}
+
+	// Check if transcoder exists
+	inline bool HasTranscoder(const intel_shared_info& info)
+	{
+		// DDI and PCH systems have transcoders
+		return (info.pch_info != INTEL_PCH_NONE);
+	}
+}
+
+
 Pipe::Pipe(pipe_index pipeIndex)
 	:
 	fHasTranscoder(false),
 	fFDILink(NULL),
 	fPanelFitter(NULL),
 	fPipeIndex(pipeIndex),
-	fPipeOffset(0),
-	fPlaneOffset(0)
+	fPipeOffset(GetPipeOffset(pipeIndex)),
+	fPlaneOffset(GetPlaneOffset(pipeIndex))
 {
-	switch (pipeIndex) {
-		case INTEL_PIPE_B:
-			TRACE("Pipe B.\n");
-			fPipeOffset = 0x1000;
-			fPlaneOffset = INTEL_PLANE_OFFSET;
-			break;
-		case INTEL_PIPE_C:
-			TRACE("Pipe C.\n");
-			fPipeOffset = 0x2000;
-			fPlaneOffset = INTEL_PLANE_OFFSET * 2;
-			break;
-		case INTEL_PIPE_D:
-			TRACE("Pipe D.\n");
-			fPipeOffset = 0xf000;
-			//no fPlaneOffset..
-			break;
-		default:
-			TRACE("Pipe A.\n");
-			break;
-	}
+	const intel_shared_info& info = *gInfo->shared_info;
 
+	// Check for transcoder
+	fHasTranscoder = HasTranscoder(info);
+
+	// Create FDI link if necessary
 	// IvyBridge: Analog + Digital Ports behind FDI (on northbridge)
 	// Haswell: Only VGA behind FDI (on northbridge)
 	// SkyLake: FDI gone. No more northbridge video.
-	if ((gInfo->shared_info->pch_info != INTEL_PCH_NONE) &&
-		(gInfo->shared_info->device_type.Generation() <= 8)) {
-		TRACE("%s: Pipe is routed through FDI\n", __func__);
-
-		// Program FDILink if PCH
+	if (NeedsFDILink(info)) {
 		fFDILink = new(std::nothrow) FDILink(pipeIndex);
-	}
-	if (gInfo->shared_info->pch_info != INTEL_PCH_NONE) {
-		// DDI also has transcoders
-		fHasTranscoder = true;
-		// Program gen5(+) style panelfitter as well (DDI has this as well..)
-		fPanelFitter = new(std::nothrow) PanelFitter(pipeIndex);
+		if (fFDILink == NULL) {
+			ERROR("%s: Failed to allocate FDI link for pipe %d\n",
+				__func__, pipeIndex);
+		} else {
+			TRACE("%s: FDI link created for pipe %d\n", __func__, pipeIndex);
+		}
 	}
 
-	TRACE("Pipe Base: 0x%" B_PRIxADDR " Plane Base: 0x%" B_PRIxADDR "\n",
-			fPipeOffset, fPlaneOffset);
+	// Create PanelFitter if necessary
+	// Program gen5(+) style panelfitter (DDI has this as well)
+	if (NeedsPanelFitter(info)) {
+		fPanelFitter = new(std::nothrow) PanelFitter(pipeIndex);
+		if (fPanelFitter == NULL) {
+			ERROR("%s: Failed to allocate PanelFitter for pipe %d\n",
+				__func__, pipeIndex);
+		}
+	}
+
+	TRACE("%s: Pipe %d initialized (offset: 0x%" B_PRIx32
+		", plane: 0x%" B_PRIx32 ", transcoder: %s)\n",
+		__func__, pipeIndex, fPipeOffset, fPlaneOffset,
+		fHasTranscoder ? "yes" : "no");
 }
 
 
