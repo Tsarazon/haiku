@@ -115,28 +115,62 @@ QueueCommands::MakeSpace(uint32 size)
 	ASSERT((size & 1) == 0);
 
 	size *= sizeof(uint32);
-	bigtime_t start = system_time();
 
-	while (fRingBuffer.space_left < size) {
-		// wait until more space is free
-		uint32 head = read32(fRingBuffer.register_base + RING_BUFFER_HEAD)
+	// Fast path - sufficient space available
+	if (fRingBuffer.space_left >= size) {
+		fRingBuffer.space_left -= size;
+		return;
+	}
+
+	// Slow path - wait for space to free up
+	const bigtime_t timeout = 1000000LL;  // 1 second
+	const bigtime_t startTime = system_time();
+	const uint32 ringBase = fRingBuffer.register_base;
+
+	// Exponential backoff for more efficient waiting
+	bigtime_t spinDelay = 1;  // start with 1 us
+	const bigtime_t maxSpinDelay = 100;  // max 100 us
+
+	do {
+		// Read current head position
+		uint32 head = read32(ringBase + RING_BUFFER_HEAD)
 			& INTEL_RING_BUFFER_HEAD_MASK;
 
+		// Calculate available space accounting for wrap-around
 		if (head <= fRingBuffer.position)
 			head += fRingBuffer.size;
 
-		fRingBuffer.space_left = head - fRingBuffer.position;
+		uint32 available = head - fRingBuffer.position;
 
-		if (fRingBuffer.space_left < size) {
-			if (system_time() > start + 1000000LL) {
-				ERROR("engine stalled, head %" B_PRIx32 "\n", head);
-				break;
-			}
-			spin(10);
+		// Check if enough space is available
+		if (available >= size) {
+			fRingBuffer.space_left = available - size;
+			return;
 		}
-	}
 
-	fRingBuffer.space_left -= size;
+		// Update cached available space
+		fRingBuffer.space_left = available;
+
+		// Check timeout
+		bigtime_t elapsed = system_time() - startTime;
+		if (elapsed > timeout) {
+			ERROR("%s: Ring buffer timeout after %" B_PRId64 " us "
+				"(need %u bytes, have %u bytes, head %" B_PRIx32
+				", tail %" B_PRIx32 ")\n",
+				__func__, elapsed, size, available,
+				head, fRingBuffer.position);
+
+			// Still reserve space to not break caller logic
+			fRingBuffer.space_left = (available >= size) ? (available - size) : 0;
+			return;
+		}
+
+		// Exponential backoff
+		spin(spinDelay);
+		if (spinDelay < maxSpinDelay)
+			spinDelay *= 2;
+
+	} while (true);
 }
 
 
