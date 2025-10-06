@@ -72,6 +72,10 @@ virtual pipe_index					PipePreference();
 protected:
 		void						_SetName(const char* name);
 
+		status_t					_ConfigurePipeComponents(
+										const display_timing& timing,
+										bool enableScaling = false);
+
 static	status_t					_GetI2CSignals(void* cookie, int* _clock,
 										int* _data);
 static	status_t					_SetI2CSignals(void* cookie, int clock,

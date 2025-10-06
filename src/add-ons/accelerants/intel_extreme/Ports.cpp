@@ -209,6 +209,48 @@ Port::SetPipe(Pipe* pipe)
 
 
 status_t
+Port::_ConfigurePipeComponents(const display_timing& timing, bool enableScaling)
+{
+	if (fPipe == NULL) {
+		ERROR("%s: No pipe assigned to port %s\n", __func__, PortName());
+		return B_ERROR;
+	}
+
+	// Configure PanelFitter if it exists
+	PanelFitter* fitter = fPipe->PFT();
+	if (fitter != NULL) {
+		if (enableScaling) {
+			fitter->Enable(timing);
+			TRACE("%s: PanelFitter enabled for %s\n", __func__, PortName());
+		} else {
+			// For ports that don't need scaling, still enable with timing
+			fitter->Enable(timing);
+		}
+	}
+
+	// Configure and train FDI link if it exists
+	FDILink* link = fPipe->FDI();
+	if (link != NULL) {
+		uint32 lanes = 0;
+		uint32 linkBandwidth = 0;
+		uint32 bitsPerPixel = 0;
+
+		link->PreTrain(const_cast<display_timing*>(&timing),
+			&linkBandwidth, &lanes, &bitsPerPixel);
+
+		fPipe->SetFDILink(timing, linkBandwidth, lanes, bitsPerPixel);
+
+		link->Train(const_cast<display_timing*>(&timing), lanes);
+
+		TRACE("%s: FDI configured: %u lanes, %u MHz, %u bpp\n",
+			__func__, lanes, linkBandwidth, bitsPerPixel);
+	}
+
+	return B_OK;
+}
+
+
+status_t
 Port::Power(bool enabled)
 {
 	if (fPipe == NULL) {
@@ -1024,18 +1066,10 @@ AnalogPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	PanelFitter* fitter = fPipe->PFT();
-	if (fitter != NULL)
-		fitter->Enable(target->timing);
-	FDILink* link = fPipe->FDI();
-	if (link != NULL) {
-		uint32 lanes = 0;
-		uint32 linkBandwidth = 0;
-		uint32 bitsPerPixel = 0;
-		link->PreTrain(&target->timing, &linkBandwidth, &lanes, &bitsPerPixel);
-		fPipe->SetFDILink(target->timing, linkBandwidth, lanes, bitsPerPixel);
-		link->Train(&target->timing, lanes);
-	}
+	status_t status = _ConfigurePipeComponents(target->timing, false);
+	if (status != B_OK)
+		return status;
+
 	pll_divisors divisors;
 	compute_pll_divisors(&target->timing, &divisors, false);
 
@@ -1240,18 +1274,9 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	PanelFitter* fitter = fPipe->PFT();
-	if (fitter != NULL)
-		fitter->Enable(hardwareTarget);
-	FDILink* link = fPipe->FDI();
-	if (link != NULL) {
-		uint32 lanes = 0;
-		uint32 linkBandwidth = 0;
-		uint32 bitsPerPixel = 0;
-		link->PreTrain(&hardwareTarget, &linkBandwidth, &lanes, &bitsPerPixel);
-		fPipe->SetFDILink(hardwareTarget, linkBandwidth, lanes, bitsPerPixel);
-		link->Train(&hardwareTarget, lanes);
-	}
+	status_t status = _ConfigurePipeComponents(hardwareTarget, needsScaling);
+	if (status != B_OK)
+		return status;
 
 	pll_divisors divisors;
 	compute_pll_divisors(&hardwareTarget, &divisors, true);
@@ -1418,18 +1443,9 @@ DigitalPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	PanelFitter* fitter = fPipe->PFT();
-	if (fitter != NULL)
-		fitter->Enable(target->timing);
-	FDILink* link = fPipe->FDI();
-	if (link != NULL) {
-		uint32 lanes = 0;
-		uint32 linkBandwidth = 0;
-		uint32 bitsPerPixel = 0;
-		link->PreTrain(&target->timing, &linkBandwidth, &lanes, &bitsPerPixel);
-		fPipe->SetFDILink(target->timing, linkBandwidth, lanes, bitsPerPixel);
-		link->Train(&target->timing, lanes);
-	}
+	status_t status = _ConfigurePipeComponents(target->timing, false);
+	if (status != B_OK)
+		return status;
 
 	pll_divisors divisors;
 	compute_pll_divisors(&target->timing, &divisors, false);
