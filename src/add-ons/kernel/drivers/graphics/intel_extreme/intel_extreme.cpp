@@ -209,10 +209,8 @@ gen8_handle_interrupts(intel_info& info, uint32 interrupt)
 
 
 
-/** Get the appropriate interrupt mask for enabling or testing interrupts on
- * the given pipe.
- *
- * The bits to test or set are different depending on the hardware generation.
+/** Get the appropriate interrupt mask for enabling or testing interrupts.
+ * Gen 6+: Register layout differs between Sandy Bridge and later generations.
  *
  * \param info Intel_extreme driver information
  * \param pipe pipe to use

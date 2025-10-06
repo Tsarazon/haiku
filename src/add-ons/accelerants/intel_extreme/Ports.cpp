@@ -9,6 +9,9 @@
  *		Rudolf Cornelissen, ruud@highsand-juicylake.nl
  */
 
+/*
+ * Port Configuration & Management - Gen 6+ only
+ */
 
 #include "Ports.h"
 

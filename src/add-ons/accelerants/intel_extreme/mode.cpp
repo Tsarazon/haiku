@@ -9,6 +9,9 @@
  *		Axel Dörfler, axeld@pinc-software.de
  */
 
+/*
+ * Display Mode Configuration - Gen 6+ only
+ */
 
 #include <algorithm>
 #include <math.h>
