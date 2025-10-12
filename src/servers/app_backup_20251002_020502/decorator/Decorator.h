@@ -282,6 +282,18 @@ protected:
 
 			void 				_InvalidateBitmaps();
 
+private:
+			void				_SetButtonPressed(int32 tab, bool pressed,
+									bool Decorator::Tab::*buttonState,
+									void (Decorator::*drawFunc)(int32));
+			
+			void				_DrawDecoratorButton(int32 tab,
+									void (Decorator::*drawFunc)(
+										Decorator::Tab*, bool, BRect),
+									BRect Decorator::Tab::*rectMember);
+			
+			void				_EnsureFootprintValid();
+
 protected:
 	mutable		MultiLocker	fLocker;
 

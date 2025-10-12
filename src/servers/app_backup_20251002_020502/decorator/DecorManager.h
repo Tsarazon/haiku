@@ -83,6 +83,10 @@ private:
 			DecorAddOn*			_LoadDecor(BString path, status_t &error);
 			bool				_LoadSettingsFromDisk();
 			bool				_SaveSettingsToDisk();
+			
+			status_t			_GetSettingsPath(BPath& path) const;
+			Decorator*			_AllocateDecoratorForWindow(DecorAddOn* addon,
+									Window* window);
 
 private:
 			DecorAddOn			fDefaultDecor;

@@ -374,6 +374,23 @@ Decorator::TabRect(Decorator::Tab* tab) const
 }
 
 
+void
+Decorator::_SetButtonPressed(int32 tab, bool pressed,
+	bool Decorator::Tab::*buttonState, void (Decorator::*drawFunc)(int32))
+{
+	AutoWriteLocker _(fLocker);
+	
+	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == NULL)
+		return;
+	
+	if (pressed != decoratorTab->*buttonState) {
+		decoratorTab->*buttonState = pressed;
+		(this->*drawFunc)(tab);
+	}
+}
+
+
 /*!	\brief Sets the close button's value.
 
 	Note that this does not update the button's look - it just updates the
@@ -385,16 +402,8 @@ Decorator::TabRect(Decorator::Tab* tab) const
 void
 Decorator::SetClose(int32 tab, bool pressed)
 {
-	AutoWriteLocker _(fLocker);
-
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
-		return;
-
-	if (pressed != decoratorTab->closePressed) {
-		decoratorTab->closePressed = pressed;
-		DrawClose(tab);
-	}
+	_SetButtonPressed(tab, pressed, &Decorator::Tab::closePressed,
+		&Decorator::DrawClose);
 }
 
 
@@ -408,16 +417,8 @@ Decorator::SetClose(int32 tab, bool pressed)
 void
 Decorator::SetMinimize(int32 tab, bool pressed)
 {
-	AutoWriteLocker _(fLocker);
-
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
-		return;
-
-	if (pressed != decoratorTab->minimizePressed) {
-		decoratorTab->minimizePressed = pressed;
-		DrawMinimize(tab);
-	}
+	_SetButtonPressed(tab, pressed, &Decorator::Tab::minimizePressed,
+		&Decorator::DrawMinimize);
 }
 
 /*!	\brief Sets the zoom button's value.
@@ -430,16 +431,8 @@ Decorator::SetMinimize(int32 tab, bool pressed)
 void
 Decorator::SetZoom(int32 tab, bool pressed)
 {
-	AutoWriteLocker _(fLocker);
-
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
-		return;
-
-	if (pressed != decoratorTab->zoomPressed) {
-		decoratorTab->zoomPressed = pressed;
-		DrawZoom(tab);
-	}
+	_SetButtonPressed(tab, pressed, &Decorator::Tab::zoomPressed,
+		&Decorator::DrawZoom);
 }
 
 
@@ -884,6 +877,21 @@ Decorator::GetSizeLimits(int32* minWidth, int32* minHeight,
 }
 
 
+void
+Decorator::_DrawDecoratorButton(int32 tab,
+	void (Decorator::*drawFunc)(Decorator::Tab*, bool, BRect),
+	BRect Decorator::Tab::*rectMember)
+{
+	AutoReadLocker _(fLocker);
+
+	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
+	if (decoratorTab == NULL)
+		return;
+	
+	(this->*drawFunc)(decoratorTab, true, decoratorTab->*rectMember);
+}
+
+
 //! draws the tab, title, and buttons
 void
 Decorator::DrawTab(int32 tabIndex)
@@ -919,13 +927,8 @@ Decorator::DrawTitle(int32 tab)
 void
 Decorator::DrawClose(int32 tab)
 {
-	AutoReadLocker _(fLocker);
-
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
-		return;
-
-	_DrawClose(decoratorTab, true, decoratorTab->closeRect);
+	_DrawDecoratorButton(tab, &Decorator::_DrawClose, 
+		&Decorator::Tab::closeRect);
 }
 
 
@@ -947,12 +950,8 @@ Decorator::DrawMinimize(int32 tab)
 void
 Decorator::DrawZoom(int32 tab)
 {
-	AutoReadLocker _(fLocker);
-
-	Decorator::Tab* decoratorTab = fTabList.ItemAt(tab);
-	if (decoratorTab == NULL)
-		return;
-	_DrawZoom(decoratorTab, true, decoratorTab->zoomRect);
+	_DrawDecoratorButton(tab, &Decorator::_DrawZoom,
+		&Decorator::Tab::zoomRect);
 }
 
 
@@ -1065,11 +1064,15 @@ void
 Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 	window_look look, BRegion* updateRegion)
 {
-	// TODO: we could be much smarter about the update region
+	// Nothing to do if look hasn't changed
+	if (tab->look == look)
+		return;
 
-	// get previous extent
-	if (updateRegion != NULL)
-		updateRegion->Include(&GetFootprint());
+	if (updateRegion != NULL) {
+		// Include current footprint before changes
+		_EnsureFootprintValid();
+		updateRegion->Include(&fFootprint);
+	}
 
 	tab->look = look;
 
@@ -1078,27 +1081,47 @@ Decorator::_SetLook(Decorator::Tab* tab, DesktopSettings& settings,
 	_DoOutlineLayout();
 
 	_InvalidateFootprint();
-	if (updateRegion != NULL)
-		updateRegion->Include(&GetFootprint());
+	
+	if (updateRegion != NULL) {
+		// Include new footprint after changes
+		// Note: footprint will be invalidated again by SetLook() caller,
+		// but we need the valid footprint here for the update region
+		_EnsureFootprintValid();
+		updateRegion->Include(&fFootprint);
+		// Don't invalidate here - let the caller do it to avoid
+		// redundant footprint recalculation
+	}
 }
 
 
 void
 Decorator::_SetFlags(Decorator::Tab* tab, uint32 flags, BRegion* updateRegion)
 {
-	// TODO: we could be much smarter about the update region
+	// Nothing to do if flags haven't changed
+	if (tab->flags == flags)
+		return;
 
-	// get previous extent
-	if (updateRegion != NULL)
-		updateRegion->Include(&GetFootprint());
+	if (updateRegion != NULL) {
+		// Include current footprint before changes
+		_EnsureFootprintValid();
+		updateRegion->Include(&fFootprint);
+	}
 
 	tab->flags = flags;
 	_DoLayout();
 	_DoOutlineLayout();
 
 	_InvalidateFootprint();
-	if (updateRegion != NULL)
-		updateRegion->Include(&GetFootprint());
+	
+	if (updateRegion != NULL) {
+		// Include new footprint after changes
+		// Note: footprint will be invalidated again by SetFlags() caller,
+		// but we need the valid footprint here for the update region
+		_EnsureFootprintValid();
+		updateRegion->Include(&fFootprint);
+		// Don't invalidate here - let the caller do it to avoid
+		// redundant footprint recalculation
+	}
 }
 
 
@@ -1216,6 +1239,19 @@ void
 Decorator::_InvalidateFootprint()
 {
 	fFootprintValid = false;
+}
+
+
+void
+Decorator::_EnsureFootprintValid()
+{
+	if (!fFootprintValid) {
+		fFootprint.MakeEmpty();
+		_GetFootprint(&fFootprint);
+		if (IsOutlineResizing())
+			_GetOutlineFootprint(&fFootprint);
+		fFootprintValid = true;
+	}
 }
 
 

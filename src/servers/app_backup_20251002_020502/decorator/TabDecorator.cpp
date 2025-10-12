@@ -235,8 +235,7 @@ TabDecorator::_DoLayout()
 
 	bool hasTab = false;
 
-	// TODO: Put this computation somewhere more central!
-	const float scaleFactor = max_c(fDrawState.Font().Size() / 12.0f, 1.0f);
+	const float scaleFactor = _GetScaleFactor();
 
 	switch ((int)fTopTab->look) {
 		case B_MODAL_WINDOW_LOOK:
@@ -366,7 +365,9 @@ TabDecorator::_DoTabLayout()
 		font_height fontHeight;
 		fDrawState.Font().GetHeight(fontHeight);
 
-		if (tab->look != kLeftTitledWindowLook) {
+		const bool isLeftTitled = (tab->look == kLeftTitledWindowLook);
+		
+		if (!isLeftTitled) {
 			const float spacing = fBorderWidth * 1.4f;
 			tabRect.Set(fFrame.left - fBorderWidth,
 				fFrame.top - fBorderWidth
@@ -408,15 +409,15 @@ TabDecorator::_DoTabLayout()
 			tab->maxTabSize += tab->textOffset;
 		tab->maxTabSize += tab->minTabSize;
 
-		float tabSize = (tab->look != kLeftTitledWindowLook
-			? fFrame.Width() : fFrame.Height()) + fBorderWidth * 2;
+		float tabSize = (isLeftTitled ? fFrame.Height() : fFrame.Width()) 
+			+ fBorderWidth * 2;
 		if (tabSize < tab->minTabSize)
 			tabSize = tab->minTabSize;
 		if (tabSize > tab->maxTabSize)
 			tabSize = tab->maxTabSize;
 
 		// layout buttons and truncate text
-		if (tab->look != kLeftTitledWindowLook)
+		if (!isLeftTitled)
 			tabRect.right = tabRect.left + tabSize;
 		else
 			tabRect.bottom = tabRect.top + tabSize;
@@ -462,65 +463,66 @@ TabDecorator::_DistributeTabSize(float delta)
 	int32 tabCount = fTabList.CountItems();
 	ASSERT(tabCount > 1);
 
-	float maxTabSize = 0;
-	float secMaxTabSize = 0;
-	int32 nTabsWithMaxSize = 0;
-	for (int32 i = 0; i < tabCount; i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
-		if (tab == NULL)
-			continue;
+	// Iterative approach instead of recursion to avoid stack issues
+	while (delta > 0) {
+		float maxTabSize = 0;
+		float secMaxTabSize = 0;
+		int32 nTabsWithMaxSize = 0;
+		
+		// Find maximum and second maximum tab sizes
+		for (int32 i = 0; i < tabCount; i++) {
+			Decorator::Tab* tab = fTabList.ItemAt(i);
+			if (tab == NULL)
+				continue;
 
-		float tabWidth = tab->tabRect.Width();
-		if (int_equal(maxTabSize, tabWidth)) {
-			nTabsWithMaxSize++;
-			continue;
-		}
-		if (maxTabSize < tabWidth) {
-			secMaxTabSize = maxTabSize;
-			maxTabSize = tabWidth;
-			nTabsWithMaxSize = 1;
-		} else if (secMaxTabSize <= tabWidth)
-			secMaxTabSize = tabWidth;
-	}
-
-	float minus = ceilf(std::min(maxTabSize - secMaxTabSize, delta));
-	if (minus < 1.0)
-		return;
-	delta -= minus;
-	minus /= nTabsWithMaxSize;
-
-	Decorator::Tab* previousTab = NULL;
-	for (int32 i = 0; i < tabCount; i++) {
-		Decorator::Tab* tab = fTabList.ItemAt(i);
-		if (tab == NULL)
-			continue;
-
-		if (int_equal(maxTabSize, tab->tabRect.Width()))
-			tab->tabRect.right -= minus;
-
-		if (previousTab != NULL) {
-			float offsetX = previousTab->tabRect.right - tab->tabRect.left;
-			tab->tabRect.OffsetBy(offsetX, 0);
+			float tabWidth = tab->tabRect.Width();
+			if (int_equal(maxTabSize, tabWidth)) {
+				nTabsWithMaxSize++;
+				continue;
+			}
+			if (maxTabSize < tabWidth) {
+				secMaxTabSize = maxTabSize;
+				maxTabSize = tabWidth;
+				nTabsWithMaxSize = 1;
+			} else if (secMaxTabSize <= tabWidth)
+				secMaxTabSize = tabWidth;
 		}
 
-		previousTab = tab;
+		float minus = ceilf(std::min(maxTabSize - secMaxTabSize, delta));
+		if (minus < 1.0)
+			break;
+			
+		delta -= minus;
+		minus /= nTabsWithMaxSize;
+
+		Decorator::Tab* previousTab = NULL;
+		for (int32 i = 0; i < tabCount; i++) {
+			Decorator::Tab* tab = fTabList.ItemAt(i);
+			if (tab == NULL)
+				continue;
+
+			if (int_equal(maxTabSize, tab->tabRect.Width()))
+				tab->tabRect.right -= minus;
+
+			if (previousTab != NULL) {
+				float offsetX = previousTab->tabRect.right - tab->tabRect.left;
+				tab->tabRect.OffsetBy(offsetX, 0);
+			}
+
+			previousTab = tab;
+		}
 	}
 
-	if (delta > 0) {
-		_DistributeTabSize(delta);
-		return;
-	}
+	// Finalize: ensure last tab aligns with right border
+	Decorator::Tab* lastTab = fTabList.ItemAt(tabCount - 1);
+	if (lastTab != NULL)
+		lastTab->tabRect.right = floorf(fFrame.right + fBorderWidth);
 
-	// done
-	if (previousTab != NULL)
-		previousTab->tabRect.right = floorf(fFrame.right + fBorderWidth);
-
+	// Update tab offsets
 	for (int32 i = 0; i < tabCount; i++) {
 		Decorator::Tab* tab = fTabList.ItemAt(i);
-		if (tab == NULL)
-			continue;
-
-		tab->tabOffset = uint32(tab->tabRect.left - fLeftBorder.left);
+		if (tab != NULL)
+			tab->tabOffset = uint32(tab->tabRect.left - fLeftBorder.left);
 	}
 }
 
@@ -542,10 +544,13 @@ void
 TabDecorator::_SetTitle(Decorator::Tab* tab, const char* string,
 	BRegion* updateRegion)
 {
-	// TODO: we could be much smarter about the update region
-
-	BRect rect = TabRect((int32) 0) | TabRect(CountTabs() - 1);
-		// Get a rect of all the tabs
+	if (updateRegion != NULL) {
+		// Include current tabs region before layout changes
+		// Add 1 pixel below for border that changes appearance
+		BRect oldRect = fTabsRegion.Frame();
+		oldRect.bottom++;
+		updateRegion->Include(oldRect);
+	}
 
 	_DoLayout();
 	_DoOutlineLayout();
@@ -553,13 +558,12 @@ TabDecorator::_SetTitle(Decorator::Tab* tab, const char* string,
 	if (updateRegion == NULL)
 		return;
 
-	rect = rect | TabRect(CountTabs() - 1);
-		// Update the rect to guarantee it updates all the tabs
-
-	rect.bottom++;
-		// the border will look differently when the title is adjacent
-
-	updateRegion->Include(rect);
+	// Include new tabs region after layout changes
+	// fTabsRegion is updated in _DoTabLayout() as fTabsRegion = fTitleBarRect
+	// Add 1 pixel below for border that changes appearance
+	BRect newRect = fTabsRegion.Frame();
+	newRect.bottom++;
+	updateRegion->Include(newRect);
 }
 
 
@@ -701,7 +705,9 @@ TabDecorator::_ResizeBy(BPoint offset, BRegion* dirty)
 
 		float delta = tabOffset - tab->tabOffset;
 		tab->tabOffset = (uint32)tabOffset;
-		if (fTopTab->look != kLeftTitledWindowLook)
+		
+		const bool isLeftTitled = _IsLeftTitled();
+		if (!isLeftTitled)
 			tabRect.OffsetBy(delta, 0.0);
 		else
 			tabRect.OffsetBy(0.0, delta);
@@ -711,11 +717,9 @@ TabDecorator::_ResizeBy(BPoint offset, BRegion* dirty)
 		if (tabSize > tab->maxTabSize)
 			tabSize = tab->maxTabSize;
 
-		if (fTopTab->look != kLeftTitledWindowLook
-			&& tabSize != tabRect.Width()) {
+		if (!isLeftTitled && tabSize != tabRect.Width()) {
 			tabRect.right = tabRect.left + tabSize;
-		} else if (fTopTab->look == kLeftTitledWindowLook
-			&& tabSize != tabRect.Height()) {
+		} else if (isLeftTitled && tabSize != tabRect.Height()) {
 			tabRect.bottom = tabRect.top + tabSize;
 		}
 
@@ -730,7 +734,7 @@ TabDecorator::_ResizeBy(BPoint offset, BRegion* dirty)
 				BRect redraw(tabRect);
 				if (delta != 0.0) {
 					redraw = redraw | oldTabRect;
-					if (fTopTab->look != kLeftTitledWindowLook)
+					if (!isLeftTitled)
 						redraw.bottom++;
 					else
 						redraw.right++;
@@ -966,8 +970,7 @@ void
 TabDecorator::_GetButtonSizeAndOffset(const BRect& tabRect, float* _offset,
 	float* _size, float* _inset) const
 {
-	float tabSize = fTopTab->look == kLeftTitledWindowLook ?
-		tabRect.Width() : tabRect.Height();
+	float tabSize = _IsLeftTitled() ? tabRect.Width() : tabRect.Height();
 
 	bool smallTab = fTopTab->look == B_FLOATING_WINDOW_LOOK
 		|| fTopTab->look == kLeftTitledWindowLook;
@@ -999,8 +1002,11 @@ TabDecorator::_LayoutTabItems(Decorator::Tab* _tab, const BRect& tabRect)
 	BRect& closeRect = tab->closeRect;
 	BRect& zoomRect = tab->zoomRect;
 
+	// Check this specific tab's look, not fTopTab
+	const bool isLeftTitled = (tab->look == kLeftTitledWindowLook);
+	
 	// calulate close rect based on the tab rectangle
-	if (tab->look != kLeftTitledWindowLook) {
+	if (!isLeftTitled) {
 		closeRect.Set(tabRect.left + offset, tabRect.top + offset,
 			tabRect.left + offset + size, tabRect.top + offset + size);
 
@@ -1030,7 +1036,7 @@ TabDecorator::_LayoutTabItems(Decorator::Tab* _tab, const BRect& tabRect)
 	// TODO: the +2 is there because the title often appeared
 	//	truncated for no apparent reason - OTOH the title does
 	//	also not appear perfectly in the middle
-	if (tab->look != kLeftTitledWindowLook)
+	if (!isLeftTitled)
 		size = (zoomRect.left - closeRect.right) - tab->textOffset * 2 + inset;
 	else
 		size = (zoomRect.top - closeRect.bottom) - tab->textOffset * 2 + inset;
@@ -1076,18 +1082,27 @@ TabDecorator::_DefaultTextOffset() const
 float
 TabDecorator::_SingleTabOffsetAndSize(float& tabSize)
 {
-	float maxLocation;
-	if (fTopTab->look != kLeftTitledWindowLook) {
+	const bool isLeftTitled = _IsLeftTitled();
+	
+	if (!isLeftTitled) {
 		tabSize = fRightBorder.right - fLeftBorder.left;
 	} else {
 		tabSize = fBottomBorder.bottom - fTopBorder.top;
 	}
+	
 	Decorator::Tab* tab = _TabAt(0);
-	maxLocation = tabSize - tab->maxTabSize;
+	float maxLocation = tabSize - tab->maxTabSize;
 	if (maxLocation < 0)
 		maxLocation = 0;
 
 	return floorf(tab->tabLocation * maxLocation);
+}
+
+
+float
+TabDecorator::_GetScaleFactor() const
+{
+	return max_c(fDrawState.Font().Size() / 12.0f, 1.0f);
 }
 
 

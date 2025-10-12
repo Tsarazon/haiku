@@ -125,6 +125,15 @@ DecorManager::~DecorManager()
 
 
 Decorator*
+DecorManager::_AllocateDecoratorForWindow(DecorAddOn* addon, Window* window)
+{
+	return addon->AllocateDecorator(window->Desktop(),
+		window->GetDrawingEngine(), window->Frame(), window->Title(),
+		window->Look(), window->Flags());
+}
+
+
+Decorator*
 DecorManager::AllocateDecorator(Window* window)
 {
 	// Create a new instance of the current decorator.
@@ -139,17 +148,13 @@ DecorManager::AllocateDecorator(Window* window)
 	// Are we previewing a specific decorator?
 	if (window == fPreviewWindow) {
 		if (fPreviewDecor != NULL) {
-			return fPreviewDecor->AllocateDecorator(window->Desktop(),
-				window->GetDrawingEngine(), window->Frame(), window->Title(),
-				window->Look(), window->Flags());
+			return _AllocateDecoratorForWindow(fPreviewDecor, window);
 		} else {
 			fPreviewWindow = NULL;
 		}
 	}
 
-	return fCurrentDecor->AllocateDecorator(window->Desktop(),
-		window->GetDrawingEngine(), window->Frame(), window->Title(),
-		window->Look(), window->Flags());
+	return _AllocateDecoratorForWindow(fCurrentDecor, window);
 }
 
 
@@ -184,15 +189,15 @@ DecorManager::CleanupForWindow(Window* window)
 status_t
 DecorManager::PreviewDecorator(BString path, Window* window)
 {
+	if (window == NULL)
+		return B_BAD_VALUE;
+
 	if (fPreviewWindow != NULL && fPreviewWindow != window){
 		// Reset other window to current decorator - only one can preview
 		Window* oldPreviewWindow = fPreviewWindow;
 		fPreviewWindow = NULL;
 		oldPreviewWindow->ReloadDecor();
 	}
-
-	if (window == NULL)
-		return B_BAD_VALUE;
 
 	// We have to jump some hoops because the window must be able to
 	// delete its decorator before we unload the add-on
@@ -319,17 +324,28 @@ static const char* kSettingsDir = "system/app_server";
 static const char* kSettingsFile = "decorator_settings";
 
 
+status_t
+DecorManager::_GetSettingsPath(BPath& path) const
+{
+	status_t error = find_directory(B_USER_SETTINGS_DIRECTORY, &path, true);
+	if (error != B_OK)
+		return error;
+
+	error = path.Append(kSettingsDir);
+	if (error != B_OK)
+		return error;
+
+	return path.Append(kSettingsFile);
+}
+
+
 bool
 DecorManager::_LoadSettingsFromDisk()
 {
-	// get the user settings directory
 	BPath path;
-	status_t error = find_directory(B_USER_SETTINGS_DIRECTORY, &path, true);
-	if (error != B_OK)
+	if (_GetSettingsPath(path) != B_OK)
 		return false;
 
-	path.Append(kSettingsDir);
-	path.Append(kSettingsFile);
 	BFile file(path.Path(), B_READ_ONLY);
 	if (file.InitCheck() != B_OK)
 		return false;
@@ -344,8 +360,6 @@ DecorManager::_LoadSettingsFromDisk()
 				fCurrentDecor = decor;
 				fCurrentDecorPath = itemPath;
 				return true;
-			} else {
-				//TODO: do something with the reported error
 			}
 		}
 	}
@@ -357,17 +371,18 @@ DecorManager::_LoadSettingsFromDisk()
 bool
 DecorManager::_SaveSettingsToDisk()
 {
-	// get the user settings directory
 	BPath path;
-	status_t error = find_directory(B_USER_SETTINGS_DIRECTORY, &path, true);
-	if (error != B_OK)
+	if (_GetSettingsPath(path) != B_OK)
 		return false;
 
-	path.Append(kSettingsDir);
-	if (create_directory(path.Path(), 777) != B_OK)
+	// Get parent directory for creating it if needed
+	BPath parentPath;
+	if (path.GetParent(&parentPath) != B_OK)
 		return false;
 
-	path.Append(kSettingsFile);
+	if (create_directory(parentPath.Path(), 777) != B_OK)
+		return false;
+
 	BFile file(path.Path(), B_READ_WRITE | B_CREATE_FILE | B_ERASE_FILE);
 	if (file.InitCheck() != B_OK)
 		return false;
@@ -380,4 +395,3 @@ DecorManager::_SaveSettingsToDisk()
 
 	return true;
 }
-

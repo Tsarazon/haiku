@@ -8,12 +8,13 @@
 #define BITMAP_PAINTER_H
 
 #include <AutoDeleter.h>
-#include <blend2d.h>
 
 #include "Painter.h"
 
 
 class Painter::BitmapPainter {
+public:
+
 public:
 								BitmapPainter(const Painter* painter,
 									const ServerBitmap* bitmap,
@@ -27,9 +28,12 @@ private:
 									BRect sourceRect,
 									const BRect& destinationRect);
 
-			BLFormat			_ConvertToBLFormat(color_space cs);
-			void				_ConvertColorSpace(BLImage& outImage);
-			void				_SetupCompOp(BLContext& ctx);
+			bool				_HasScale();
+			bool				_HasAffineTransform();
+			bool				_HasAlphaMask();
+
+			void				_ConvertColorSpace(ObjectDeleter<BBitmap>&
+									convertedBitmapDeleter);
 
 			template<typename sourcePixel>
 			void				_TransparentMagicToAlpha(sourcePixel *buffer,
@@ -39,17 +43,17 @@ private:
 									BBitmap *output);
 
 private:
-			const Painter*		fPainter;
-			status_t			fStatus;
-			BLImage				fBLImage;
-			BRect				fBitmapBounds;
-			color_space			fColorSpace;
-			uint32				fOptions;
+			const Painter*			fPainter;
+			status_t				fStatus;
+			agg::rendering_buffer	fBitmap;
+			BRect					fBitmapBounds;
+			color_space				fColorSpace;
+			uint32					fOptions;
 
-			BRect				fDestinationRect;
-			double				fScaleX;
-			double				fScaleY;
-			BPoint				fOffset;
+			BRect					fDestinationRect;
+			double					fScaleX;
+			double					fScaleY;
+			BPoint					fOffset;
 };
 
 

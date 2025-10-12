@@ -6,10 +6,17 @@
  * All rights reserved. Distributed under the terms of the MIT License.
  */
 #include "BitmapPainter.h"
-#include "Blend2dDebug.h"
 
 #include <Bitmap.h>
 
+#include <agg_image_accessors.h>
+#include <agg_pixfmt_rgba.h>
+#include <agg_span_image_filter_rgba.h>
+
+#include "DrawBitmapBilinear.h"
+#include "DrawBitmapGeneric.h"
+#include "DrawBitmapNearestNeighbor.h"
+#include "DrawBitmapNoScale.h"
 #include "drawing_support.h"
 #include "ServerBitmap.h"
 #include "SystemPalette.h"
@@ -40,24 +47,10 @@ Painter::BitmapPainter::BitmapPainter(const Painter* painter,
 
 	fColorSpace = bitmap->ColorSpace();
 
-	// Create BLImage from existing ServerBitmap data
-	// BL_DATA_ACCESS_READ means read-only, Blend2D will create copy if needed
-	BLResult result = fBLImage.createFromData(
-		bitmap->Width(),
-		bitmap->Height(),
-		_ConvertToBLFormat(fColorSpace),
-		(void*)bitmap->Bits(),
-		bitmap->BytesPerRow(),
-		BL_DATA_ACCESS_READ,  // read-only access
-		nullptr,              // destroyFunc - not needed, data owned by ServerBitmap
-		nullptr               // userData
-	);
+	fBitmap.attach(bitmap->Bits(), bitmap->Width(), bitmap->Height(),
+		bitmap->BytesPerRow());
 
-	if (result == BL_SUCCESS) {
-		fStatus = B_OK;
-	} else {
-		BLEND2D_ERROR("BitmapPainter::BitmapPainter() - createFromData failed: %d\n", (int)result);
-	}
+	fStatus = B_OK;
 }
 
 
@@ -65,6 +58,8 @@ void
 Painter::BitmapPainter::Draw(const BRect& sourceRect,
 	const BRect& destinationRect)
 {
+	using namespace BitmapPainterPrivate;
+
 	if (fStatus != B_OK)
 		return;
 
@@ -83,96 +78,98 @@ Painter::BitmapPainter::Draw(const BRect& sourceRect,
 	if (!success)
 		return;
 
-	// Convert color space if required
-	BLImage workingImage;
-	if (fColorSpace != B_RGBA32 && fColorSpace != B_RGB32) {
-		_ConvertColorSpace(workingImage);
-	} else {
-		workingImage = fBLImage;  // shallow copy (increases reference count)
+	if ((fOptions & B_TILE_BITMAP) == 0) {
+		// optimized version for no scale in CMAP8 or RGB32 OP_OVER
+		if (!_HasScale() && !_HasAffineTransform() && !_HasAlphaMask()) {
+			if (fColorSpace == B_CMAP8) {
+				if (fPainter->fDrawingMode == B_OP_COPY) {
+					DrawBitmapNoScale<CMap8Copy> drawNoScale;
+					drawNoScale.Draw(fPainter->fInternal, fBitmap, 1, fOffset,
+						fDestinationRect);
+					return;
+				}
+				if (fPainter->fDrawingMode == B_OP_OVER) {
+					DrawBitmapNoScale<CMap8Over> drawNoScale;
+					drawNoScale.Draw(fPainter->fInternal, fBitmap, 1, fOffset,
+						fDestinationRect);
+					return;
+				}
+			} else if (fColorSpace == B_RGB32) {
+				if (fPainter->fDrawingMode == B_OP_OVER) {
+					DrawBitmapNoScale<Bgr32Over> drawNoScale;
+					drawNoScale.Draw(fPainter->fInternal, fBitmap, 4, fOffset,
+						fDestinationRect);
+					return;
+				}
+			}
+		}
 	}
 
-	// Get Blend2D context from Painter
-	BLContext& ctx = fPainter->fInternal.fBLContext;
+	ObjectDeleter<BBitmap> convertedBitmapDeleter;
+	_ConvertColorSpace(convertedBitmapDeleter);
 
-	// CRITICAL: Setup image filtering quality hints
-	BLResult result;
-	if ((fOptions & B_FILTER_BITMAP_BILINEAR) != 0) {
-		// Bilinear filtering for quality scaling
-		result = ctx.setHint(BL_CONTEXT_HINT_RENDERING_QUALITY, 
-					BL_RENDERING_QUALITY_ANTIALIAS);
-		BLEND2D_CHECK_WARN(result);
-		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
-					BL_PATTERN_QUALITY_BILINEAR);
-		BLEND2D_CHECK_WARN(result);
-	} else {
-		// Nearest neighbor for pixel-perfect graphics (no smoothing)
-		result = ctx.setHint(BL_CONTEXT_HINT_PATTERN_QUALITY,
-					BL_PATTERN_QUALITY_NEAREST);
-		BLEND2D_CHECK_WARN(result);
+	if ((fOptions & B_TILE_BITMAP) == 0) {
+		// optimized version if there is no scale
+		if (!_HasScale() && !_HasAffineTransform() && !_HasAlphaMask()) {
+			if (fPainter->fDrawingMode == B_OP_COPY) {
+				DrawBitmapNoScale<Bgr32Copy> drawNoScale;
+				drawNoScale.Draw(fPainter->fInternal, fBitmap, 4, fOffset,
+					fDestinationRect);
+				return;
+			}
+			if (fPainter->fDrawingMode == B_OP_OVER
+				|| (fPainter->fDrawingMode == B_OP_ALPHA
+					 && fPainter->fAlphaSrcMode == B_PIXEL_ALPHA
+					 && fPainter->fAlphaFncMode == B_ALPHA_OVERLAY)) {
+				DrawBitmapNoScale<Bgr32Alpha> drawNoScale;
+				drawNoScale.Draw(fPainter->fInternal, fBitmap, 4, fOffset,
+					fDestinationRect);
+				return;
+			}
+		}
+
+		if (!_HasScale() && !_HasAffineTransform() && _HasAlphaMask()) {
+			if (fPainter->fDrawingMode == B_OP_COPY) {
+				DrawBitmapNoScale<Bgr32CopyMasked> drawNoScale;
+				drawNoScale.Draw(fPainter->fInternal, fBitmap, 4, fOffset,
+					fDestinationRect);
+				return;
+			}
+		}
+
+		// bilinear and nearest-neighbor scaled, OP_COPY only
+		if (fPainter->fDrawingMode == B_OP_COPY
+			&& !_HasAffineTransform() && !_HasAlphaMask()) {
+			if ((fOptions & B_FILTER_BITMAP_BILINEAR) != 0) {
+				DrawBitmapBilinear<ColorTypeRgb, DrawModeCopy> drawBilinear;
+				drawBilinear.Draw(fPainter, fPainter->fInternal,
+					fBitmap, fOffset, fScaleX, fScaleY, fDestinationRect);
+			} else {
+				DrawBitmapNearestNeighborCopy::Draw(fPainter, fPainter->fInternal,
+					fBitmap, fOffset, fScaleX, fScaleY, fDestinationRect);
+			}
+			return;
+		}
+
+		if (fPainter->fDrawingMode == B_OP_ALPHA
+			&& fPainter->fAlphaSrcMode == B_PIXEL_ALPHA
+			&& fPainter->fAlphaFncMode == B_ALPHA_OVERLAY
+			&& !_HasAffineTransform() && !_HasAlphaMask()
+			&& (fOptions & B_FILTER_BITMAP_BILINEAR) != 0) {
+			DrawBitmapBilinear<ColorTypeRgba, DrawModeAlphaOverlay> drawBilinear;
+			drawBilinear.Draw(fPainter, fPainter->fInternal,
+				fBitmap, fOffset, fScaleX, fScaleY, fDestinationRect);
+			return;
+		}
 	}
-
-	// Setup composition operator (SRC_COPY, SRC_OVER, etc.)
-	_SetupCompOp(ctx);
 
 	if ((fOptions & B_TILE_BITMAP) != 0) {
-		// ===== TILING MODE =====
-		// Use BLPattern for seamless image repetition
-		BLPattern pattern(workingImage);
-		
-		// Set repeat mode for seamless tiling
-		pattern.setExtendMode(BL_EXTEND_MODE_REPEAT);
-		
-		// Apply transformation to pattern (scale and offset)
-		BLMatrix2D matrix;
-		matrix.translate(fOffset.x, fOffset.y);
-		if (fScaleX != 1.0 || fScaleY != 1.0) {
-			matrix.scale(fScaleX, fScaleY);
-		}
-		pattern.setMatrix(matrix);
-		
-		// Fill rectangle with pattern
-		result = ctx.fillRect(BLRect(
-			fDestinationRect.left,
-			fDestinationRect.top,
-			fDestinationRect.Width() + 1,
-			fDestinationRect.Height() + 1
-		), pattern);
-		BLEND2D_CHECK_WARN(result);
-		
+		DrawBitmapGeneric<Tile>::Draw(fPainter, fPainter->fInternal, fBitmap,
+			fOffset, fScaleX, fScaleY, fDestinationRect, fOptions);
 	} else {
-		// ===== NORMAL MODE (NON-TILING) =====
-		// Use blitImage for drawing (with automatic scaling)
-		
-		// Calculate source area from sourceRect
-		BRect actualSourceRect = sourceRect;
-		// Constrain to bitmap bounds
-		if (actualSourceRect.left < fBitmapBounds.left)
-			actualSourceRect.left = fBitmapBounds.left;
-		if (actualSourceRect.top < fBitmapBounds.top)
-			actualSourceRect.top = fBitmapBounds.top;
-		if (actualSourceRect.right > fBitmapBounds.right)
-			actualSourceRect.right = fBitmapBounds.right;
-		if (actualSourceRect.bottom > fBitmapBounds.bottom)
-			actualSourceRect.bottom = fBitmapBounds.bottom;
-		
-		BLRectI srcArea(
-			(int)actualSourceRect.left,
-			(int)actualSourceRect.top,
-			(int)(actualSourceRect.Width() + 1),
-			(int)(actualSourceRect.Height() + 1)
-		);
-		
-		BLRect dstRect(
-			fDestinationRect.left,
-			fDestinationRect.top,
-			fDestinationRect.Width() + 1,
-			fDestinationRect.Height() + 1
-		);
-		
-		// blitImage automatically performs scaling if srcArea != dstRect
-		// Filter quality is determined by hints set above
-		result = ctx.blitImage(dstRect, workingImage, srcArea);
-		BLEND2D_CHECK_WARN(result);
+		// for all other cases (non-optimized drawing mode or scaled drawing)
+		DrawBitmapGeneric<Fill>::Draw(fPainter, fPainter->fInternal, fBitmap,
+			fOffset, fScaleX, fScaleY, fDestinationRect, fOptions);
 	}
 }
 
@@ -196,7 +193,7 @@ Painter::BitmapPainter::_DetermineTransform(BRect sourceRect,
 		align_rect_to_pixels(&fDestinationRect);
 	}
 
-	if ((fOptions & B_TILE_BITMAP) == 0) {
+	if((fOptions & B_TILE_BITMAP) == 0) {
 		fScaleX = (fDestinationRect.Width() + 1) / (sourceRect.Width() + 1);
 		fScaleY = (fDestinationRect.Height() + 1) / (sourceRect.Height() + 1);
 
@@ -237,170 +234,98 @@ Painter::BitmapPainter::_DetermineTransform(BRect sourceRect,
 }
 
 
-BLFormat
-Painter::BitmapPainter::_ConvertToBLFormat(color_space cs)
+bool
+Painter::BitmapPainter::_HasScale()
 {
-	switch (cs) {
-		case B_RGBA32:
-		case B_RGB32:
-			// Blend2D uses premultiplied alpha by default
-			return BL_FORMAT_PRGB32;
-		
-		case B_RGB24:
-			// 24-bit RGB without alpha
-			// Blend2D converts to PRGB32 automatically
-			return BL_FORMAT_XRGB32;
-		
-		case B_CMAP8:
-			// 8-bit indexed color - needs conversion via palette
-			// Convert to PRGB32
-			return BL_FORMAT_PRGB32;
-		
-		case B_RGB15:
-		case B_RGBA15:
-			// 15/16-bit formats - convert to PRGB32
-			return BL_FORMAT_PRGB32;
-		
-		default:
-			// Default to PRGB32
-			return BL_FORMAT_PRGB32;
-	}
+	return fScaleX != 1.0 || fScaleY != 1.0;
+}
+
+
+bool
+Painter::BitmapPainter::_HasAffineTransform()
+{
+	return !fPainter->fIdentityTransform;
+}
+
+
+bool
+Painter::BitmapPainter::_HasAlphaMask()
+{
+	return fPainter->fInternal.fMaskedUnpackedScanline != NULL;
 }
 
 
 void
-Painter::BitmapPainter::_SetupCompOp(BLContext& ctx)
+Painter::BitmapPainter::_ConvertColorSpace(
+	ObjectDeleter<BBitmap>& convertedBitmapDeleter)
 {
-	switch (fPainter->fDrawingMode) {
-		case B_OP_COPY:
-			// Simple copy (replace pixels)
-			ctx.setCompOp(BL_COMP_OP_SRC_COPY);
-			break;
-		
-		case B_OP_OVER:
-			// Alpha blending (overlay with transparency)
-			ctx.setCompOp(BL_COMP_OP_SRC_OVER);
-			break;
-		
-		case B_OP_ALPHA:
-			if (fPainter->fAlphaSrcMode == B_PIXEL_ALPHA &&
-				fPainter->fAlphaFncMode == B_ALPHA_OVERLAY) {
-				// Pixel alpha overlay mode
-				ctx.setCompOp(BL_COMP_OP_SRC_OVER);
-			} else {
-				// Other alpha modes - use SRC_OVER as fallback
-				ctx.setCompOp(BL_COMP_OP_SRC_OVER);
-			}
-			break;
-		
-		default:
-			// Default - standard alpha blending
-			ctx.setCompOp(BL_COMP_OP_SRC_OVER);
-			break;
-	}
-	
-	// Set global alpha if needed
-	if (fPainter->fAlphaSrcMode != B_PIXEL_ALPHA) {
-		// Constant alpha
-		double alpha = fPainter->fPatternHandler.GetAlpha() / 255.0;
-		ctx.setGlobalAlpha(alpha);
-	}
-}
+	if (fColorSpace == B_RGBA32)
+		return;
 
-
-void
-Painter::BitmapPainter::_ConvertColorSpace(BLImage& outImage)
-{
-	// For formats requiring conversion
-	if (fColorSpace == B_RGBA32 || fColorSpace == B_RGB32) {
-		outImage = fBLImage;
+	if (fColorSpace == B_RGB32
+		&& (fPainter->fDrawingMode == B_OP_COPY
+#if 1
+// Enabling this would make the behavior compatible to BeOS, which
+// treats B_RGB32 bitmaps as B_RGB*A*32 bitmaps in B_OP_ALPHA - unlike in
+// all other drawing modes, where B_TRANSPARENT_MAGIC_RGBA32 is handled.
+// B_RGB32 bitmaps therefore don't draw correctly on BeOS if they actually
+// use this color, unless the alpha channel contains 255 for all other
+// pixels, which is inconsistent.
+		|| fPainter->fDrawingMode == B_OP_ALPHA
+#endif
+		)) {
 		return;
 	}
 
-	// Create temporary bitmap for conversion
-	BBitmap* conversionBitmap = new(std::nothrow) BBitmap(
-		fBitmapBounds,
-		B_BITMAP_NO_SERVER_LINK,
-		B_RGBA32
-	);
-	
+	BBitmap* conversionBitmap = new(std::nothrow) BBitmap(fBitmapBounds,
+		B_BITMAP_NO_SERVER_LINK, B_RGBA32);
 	if (conversionBitmap == NULL) {
-		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
-			"out of memory\n");
-		outImage = fBLImage;
+		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
+			"out of memory for creating temporary conversion bitmap\n");
 		return;
 	}
+	convertedBitmapDeleter.SetTo(conversionBitmap);
 
-	ObjectDeleter<BBitmap> bitmapDeleter(conversionBitmap);
-
-	// Convert via ImportBits
-	BLImageData srcData;
-	fBLImage.getData(&srcData);
-	
-	status_t err = conversionBitmap->ImportBits(
-		srcData.pixelData,
-		srcData.size.h * srcData.stride,
-		srcData.stride,
-		0,
-		fColorSpace
-	);
-	
+	status_t err = conversionBitmap->ImportBits(fBitmap.buf(),
+		fBitmap.height() * fBitmap.stride(),
+		fBitmap.stride(), 0, fColorSpace);
 	if (err < B_OK) {
-		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
-			"conversion failed: %s\n", strerror(err));
-		outImage = fBLImage;
+		fprintf(stderr, "BitmapPainter::_ConvertColorSpace() - "
+			"colorspace conversion failed: %s\n", strerror(err));
 		return;
 	}
 
-	// Handle transparent magic colors
+	// the original bitmap might have had some of the
+	// transaparent magic colors set that we now need to
+	// make transparent in our RGBA32 bitmap again.
 	switch (fColorSpace) {
-		case B_RGB32: {
-			uint32* bits = (uint32*)conversionBitmap->Bits();
-			_TransparentMagicToAlpha(bits,
-				conversionBitmap->Bounds().IntegerWidth() + 1,
-				conversionBitmap->Bounds().IntegerHeight() + 1,
-				conversionBitmap->BytesPerRow(),
-				B_TRANSPARENT_MAGIC_RGBA32,
+		case B_RGB32:
+			_TransparentMagicToAlpha((uint32 *)fBitmap.buf(),
+				fBitmap.width(), fBitmap.height(),
+				fBitmap.stride(), B_TRANSPARENT_MAGIC_RGBA32,
 				conversionBitmap);
 			break;
-		}
-		case B_RGB15: {
-			uint16* bits = (uint16*)srcData.pixelData;
-			_TransparentMagicToAlpha(bits,
-				srcData.size.w,
-				srcData.size.h,
-				srcData.stride,
-				B_TRANSPARENT_MAGIC_RGBA15,
+
+		// TODO: not sure if this applies to B_RGBA15 too. It
+		// should not because B_RGBA15 actually has an alpha
+		// channel itself and it should have been preserved
+		// when importing the bitmap. Maybe it applies to
+		// B_RGB16 though?
+		case B_RGB15:
+			_TransparentMagicToAlpha((uint16 *)fBitmap.buf(),
+				fBitmap.width(), fBitmap.height(),
+				fBitmap.stride(), B_TRANSPARENT_MAGIC_RGBA15,
 				conversionBitmap);
 			break;
-		}
+
 		default:
 			break;
 	}
 
-	// Create BLImage from converted bitmap - make a COPY since conversionBitmap will be deleted
-	BLResult result = outImage.create(
-		conversionBitmap->Bounds().IntegerWidth() + 1,
-		conversionBitmap->Bounds().IntegerHeight() + 1,
-		BL_FORMAT_PRGB32
-	);
-	
-	if (result == BL_SUCCESS) {
-		// Copy pixel data
-		BLImageData dstData;
-		result = outImage.getData(&dstData);
-		if (result != BL_SUCCESS) {
-			BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - getData failed: %d\n", (int)result);
-			outImage = fBLImage;
-			return;
-		}
-		memcpy(dstData.pixelData, conversionBitmap->Bits(),
-			conversionBitmap->BitsLength());
-	} else {
-		BLEND2D_ERROR("BitmapPainter::_ConvertColorSpace() - "
-		"BLImage creation failed: %d\n", (int)result);
-		outImage = fBLImage;
-	}
+	fBitmap.attach((uint8*)conversionBitmap->Bits(),
+		(uint32)fBitmapBounds.IntegerWidth() + 1,
+		(uint32)fBitmapBounds.IntegerHeight() + 1,
+		conversionBitmap->BytesPerRow());
 }
 
 

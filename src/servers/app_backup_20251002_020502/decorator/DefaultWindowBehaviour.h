@@ -95,6 +95,8 @@ private:
 
 			void				_SetBorderHighlights(int8 horizontal,
 									int8 vertical, bool active);
+			Decorator::Region	_RegionForCorner(int8 horizontal,
+									int8 vertical) const;
 
 			ServerCursor*		_ResizeCursorFor(int8 horizontal,
 									int8 vertical);
@@ -103,6 +105,9 @@ private:
 			void				_ResetResizeCursor();
 	static	void				_ComputeResizeDirection(float x, float y,
 									int8& _horizontal, int8& _vertical);
+			
+	static	bool				_HasMouseButton(const BMessage* message,
+									int32 button);
 
 			void				_NextState(State* state);
 

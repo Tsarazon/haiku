@@ -6,29 +6,45 @@
  *		Maxim Shemanarev <mcseemagg@yahoo.com>
  *		Stephan Aßmus <superstippi@gmx.de>
  *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
- *		2025 Blend2D Migration
  */
+
+//----------------------------------------------------------------------------
+// Anti-Grain Geometry - Version 2.4
+// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
+//
+// Permission to copy, use, modify, sell and distribute this software
+// is granted provided this copyright notice appears in all copies.
+// This software is provided "as is" without express or implied
+// warranty, and with no claim as to its suitability for any purpose.
+//
+//----------------------------------------------------------------------------
+// Contact: mcseem@antigrain.com
+//			mcseemagg@yahoo.com
+//			http://www.antigrain.com
+//----------------------------------------------------------------------------
+
 
 #include "FontCacheEntry.h"
 
 #include <string.h>
-#include <stdio.h>
 
 #include <new>
 
 #include <Autolock.h>
+
+#include <agg_array.h>
 #include <utf8_functions.h>
 #include <util/OpenHashTable.h>
 
 #include "GlobalSubpixelSettings.h"
 
+
 BLocker FontCacheEntry::sUsageUpdateLock("FontCacheEntry usage lock");
 
-// ============================================================================
-// GlyphCachePool - хеш-таблица для кэширования глифов
-// ============================================================================
 
 class FontCacheEntry::GlyphCachePool {
+	// This class needs to be defined before any inline functions, as otherwise
+	// gcc2 will barf in debug mode.
 	struct GlyphHashTableDefinition {
 		typedef uint32		KeyType;
 		typedef	GlyphCache	ValueType;
@@ -53,7 +69,6 @@ class FontCacheEntry::GlyphCachePool {
 			return value->hash_link;
 		}
 	};
-
 public:
 	GlyphCachePool()
 	{
@@ -80,7 +95,7 @@ public:
 	}
 
 	GlyphCache* CacheGlyph(uint32 glyphIndex,
-		uint32 dataSize, glyph_data_type dataType, const BLBox& bounds,
+		uint32 dataSize, glyph_data_type dataType, const agg::rect_i& bounds,
 		float advanceX, float advanceY, float preciseAdvanceX,
 		float preciseAdvanceY, float insetLeft, float insetRight)
 	{
@@ -96,6 +111,9 @@ public:
 			return NULL;
 		}
 
+		// TODO: The HashTable grows without bounds. We should cleanup
+		// older entries from time to time.
+
 		fGlyphTable.Insert(glyph);
 
 		return glyph;
@@ -103,12 +121,13 @@ public:
 
 private:
 	typedef BOpenHashTable<GlyphHashTableDefinition> GlyphTable;
+
 	GlyphTable	fGlyphTable;
 };
 
-// ============================================================================
-// FontCacheEntry Implementation
-// ============================================================================
+
+// #pragma mark -
+
 
 FontCacheEntry::FontCacheEntry()
 	:
@@ -120,9 +139,12 @@ FontCacheEntry::FontCacheEntry()
 {
 }
 
+
 FontCacheEntry::~FontCacheEntry()
 {
+//printf("~FontCacheEntry()\n");
 }
+
 
 bool
 FontCacheEntry::Init(const ServerFont& font, bool forceVector)
@@ -130,111 +152,233 @@ FontCacheEntry::Init(const ServerFont& font, bool forceVector)
 	if (!fGlyphCache.IsSet())
 		return false;
 
-	if (fGlyphCache->Init() != B_OK)
-		return false;
-
 	glyph_rendering renderingType = _RenderTypeFor(font, forceVector);
 
-	if (!fEngine.Init(font.Path(), font.Face(), font.Size(),
-			FT_ENCODING_NONE, renderingType, font.Hinting())) {
+	// TODO: encoding from font
+	FT_Encoding charMap = FT_ENCODING_NONE;
+	bool hinting = font.Hinting();
+
+	bool success;
+	if (font.FontData() != NULL)
+		success = fEngine.Init(NULL, font.FaceIndex(), font.Size(), charMap,
+			renderingType, hinting, (const void*)font.FontData(), font.FontDataSize());
+	else
+		success = fEngine.Init(font.Path(), font.FaceIndex(), font.Size(), charMap,
+			renderingType, hinting);
+
+	if (!success) {
+		fprintf(stderr, "FontCacheEntry::Init() - some error loading font "
+			"file %s\n", font.Path());
+		return false;
+	}
+
+	if (fGlyphCache->Init() != B_OK) {
+		fprintf(stderr, "FontCacheEntry::Init() - failed to allocate "
+			"GlyphCache table for font file %s\n", font.Path());
 		return false;
 	}
 
 	return true;
 }
+
 
 bool
-FontCacheEntry::HasGlyphs(const char* utf8String, ssize_t glyphCount) const
+FontCacheEntry::HasGlyphs(const char* utf8String, ssize_t length) const
 {
-	if (!fGlyphCache.IsSet())
-		return false;
-
-	uint32 charCode;
-
-	for (ssize_t i = 0; i < glyphCount; i++) {
-		charCode = UTF8ToCharCode(&utf8String);
-		if (charCode == 0)
-			break;
-
-		uint32 glyphIndex = fEngine.GlyphIndexForGlyphCode(charCode);
-		if (glyphIndex == 0 && charCode != 0)
-			continue;
-
-		if (fGlyphCache->FindGlyph(glyphIndex) == NULL)
+	uint32 glyphCode;
+	const char* start = utf8String;
+	while ((glyphCode = UTF8ToCharCode(&utf8String))) {
+		if (fGlyphCache->FindGlyph(glyphCode) == NULL)
 			return false;
+		if (utf8String - start + 1 > length)
+			break;
 	}
-
 	return true;
 }
+
+
+inline bool
+render_as_space(uint32 glyphCode)
+{
+	// whitespace: render as space
+	// as per Unicode PropList.txt: White_Space
+	return (glyphCode >= 0x0009 && glyphCode <= 0x000d)
+			// control characters
+		|| (glyphCode == 0x0085)
+			// another control
+		|| (glyphCode == 0x00a0)
+			// no-break space
+		|| (glyphCode == 0x1680)
+			// ogham space mark
+		|| (glyphCode >= 0x2000 && glyphCode <= 0x200a)
+			// en quand, hair space
+		|| (glyphCode >= 0x2028 && glyphCode <= 0x2029)
+			// line and paragraph separators
+		|| (glyphCode == 0x202f)
+			// narrow no-break space
+		|| (glyphCode == 0x205f)
+			// medium math space
+		|| (glyphCode == 0x3000)
+			// ideographic space
+		;
+}
+
+
+inline bool
+render_as_zero_width(uint32 glyphCode)
+{
+	// ignorable chars: render as invisible
+	// as per Unicode DerivedCoreProperties.txt: Default_Ignorable_Code_Point.
+	// We also don't want tofu for noncharacters if we ever get one.
+	return (glyphCode == 0x00ad)
+			// soft hyphen
+		|| (glyphCode == 0x034f)
+			// combining grapheme joiner
+		|| (glyphCode == 0x061c)
+			// arabic letter mark
+		|| (glyphCode >= 0x115f && glyphCode <= 0x1160)
+			// hangul fillers
+		|| (glyphCode >= 0x17b4 && glyphCode <= 0x17b5)
+			// ignorable khmer vowels
+		|| (glyphCode >= 0x180b && glyphCode <= 0x180f)
+			// mongolian variation selectors and vowel separator
+		|| (glyphCode >= 0x200b && glyphCode <= 0x200f)
+			// zero width space, cursive joiners, ltr marks
+		|| (glyphCode >= 0x202a && glyphCode <= 0x202e)
+			// left to right embed, override
+		|| (glyphCode >= 0x2060 && glyphCode <= 0x206f)
+			// word joiner, invisible math operators, reserved
+		|| (glyphCode == 0x3164)
+			// hangul filler
+		|| (glyphCode >= 0xfe00 && glyphCode <= 0xfe0f)
+			// variation selectors
+		|| (glyphCode == 0xfeff)
+			// zero width no-break space
+		|| (glyphCode == 0xffa0)
+			// halfwidth hangul filler
+		|| (glyphCode >= 0xfff0 && glyphCode <= 0xfff8)
+			// reserved
+		|| (glyphCode >= 0x1bca0 && glyphCode <= 0x1bca3)
+			// shorthand format controls
+		|| (glyphCode >= 0x1d173 && glyphCode <= 0x1d17a)
+			// musical symbols
+		|| (glyphCode >= 0xe0000 && glyphCode <= 0xe01ef)
+			// variation selectors, tag space, reserved
+		|| (glyphCode >= 0xe01f0 && glyphCode <= 0xe0fff)
+			// reserved
+		|| ((glyphCode & 0xffff) >= 0xfffe)
+			// noncharacters
+		|| ((glyphCode >= 0xfdd0 && glyphCode <= 0xfdef)
+			&& glyphCode != 0xfdd1)
+			// noncharacters; 0xfdd1 is used internally to force .notdef glyph
+		;
+}
+
 
 const GlyphCache*
 FontCacheEntry::CachedGlyph(uint32 glyphCode)
 {
-	if (!fGlyphCache.IsSet())
-		return NULL;
-
-	uint32 glyphIndex = fEngine.GlyphIndexForGlyphCode(glyphCode);
-	return fGlyphCache->FindGlyph(glyphIndex);
+	// Only requires a read lock.
+	return fGlyphCache->FindGlyph(glyphCode);
 }
 
-const GlyphCache*
-FontCacheEntry::CreateGlyph(uint32 glyphCode, FontCacheEntry* fallbackEntry)
-{
-	if (!fGlyphCache.IsSet())
-		return NULL;
-
-	uint32 glyphIndex = fEngine.GlyphIndexForGlyphCode(glyphCode);
-
-	// Проверяем, есть ли уже в кэше
-	const GlyphCache* glyph = fGlyphCache->FindGlyph(glyphIndex);
-	if (glyph != NULL)
-		return glyph;
-
-	// Пробуем использовать fallback
-	if (glyphIndex == 0 && fallbackEntry != NULL) {
-		glyph = fallbackEntry->CreateGlyph(glyphCode, NULL);
-		if (glyph != NULL)
-			return glyph;
-	}
-
-	// Подготавливаем глиф через FontEngine
-	if (!fEngine.PrepareGlyph(glyphIndex))
-		return NULL;
-
-	// Получаем данные глифа
-	uint32 dataSize = fEngine.DataSize();
-	glyph_data_type dataType = fEngine.DataType();
-	BLBox bounds = fEngine.Bounds();
-
-	// Создаем запись в кэше
-	GlyphCache* cache = fGlyphCache->CacheGlyph(glyphIndex,
-		dataSize, dataType, bounds,
-		fEngine.AdvanceX(), fEngine.AdvanceY(),
-		fEngine.PreciseAdvanceX(), fEngine.PreciseAdvanceY(),
-		fEngine.InsetLeft(), fEngine.InsetRight());
-
-	if (cache == NULL)
-		return NULL;
-
-	// Записываем данные глифа
-	if (dataType == glyph_data_outline) {
-		// Сериализация BLPath
-		const BLPath& path = fEngine.Path();
-		SerializedPath::Serialize(path, cache->data);
-	} else {
-		// Растровые данные (mono, gray8, lcd)
-		fEngine.WriteGlyphTo(cache->data);
-	}
-
-	return cache;
-}
 
 bool
 FontCacheEntry::CanCreateGlyph(uint32 glyphCode)
 {
+	// Note that this bypass any fallback or caching because it is used in
+	// the fallback code itself.
 	uint32 glyphIndex = fEngine.GlyphIndexForGlyphCode(glyphCode);
 	return glyphIndex != 0;
 }
+
+
+const GlyphCache*
+FontCacheEntry::CreateGlyph(uint32 glyphCode, FontCacheEntry* fallbackEntry)
+{
+	// We cache the glyph by the requested glyphCode. The FontEngine of this
+	// FontCacheEntry may not contain a glyph for the given code, in which case
+	// we ask the fallbackEntry for the code to index translation and let it
+	// generate the glyph data. We will still use our own cache for storing the
+	// glyph. The next time it will be found (by glyphCode).
+
+	// NOTE: Both this and the fallback FontCacheEntry are expected to be
+	// write-locked!
+
+	const GlyphCache* glyph = fGlyphCache->FindGlyph(glyphCode);
+	if (glyph != NULL)
+		return glyph;
+
+	FontEngine* engine = &fEngine;
+	uint32 glyphIndex = engine->GlyphIndexForGlyphCode(glyphCode);
+	if (glyphIndex == 0 && fallbackEntry != NULL) {
+		// Our FontEngine does not contain this glyph, but we can retry with
+		// the fallbackEntry.
+		engine = &fallbackEntry->fEngine;
+		glyphIndex = engine->GlyphIndexForGlyphCode(glyphCode);
+	}
+
+	if (glyphIndex == 0) {
+		if (render_as_zero_width(glyphCode)) {
+			// cache and return a zero width glyph
+			return fGlyphCache->CacheGlyph(glyphCode, 0, glyph_data_invalid,
+				agg::rect_i(0, 0, -1, -1), 0, 0, 0, 0, 0, 0);
+		}
+
+		// reset to our engine
+		engine = &fEngine;
+		if (render_as_space(glyphCode)) {
+			// get the normal space glyph
+			glyphIndex = engine->GlyphIndexForGlyphCode(0x20 /* space */);
+		}
+	}
+
+	if (engine->PrepareGlyph(glyphIndex)) {
+		glyph = fGlyphCache->CacheGlyph(glyphCode,
+			engine->DataSize(), engine->DataType(), engine->Bounds(),
+			engine->AdvanceX(), engine->AdvanceY(),
+			engine->PreciseAdvanceX(), engine->PreciseAdvanceY(),
+			engine->InsetLeft(), engine->InsetRight());
+
+		if (glyph != NULL)
+			engine->WriteGlyphTo(glyph->data);
+	}
+
+	return glyph;
+}
+
+
+void
+FontCacheEntry::InitAdaptors(const GlyphCache* glyph,
+	double x, double y, GlyphMonoAdapter& monoAdapter,
+	GlyphGray8Adapter& gray8Adapter, GlyphPathAdapter& pathAdapter,
+	double scale)
+{
+	if (glyph == NULL)
+		return;
+
+	switch(glyph->data_type) {
+		case glyph_data_mono:
+			monoAdapter.init(glyph->data, glyph->data_size, x, y);
+			break;
+
+		case glyph_data_gray8:
+			gray8Adapter.init(glyph->data, glyph->data_size, x, y);
+			break;
+
+		case glyph_data_subpix:
+			gray8Adapter.init(glyph->data, glyph->data_size, x, y);
+			break;
+
+		case glyph_data_outline:
+			pathAdapter.init(glyph->data, glyph->data_size, x, y, scale);
+			break;
+
+		default:
+			break;
+	}
+}
+
 
 bool
 FontCacheEntry::GetKerning(uint32 glyphCode1, uint32 glyphCode2,
@@ -243,48 +387,51 @@ FontCacheEntry::GetKerning(uint32 glyphCode1, uint32 glyphCode2,
 	return fEngine.GetKerning(glyphCode1, glyphCode2, x, y);
 }
 
-// static
-void
+
+/*static*/ void
 FontCacheEntry::GenerateSignature(char* signature, size_t signatureSize,
 	const ServerFont& font, bool forceVector)
 {
 	glyph_rendering renderingType = _RenderTypeFor(font, forceVector);
 
-	snprintf(signature, signatureSize, "%s-%u-%.1f-%s-%s",
-		font.GetFamilyAndStyle(),
-		font.Face(),
-		font.Size(),
-		font.Hinting() ? "hinted" : "unhinted",
-		renderingType == glyph_ren_outline ? "vector" : 
-		renderingType == glyph_ren_lcd ? "lcd" :
-		renderingType == glyph_ren_native_gray8 ? "gray8" : "mono");
+	// TODO: read more of these from the font
+	FT_Encoding charMap = FT_ENCODING_NONE;
+	bool hinting = font.Hinting();
+	uint8 averageWeight = gSubpixelAverageWeight;
+
+	snprintf(signature, signatureSize, "%" B_PRId32 ",%p,%u,%d,%d,%.1f,%d,%d",
+		font.GetFamilyAndStyle(), font.Manager(), charMap,
+		font.Face(), int(renderingType), font.Size(), hinting, averageWeight);
 }
+
 
 void
 FontCacheEntry::UpdateUsage()
 {
+	// this is a static lock to prevent usage of too many semaphores,
+	// but on the other hand, it is not so nice to be using a lock
+	// here at all
+	// the hope is that the time is so short to hold this lock, that
+	// there is not much contention
 	BAutolock _(sUsageUpdateLock);
+
 	fLastUsedTime = system_time();
 	fUseCounter++;
 }
 
-// static
-glyph_rendering
+
+/*static*/ glyph_rendering
 FontCacheEntry::_RenderTypeFor(const ServerFont& font, bool forceVector)
 {
-	glyph_rendering renderingType;
+	glyph_rendering renderingType = gSubpixelAntialiasing ?
+		glyph_ren_subpix : glyph_ren_native_gray8;
 
 	if (forceVector || font.Rotation() != 0.0 || font.Shear() != 90.0
-		|| font.FalseBoldWidth() != 0.0) {
+		|| font.FalseBoldWidth() != 0.0
+		|| (font.Flags() & B_DISABLE_ANTIALIASING) != 0
+		|| font.Size() > 30
+		|| !font.Hinting()) {
 		renderingType = glyph_ren_outline;
-	} else {
-		// Используем LCD рендеринг если включен subpixel
-		if (gSubpixelAntialiasing)
-			renderingType = glyph_ren_lcd;
-		else if (font.Flags() & B_DISABLE_ANTIALIASING)
-			renderingType = glyph_ren_native_mono;
-		else
-			renderingType = glyph_ren_native_gray8;
 	}
 
 	return renderingType;

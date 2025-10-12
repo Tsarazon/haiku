@@ -6,15 +6,33 @@
  *		Maxim Shemanarev <mcseemagg@yahoo.com>
  *		Stephan Aßmus <superstippi@gmx.de>
  *		Andrej Spielmann, <andrej.spielmann@seh.ox.ac.uk>
- *		2025 Blend2D Migration
  */
+
+//----------------------------------------------------------------------------
+// Anti-Grain Geometry - Version 2.4
+// Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com)
+//
+// Permission to copy, use, modify, sell and distribute this software
+// is granted provided this copyright notice appears in all copies.
+// This software is provided "as is" without express or implied
+// warranty, and with no claim as to its suitability for any purpose.
+//
+//----------------------------------------------------------------------------
+// Contact: mcseem@antigrain.com
+//			mcseemagg@yahoo.com
+//			http://www.antigrain.com
+//----------------------------------------------------------------------------
 
 #ifndef FONT_CACHE_ENTRY_H
 #define FONT_CACHE_ENTRY_H
 
+
 #include <AutoDeleter.h>
 #include <Locker.h>
-#include <blend2d.h>
+
+#include <agg_conv_curve.h>
+#include <agg_conv_contour.h>
+#include <agg_conv_transform.h>
 
 #include "ServerFont.h"
 #include "FontEngine.h"
@@ -22,104 +40,10 @@
 #include "Referenceable.h"
 #include "Transformable.h"
 
-// ============================================================================
-// BLPath Serialization
-// ============================================================================
-
-// Структура для сериализации BLPath
-struct SerializedPath {
-	uint32 commandCount;
-	uint32 vertexCount;
-	// За структурой следуют данные:
-	// uint8 commands[commandCount]
-	// BLPoint vertices[vertexCount]
-	
-	static uint32 CalculateSize(const BLPath& path) {
-		return sizeof(SerializedPath) 
-			+ path.size() * sizeof(uint8)  // commands
-			+ path.size() * sizeof(BLPoint);  // vertices
-	}
-	
-	static void Serialize(const BLPath& path, uint8* buffer) {
-		SerializedPath* header = (SerializedPath*)buffer;
-		header->commandCount = path.size();
-		header->vertexCount = path.size();
-		
-		uint8* commands = buffer + sizeof(SerializedPath);
-		BLPoint* vertices = (BLPoint*)(commands + header->commandCount);
-		
-		// Use BLPath direct access methods
-		size_t cmdCount = path.size();
-		const uint8* cmds = path.commandData();
-		const BLPoint* vtx = path.vertexData();
-		
-		for (size_t i = 0; i < cmdCount; i++) {
-			commands[i] = cmds[i];
-			vertices[i] = vtx[i];
-		}
-	}
-	
-	static BLPath Deserialize(const uint8* buffer) {
-		BLPath path;
-		const SerializedPath* header = (const SerializedPath*)buffer;
-		
-		const uint8* commands = buffer + sizeof(SerializedPath);
-		const BLPoint* vertices = (const BLPoint*)(commands + header->commandCount);
-		
-		// Используем отдельный индекс для вершин чтобы избежать проблем с i++
-		size_t vertexIndex = 0;
-		
-		for (uint32 i = 0; i < header->commandCount; i++) {
-			if (vertexIndex >= header->vertexCount)
-				break;
-				
-			switch (commands[i]) {
-				case BL_PATH_CMD_MOVE:
-					path.moveTo(vertices[vertexIndex].x, vertices[vertexIndex].y);
-					vertexIndex++;
-					break;
-				case BL_PATH_CMD_ON:
-					path.lineTo(vertices[vertexIndex].x, vertices[vertexIndex].y);
-					vertexIndex++;
-					break;
-				case BL_PATH_CMD_QUAD:
-					// Quadratic bezier требует 2 точки
-					if (vertexIndex + 1 < header->vertexCount) {
-						path.quadTo(
-							vertices[vertexIndex].x, vertices[vertexIndex].y,
-							vertices[vertexIndex+1].x, vertices[vertexIndex+1].y
-						);
-						vertexIndex += 2;
-					}
-					break;
-				case BL_PATH_CMD_CUBIC:
-					// Cubic bezier требует 3 точки
-					if (vertexIndex + 2 < header->vertexCount) {
-						path.cubicTo(
-							vertices[vertexIndex].x, vertices[vertexIndex].y,
-							vertices[vertexIndex+1].x, vertices[vertexIndex+1].y,
-							vertices[vertexIndex+2].x, vertices[vertexIndex+2].y
-						);
-						vertexIndex += 3;
-					}
-					break;
-				case BL_PATH_CMD_CLOSE:
-					path.close();
-					break;
-			}
-		}
-		
-		return path;
-	}
-};
-
-// ============================================================================
-// GlyphCache - кэш отдельного глифа
-// ============================================================================
 
 struct GlyphCache {
 	GlyphCache(uint32 glyphIndex, uint32 dataSize, glyph_data_type dataType,
-			const BLBox& blBounds, float advanceX, float advanceY,
+			const agg::rect_i& bounds, float advanceX, float advanceY,
 			float preciseAdvanceX, float preciseAdvanceY,
 			float insetLeft, float insetRight)
 		:
@@ -127,7 +51,7 @@ struct GlyphCache {
 		data((uint8*)malloc(dataSize)),
 		data_size(dataSize),
 		data_type(dataType),
-		bounds(blBounds),
+		bounds(bounds),
 		advance_x(advanceX),
 		advance_y(advanceY),
 		precise_advance_x(preciseAdvanceX),
@@ -147,7 +71,7 @@ struct GlyphCache {
 	uint8*			data;
 	uint32			data_size;
 	glyph_data_type	data_type;
-	BLBox			bounds;
+	agg::rect_i		bounds;
 	float			advance_x;
 	float			advance_y;
 	float			precise_advance_x;
@@ -156,73 +80,28 @@ struct GlyphCache {
 	float			inset_right;
 
 	GlyphCache*		hash_link;
-	
-	// Восстановление BLPath из сериализованных данных
-	BLPath GetPath() const {
-		if (data_type == glyph_data_outline && data != NULL) {
-			return SerializedPath::Deserialize(data);
-		}
-		return BLPath();
-	}
-	
-	// Восстановление BLImage из данных
-	BLImage GetImage() const {
-		BLImage image;
-		
-		if (data == NULL)
-			return image;
-			
-		switch (data_type) {
-			case glyph_data_mono:
-			case glyph_data_gray8:
-			case glyph_data_lcd: {
-				uint32 width = (uint32)(bounds.x1 - bounds.x0);
-				uint32 height = (uint32)(bounds.y1 - bounds.y0);
-				
-				if (width == 0 || height == 0)
-					return image;
-				
-				BLResult result = image.create(width, height, BL_FORMAT_A8);
-				if (result != BL_SUCCESS)
-					return BLImage(); // Пустой image
-				
-				BLImageData imageData;
-				result = image.makeMutable(&imageData);
-				if (result != BL_SUCCESS) {
-					image.reset(); // ✅ Освобождаем перед возвратом
-					return BLImage();
-				}
-				
-				// Копируем данные
-				uint32 srcStride = width; // A8 формат
-				uint32 dstStride = imageData.stride;
-				
-				uint8* src = data;
-				uint8* dst = (uint8*)imageData.pixelData;
-				
-				for (uint32 y = 0; y < height; y++) {
-					memcpy(dst, src, width);
-					src += srcStride;
-					dst += dstStride;
-				}
-				break;
-			}
-			default:
-				break;
-		}
-		
-		return image;
-	}
 };
-
-// ============================================================================
-// FontCacheEntry - кэш шрифта
-// ============================================================================
 
 class FontCache;
 
 class FontCacheEntry : public MultiLocker, public BReferenceable {
  public:
+	typedef FontEngine::PathAdapter					GlyphPathAdapter;
+	typedef FontEngine::Gray8Adapter				GlyphGray8Adapter;
+	typedef GlyphGray8Adapter::embedded_scanline	GlyphGray8Scanline;
+	typedef FontEngine::MonoAdapter					GlyphMonoAdapter;
+	typedef GlyphMonoAdapter::embedded_scanline		GlyphMonoScanline;
+	typedef FontEngine::SubpixAdapter				SubpixAdapter;
+	typedef agg::conv_curve<GlyphPathAdapter>		CurveConverter;
+	typedef agg::conv_contour<CurveConverter>		ContourConverter;
+
+	typedef agg::conv_transform<CurveConverter, Transformable>
+													TransformedOutline;
+
+	typedef agg::conv_transform<ContourConverter, Transformable>
+													TransformedContourOutline;
+
+
 								FontCacheEntry();
 	virtual						~FontCacheEntry();
 
@@ -235,6 +114,13 @@ class FontCacheEntry : public MultiLocker, public BReferenceable {
 			const GlyphCache*	CreateGlyph(uint32 glyphCode,
 									FontCacheEntry* fallbackEntry = NULL);
 			bool				CanCreateGlyph(uint32 glyphCode);
+
+			void				InitAdaptors(const GlyphCache* glyph,
+									double x, double y,
+									GlyphMonoAdapter& monoAdapter,
+									GlyphGray8Adapter& gray8Adapter,
+									GlyphPathAdapter& pathAdapter,
+									double scale = 1.0);
 
 			bool				GetKerning(uint32 glyphCode1,
 									uint32 glyphCode2, double* x, double* y);
@@ -269,3 +155,4 @@ class FontCacheEntry : public MultiLocker, public BReferenceable {
 };
 
 #endif // FONT_CACHE_ENTRY_H
+

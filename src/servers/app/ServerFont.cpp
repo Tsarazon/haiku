@@ -35,7 +35,7 @@
 #include <UnicodeBlockObjects.h>
 #include <UTF8.h>
 
-
+#include <agg_bounding_rect.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -923,6 +923,10 @@ class BoundingBoxConsumer {
 		rectArray(rectArray),
 		stringBoundingBox(INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN),
 		fAsString(asString),
+		fCurves(fPathAdaptor),
+		fContour(fCurves),
+		fTransformedOutline(fCurves, transform),
+		fTransformedContourOutline(fContour, transform),
 		fTransform(transform)
 	{
 	}
@@ -937,52 +941,47 @@ class BoundingBoxConsumer {
 			double advanceY)
 	{
 		if (glyph->data_type != glyph_data_outline) {
-			// Растровый глиф - используем готовый bounds из BLBox
-			const BLBox& r = glyph->bounds;
-			
+			const agg::rect_i& r = glyph->bounds;
 			if (fAsString) {
 				if (rectArray) {
-					rectArray[index].left = r.x0 + x;
-					rectArray[index].top = r.y0 + y;
-					rectArray[index].right = r.x1 + x;
-					rectArray[index].bottom = r.y1 + y;
+					rectArray[index].left = r.x1 + x;
+					rectArray[index].top = r.y1 + y;
+					rectArray[index].right = r.x2 + x + 1;
+					rectArray[index].bottom = r.y2 + y + 1;
 				} else {
 					stringBoundingBox = stringBoundingBox
-						| BRect(r.x0 + x, r.y0 + y, r.x1 + x, r.y1 + y);
+						| BRect(r.x1 + x, r.y1 + y,
+							r.x2 + x + 1, r.y2 + y + 1);
 				}
 			} else {
-				rectArray[index].left = r.x0;
-				rectArray[index].top = r.y0;
-				rectArray[index].right = r.x1;
-				rectArray[index].bottom = r.y1;
+				rectArray[index].left = r.x1;
+				rectArray[index].top = r.y1;
+				rectArray[index].right = r.x2 + 1;
+				rectArray[index].bottom = r.y2 + 1;
 			}
 		} else {
-			// Векторный глиф - десериализуем BLPath и вычисляем bounds
-			BLPath path = glyph->GetPath();
-			
-			if (path.empty())
-				return false;
-			
-			// Трансформируем путь если нужно
 			if (fAsString) {
-				BLMatrix2D matrix = BLMatrix2D::makeTranslation(x, y);
-				path.transform(matrix);
+				entry->InitAdaptors(glyph, x, y,
+						fMonoAdaptor, fGray8Adaptor, fPathAdaptor);
+			} else {
+				entry->InitAdaptors(glyph, 0, 0,
+						fMonoAdaptor, fGray8Adaptor, fPathAdaptor);
 			}
-			
-			// Применяем общую трансформацию шрифта
-			if (!fTransform.IsIdentity()) {
-				path.transform(fTransform.Matrix());
-			}
-			
-			// Получаем bounding box от BLPath
-			BLBox box;
-			path.getBoundingBox(&box);
-			
+			double left = 0.0;
+			double top = 0.0;
+			double right = -1.0;
+			double bottom = -1.0;
+			uint32 pathID[1];
+			pathID[0] = 0;
+			// TODO: use fContour if falseboldwidth is > 0
+			agg::bounding_rect(fTransformedOutline, pathID, 0, 1,
+				&left, &top, &right, &bottom);
+
 			if (rectArray) {
-				rectArray[index] = BRect(box.x0, box.y0, box.x1, box.y1);
+				rectArray[index] = BRect(left, top, right, bottom);
 			} else {
 				stringBoundingBox = stringBoundingBox
-					| BRect(box.x0, box.y0, box.x1, box.y1);
+					| BRect(left, top, right, bottom);
 			}
 		}
 		return true;
@@ -993,6 +992,16 @@ class BoundingBoxConsumer {
 
  private:
 	bool								fAsString;
+	FontCacheEntry::GlyphPathAdapter	fPathAdaptor;
+	FontCacheEntry::GlyphGray8Adapter	fGray8Adaptor;
+	FontCacheEntry::GlyphMonoAdapter	fMonoAdaptor;
+
+	FontCacheEntry::CurveConverter		fCurves;
+	FontCacheEntry::ContourConverter	fContour;
+
+	FontCacheEntry::TransformedOutline	fTransformedOutline;
+	FontCacheEntry::TransformedContourOutline fTransformedContourOutline;
+
 	Transformable&						fTransform;
 };
 

@@ -127,10 +127,15 @@ protected:
 private:
 			void				_LayoutTabItems(Decorator::Tab* tab,
 									const BRect& tabRect);
+			
+			bool				_IsLeftTitled() const
+									{ return fTopTab && fTopTab->look == kLeftTitledWindowLook; }
+			
+			float				_GetScaleFactor() const;
 
 protected:
-	inline	float				_DefaultTextOffset() const;
-	inline	float				_SingleTabOffsetAndSize(float& tabSize);
+inline	float				_DefaultTextOffset() const;
+inline	float				_SingleTabOffsetAndSize(float& tabSize);
 
 			void				_CalculateTabsRegion();
 

@@ -2,7 +2,7 @@
  * Copyright 2005, Stephan Aßmus <superstippi@gmx.de>. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * A handy front-end to BLMatrix2D transformation matrix.
+ * A handy front-end to agg::trans_affine transformation matrix.
  *
  */
 
@@ -29,19 +29,19 @@ max4(float a, float b, float c, float d)
 
 
 Transformable::Transformable()
-	: fMatrix(BLMatrix2D::makeIdentity())
+	: agg::trans_affine()
 {
 }
 
 
 Transformable::Transformable(const Transformable& other)
-	: fMatrix(other.fMatrix)
+	: agg::trans_affine(other)
 {
 }
 
 
 Transformable::Transformable(const BMessage* archive)
-	: fMatrix(BLMatrix2D::makeIdentity())
+	: agg::trans_affine()
 {
 	if (archive != NULL) {
 		double storage[6];
@@ -51,10 +51,8 @@ Transformable::Transformable(const BMessage* archive)
 			if (ret < B_OK)
 				break;
 		}
-		if (ret >= B_OK) {
-			fMatrix.reset(storage[0], storage[1], storage[2], 
-						  storage[3], storage[4], storage[5]);
-		}
+		if (ret >= B_OK)
+			load_from(storage);
 	}
 }
 
@@ -70,7 +68,7 @@ Transformable::Archive(BMessage* into, bool deep) const
 	status_t ret = BArchivable::Archive(into, deep);
 	if (ret == B_OK) {
 		double storage[6];
-		StoreTo(storage);
+		store_to(storage);
 		for (int32 i = 0; i < 6; i++) {
 			ret = into->AddDouble("affine matrix", storage[i]);
 			if (ret < B_OK)
@@ -87,12 +85,7 @@ Transformable::Archive(BMessage* into, bool deep) const
 void
 Transformable::StoreTo(double matrix[6]) const
 {
-	matrix[0] = fMatrix.m00;
-	matrix[1] = fMatrix.m01;
-	matrix[2] = fMatrix.m10;
-	matrix[3] = fMatrix.m11;
-	matrix[4] = fMatrix.m20;
-	matrix[5] = fMatrix.m21;
+	store_to(matrix);
 }
 
 
@@ -102,11 +95,9 @@ Transformable::LoadFrom(double matrix[6])
 	// Before calling the potentially heavy TransformationChanged()
 	// hook function, we make sure that it is actually true
 	Transformable t;
-	t.fMatrix.reset(matrix[0], matrix[1], matrix[2], 
-					matrix[3], matrix[4], matrix[5]);
+	t.load_from(matrix);
 	if (*this != t) {
-		fMatrix.reset(matrix[0], matrix[1], matrix[2], 
-					  matrix[3], matrix[4], matrix[5]);
+		load_from(matrix);
 		TransformationChanged();
 	}
 }
@@ -126,7 +117,7 @@ Transformable&
 Transformable::operator=(const Transformable& other)
 {
 	if (other != *this) {
-		fMatrix = other.fMatrix;
+		agg::trans_affine::operator=(other);
 		TransformationChanged();
 	}
 	return *this;
@@ -134,10 +125,10 @@ Transformable::operator=(const Transformable& other)
 
 
 Transformable&
-Transformable::operator=(const BLMatrix2D& other)
+Transformable::operator=(const agg::trans_affine& other)
 {
-	if (other != fMatrix) {
-		fMatrix = other;
+	if (other != *this) {
+		agg::trans_affine::operator=(other);
 		TransformationChanged();
 	}
 	return *this;
@@ -148,7 +139,7 @@ Transformable&
 Transformable::Multiply(const Transformable& other)
 {
 	if (!other.IsIdentity()) {
-		fMatrix.transform(other.fMatrix);
+		multiply(other);
 		TransformationChanged();
 	}
 	return *this;
@@ -158,49 +149,39 @@ Transformable::Multiply(const Transformable& other)
 void
 Transformable::Reset()
 {
-	fMatrix.reset();
+	reset();
 }
 
 
 bool
 Transformable::IsIdentity() const
 {
-	return fMatrix.m00 == 1.0 &&
-		   fMatrix.m01 == 0.0 &&
-		   fMatrix.m10 == 0.0 &&
-		   fMatrix.m11 == 1.0 &&
-		   fMatrix.m20 == 0.0 &&
-		   fMatrix.m21 == 0.0;
+	double m[6];
+	store_to(m);
+	if (m[0] == 1.0 &&
+		m[1] == 0.0 &&
+		m[2] == 0.0 &&
+		m[3] == 1.0 &&
+		m[4] == 0.0 &&
+		m[5] == 0.0)
+		return true;
+	return false;
 }
 
 
 bool
 Transformable::IsDilation() const
 {
-	return fMatrix.m01 == 0.0 && fMatrix.m10 == 0.0;
-}
-
-
-bool
-Transformable::operator==(const Transformable& other) const
-{
-	return fMatrix == other.fMatrix;
-}
-
-
-bool
-Transformable::operator!=(const Transformable& other) const
-{
-	return fMatrix != other.fMatrix;
+	double m[6];
+	store_to(m);
+	return m[1] == 0.0 && m[2] == 0.0;
 }
 
 
 void
 Transformable::Transform(double* x, double* y) const
 {
-	BLPoint p = fMatrix.mapPoint(*x, *y);
-	*x = p.x;
-	*y = p.y;
+	transform(x, y);
 }
 
 
@@ -211,10 +192,10 @@ Transformable::Transform(BPoint* point) const
 		double x = point->x;
 		double y = point->y;
 
-		BLPoint p = fMatrix.mapPoint(x, y);
+		transform(&x, &y);
 	
-		point->x = p.x;
-		point->y = p.y;
+		point->x = x;
+		point->y = y;
 	}
 }
 
@@ -231,11 +212,7 @@ Transformable::Transform(const BPoint& point) const
 void
 Transformable::InverseTransform(double* x, double* y) const
 {
-	BLMatrix2D inverted;
-	BLMatrix2D::invert(inverted, fMatrix);
-	BLPoint p = inverted.mapPoint(*x, *y);
-	*x = p.x;
-	*y = p.y;
+	inverse_transform(x, y);
 }
 
 
@@ -246,12 +223,10 @@ Transformable::InverseTransform(BPoint* point) const
 		double x = point->x;
 		double y = point->y;
 
-		BLMatrix2D inverted;
-		BLMatrix2D::invert(inverted, fMatrix);
-		BLPoint p = inverted.mapPoint(x, y);
+		inverse_transform(&x, &y);
 	
-		point->x = p.x;
-		point->y = p.y;
+		point->x = x;
+		point->y = y;
 	}
 }
 
@@ -291,8 +266,10 @@ Transformable::TransformBounds(const BRect& bounds) const
 bool
 Transformable::IsTranslationOnly() const
 {
-	return fMatrix.m00 == 1.0 && fMatrix.m01 == 0.0
-		&& fMatrix.m10 == 0.0 && fMatrix.m11 == 1.0;
+	double matrix[6];
+	store_to(matrix);
+	return matrix[0] == 1.0 && matrix[1] == 0.0
+		&& matrix[2] == 0.0 && matrix[3] == 1.0;
 }
 
 
@@ -301,7 +278,7 @@ void
 Transformable::TranslateBy(BPoint offset)
 {
 	if (offset.x != 0.0 || offset.y != 0.0) {
-		fMatrix.translate(offset.x, offset.y);
+		multiply(agg::trans_affine_translation(offset.x, offset.y));
 		TransformationChanged();
 	}
 }
@@ -311,9 +288,9 @@ void
 Transformable::RotateBy(BPoint origin, double radians)
 {
 	if (radians != 0.0) {
-		fMatrix.translate(-origin.x, -origin.y);
-		fMatrix.rotate(radians);
-		fMatrix.translate(origin.x, origin.y);
+		multiply(agg::trans_affine_translation(-origin.x, -origin.y));
+		multiply(agg::trans_affine_rotation(radians));
+		multiply(agg::trans_affine_translation(origin.x, origin.y));
 		TransformationChanged();
 	}
 }
@@ -323,9 +300,9 @@ void
 Transformable::ScaleBy(BPoint origin, double xScale, double yScale)
 {
 	if (xScale != 1.0 || yScale != 1.0) {
-		fMatrix.translate(-origin.x, -origin.y);
-		fMatrix.scale(xScale, yScale);
-		fMatrix.translate(origin.x, origin.y);
+		multiply(agg::trans_affine_translation(-origin.x, -origin.y));
+		multiply(agg::trans_affine_scaling(xScale, yScale));
+		multiply(agg::trans_affine_translation(origin.x, origin.y));
 		TransformationChanged();
 	}
 }
@@ -335,9 +312,9 @@ void
 Transformable::ShearBy(BPoint origin, double xShear, double yShear)
 {
 	if (xShear != 0.0 || yShear != 0.0) {
-		fMatrix.translate(-origin.x, -origin.y);
-		fMatrix.skew(xShear, yShear);
-		fMatrix.translate(origin.x, origin.y);
+		multiply(agg::trans_affine_translation(-origin.x, -origin.y));
+		multiply(agg::trans_affine_skewing(xShear, yShear));
+		multiply(agg::trans_affine_translation(origin.x, origin.y));
 		TransformationChanged();
 	}
 }

@@ -28,12 +28,33 @@
 #include <String.h>
 
 
+// Forward Declarations
 class Window;
+class ClickTarget;
+class ClientLooper;
+class Decorator;
+class Desktop;
+class DrawingEngine;
+class EventDispatcher;
+class Screen;
+class WindowBehaviour;
+class WorkspacesView;
 
+namespace BPrivate {
+	class PortLink;
+};
+
+
+// Constants and Types
+namespace {
+	// Message code for redraw requests
+	const uint32 AS_REDRAW = 'rdrw';
+}
 
 typedef	BObjectList<Window>	StackWindows;
 
 
+// WindowStack Class
 class WindowStack : public BReferenceable {
 public:
 								WindowStack(::Decorator* decorator);
@@ -49,41 +70,24 @@ public:
 
 			int32				CountWindows();
 			Window*				WindowAt(int32 index);
-			bool				AddWindow(Window* window,
-									int32 position = -1);
+			bool				AddWindow(Window* window, int32 position = -1);
 			bool				RemoveWindow(Window* window);
 
 			bool				MoveToTopLayer(Window* window);
 			bool				Move(int32 from, int32 to);
+
 private:
 			ObjectDeleter< ::Decorator>
 								fDecorator;
-
 			StackWindows		fWindowList;
 			StackWindows		fWindowLayerOrder;
 };
 
 
-namespace BPrivate {
-	class PortLink;
-};
-
-class ClickTarget;
-class ClientLooper;
-class Decorator;
-class Desktop;
-class DrawingEngine;
-class EventDispatcher;
-class Screen;
-class WindowBehaviour;
-class WorkspacesView;
-
-// TODO: move this into a proper place
-#define AS_REDRAW 'rdrw'
-
-
+// Window Class
 class Window {
 public:
+	// Construction and Destruction
 								Window(const BRect& frame, const char *name,
 									window_look look, window_feel feel,
 									uint32 flags, uint32 workspaces,
@@ -91,15 +95,20 @@ public:
 									DrawingEngine* drawingEngine);
 	virtual						~Window();
 
+	// Initialization and Properties
 			status_t			InitCheck() const;
 
 			BRect				Frame() const { return fFrame; }
 			const char*			Title() const { return fTitle.String(); }
 
+	virtual	bool				IsOffscreenWindow() const { return false; }
+
+	// Window Anchoring
 			window_anchor&		Anchor(int32 index);
 			Window*				NextWindow(int32 index) const;
 			Window*				PreviousWindow(int32 index) const;
 
+	// Screen and Desktop Management
 			::Desktop*			Desktop() const { return fDesktop; }
 			::Decorator*		Decorator() const;
 			::ServerWindow*		ServerWindow() const { return fWindow; }
@@ -111,19 +120,25 @@ public:
 			void				SetScreen(const ::Screen* screen);
 			const ::Screen*		Screen() const;
 
-			// setting and getting the "hard" clipping, you need to have
-			// WriteLock()ed the clipping!
+	// Clipping and Regions
+			// IMPORTANT: The following clipping methods require proper locking:
+			// - For reading: Desktop must hold ReadLock on clipping
+			// - For writing: Desktop must hold WriteLock on clipping
+			// Current implementation does not enforce this, but callers must respect it
 			void				SetClipping(BRegion* stillAvailableOnScreen);
-			// you need to have ReadLock()ed the clipping!
+
 	inline	BRegion&			VisibleRegion() { return fVisibleRegion; }
 			BRegion&			VisibleContentRegion();
 
-			// TODO: not protected by a lock, but noone should need this anyways
-			// make private? when used inside Window, it has the ReadLock()
 			void				GetFullRegion(BRegion* region);
 			void				GetBorderRegion(BRegion* region);
 			void				GetContentRegion(BRegion* region);
 
+			void				GetEffectiveDrawingRegion(View* view,
+									BRegion& region);
+			bool				DrawingRegionChanged(View* view) const;
+
+	// Layout and Positioning
 			void				MoveBy(int32 x, int32 y, bool moveStack = true);
 			void				ResizeBy(int32 x, int32 y,
 									BRegion* dirtyRegion,
@@ -133,31 +148,22 @@ public:
 
 			void				ScrollViewBy(View* view, int32 dx, int32 dy);
 
+	// View Management
 			void				SetTopView(View* topView);
 			View*				TopView() const { return fTopView.Get(); }
 			View*				ViewAt(const BPoint& where);
 
-	virtual	bool				IsOffscreenWindow() const { return false; }
-
-			void				GetEffectiveDrawingRegion(View* view,
-									BRegion& region);
-			bool				DrawingRegionChanged(View* view) const;
-
-			// generic version, used by the Desktop
+	// Drawing and Updates
 			void				ProcessDirtyRegion(const BRegion& dirtyRegion,
 									const BRegion& exposeRegion);
 			void				ProcessDirtyRegion(const BRegion& exposeRegion)
 									{ ProcessDirtyRegion(exposeRegion, exposeRegion); }
 			void				RedrawDirtyRegion();
 
-			// can be used from inside classes that don't
-			// need to know about Desktop (first version uses Desktop)
 			void				MarkDirty(BRegion& regionOnScreen);
-			// these versions do not use the Desktop
 			void				MarkContentDirty(BRegion& dirtyRegion,
 									BRegion& exposeRegion);
 			void				MarkContentDirtyAsync(BRegion& dirtyRegion);
-			// shortcut for invalidating just one view
 			void				InvalidateView(View* view, BRegion& viewRegion);
 
 			void				DisableUpdateRequests();
@@ -165,18 +171,17 @@ public:
 
 			void				BeginUpdate(BPrivate::PortLink& link);
 			void				EndUpdate();
-			bool				InUpdate() const
-									{ return fInUpdate; }
-
-			bool				NeedsUpdate() const
-									{ return fUpdateRequested; }
+			bool				InUpdate() const { return fInUpdate; }
+			bool				NeedsUpdate() const { return fUpdateRequested; }
 
 			DrawingEngine*		GetDrawingEngine() const
 									{ return fDrawingEngine.Get(); }
 
-			// managing a region pool
-			::RegionPool*		RegionPool()
-									{ return &fRegionPool; }
+			void				CopyContents(BRegion* region,
+									int32 xOffset, int32 yOffset);
+
+	// Region Pool Management
+			::RegionPool*		RegionPool() { return &fRegionPool; }
 	inline	BRegion*			GetRegion()
 									{ return fRegionPool.GetRegion(); }
 	inline	BRegion*			GetRegion(const BRegion& copy)
@@ -184,9 +189,7 @@ public:
 	inline	void				RecycleRegion(BRegion* region)
 									{ fRegionPool.Recycle(region); }
 
-			void				CopyContents(BRegion* region,
-									int32 xOffset, int32 yOffset);
-
+	// User Interaction - Mouse Events
 			void				MouseDown(BMessage* message, BPoint where,
 									const ClickTarget& lastClickTarget,
 									int32& clickCount,
@@ -197,16 +200,10 @@ public:
 									int32* _viewToken, bool isLatestMouseMoved,
 									bool isFake);
 
+	// User Interaction - Keyboard Events
 			void				ModifiersChanged(int32 modifiers);
 
-			// some hooks to inform the client window
-			// TODO: move this to ServerWindow maybe?
-			void				WorkspaceActivated(int32 index, bool active);
-			void				WorkspacesChanged(uint32 oldWorkspaces,
-									uint32 newWorkspaces);
-			void				Activated(bool active);
-
-			// changing some properties
+	// Window State Management
 			void				SetTitle(const char* name, BRegion& dirty);
 
 			void				SetFocus(bool focus);
@@ -221,27 +218,18 @@ public:
 			void				SetMinimized(bool minimized);
 	inline	bool				IsMinimized() const { return fMinimized; }
 
-			void				SetCurrentWorkspace(int32 index)
-									{ fCurrentWorkspace = index; fPriorWorkspace = index; }
-			int32				CurrentWorkspace() const
-									{ return fCurrentWorkspace; }
 			bool				IsVisible() const;
-
-			void				SetPriorWorkspace(int32 index)
-									{ fPriorWorkspace = index; }
-			int32				PriorWorkspace() const
-									{ return fPriorWorkspace; }
 
 			bool				IsDragging() const;
 			bool				IsResizing() const;
 
+	// Window Limits
 			void				SetSizeLimits(int32 minWidth, int32 maxWidth,
 									int32 minHeight, int32 maxHeight);
-
 			void				GetSizeLimits(int32* minWidth, int32* maxWidth,
 									int32* minHeight, int32* maxHeight) const;
 
-								// 0.0 -> left .... 1.0 -> right
+	// Window Appearance
 			bool				SetTabLocation(float location, bool isShifting,
 									BRegion& dirty);
 			float				TabLocation() const;
@@ -264,12 +252,28 @@ public:
 			window_feel			Feel() const { return fFeel; }
 			uint32				Flags() const { return fFlags; }
 
-			// window manager stuff
+	// Workspace Management
+			void				SetCurrentWorkspace(int32 index)
+									{ fCurrentWorkspace = index; fPriorWorkspace = index; }
+			int32				CurrentWorkspace() const
+									{ return fCurrentWorkspace; }
+
+			void				SetPriorWorkspace(int32 index)
+									{ fPriorWorkspace = index; }
+			int32				PriorWorkspace() const
+									{ return fPriorWorkspace; }
+
 			uint32				Workspaces() const { return fWorkspaces; }
 			void				SetWorkspaces(uint32 workspaces)
 									{ fWorkspaces = workspaces; }
 			bool				InWorkspace(int32 index) const;
 
+			void				WorkspaceActivated(int32 index, bool active);
+			void				WorkspacesChanged(uint32 oldWorkspaces,
+									uint32 newWorkspaces);
+			void				Activated(bool active);
+
+	// Window Hierarchy and Relationships
 			bool				SupportsFront();
 
 			bool				IsModal() const;
@@ -290,6 +294,7 @@ public:
 			uint32				SubsetWorkspaces() const;
 			bool				InSubsetWorkspace(int32 index) const;
 
+	// WorkspacesView Management
 			bool				HasWorkspacesViews() const
 									{ return fWorkspacesViewCount != 0; }
 			void				AddWorkspacesView()
@@ -299,15 +304,7 @@ public:
 			void				FindWorkspacesViews(
 									BObjectList<WorkspacesView>& list) const;
 
-	static	bool				IsValidLook(window_look look);
-	static	bool				IsValidFeel(window_feel feel);
-	static	bool				IsModalFeel(window_feel feel);
-	static	bool				IsFloatingFeel(window_feel feel);
-
-	static	uint32				ValidWindowFlags();
-	static	uint32				ValidWindowFlags(window_feel feel);
-
-			// Window stack methods.
+	// Window Stack Management
 			WindowStack*		GetWindowStack();
 
 			bool				DetachFromWindowStack(
@@ -320,17 +317,26 @@ public:
 			bool				MoveToTopStackLayer();
 			bool				MoveToStackPosition(int32 index,
 									bool isMoving);
+
+	// Static Utility Methods
+	static	bool				IsValidLook(window_look look);
+	static	bool				IsValidFeel(window_feel feel);
+	static	bool				IsModalFeel(window_feel feel);
+	static	bool				IsFloatingFeel(window_feel feel);
+
+	static	uint32				ValidWindowFlags();
+	static	uint32				ValidWindowFlags(window_feel feel);
+
 protected:
+	// Protected Helper Methods
 			void				_ShiftPartOfRegion(BRegion* region,
 									BRegion* regionToShift, int32 xOffset,
 									int32 yOffset);
 
-			// different types of drawing
 			void				_TriggerContentRedraw(BRegion& dirty,
 									const BRegion& expose = BRegion());
 			void				_DrawBorder();
 
-			// handling update sessions
 			void				_TransferToUpdateSession(
 									BRegion* contentDirtyRegion);
 			void				_SendUpdateMessage();
@@ -340,60 +346,8 @@ protected:
 			void				_ObeySizeLimits();
 			void				_PropagatePosition();
 
-			BString				fTitle;
-			// TODO: no fp rects anywhere
-			BRect				fFrame;
-			const ::Screen*		fScreen;
-
-			window_anchor		fAnchor[kListCount];
-
-			// the visible region is only recalculated from the
-			// Desktop thread, when using it, Desktop::ReadLockClipping()
-			// has to be called
-
-			BRegion				fVisibleRegion;
-			BRegion				fVisibleContentRegion;
-
-			// Our part of the "global" dirty region (what needs to be redrawn).
-			// It is calculated from the desktop thread, but we can write to it when we read locked
-			// the clipping, since it is local and the desktop thread is blocked.
-			BRegion				fDirtyRegion;
-
-			// Subset of the dirty region that is newly exposed. While the dirty region is merely
-			// showing out of date data on screen, this subset of it is showing remains of other
-			// windows. To avoid glitches, it must be set to a reasonable state as fast as possible,
-			// without waiting for a roundtrip to the window's Draw() methods. So it will be filled
-			// using background color and view bitmap, which can all be done without leaving
-			// app_server.
-			BRegion				fExposeRegion;
-
-			// caching local regions
-			BRegion				fContentRegion;
-			BRegion				fEffectiveDrawingRegion;
-
-			bool				fVisibleContentRegionValid : 1;
-			bool				fContentRegionValid : 1;
-			bool				fEffectiveDrawingRegionValid : 1;
-
-			::RegionPool		fRegionPool;
-
-			BObjectList<Window> fSubsets;
-
-			ObjectDeleter<WindowBehaviour>
-								fWindowBehaviour;
-			ObjectDeleter<View>	fTopView;
-			::ServerWindow*		fWindow;
-			ObjectDeleter<DrawingEngine>
-								fDrawingEngine;
-			::Desktop*			fDesktop;
-
-			// The synchronization, which client drawing commands
-			// belong to the redraw of which dirty region is handled
-			// through an UpdateSession. When the client has
-			// been informed that it should redraw stuff, then
-			// this is the current update session. All new
-			// redraw requests from the Desktop will go
-			// into the pending update session.
+private:
+	// UpdateSession Nested Class
 	class UpdateSession {
 	public:
 									UpdateSession();
@@ -415,41 +369,84 @@ protected:
 				bool				fInUse;
 	};
 
+	// Private Helper Methods
+			WindowStack*		_InitWindowStack();
+
+	// Member Variables - Basic Properties
+			BString				fTitle;
+			// NOTE: Using BRect (floating point) for historical reasons
+			// Ideally should use integer rects throughout the system
+			// for pixel-perfect positioning and to avoid rounding issues
+			BRect				fFrame;
+			const ::Screen*		fScreen;
+
+			window_anchor		fAnchor[kListCount];
+
+	// Member Variables - Regions
+			BRegion				fVisibleRegion;
+			BRegion				fVisibleContentRegion;
+			BRegion				fDirtyRegion;
+			BRegion				fExposeRegion;
+			BRegion				fContentRegion;
+			BRegion				fEffectiveDrawingRegion;
+
+			bool				fVisibleContentRegionValid : 1;
+			bool				fContentRegionValid : 1;
+			bool				fEffectiveDrawingRegionValid : 1;
+
+			::RegionPool		fRegionPool;
+
+	// Member Variables - Window Relationships
+			BObjectList<Window> fSubsets;
+
+	// Member Variables - Core Objects
+			ObjectDeleter<WindowBehaviour>
+								fWindowBehaviour;
+			ObjectDeleter<View>	fTopView;
+			::ServerWindow*		fWindow;
+			ObjectDeleter<DrawingEngine>
+								fDrawingEngine;
+			::Desktop*			fDesktop;
+
+	// Member Variables - Update Management
 			UpdateSession		fUpdateSessions[2];
 			UpdateSession*		fCurrentUpdateSession;
 			UpdateSession*		fPendingUpdateSession;
-			// these two flags are supposed to ensure a sane
-			// and consistent update session
+
 			bool				fUpdateRequested : 1;
 			bool				fInUpdate : 1;
 			bool				fUpdatesEnabled : 1;
 
+	// Member Variables - Window State
 			bool				fHidden : 1;
 			int32				fShowLevel;
 			bool				fMinimized : 1;
 			bool				fIsFocus : 1;
 
+	// Member Variables - Window Appearance
 			window_look			fLook;
 			window_feel			fFeel;
 			uint32				fOriginalFlags;
 			uint32				fFlags;
+
+	// Member Variables - Workspace
 			uint32				fWorkspaces;
 			int32				fCurrentWorkspace;
 			int32				fPriorWorkspace;
 
+	// Member Variables - Size Limits
 			int32				fMinWidth;
 			int32				fMaxWidth;
 			int32				fMinHeight;
 			int32				fMaxHeight;
 
+	// Member Variables - WorkspacesView
 			int32				fWorkspacesViewCount;
 
-		friend class DecorManager;
-
-private:
-			WindowStack*		_InitWindowStack();
-
+	// Member Variables - Window Stack
 			BReference<WindowStack>		fCurrentStack;
+
+	friend class DecorManager;
 };
 
 
