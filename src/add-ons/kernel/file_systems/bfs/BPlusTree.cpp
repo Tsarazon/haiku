@@ -409,7 +409,8 @@ CachedNode::SetToWritableHeader(Transaction& transaction)
 		transaction.AddListener(fTree);
 		fTree->fInTransaction = true;
 
-		if (!transaction.GetVolume()->IsInitializing()) {
+		if (!transaction.GetVolume()->IsInitializing()
+				&& fTree->fStream != transaction.GetVolume()->IndicesNode()) {
 			acquire_vnode(transaction.GetVolume()->FSVolume(),
 				fTree->fStream->ID());
 		}
@@ -982,7 +983,7 @@ BPlusTree::RemovedFromTransaction()
 {
 	fInTransaction = false;
 
-	if (!fStream->GetVolume()->IsInitializing())
+	if (!fStream->GetVolume()->IsInitializing() && fStream != fStream->GetVolume()->IndicesNode())
 		put_vnode(fStream->GetVolume()->FSVolume(), fStream->ID());
 }
 
