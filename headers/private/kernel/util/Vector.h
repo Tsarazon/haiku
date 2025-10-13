@@ -16,7 +16,7 @@ template<typename Value> class VectorIterator;
 // for convenience
 #define _VECTOR_TEMPLATE_LIST template<typename Value>
 #define _VECTOR_CLASS_NAME Vector<Value>
-#define _VECTOR_CLASS_TYPE typename Vector<Value>
+#define _VECTOR_CLASS_TYPE Vector<Value>
 
 /*!
 	\class Vector
