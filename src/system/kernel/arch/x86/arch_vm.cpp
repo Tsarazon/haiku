@@ -40,7 +40,6 @@
 #	define TRACE(x) ;
 #endif
 
-// 0: disabled, 1: some, 2: more
 #define TRACE_MTRR_ARCH_VM 1
 
 #if TRACE_MTRR_ARCH_VM >= 1
@@ -56,40 +55,45 @@
 #endif
 
 
+static const addr_t kDMARegionEnd = 0xa0000;
+static const size_t kMaxUpdateMTRRRetries = 100;
+static const uint32 kMaxMemoryTypeRegisters = 32;
+
+
 void *gDmaAddress;
 
 
 namespace {
 
-struct memory_type_range : DoublyLinkedListLinkImpl<memory_type_range> {
-	uint64						base;
-	uint64						size;
-	uint32						type;
-	area_id						area;
-};
+	struct memory_type_range : DoublyLinkedListLinkImpl<memory_type_range> {
+		uint64						base;
+		uint64						size;
+		uint32						type;
+		area_id						area;
+	};
 
 
-struct memory_type_range_point
-		: DoublyLinkedListLinkImpl<memory_type_range_point> {
-	uint64				address;
-	memory_type_range*	range;
+	struct memory_type_range_point
+	: DoublyLinkedListLinkImpl<memory_type_range_point> {
+		uint64				address;
+		memory_type_range*	range;
 
-	bool IsStart() const	{ return range->base == address; }
+		bool IsStart() const	{ return range->base == address; }
 
-	bool operator<(const memory_type_range_point& other) const
-	{
-		return address < other.address;
-	}
-};
-
-
-struct update_mtrr_info {
-	uint64	ignoreUncacheableSize;
-	uint64	shortestUncacheableSize;
-};
+		bool operator<(const memory_type_range_point& other) const
+		{
+			return address < other.address;
+		}
+	};
 
 
-typedef DoublyLinkedList<memory_type_range> MemoryTypeRangeList;
+	struct update_mtrr_info {
+		uint64	ignoreUncacheableSize;
+		uint64	shortestUncacheableSize;
+	};
+
+
+	typedef DoublyLinkedList<memory_type_range> MemoryTypeRangeList;
 
 } // namespace
 
@@ -98,7 +102,6 @@ static mutex sMemoryTypeLock = MUTEX_INITIALIZER("memory type ranges");
 static MemoryTypeRangeList sMemoryTypeRanges;
 static int32 sMemoryTypeRangeCount = 0;
 
-static const uint32 kMaxMemoryTypeRegisters	= 32;
 static x86_mtrr_info sMemoryTypeRegisters[kMaxMemoryTypeRegisters];
 static uint32 sMemoryTypeRegisterCount;
 static uint32 sMemoryTypeRegistersUsed;
@@ -113,17 +116,17 @@ static void
 set_mtrrs()
 {
 	x86_set_mtrrs(IA32_MTR_WRITE_BACK, sMemoryTypeRegisters,
-		sMemoryTypeRegistersUsed);
+				  sMemoryTypeRegistersUsed);
 
-#if TRACE_MTRR_ARCH_VM
+	#if TRACE_MTRR_ARCH_VM
 	TRACE_MTRR("set MTRRs to:\n");
 	for (uint32 i = 0; i < sMemoryTypeRegistersUsed; i++) {
 		const x86_mtrr_info& info = sMemoryTypeRegisters[i];
 		TRACE_MTRR("  mtrr: %2" B_PRIu32 ": base: %#10" B_PRIx64  ", size: %#10"
-			B_PRIx64 ", type: %u\n", i, info.base, info.size,
-			info.type);
+		B_PRIx64 ", type: %u\n", i, info.base, info.size,
+		info.type);
 	}
-#endif
+	#endif
 }
 
 
@@ -150,8 +153,12 @@ add_used_mtrr(uint64 base, uint64 size, uint32 type)
 			return false;
 	}
 
-	if (sMemoryTypeRegistersUsed == sMemoryTypeRegisterCount)
+	if (sMemoryTypeRegistersUsed >= sMemoryTypeRegisterCount) {
+		TRACE_MTRR("add_used_mtrr: out of MTRRs (used %" B_PRIu32 ", max %"
+		B_PRIu32 ")\n", sMemoryTypeRegistersUsed,
+		sMemoryTypeRegisterCount);
 		return false;
+	}
 
 	x86_mtrr_info& mtrr = sMemoryTypeRegisters[sMemoryTypeRegistersUsed++];
 	mtrr.base = base;
@@ -185,21 +192,23 @@ add_mtrrs_for_range(uint64 base, uint64 size, uint32 type)
 
 
 static memory_type_range*
-find_range(area_id areaID)
+find_range_locked(area_id areaID)
 {
+	ASSERT_LOCKED_MUTEX(&sMemoryTypeLock);
+
 	for (MemoryTypeRangeList::Iterator it = sMemoryTypeRanges.GetIterator();
-			memory_type_range* range = it.Next();) {
+		 memory_type_range* range = it.Next();) {
 		if (range->area == areaID)
 			return range;
-	}
+		 }
 
-	return NULL;
+		 return NULL;
 }
 
 
 static void
 optimize_memory_ranges(MemoryTypeRangeList& ranges, uint32 type,
-	bool removeRanges)
+					   bool removeRanges)
 {
 	uint64 previousEnd = 0;
 	uint64 nextStart = 0;
@@ -213,7 +222,6 @@ optimize_memory_ranges(MemoryTypeRangeList& ranges, uint32 type,
 			continue;
 		}
 
-		// find the start of the next range we cannot join this one with
 		if (nextStart == 0) {
 			MemoryTypeRangeList::Iterator nextIt = it;
 			while (memory_type_range* nextRange = nextIt.Next()) {
@@ -223,19 +231,10 @@ optimize_memory_ranges(MemoryTypeRangeList& ranges, uint32 type,
 				}
 			}
 
-			if (nextStart == 0) {
-				// no upper limit -- set an artificial one, so we don't need to
-				// special case below
+			if (nextStart == 0)
 				nextStart = (uint64)1 << 32;
-			}
 		}
 
-		// Align the range's base and end to the greatest power of two possible.
-		// As long as we can align both without intersecting any differently
-		// range, we can extend the range without making it more complicated.
-		// Once one side hit a limit we need to be careful. We can still
-		// continue aligning the other side, if the range crosses the power of
-		// two boundary.
 		uint64 rangeBase = range->base;
 		uint64 rangeEnd = rangeBase + range->size;
 		uint64 interval = B_PAGE_SIZE * 2;
@@ -266,20 +265,16 @@ optimize_memory_ranges(MemoryTypeRangeList& ranges, uint32 type,
 
 		previousEnd = rangeEnd;
 
-		// Skip the subsequent ranges we have swallowed and possible cut one
-		// we now partially intersect with.
 		while ((range = it.Next()) != NULL) {
 			if (range->base >= rangeEnd)
 				break;
 
 			if (range->base + range->size > rangeEnd) {
-				// we partially intersect -- cut the range
 				range->size = range->base + range->size - rangeEnd;
 				range->base = rangeEnd;
 				break;
 			}
 
-			// we have swallowed this range completely
 			range->size = 0;
 			it.Remove();
 		}
@@ -293,33 +288,28 @@ ensure_temporary_ranges_space(int32 count)
 	if (sTemporaryRangeCount >= count && sTemporaryRangePointCount >= count)
 		return true;
 
-	// round count to power of 2
 	int32 unalignedCount = count;
 	count = 8;
 	while (count < unalignedCount)
 		count <<= 1;
 
-	// resize ranges array
 	if (sTemporaryRangeCount < count) {
 		memory_type_range* ranges = new(std::nothrow) memory_type_range[count];
 		if (ranges == NULL)
 			return false;
 
 		delete[] sTemporaryRanges;
-
 		sTemporaryRanges = ranges;
 		sTemporaryRangeCount = count;
 	}
 
-	// resize points array
 	if (sTemporaryRangePointCount < count) {
 		memory_type_range_point* points
-			= new(std::nothrow) memory_type_range_point[count];
+		= new(std::nothrow) memory_type_range_point[count];
 		if (points == NULL)
 			return false;
 
 		delete[] sTemporaryRangePoints;
-
 		sTemporaryRangePoints = points;
 		sTemporaryRangePointCount = count;
 	}
@@ -331,20 +321,14 @@ ensure_temporary_ranges_space(int32 count)
 static status_t
 update_mtrrs(update_mtrr_info& updateInfo)
 {
-	// resize the temporary points/ranges arrays, if necessary
 	if (!ensure_temporary_ranges_space(sMemoryTypeRangeCount * 2))
 		return B_NO_MEMORY;
 
-	// get the range points and sort them
 	memory_type_range_point* rangePoints = sTemporaryRangePoints;
 	int32 pointCount = 0;
 	for (MemoryTypeRangeList::Iterator it = sMemoryTypeRanges.GetIterator();
-			memory_type_range* range = it.Next();) {
+		 memory_type_range* range = it.Next();) {
 		if (range->type == B_UNCACHED_MEMORY) {
-			// Ignore uncacheable ranges below a certain size, if requested.
-			// Since we always enforce uncacheability via the PTE attributes,
-			// this is no problem (though not recommended for performance
-			// reasons).
 			if (range->size <= updateInfo.ignoreUncacheableSize)
 				continue;
 			if (range->size < updateInfo.shortestUncacheableSize)
@@ -352,109 +336,85 @@ update_mtrrs(update_mtrr_info& updateInfo)
 		}
 
 		rangePoints[pointCount].address = range->base;
-		rangePoints[pointCount++].range = range;
-		rangePoints[pointCount].address = range->base + range->size;
-		rangePoints[pointCount++].range = range;
-	}
+	rangePoints[pointCount++].range = range;
+	rangePoints[pointCount].address = range->base + range->size;
+	rangePoints[pointCount++].range = range;
+		 }
 
-	std::sort(rangePoints, rangePoints + pointCount);
+		 std::sort(rangePoints, rangePoints + pointCount);
 
-#if TRACE_MTRR_ARCH_VM >= 2
-	TRACE_MTRR2("memory type range points:\n");
-	for (int32 i = 0; i < pointCount; i++) {
-		TRACE_MTRR2("%12" B_PRIx64 " (%p)\n", rangePoints[i].address,
-			rangePoints[i].range);
-	}
-#endif
+		 #if TRACE_MTRR_ARCH_VM >= 2
+		 TRACE_MTRR2("memory type range points:\n");
+		 for (int32 i = 0; i < pointCount; i++) {
+			 TRACE_MTRR2("%12" B_PRIx64 " (%p)\n", rangePoints[i].address,
+						 rangePoints[i].range);
+		 }
+		 #endif
 
-	// Compute the effective ranges. When ranges overlap, we go with the
-	// stricter requirement. The types are not necessarily totally ordered, so
-	// the order we use below is not always correct. To keep it simple we
-	// consider it the reponsibility of the callers not to define overlapping
-	// memory ranges with uncomparable types.
+		 memory_type_range* ranges = sTemporaryRanges;
+		 typedef DoublyLinkedList<memory_type_range_point> PointList;
+		 PointList pendingPoints;
+		 memory_type_range* activeRange = NULL;
+		 int32 rangeCount = 0;
 
-	memory_type_range* ranges = sTemporaryRanges;
-	typedef DoublyLinkedList<memory_type_range_point> PointList;
-	PointList pendingPoints;
-	memory_type_range* activeRange = NULL;
-	int32 rangeCount = 0;
+		 for (int32 i = 0; i < pointCount; i++) {
+			 memory_type_range_point* point = &rangePoints[i];
+			 bool terminateRange = false;
+			 if (point->IsStart()) {
+				 pendingPoints.Add(point);
+				 if (activeRange != NULL && activeRange->type > point->range->type)
+					 terminateRange = true;
+			 } else {
+				 for (PointList::Iterator it = pendingPoints.GetIterator();
+					  memory_type_range_point* pendingPoint = it.Next();) {
+					 if (pendingPoint->range == point->range) {
+						 it.Remove();
+						 break;
+					 }
+					  }
 
-	for (int32 i = 0; i < pointCount; i++) {
-		memory_type_range_point* point = &rangePoints[i];
-		bool terminateRange = false;
-		if (point->IsStart()) {
-			// a range start point
-			pendingPoints.Add(point);
-			if (activeRange != NULL && activeRange->type > point->range->type)
-				terminateRange = true;
-		} else {
-			// a range end point -- remove the pending start point
-			for (PointList::Iterator it = pendingPoints.GetIterator();
-					memory_type_range_point* pendingPoint = it.Next();) {
-				if (pendingPoint->range == point->range) {
-					it.Remove();
-					break;
-				}
-			}
+					  if (point->range == activeRange)
+						  terminateRange = true;
+			 }
 
-			if (point->range == activeRange)
-				terminateRange = true;
-		}
+			 if (terminateRange) {
+				 ranges[rangeCount].size = point->address - ranges[rangeCount].base;
+				 rangeCount++;
+				 activeRange = NULL;
+			 }
 
-		if (terminateRange) {
-			ranges[rangeCount].size = point->address - ranges[rangeCount].base;
-			rangeCount++;
-			activeRange = NULL;
-		}
+			 if (activeRange != NULL || pendingPoints.IsEmpty())
+				 continue;
 
-		if (activeRange != NULL || pendingPoints.IsEmpty())
-			continue;
+			 for (PointList::Iterator it = pendingPoints.GetIterator();
+				  memory_type_range_point* pendingPoint = it.Next();) {
+				 memory_type_range* pendingRange = pendingPoint->range;
+			 if (activeRange == NULL || activeRange->type > pendingRange->type)
+				 activeRange = pendingRange;
+				  }
 
-		// we need to start a new range -- find the strictest pending range
-		for (PointList::Iterator it = pendingPoints.GetIterator();
-				memory_type_range_point* pendingPoint = it.Next();) {
-			memory_type_range* pendingRange = pendingPoint->range;
-			if (activeRange == NULL || activeRange->type > pendingRange->type)
-				activeRange = pendingRange;
-		}
+				  memory_type_range* previousRange = rangeCount > 0
+				  ? &ranges[rangeCount - 1] : NULL;
+				  if (previousRange == NULL || previousRange->type != activeRange->type
+					  || previousRange->base + previousRange->size
+					  < activeRange->base) {
+					  ranges[rangeCount].base = point->address;
+				  ranges[rangeCount].type = activeRange->type;
+					  } else
+						  rangeCount--;
+		 }
 
-		memory_type_range* previousRange = rangeCount > 0
-			? &ranges[rangeCount - 1] : NULL;
-		if (previousRange == NULL || previousRange->type != activeRange->type
-				|| previousRange->base + previousRange->size
-					< activeRange->base) {
-			// we can't join with the previous range -- add a new one
-			ranges[rangeCount].base = point->address;
-			ranges[rangeCount].type = activeRange->type;
-		} else
-			rangeCount--;
-	}
+		 #if TRACE_MTRR_ARCH_VM >= 2
+		 TRACE_MTRR2("effective memory type ranges:\n");
+		 for (int32 i = 0; i < rangeCount; i++) {
+			 TRACE_MTRR2("%12" B_PRIx64 " - %12" B_PRIx64 ": %" B_PRIu32 "\n",
+						 ranges[i].base, ranges[i].base + ranges[i].size, ranges[i].type);
+		 }
+		 #endif
 
-#if TRACE_MTRR_ARCH_VM >= 2
-	TRACE_MTRR2("effective memory type ranges:\n");
-	for (int32 i = 0; i < rangeCount; i++) {
-		TRACE_MTRR2("%12" B_PRIx64 " - %12" B_PRIx64 ": %" B_PRIu32 "\n",
-			ranges[i].base, ranges[i].base + ranges[i].size, ranges[i].type);
-	}
-#endif
-
-	// Extend ranges to be more MTRR-friendly. A range is MTRR friendly, when it
-	// has a power of two size and a base address aligned to the size. For
-	// ranges without this property we need more than one MTRR. We improve
-	// MTRR-friendliness by aligning a range's base and end address to the
-	// greatest power of two (base rounded down, end up) such that the extended
-	// range does not intersect with any other differently typed range. We join
-	// equally typed ranges, if possible. There are two exceptions to the
-	// intersection requirement: Uncached ranges may intersect with any other
-	// range; the resulting type will still be uncached. Hence we can ignore
-	// uncached ranges when extending the other ranges. Write-through ranges may
-	// intersect with write-back ranges; the resulting type will be
-	// write-through. Hence we can ignore write-through ranges when extending
-	// write-back ranges.
-
-	MemoryTypeRangeList rangeList;
-	for (int32 i = 0; i < rangeCount; i++)
-		rangeList.Add(&ranges[i]);
+		 MemoryTypeRangeList rangeList;
+		 for (int32 i = 0; i < rangeCount; i++)
+			 rangeList.Add(&ranges[i]);
 
 	static const uint32 kMemoryTypes[] = {
 		B_UNCACHED_MEMORY,
@@ -467,32 +427,26 @@ update_mtrrs(update_mtrr_info& updateInfo)
 
 	for (int32 i = 0; i < kMemoryTypeCount; i++) {
 		uint32 type = kMemoryTypes[i];
-
-		// Remove uncached and write-through ranges after processing them. This
-		// let's us leverage their intersection property with any other
-		// respectively write-back ranges.
-		bool removeRanges = type == B_UNCACHED_MEMORY || type == B_WRITE_THROUGH_MEMORY;
-
+		bool removeRanges = type == B_UNCACHED_MEMORY
+		|| type == B_WRITE_THROUGH_MEMORY;
 		optimize_memory_ranges(rangeList, type, removeRanges);
 	}
 
-#if TRACE_MTRR_ARCH_VM >= 2
+	#if TRACE_MTRR_ARCH_VM >= 2
 	TRACE_MTRR2("optimized memory type ranges:\n");
 	for (int32 i = 0; i < rangeCount; i++) {
 		if (ranges[i].size > 0) {
 			TRACE_MTRR2("%12" B_PRIx64 " - %12" B_PRIx64 ": %" B_PRIu32 "\n",
-				ranges[i].base, ranges[i].base + ranges[i].size,
-				ranges[i].type);
+						ranges[i].base, ranges[i].base + ranges[i].size,
+			   ranges[i].type);
 		}
 	}
-#endif
+	#endif
 
-	// compute the mtrrs from the ranges
 	sMemoryTypeRegistersUsed = 0;
 	for (int32 i = 0; i < kMemoryTypeCount; i++) {
 		uint32 type = kMemoryTypes[i];
 
-		// skip write-back ranges -- that'll be the default type anyway
 		if (type == B_WRITE_BACK_MEMORY)
 			continue;
 
@@ -514,127 +468,137 @@ update_mtrrs(update_mtrr_info& updateInfo)
 static status_t
 update_mtrrs()
 {
-	// Until we know how many MTRRs we have, pretend everything is OK.
 	if (sMemoryTypeRegisterCount == 0)
 		return B_OK;
 
 	update_mtrr_info updateInfo;
 	updateInfo.ignoreUncacheableSize = 0;
 
-	while (true) {
-		TRACE_MTRR2("update_mtrrs(): Trying with ignoreUncacheableSize %#"
-			B_PRIx64 ".\n", updateInfo.ignoreUncacheableSize);
+	for (size_t retry = 0; retry < kMaxUpdateMTRRRetries; retry++) {
+		TRACE_MTRR2("update_mtrrs(): attempt %" B_PRIuSIZE
+		" with ignoreUncacheableSize %#" B_PRIx64 "\n",
+		retry + 1, updateInfo.ignoreUncacheableSize);
 
 		updateInfo.shortestUncacheableSize = ~(uint64)0;
 		status_t error = update_mtrrs(updateInfo);
 		if (error != B_BUSY) {
 			if (error == B_OK && updateInfo.ignoreUncacheableSize > 0) {
-				TRACE_MTRR("update_mtrrs(): Succeeded setting MTRRs after "
-					"ignoring uncacheable ranges up to size %#" B_PRIx64 ".\n",
-					updateInfo.ignoreUncacheableSize);
+				TRACE_MTRR("update_mtrrs(): succeeded after ignoring "
+				"uncacheable ranges up to size %#" B_PRIx64 "\n",
+			   updateInfo.ignoreUncacheableSize);
 			}
 			return error;
 		}
 
-		// Not enough MTRRs. Retry with less uncacheable ranges.
 		if (updateInfo.shortestUncacheableSize == ~(uint64)0) {
-			// Ugh, even without any uncacheable ranges the available MTRRs do
-			// not suffice.
-			panic("update_mtrrs(): Out of MTRRs!");
+			dprintf("update_mtrrs: out of MTRRs after %" B_PRIuSIZE
+			" attempts\n", retry + 1);
 			return B_BUSY;
 		}
 
 		ASSERT(updateInfo.ignoreUncacheableSize
-			< updateInfo.shortestUncacheableSize);
+		< updateInfo.shortestUncacheableSize);
 
 		updateInfo.ignoreUncacheableSize = updateInfo.shortestUncacheableSize;
 	}
+
+	dprintf("update_mtrrs: failed after %" B_PRIuSIZE " retries\n",
+			kMaxUpdateMTRRRetries);
+	return B_BUSY;
 }
 
 
 static status_t
 add_memory_type_range(area_id areaID, uint64 base, uint64 size, uint32 type,
-	uint32 *effectiveType)
+					  uint32 *effectiveType)
 {
 	if (type == 0)
 		return B_OK;
 
+	uint64 rangeEnd = base + size;
+	if (rangeEnd < base) {
+		dprintf("add_memory_type_range: overflow in range [%#" B_PRIx64
+		", %#" B_PRIx64 "]\n", base, size);
+		return B_BAD_VALUE;
+	}
+
 	TRACE_MTRR2("add_memory_type_range(%" B_PRId32 ", %#" B_PRIx64 ", %#"
-		B_PRIx64 ", %" B_PRIu32 ")\n", areaID, base, size, type);
+	B_PRIx64 ", %" B_PRIu32 ")\n", areaID, base, size, type);
 
 	MutexLocker locker(sMemoryTypeLock);
 
 	for (MemoryTypeRangeList::Iterator it = sMemoryTypeRanges.GetIterator();
-			memory_type_range* range = it.Next(); ) {
+		 memory_type_range* range = it.Next(); ) {
 
 		if (range->area == areaID || range->type == type
-				|| base + size <= range->base
-				|| base >= range->base + range->size) {
+			|| base + size <= range->base
+			|| base >= range->base + range->size) {
 			continue;
-		}
+			}
 
-		if (range->area == -1 && !x86_use_pat()) {
-			// Physical memory range in MTRRs; permit overlapping.
-			continue;
-		}
+			if (range->area == -1 && !x86_use_pat()) {
+				continue;
+			}
 
-		if (effectiveType != NULL) {
-			type = *effectiveType = range->type;
-			effectiveType = NULL;
+			if (effectiveType != NULL) {
+				type = *effectiveType = range->type;
+				effectiveType = NULL;
 
-			dprintf("assuming memory type %" B_PRIx32 " for overlapping %#"
+				dprintf("assuming memory type %" B_PRIx32 " for overlapping %#"
 				B_PRIx64 ", %#" B_PRIx64 " area %" B_PRId32 " from existing %#"
 				B_PRIx64 ", %#" B_PRIx64 " area %" B_PRId32 "\n", type,
-				base, size, areaID, range->base, range->size, range->area);
-			continue;
-		}
+			base, size, areaID, range->base, range->size, range->area);
+				continue;
+			}
 
-		(KDEBUG ? panic : dprintf)("incompatible overlapping memory %#" B_PRIx64
+			(KDEBUG ? panic : dprintf)("incompatible overlapping memory %#" B_PRIx64
 			", %#" B_PRIx64 " type %" B_PRIx32 " area %" B_PRId32
 			" with existing %#" B_PRIx64 ", %#" B_PRIx64 " type %" B_PRIx32
 			" area %" B_PRId32 "\n", base, size, type, areaID, range->base,
 			range->size, range->type, range->area);
-		return B_BUSY;
-	}
+			return B_BUSY;
+		 }
 
-	memory_type_range* range = areaID >= 0 ? find_range(areaID) : NULL;
-	int32 oldRangeType = -1;
-	if (range != NULL) {
-		if (range->base != base || range->size != size)
-			return B_BAD_VALUE;
-		if (range->type == type)
-			return B_OK;
+		 memory_type_range* range = areaID >= 0 ? find_range_locked(areaID) : NULL;
+		 int32 oldRangeType = -1;
+		 if (range != NULL) {
+			 if (range->base != base || range->size != size) {
+				 dprintf("add_memory_type_range: range mismatch for area %"
+				 B_PRId32 "\n", areaID);
+				 return B_BAD_VALUE;
+			 }
+			 if (range->type == type)
+				 return B_OK;
 
-		oldRangeType = range->type;
-		range->type = type;
-	} else {
-		range = new(std::nothrow) memory_type_range;
-		if (range == NULL)
-			return B_NO_MEMORY;
+			 oldRangeType = range->type;
+			 range->type = type;
+		 } else {
+			 range = new(std::nothrow) memory_type_range;
+			 if (range == NULL)
+				 return B_NO_MEMORY;
 
-		range->area = areaID;
-		range->base = base;
-		range->size = size;
-		range->type = type;
-		sMemoryTypeRanges.Add(range);
-		sMemoryTypeRangeCount++;
-	}
+			 range->area = areaID;
+			 range->base = base;
+			 range->size = size;
+			 range->type = type;
+			 sMemoryTypeRanges.Add(range);
+			 sMemoryTypeRangeCount++;
+		 }
 
-	status_t error = update_mtrrs();
-	if (error != B_OK) {
-		// revert the addition of the range/change of its type
-		if (oldRangeType < 0) {
-			sMemoryTypeRanges.Remove(range);
-			sMemoryTypeRangeCount--;
-			delete range;
-		} else
-			range->type = oldRangeType;
+		 status_t error = update_mtrrs();
+		 if (error != B_OK) {
+			 if (oldRangeType < 0) {
+				 sMemoryTypeRanges.Remove(range);
+				 sMemoryTypeRangeCount--;
+				 delete range;
+			 } else
+				 range->type = oldRangeType;
 
-		update_mtrrs();
-		return error;
-	}
+			 update_mtrrs();
+			 return error;
+		 }
 
-	return B_OK;
+		 return B_OK;
 }
 
 
@@ -643,11 +607,11 @@ remove_memory_type_range(area_id areaID)
 {
 	MutexLocker locker(sMemoryTypeLock);
 
-	memory_type_range* range = find_range(areaID);
+	memory_type_range* range = find_range_locked(areaID);
 	if (range != NULL) {
 		TRACE_MTRR2("remove_memory_type_range(%" B_PRId32 ", %#" B_PRIx64 ", %#"
-			B_PRIx64 ", %" B_PRIu32 ")\n", range->area, range->base,
-			range->size, range->type);
+		B_PRIx64 ", %" B_PRIu32 ")\n", range->area, range->base,
+		range->size, range->type);
 
 		sMemoryTypeRanges.Remove(range);
 		sMemoryTypeRangeCount--;
@@ -656,7 +620,7 @@ remove_memory_type_range(area_id areaID)
 		update_mtrrs();
 	} else {
 		dprintf("remove_memory_type_range(): no range known for area %" B_PRId32
-			"\n", areaID);
+		"\n", areaID);
 	}
 }
 
@@ -688,15 +652,15 @@ dump_memory_type_ranges(int argc, char **argv)
 		"start            end              size             area     type\n");
 
 	for (MemoryTypeRangeList::Iterator it = sMemoryTypeRanges.GetIterator();
-			memory_type_range* range = it.Next();) {
+		 memory_type_range* range = it.Next();) {
 
 		kprintf("%#16" B_PRIx64 " %#16" B_PRIx64 " %#16" B_PRIx64 " % 8"
-			B_PRId32 " %#" B_PRIx32 " %s\n", range->base,
-			range->base + range->size, range->size, range->area, range->type,
-			memory_type_to_string(range->type));
-	}
+		B_PRId32 " %#" B_PRIx32 " %s\n", range->base,
+		range->base + range->size, range->size, range->area, range->type,
+		memory_type_to_string(range->type));
+		 }
 
-	return 0;
+		 return 0;
 }
 
 
@@ -707,52 +671,46 @@ status_t
 arch_vm_init(kernel_args *args)
 {
 	TRACE(("arch_vm_init: entry\n"));
-	return 0;
+	return B_OK;
 }
 
 
-/*!	Marks DMA region as in-use, and maps it into the kernel space */
 status_t
 arch_vm_init_post_area(kernel_args *args)
 {
-	area_id id;
-
 	TRACE(("arch_vm_init_post_area: entry\n"));
 
-	// account for DMA area and mark the pages unusable
-	vm_mark_page_range_inuse(0x0, 0xa0000 / B_PAGE_SIZE);
+	vm_mark_page_range_inuse(0x0, kDMARegionEnd / B_PAGE_SIZE);
 
-	// map 0 - 0xa0000 directly
-	id = map_physical_memory("dma_region", 0x0, 0xa0000,
-		B_ANY_KERNEL_ADDRESS | B_WRITE_BACK_MEMORY,
-		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &gDmaAddress);
+	area_id id = map_physical_memory("dma_region", 0x0, kDMARegionEnd,
+									 B_ANY_KERNEL_ADDRESS | B_WRITE_BACK_MEMORY,
+								  B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &gDmaAddress);
 	if (id < 0) {
-		panic("arch_vm_init_post_area: unable to map dma region\n");
+		panic("arch_vm_init_post_area: unable to map dma region: %s",
+			  strerror(id));
 		return B_NO_MEMORY;
 	}
 
 	add_debugger_command_etc("memory_type_ranges", &dump_memory_type_ranges,
-		"List all configured memory type ranges",
-		"\n"
-		"Lists all memory type ranges with their types and areas.\n", 0);
+							 "List all configured memory type ranges",
+						  "\n"
+						  "Lists all memory type ranges with their types and areas.\n", 0);
 
-#ifndef __x86_64__
+	#ifndef __x86_64__
 	return bios_init();
-#else
+	#else
 	return B_OK;
-#endif
+	#endif
 }
 
 
-/*!	Gets rid of all yet unmapped (and therefore now unused) page tables */
 status_t
 arch_vm_init_end(kernel_args *args)
 {
-	TRACE(("arch_vm_init_endvm: entry\n"));
+	TRACE(("arch_vm_init_end: entry\n"));
 
-	// throw away anything in the kernel_args.pgtable[] that's not yet mapped
 	vm_free_unused_boot_loader_range(KERNEL_LOAD_BASE,
-		args->arch_args.virtual_end - KERNEL_LOAD_BASE);
+									 args->arch_args.virtual_end - KERNEL_LOAD_BASE);
 
 	return B_OK;
 }
@@ -761,20 +719,20 @@ arch_vm_init_end(kernel_args *args)
 status_t
 arch_vm_init_post_modules(kernel_args *args)
 {
-	// the x86 CPU modules are now accessible
-
 	sMemoryTypeRegisterCount = x86_count_mtrrs();
 	if (sMemoryTypeRegisterCount == 0)
 		return B_OK;
 
-	// not very likely, but play safe here
-	if (sMemoryTypeRegisterCount > kMaxMemoryTypeRegisters)
+	if (sMemoryTypeRegisterCount > kMaxMemoryTypeRegisters) {
+		dprintf("arch_vm_init_post_modules: capping MTRR count from %"
+		B_PRIu32 " to %" B_PRIu32 "\n", sMemoryTypeRegisterCount,
+		kMaxMemoryTypeRegisters);
 		sMemoryTypeRegisterCount = kMaxMemoryTypeRegisters;
+	}
 
-	// set the physical memory ranges to write-back mode
 	for (uint32 i = 0; i < args->num_physical_memory_ranges; i++) {
 		add_memory_type_range(-1, args->physical_memory_range[i].start,
-			args->physical_memory_range[i].size, B_WRITE_BACK_MEMORY, NULL);
+							  args->physical_memory_range[i].size, B_WRITE_BACK_MEMORY, NULL);
 	}
 
 	return B_OK;
@@ -784,40 +742,24 @@ arch_vm_init_post_modules(kernel_args *args)
 void
 arch_vm_aspace_swap(struct VMAddressSpace *from, struct VMAddressSpace *to)
 {
-	// This functions is only invoked when a userland thread is in the process
-	// of dying. It switches to the kernel team and does whatever cleanup is
-	// necessary (in case it is the team's main thread, it will delete the
-	// team).
-	// It is however not necessary to change the page directory. Userland team's
-	// page directories include all kernel mappings as well. Furthermore our
-	// arch specific translation map data objects are ref-counted, so they won't
-	// go away as long as they are still used on any CPU.
 }
 
 
 bool
 arch_vm_supports_protection(uint32 protection)
 {
-	// x86 always has the same read/write properties for userland and the
-	// kernel.
-	// That's why we do not support user-read/kernel-write access. While the
-	// other way around is not supported either, we don't care in this case
-	// and give the kernel full access.
 	if ((protection & (B_READ_AREA | B_WRITE_AREA)) == B_READ_AREA
 		&& (protection & B_KERNEL_WRITE_AREA) != 0) {
 		return false;
-	}
+		}
 
-	// Userland and the kernel have the same setting of NX-bit.
-	// That's why we do not allow any area that user can access, but not execute
-	// and the kernel can execute.
-	if ((protection & (B_READ_AREA | B_WRITE_AREA)) != 0
-		&& (protection & B_EXECUTE_AREA) == 0
-		&& (protection & B_KERNEL_EXECUTE_AREA) != 0) {
-		return false;
-	}
+		if ((protection & (B_READ_AREA | B_WRITE_AREA)) != 0
+			&& (protection & B_EXECUTE_AREA) == 0
+			&& (protection & B_KERNEL_EXECUTE_AREA) != 0) {
+			return false;
+			}
 
-	return true;
+			return true;
 }
 
 
@@ -833,8 +775,8 @@ arch_vm_unset_memory_type(struct VMArea *area)
 
 status_t
 arch_vm_set_memory_type(struct VMArea *area, phys_addr_t physicalBase,
-	uint32 type, uint32 *effectiveType)
+						uint32 type, uint32 *effectiveType)
 {
 	return add_memory_type_range(area->id, physicalBase, area->Size(), type,
-		effectiveType);
+								 effectiveType);
 }

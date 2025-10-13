@@ -21,10 +21,12 @@ enum cpu_vendor sCPUVendor;
 uint32 sCPUModel;
 int64 sCPUClockSpeed;
 
+static spinlock sCPUIDLock = B_SPINLOCK_INITIALIZER;
+
 
 static bool
 get_cpuid_for(cpuid_info *info, uint32 currentCPU, uint32 eaxRegister,
-	uint32 forCPU)
+			  uint32 forCPU)
 {
 	if (currentCPU != forCPU)
 		return false;
@@ -34,27 +36,46 @@ get_cpuid_for(cpuid_info *info, uint32 currentCPU, uint32 eaxRegister,
 }
 
 
+static bool
+is_cpuid_leaf_supported(uint32 leaf)
+{
+	cpuid_info info;
+
+	if (leaf < 0x80000000) {
+		get_current_cpuid(&info, 0, 0);
+		return leaf <= info.eax_0.max_eax;
+	} else {
+		get_current_cpuid(&info, 0x80000000, 0);
+		return leaf <= info.eax_0.max_eax;
+	}
+}
+
+
 status_t
 get_cpuid(cpuid_info *info, uint32 eaxRegister, uint32 forCPU)
 {
 	uint32 numCPUs = (uint32)smp_get_num_cpus();
-	cpu_status state;
 
 	if (forCPU >= numCPUs)
 		return B_BAD_VALUE;
 
-	// prevent us from being rescheduled
-	state = disable_interrupts();
+	if (info == NULL)
+		return B_BAD_ADDRESS;
 
-	// ToDo: as long as we only run on pentium-class systems, we can assume
-	//	that the CPU supports cpuid.
+	if (!is_cpuid_leaf_supported(eaxRegister))
+		return B_NOT_SUPPORTED;
+
+	cpu_status state = disable_interrupts();
+	acquire_spinlock(&sCPUIDLock);
 
 	if (!get_cpuid_for(info, smp_get_current_cpu(), eaxRegister, forCPU)) {
 		smp_send_broadcast_ici(SMP_MSG_CALL_FUNCTION, (addr_t)info,
-			eaxRegister, forCPU, (void *)get_cpuid_for, SMP_MSG_FLAG_SYNC);
+							   eaxRegister, forCPU, (void *)get_cpuid_for, SMP_MSG_FLAG_SYNC);
 	}
 
+	release_spinlock(&sCPUIDLock);
 	restore_interrupts(state);
+
 	return B_OK;
 }
 
@@ -62,8 +83,9 @@ get_cpuid(cpuid_info *info, uint32 eaxRegister, uint32 forCPU)
 status_t
 arch_system_info_init(struct kernel_args *args)
 {
-	// So far we don't have to care about heterogeneous x86 platforms.
 	cpu_ent* cpu = get_cpu_struct();
+	if (cpu == NULL)
+		return B_ERROR;
 
 	switch (cpu->arch.vendor) {
 		case VENDOR_AMD:
@@ -96,14 +118,16 @@ arch_system_info_init(struct kernel_args *args)
 	}
 
 	sCPUModel = (cpu->arch.extended_family << 20)
-		| (cpu->arch.extended_model << 16) | (cpu->arch.type << 12)
-		| (cpu->arch.family << 8) | (cpu->arch.model << 4) | cpu->arch.stepping;
+	| (cpu->arch.extended_model << 16) | (cpu->arch.type << 12)
+	| (cpu->arch.family << 8) | (cpu->arch.model << 4) | cpu->arch.stepping;
 
 	sCPUClockSpeed = args->arch_args.cpu_clock_speed;
+
 	if (cpu->arch.vendor == VENDOR_INTEL) {
 		cpuid_info cpuid;
 		get_current_cpuid(&cpuid, 0, 0);
 		uint32 maxBasicLeaf = cpuid.eax_0.max_eax;
+
 		if (maxBasicLeaf >= 0x16) {
 			get_current_cpuid(&cpuid, 0x16, 0);
 			if (cpuid.regs.eax != 0) {
@@ -112,6 +136,7 @@ arch_system_info_init(struct kernel_args *args)
 			}
 		}
 	}
+
 	return B_OK;
 }
 
@@ -119,15 +144,18 @@ arch_system_info_init(struct kernel_args *args)
 void
 arch_fill_topology_node(cpu_topology_node_info* node, int32 cpu)
 {
+	if (node == NULL)
+		return;
+
 	switch (node->type) {
 		case B_TOPOLOGY_ROOT:
-#if __i386__
+			#if __i386__
 			node->data.root.platform = B_CPU_x86;
-#elif __x86_64__
+			#elif __x86_64__
 			node->data.root.platform = B_CPU_x86_64;
-#else
+			#else
 			node->data.root.platform = B_CPU_UNKNOWN;
-#endif
+			#endif
 			break;
 
 		case B_TOPOLOGY_PACKAGE:
@@ -151,8 +179,12 @@ get_frequency_for(void *_frequency, int cpu)
 {
 	uint64 *frequency = (uint64*)_frequency;
 
+	if (frequency == NULL)
+		return;
+
 	bigtime_t timestamp = gCPU[cpu].arch.perf_timestamp;
 	bigtime_t timestamp2 = system_time();
+
 	if (timestamp2 - timestamp < 100) {
 		*frequency = gCPU[cpu].arch.frequency;
 		return;
@@ -163,25 +195,56 @@ get_frequency_for(void *_frequency, int cpu)
 	uint64 mperf2 = x86_read_msr(IA32_MSR_MPERF);
 	uint64 aperf2 = x86_read_msr(IA32_MSR_APERF);
 
-	if (mperf2 == mperf)
+	if (mperf2 <= mperf) {
 		*frequency = 0;
-	else {
-		*frequency = (aperf2 - aperf) * sCPUClockSpeed / (mperf2 - mperf);
-		gCPU[cpu].arch.mperf_prev = mperf2;
-		gCPU[cpu].arch.aperf_prev = aperf2;
-		gCPU[cpu].arch.perf_timestamp = timestamp2;
-		gCPU[cpu].arch.frequency = *frequency;
+		return;
 	}
+
+	uint64 mperf_delta = mperf2 - mperf;
+	uint64 aperf_delta = aperf2 - aperf;
+
+	if (mperf_delta == 0) {
+		*frequency = 0;
+		return;
+	}
+
+	if (aperf_delta > UINT64_MAX / (uint64)sCPUClockSpeed) {
+		*frequency = sCPUClockSpeed;
+		return;
+	}
+
+	*frequency = (aperf_delta * (uint64)sCPUClockSpeed) / mperf_delta;
+
+	gCPU[cpu].arch.mperf_prev = mperf2;
+	gCPU[cpu].arch.aperf_prev = aperf2;
+	gCPU[cpu].arch.perf_timestamp = timestamp2;
+	gCPU[cpu].arch.frequency = *frequency;
 }
 
 
 status_t
 arch_get_frequency(uint64 *frequency, int32 cpu)
 {
-	if (x86_check_feature(IA32_FEATURE_APERFMPERF, FEATURE_6_ECX))
-		call_single_cpu_sync(cpu, get_frequency_for, frequency);
-	else
+	if (frequency == NULL)
+		return B_BAD_ADDRESS;
+
+	if (cpu < 0 || cpu >= smp_get_num_cpus())
+		return B_BAD_VALUE;
+
+	*frequency = 0;
+
+	if (x86_check_feature(IA32_FEATURE_EXT_HYPERVISOR, FEATURE_EXT)) {
 		*frequency = sCPUClockSpeed;
+		return B_OK;
+	}
+
+	if (x86_check_feature(IA32_FEATURE_APERFMPERF, FEATURE_6_ECX)) {
+		call_single_cpu_sync(cpu, get_frequency_for, frequency);
+		if (*frequency == 0)
+			*frequency = sCPUClockSpeed;
+	} else {
+		*frequency = sCPUClockSpeed;
+	}
 
 	return B_OK;
 }
@@ -194,17 +257,16 @@ status_t
 _user_get_cpuid(cpuid_info *userInfo, uint32 eaxRegister, uint32 cpuNum)
 {
 	cpuid_info info;
-	status_t status;
 
 	if (!IS_USER_ADDRESS(userInfo))
 		return B_BAD_ADDRESS;
 
-	status = get_cpuid(&info, eaxRegister, cpuNum);
+	status_t status = get_cpuid(&info, eaxRegister, cpuNum);
+	if (status != B_OK)
+		return status;
 
-	if (status == B_OK
-		&& user_memcpy(userInfo, &info, sizeof(cpuid_info)) < B_OK)
+	if (user_memcpy(userInfo, &info, sizeof(cpuid_info)) < B_OK)
 		return B_BAD_ADDRESS;
 
-	return status;
+	return B_OK;
 }
-

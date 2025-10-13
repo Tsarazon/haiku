@@ -23,6 +23,7 @@
 #	define TRACE(x) ;
 #endif
 
+// Error codes for breakpoint/watchpoint operations
 #define B_NO_MORE_BREAKPOINTS				B_BUSY
 #define B_NO_MORE_WATCHPOINTS				B_BUSY
 #define B_BAD_WATCHPOINT_ALIGNMENT			B_BAD_VALUE
@@ -30,7 +31,6 @@
 #define B_WATCHPOINT_LENGTH_NOT_SUPPORTED	B_NOT_SUPPORTED
 #define B_BREAKPOINT_NOT_FOUND				B_NAME_NOT_FOUND
 #define B_WATCHPOINT_NOT_FOUND				B_NAME_NOT_FOUND
-	// TODO: Make those real error codes.
 
 
 #ifdef __x86_64__
@@ -39,46 +39,55 @@ extern bool gHasXsave;
 extern bool gHasSSE;
 #endif
 
-// The software breakpoint instruction (int3).
+// Software breakpoint instruction (int3)
 const uint8 kX86SoftwareBreakpoint[1] = { 0xcc };
 
-// maps breakpoint slot index to LEN_i LSB number
+// DR7 bit field mappings (Intel SDM Vol. 3B, Section 17.2.4)
+// Maps breakpoint slot index (0-3) to LEN field LSB position in DR7
 static const size_t sDR7Len[4] = {
 	X86_DR7_LEN0_LSB, X86_DR7_LEN1_LSB, X86_DR7_LEN2_LSB, X86_DR7_LEN3_LSB
 };
 
-// maps breakpoint slot index to R/W_i LSB number
+// Maps breakpoint slot index (0-3) to R/W field LSB position in DR7
 static const size_t sDR7RW[4] = {
 	X86_DR7_RW0_LSB, X86_DR7_RW1_LSB, X86_DR7_RW2_LSB, X86_DR7_RW3_LSB
 };
 
-// maps breakpoint slot index to L_i bit number
+// Maps breakpoint slot index (0-3) to Local Enable bit position in DR7
 static const size_t sDR7L[4] = {
 	X86_DR7_L0, X86_DR7_L1, X86_DR7_L2, X86_DR7_L3
 };
 
-// maps breakpoint slot index to G_i bit number
+// Maps breakpoint slot index (0-3) to Global Enable bit position in DR7
 static const size_t sDR7G[4] = {
 	X86_DR7_G0, X86_DR7_G1, X86_DR7_G2, X86_DR7_G3
 };
 
-// maps breakpoint slot index to B_i bit number
+// Maps breakpoint slot index (0-3) to breakpoint detected bit in DR6
 static const size_t sDR6B[4] = {
 	X86_DR6_B0, X86_DR6_B1, X86_DR6_B2, X86_DR6_B3
 };
 
-// Enables a hack to make single stepping work under qemu. Set via kernel
-// driver settings.
+// Enables QEMU single-step workaround via kernel driver settings
 static bool sQEmuSingleStepHack = false;
+
+
+// #pragma mark - Helper Functions: CPU State Management
 
 
 #ifdef __x86_64__
 
-
+/*!	Copies CPU register state from iframe to debug_cpu_state structure
+ * \param frame Interrupt frame containing CPU state
+ * \param cpuState Output structure to receive register values
+ *
+ * Note: Segment registers (DS, ES, FS, GS) are read directly from CPU
+ * as they are not saved/restored on x86_64 interrupts (except FS/GS bases).
+ */
 static void
 get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
 {
-	// Get general purpose registers.
+	// General purpose registers
 	cpuState->r15 = frame->r15;
 	cpuState->r14 = frame->r14;
 	cpuState->r13 = frame->r13;
@@ -94,16 +103,19 @@ get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
 	cpuState->rcx = frame->cx;
 	cpuState->rbx = frame->bx;
 	cpuState->rax = frame->ax;
+
+	// Exception information
 	cpuState->vector = frame->vector;
 	cpuState->error_code = frame->error_code;
+
+	// Control registers
 	cpuState->rip = frame->ip;
 	cpuState->cs = frame->cs;
 	cpuState->rflags = frame->flags;
 	cpuState->rsp = frame->sp;
 	cpuState->ss = frame->ss;
 
-	// Other segment registers are not saved or changed on interrupts, so
-	// get their value here.
+	// Segment registers (not saved in iframe on x86_64)
 	uint16 seg;
 	__asm__ volatile ("movw %%ds, %0" : "=r" (seg));
 	cpuState->ds = seg;
@@ -116,6 +128,13 @@ get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
 }
 
 
+/*!	Updates iframe with CPU register state from debug_cpu_state
+ * \param frame Interrupt frame to be modified
+ * \param cpuState Source structure containing new register values
+ *
+ * Note: Only general purpose registers, RIP, RFLAGS and RSP are updated.
+ * Segment registers and exception info are not modified.
+ */
 static void
 set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 {
@@ -135,15 +154,20 @@ set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 	frame->bx = cpuState->rbx;
 	frame->ax = cpuState->rax;
 	frame->ip = cpuState->rip;
+
+	// Preserve system flags, only allow user-settable flags to be modified
 	frame->flags = (frame->flags & ~X86_EFLAGS_USER_SETTABLE_FLAGS)
-		| (cpuState->rflags & X86_EFLAGS_USER_SETTABLE_FLAGS);
+	| (cpuState->rflags & X86_EFLAGS_USER_SETTABLE_FLAGS);
+
 	frame->sp = cpuState->rsp;
 }
 
-
 #else	// __x86_64__
 
-
+/*!	Copies CPU register state from iframe to debug_cpu_state structure (x86)
+ * \param frame Interrupt frame containing CPU state
+ * \param cpuState Output structure to receive register values
+ */
 static void
 get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
 {
@@ -169,103 +193,120 @@ get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
 }
 
 
+/*!	Updates iframe with CPU register state from debug_cpu_state (x86)
+ * \param frame Interrupt frame to be modified
+ * \param cpuState Source structure containing new register values
+ */
 static void
 set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 {
-//	frame->gs = cpuState->gs;
-//	frame->fs = cpuState->fs;
-//	frame->es = cpuState->es;
-//	frame->ds = cpuState->ds;
+	// Note: Segment registers are not updated for safety reasons
 	frame->di = cpuState->edi;
 	frame->si = cpuState->esi;
 	frame->bp = cpuState->ebp;
-//	frame->esp = cpuState->esp;
 	frame->bx = cpuState->ebx;
 	frame->dx = cpuState->edx;
 	frame->cx = cpuState->ecx;
 	frame->ax = cpuState->eax;
-//	frame->vector = cpuState->vector;
-//	frame->error_code = cpuState->error_code;
 	frame->ip = cpuState->eip;
-//	frame->cs = cpuState->cs;
-	frame->flags = (frame->flags & ~X86_EFLAGS_USER_SETTABLE_FLAGS)
-		| (cpuState->eflags & X86_EFLAGS_USER_SETTABLE_FLAGS);
-	frame->user_sp = cpuState->user_esp;
-//	frame->user_ss = cpuState->user_ss;
-}
 
+	// Preserve system flags, only allow user-settable flags
+	frame->flags = (frame->flags & ~X86_EFLAGS_USER_SETTABLE_FLAGS)
+	| (cpuState->eflags & X86_EFLAGS_USER_SETTABLE_FLAGS);
+
+	frame->user_sp = cpuState->user_esp;
+}
 
 #endif	// __x86_64__
 
 
+/*!	Retrieves complete CPU state including FPU/SSE/AVX registers
+ * \param thread Thread whose state to capture
+ * \param frame Interrupt frame containing general purpose registers
+ * \param cpuState Output structure to receive complete CPU state
+ *
+ * Important: Caller must not use FPU/SSE registers even indirectly,
+ * as this function captures their current state.
+ */
 static void
 get_cpu_state(Thread* thread, iframe* frame, debug_cpu_state* cpuState)
 {
-	// For the floating point state to be correct the calling function must
-	// not use these registers (not even indirectly).
-#ifdef __x86_64__
+	#ifdef __x86_64__
+	// Initialize extended registers area
 	memset(&cpuState->extended_registers, 0,
-		sizeof(cpuState->extended_registers));
+		   sizeof(cpuState->extended_registers));
 
 	if (frame->fpu != nullptr) {
 		if (gHasXsave) {
-			// TODO check the xsave header to know the actual size of the
-			// register context depending on what is saved. For now we assume
-			// there is only the YMM AVX registers
+			// XSAVE format includes AVX and potentially other extensions
+			// TODO: Parse XSAVE header to determine actual saved state size
+			// Currently assumes YMM (AVX) registers are present
 			memcpy(&cpuState->extended_registers, frame->fpu,
-				sizeof(cpuState->extended_registers));
+				   sizeof(cpuState->extended_registers));
 		} else {
-			// Only the "legacy area" saved by fxsave is available
+			// FXSAVE format (legacy area only)
 			memcpy(&cpuState->extended_registers, frame->fpu,
-				sizeof(cpuState->extended_registers.fp_fxsave));
+				   sizeof(cpuState->extended_registers.fp_fxsave));
 		}
 	}
-#else
+	#else
 	Thread* thisThread = thread_get_current_thread();
 	if (gHasSSE) {
 		if (thread == thisThread) {
-			// Since fxsave requires 16-byte alignment and this isn't guaranteed
-			// for the passed buffer, we use our thread's fpu_state field as
-			// temporary buffer. We need to disable interrupts to make use of
-			// it.
+			// FXSAVE requires 16-byte alignment. Use thread's fpu_state buffer
+			// which is guaranteed to be aligned. Disable interrupts to safely
+			// use this buffer.
 			Thread* thread = thread_get_current_thread();
 			InterruptsLocker locker;
 			x86_fxsave(thread->arch_info.fpu_state);
-				// unlike fnsave, fxsave doesn't reinit the FPU state
+			// FXSAVE does not reinit FPU state (unlike FNSAVE)
 		}
 		memcpy(&cpuState->extended_registers, thread->arch_info.fpu_state,
-			sizeof(cpuState->extended_registers));
+			   sizeof(cpuState->extended_registers));
 	} else {
 		if (thread == thisThread) {
 			x86_fnsave(&cpuState->extended_registers);
-			// fnsave reinits the FPU state after saving, so we need to
-			// load it again
+			// FNSAVE reinitializes FPU state, so reload it
 			x86_frstor(&cpuState->extended_registers);
 		} else {
 			memcpy(&cpuState->extended_registers, thread->arch_info.fpu_state,
-				sizeof(cpuState->extended_registers));
+				   sizeof(cpuState->extended_registers));
 		}
-		// TODO: Convert to fxsave format!
+		// TODO: Convert to FXSAVE format for consistency!
 	}
-#endif
+	#endif
 	get_iframe_registers(frame, cpuState);
 }
 
 
+// #pragma mark - Helper Functions: Breakpoint Management
+
+
+/*!	Installs hardware breakpoints from team debug info into CPU debug registers
+ * \param teamInfo Team's debug configuration containing breakpoint settings
+ *
+ * Interrupts must be disabled. Directly writes to DR0-DR3 (addresses)
+ * and DR7 (control register). See Intel SDM Vol. 3B, Section 17.2.
+ */
 static inline void
 install_breakpoints(const arch_team_debug_info& teamInfo)
 {
-	// set breakpoints
+	// Set breakpoint addresses in DR0-DR3
 	asm("mov %0, %%dr0" : : "r"(teamInfo.breakpoints[0].address));
 	asm("mov %0, %%dr1" : : "r"(teamInfo.breakpoints[1].address));
 	asm("mov %0, %%dr2" : : "r"(teamInfo.breakpoints[2].address));
 	asm("mov %0, %%dr3" : : "r"(teamInfo.breakpoints[3].address));
 
-	// enable breakpoints
+	// Enable breakpoints via DR7 control register
 	asm("mov %0, %%dr7" : : "r"(teamInfo.dr7));
 }
 
 
+/*!	Disables all hardware breakpoints
+ *
+ * Interrupts must be disabled. Writes a safe value to DR7 that masks
+ * all breakpoints. See Intel SDM Vol. 3B, Section 17.2.4.
+ */
 static inline void
 disable_breakpoints()
 {
@@ -273,92 +314,106 @@ disable_breakpoints()
 }
 
 
-/*! Sets a break-/watchpoint in the given team info.
-	Interrupts must be disabled and the team debug info lock be held.
-*/
+/*!	Sets a hardware breakpoint in team debug info
+ * \param info Team debug info structure to modify
+ * \param address Breakpoint address
+ * \param type Breakpoint type (instruction/data write/data r/w)
+ * \param length Breakpoint length (1/2/4/8 bytes)
+ * \param setGlobalFlag If true, set global enable (survives task switch)
+ * \return B_OK on success, B_NO_MORE_BREAKPOINTS if all 4 slots occupied
+ *
+ * Interrupts must be disabled and team debug info lock held.
+ * Updates the DR7 configuration but does not write to hardware.
+ */
 static inline status_t
 set_breakpoint(arch_team_debug_info& info, void* address, size_t type,
-	size_t length, bool setGlobalFlag)
+			   size_t length, bool setGlobalFlag)
 {
-	// check, if there is already a breakpoint at that address
-	bool alreadySet = false;
+	// Check if breakpoint already exists at this address/type
 	for (int32 i = 0; i < X86_BREAKPOINT_COUNT; i++) {
 		if (info.breakpoints[i].address == address
 			&& info.breakpoints[i].type == type) {
-			alreadySet = true;
-			break;
-		}
-	}
-
-	if (!alreadySet) {
-		// find a free slot
-		int32 slot = -1;
-		for (int32 i = 0; i < X86_BREAKPOINT_COUNT; i++) {
-			if (!info.breakpoints[i].address) {
-				slot = i;
-				break;
+			return B_OK;  // Already set
 			}
-		}
-
-		// init the breakpoint
-		if (slot >= 0) {
-			info.breakpoints[slot].address = address;
-			info.breakpoints[slot].type = type;
-			info.breakpoints[slot].length = length;
-
-			info.dr7 |= (length << sDR7Len[slot])
-				| (type << sDR7RW[slot])
-				| (1 << sDR7L[slot]);
-			if (setGlobalFlag)
-				info.dr7 |= (1 << sDR7G[slot]);
-		} else {
-			if (type == X86_INSTRUCTION_BREAKPOINT)
-				return B_NO_MORE_BREAKPOINTS;
-			else
-				return B_NO_MORE_WATCHPOINTS;
-		}
 	}
 
-	return B_OK;
-}
-
-
-/*! Clears a break-/watchpoint in the given team info.
-	Interrupts must be disabled and the team debug info lock be held.
-*/
-static inline status_t
-clear_breakpoint(arch_team_debug_info& info, void* address, bool watchpoint)
-{
-	// find the breakpoint
+	// Find free slot (slot with NULL address)
 	int32 slot = -1;
 	for (int32 i = 0; i < X86_BREAKPOINT_COUNT; i++) {
-		if (info.breakpoints[i].address == address
-			&& (watchpoint
-				!= (info.breakpoints[i].type == X86_INSTRUCTION_BREAKPOINT))) {
+		if (!info.breakpoints[i].address) {
 			slot = i;
 			break;
 		}
 	}
 
-	// clear the breakpoint
-	if (slot >= 0) {
-		info.breakpoints[slot].address = NULL;
-
-		info.dr7 &= ~((0x3 << sDR7Len[slot])
-			| (0x3 << sDR7RW[slot])
-			| (1 << sDR7L[slot])
-			| (1 << sDR7G[slot]));
-	} else {
-		if (watchpoint)
-			return B_WATCHPOINT_NOT_FOUND;
-		else
-			return B_BREAKPOINT_NOT_FOUND;
+	if (slot < 0) {
+		return (type == X86_INSTRUCTION_BREAKPOINT)
+		? B_NO_MORE_BREAKPOINTS : B_NO_MORE_WATCHPOINTS;
 	}
+
+	// Configure breakpoint slot
+	info.breakpoints[slot].address = address;
+	info.breakpoints[slot].type = type;
+	info.breakpoints[slot].length = length;
+
+	// Build DR7 configuration for this slot
+	// LEN field (2 bits) + R/W field (2 bits) + Local Enable (1 bit)
+	info.dr7 |= (length << sDR7Len[slot])
+	| (type << sDR7RW[slot])
+	| (1 << sDR7L[slot]);
+
+	if (setGlobalFlag)
+		info.dr7 |= (1 << sDR7G[slot]);
 
 	return B_OK;
 }
 
 
+/*!	Clears a hardware breakpoint from team debug info
+ * \param info Team debug info structure to modify
+ * \param address Breakpoint address
+ * \param watchpoint True if clearing watchpoint, false for breakpoint
+ * \return B_OK on success, B_BREAKPOINT_NOT_FOUND or B_WATCHPOINT_NOT_FOUND
+ *
+ * Interrupts must be disabled and team debug info lock held.
+ * Updates the DR7 configuration but does not write to hardware.
+ */
+static inline status_t
+clear_breakpoint(arch_team_debug_info& info, void* address, bool watchpoint)
+{
+	// Find the breakpoint slot
+	int32 slot = -1;
+	for (int32 i = 0; i < X86_BREAKPOINT_COUNT; i++) {
+		bool isWatchpoint = (info.breakpoints[i].type != X86_INSTRUCTION_BREAKPOINT);
+		if (info.breakpoints[i].address == address && watchpoint == isWatchpoint) {
+			slot = i;
+			break;
+		}
+	}
+
+	if (slot < 0) {
+		return watchpoint ? B_WATCHPOINT_NOT_FOUND : B_BREAKPOINT_NOT_FOUND;
+	}
+
+	// Clear the slot
+	info.breakpoints[slot].address = NULL;
+
+	// Clear all DR7 fields for this slot (LEN + R/W + Local + Global enable)
+	info.dr7 &= ~((0x3 << sDR7Len[slot])
+	| (0x3 << sDR7RW[slot])
+	| (1 << sDR7L[slot])
+	| (1 << sDR7G[slot]));
+
+	return B_OK;
+}
+
+
+/*!	Sets a userland breakpoint/watchpoint
+ * \param address Breakpoint address
+ * \param type Breakpoint type (X86_INSTRUCTION_BREAKPOINT, etc.)
+ * \param length Length in bytes (1, 2, 4, 8)
+ * \return B_OK on success, error code on failure
+ */
 static status_t
 set_breakpoint(void* address, size_t type, size_t length)
 {
@@ -371,7 +426,7 @@ set_breakpoint(void* address, size_t type, size_t length)
 	GRAB_TEAM_DEBUG_INFO_LOCK(thread->team->debug_info);
 
 	status_t error = set_breakpoint(thread->team->debug_info.arch_info, address,
-		type, length, false);
+									type, length, false);
 
 	RELEASE_TEAM_DEBUG_INFO_LOCK(thread->team->debug_info);
 	restore_interrupts(state);
@@ -380,6 +435,11 @@ set_breakpoint(void* address, size_t type, size_t length)
 }
 
 
+/*!	Clears a userland breakpoint/watchpoint
+ * \param address Breakpoint address
+ * \param watchpoint True if clearing watchpoint, false for breakpoint
+ * \return B_OK on success, error code on failure
+ */
 static status_t
 clear_breakpoint(void* address, bool watchpoint)
 {
@@ -392,7 +452,7 @@ clear_breakpoint(void* address, bool watchpoint)
 	GRAB_TEAM_DEBUG_INFO_LOCK(thread->team->debug_info);
 
 	status_t error = clear_breakpoint(thread->team->debug_info.arch_info,
-		address, watchpoint);
+									  address, watchpoint);
 
 	RELEASE_TEAM_DEBUG_INFO_LOCK(thread->team->debug_info);
 	restore_interrupts(state);
@@ -403,20 +463,34 @@ clear_breakpoint(void* address, bool watchpoint)
 
 #if KERNEL_BREAKPOINTS
 
+// #pragma mark - Kernel Breakpoint Support
 
+
+/*!	Installs kernel breakpoints on current CPU
+ * \param cookie Unused
+ * \param cpu CPU number (unused, operates on current CPU)
+ *
+ * Called via call_all_cpus() to install kernel breakpoints on all CPUs.
+ */
 static void
 install_breakpoints_per_cpu(void* /*cookie*/, int cpu)
 {
 	Team* kernelTeam = team_get_kernel_team();
 
 	GRAB_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
-
 	install_breakpoints(kernelTeam->debug_info.arch_info);
-
 	RELEASE_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 }
 
 
+/*!	Sets a kernel-space breakpoint/watchpoint
+ * \param address Breakpoint address
+ * \param type Breakpoint type
+ * \param length Length in bytes
+ * \return B_OK on success, error code on failure
+ *
+ * Kernel breakpoints use global enable flag and are installed on all CPUs.
+ */
 static status_t
 set_kernel_breakpoint(void* address, size_t type, size_t length)
 {
@@ -429,10 +503,11 @@ set_kernel_breakpoint(void* address, size_t type, size_t length)
 	GRAB_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 
 	status_t error = set_breakpoint(kernelTeam->debug_info.arch_info, address,
-		type, length, true);
+									type, length, true);  // setGlobalFlag = true
 
 	RELEASE_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 
+	// Install on all CPUs
 	call_all_cpus(install_breakpoints_per_cpu, NULL);
 
 	restore_interrupts(state);
@@ -441,6 +516,11 @@ set_kernel_breakpoint(void* address, size_t type, size_t length)
 }
 
 
+/*!	Clears a kernel-space breakpoint/watchpoint
+ * \param address Breakpoint address
+ * \param watchpoint True if clearing watchpoint
+ * \return B_OK on success, error code on failure
+ */
 static status_t
 clear_kernel_breakpoint(void* address, bool watchpoint)
 {
@@ -453,10 +533,11 @@ clear_kernel_breakpoint(void* address, bool watchpoint)
 	GRAB_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 
 	status_t error = clear_breakpoint(kernelTeam->debug_info.arch_info,
-		address, watchpoint);
+									  address, watchpoint);
 
 	RELEASE_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 
+	// Update all CPUs
 	call_all_cpus(install_breakpoints_per_cpu, NULL);
 
 	restore_interrupts(state);
@@ -467,11 +548,22 @@ clear_kernel_breakpoint(void* address, bool watchpoint)
 #endif	// KERNEL_BREAKPOINTS
 
 
+/*!	Validates watchpoint parameters and converts to x86 architecture values
+ * \param address Watchpoint address
+ * \param type Watchpoint type (B_DATA_WRITE_WATCHPOINT, etc.)
+ * \param length Watchpoint length in bytes
+ * \param archType Output: x86-specific type value
+ * \param archLength Output: x86-specific length value
+ * \return B_OK on success, error code if parameters invalid
+ *
+ * Checks alignment requirements and converts generic watchpoint types
+ * to x86 R/W field values. See Intel SDM Vol. 3B, Section 17.2.5.
+ */
 static inline status_t
 check_watch_point_parameters(void* address, uint32 type, int32 length,
-	size_t& archType, size_t& archLength)
+							 size_t& archType, size_t& archLength)
 {
-	// check type
+	// Validate and convert type
 	switch (type) {
 		case B_DATA_WRITE_WATCHPOINT:
 			archType = X86_DATA_WRITE_BREAKPOINT;
@@ -482,10 +574,9 @@ check_watch_point_parameters(void* address, uint32 type, int32 length,
 		case B_DATA_READ_WATCHPOINT:
 		default:
 			return B_WATCHPOINT_TYPE_NOT_SUPPORTED;
-			break;
 	}
 
-	// check length and alignment
+	// Validate and convert length with alignment check
 	switch (length) {
 		case 1:
 			archLength = X86_BREAKPOINT_LENGTH_1;
@@ -493,13 +584,13 @@ check_watch_point_parameters(void* address, uint32 type, int32 length,
 		case 2:
 			if ((addr_t)address & 0x1)
 				return B_BAD_WATCHPOINT_ALIGNMENT;
-			archLength = X86_BREAKPOINT_LENGTH_2;
-			break;
+		archLength = X86_BREAKPOINT_LENGTH_2;
+		break;
 		case 4:
 			if ((addr_t)address & 0x3)
 				return B_BAD_WATCHPOINT_ALIGNMENT;
-			archLength = X86_BREAKPOINT_LENGTH_4;
-			break;
+		archLength = X86_BREAKPOINT_LENGTH_4;
+		break;
 		default:
 			return B_WATCHPOINT_LENGTH_NOT_SUPPORTED;
 	}
@@ -508,11 +599,14 @@ check_watch_point_parameters(void* address, uint32 type, int32 length,
 }
 
 
-// #pragma mark - kernel debugger commands
+// #pragma mark - Kernel Debugger Commands
 
 
 #if KERNEL_BREAKPOINTS
 
+/*!	Debugger command: List all kernel breakpoints
+ * \return 0
+ */
 static int
 debugger_breakpoints(int argc, char** argv)
 {
@@ -524,6 +618,8 @@ debugger_breakpoints(int argc, char** argv)
 
 		if (info.breakpoints[i].address != NULL) {
 			kprintf("%p ", info.breakpoints[i].address);
+
+			// Print breakpoint type
 			switch (info.breakpoints[i].type) {
 				case X86_INSTRUCTION_BREAKPOINT:
 					kprintf("instruction");
@@ -539,23 +635,25 @@ debugger_breakpoints(int argc, char** argv)
 					break;
 			}
 
-			int length = 1;
-			switch (info.breakpoints[i].length) {
-				case X86_BREAKPOINT_LENGTH_1:
-					length = 1;
-					break;
-				case X86_BREAKPOINT_LENGTH_2:
-					length = 2;
-					break;
-				case X86_BREAKPOINT_LENGTH_4:
-					length = 4;
-					break;
-			}
-
-			if (info.breakpoints[i].type != X86_INSTRUCTION_BREAKPOINT)
+			// Print length for data breakpoints
+			if (info.breakpoints[i].type != X86_INSTRUCTION_BREAKPOINT) {
+				int length = 1;
+				switch (info.breakpoints[i].length) {
+					case X86_BREAKPOINT_LENGTH_1:
+						length = 1;
+						break;
+					case X86_BREAKPOINT_LENGTH_2:
+						length = 2;
+						break;
+					case X86_BREAKPOINT_LENGTH_4:
+						length = 4;
+						break;
+				}
 				kprintf(" %d byte%s", length, (length > 1 ? "s" : ""));
-		} else
+			}
+		} else {
 			kprintf("unused");
+		}
 
 		kprintf("\n");
 	}
@@ -564,11 +662,13 @@ debugger_breakpoints(int argc, char** argv)
 }
 
 
+/*!	Debugger command: Set or clear an instruction breakpoint
+ * Usage: breakpoint <address> [clear]
+ * \return 0
+ */
 static int
 debugger_breakpoint(int argc, char** argv)
 {
-	// get arguments
-
 	if (argc < 2 || argc > 3)
 		return print_debugger_command_usage(argv[0]);
 
@@ -584,33 +684,33 @@ debugger_breakpoint(int argc, char** argv)
 			return print_debugger_command_usage(argv[0]);
 	}
 
-	// set/clear breakpoint
-
 	arch_team_debug_info& info = team_get_kernel_team()->debug_info.arch_info;
 
 	status_t error;
-
 	if (clear) {
 		error = clear_breakpoint(info, (void*)address, false);
 	} else {
 		error = set_breakpoint(info, (void*)address, X86_INSTRUCTION_BREAKPOINT,
-			X86_BREAKPOINT_LENGTH_1, true);
+							   X86_BREAKPOINT_LENGTH_1, true);
 	}
 
 	if (error == B_OK)
 		call_all_cpus_sync(install_breakpoints_per_cpu, NULL);
 	else
-		kprintf("Failed to install breakpoint: %s\n", strerror(error));
+		kprintf("Failed to %s breakpoint: %s\n", clear ? "clear" : "install",
+				strerror(error));
 
-	return 0;
+		return 0;
 }
 
 
+/*!	Debugger command: Set or clear a data watchpoint
+ * Usage: watchpoint <address> [rw|clear] [<length>]
+ * \return 0
+ */
 static int
 debugger_watchpoint(int argc, char** argv)
 {
-	// get arguments
-
 	if (argc < 2 || argc > 4)
 		return print_debugger_command_usage(argv[0]);
 
@@ -622,6 +722,7 @@ debugger_watchpoint(int argc, char** argv)
 	bool readWrite = false;
 	int argi = 2;
 	int length = 1;
+
 	if (argc >= 3) {
 		if (strcmp(argv[argi], "clear") == 0) {
 			clear = true;
@@ -631,66 +732,66 @@ debugger_watchpoint(int argc, char** argv)
 			argi++;
 		}
 
-		if (!clear && argi < argc)
+		if (!clear && argi < argc) {
 			length = strtoul(argv[argi++], NULL, 0);
+		}
 
 		if (length == 0 || argi < argc)
 			return print_debugger_command_usage(argv[0]);
 	}
 
-	// set/clear breakpoint
-
 	arch_team_debug_info& info = team_get_kernel_team()->debug_info.arch_info;
 
 	status_t error;
-
 	if (clear) {
 		error = clear_breakpoint(info, (void*)address, true);
 	} else {
 		uint32 type = readWrite ? B_DATA_READ_WRITE_WATCHPOINT
-			: B_DATA_WRITE_WATCHPOINT;
+		: B_DATA_WRITE_WATCHPOINT;
 
 		size_t archType, archLength;
 		error = check_watch_point_parameters((void*)address, type, length,
-			archType, archLength);
+											 archType, archLength);
 
 		if (error == B_OK) {
 			error = set_breakpoint(info, (void*)address, archType, archLength,
-				true);
+								   true);
 		}
 	}
 
 	if (error == B_OK)
 		call_all_cpus_sync(install_breakpoints_per_cpu, NULL);
 	else
-		kprintf("Failed to install breakpoint: %s\n", strerror(error));
+		kprintf("Failed to %s watchpoint: %s\n", clear ? "clear" : "install",
+				strerror(error));
 
-	return 0;
+		return 0;
 }
 
 
+/*!	Debugger command: Enable single-step mode and exit debugger
+ * \return B_KDEBUG_QUIT to exit debugger
+ */
 static int
 debugger_single_step(int argc, char** argv)
 {
-	// TODO: Since we need an iframe, this doesn't work when KDL wasn't entered
-	// via an exception.
-
 	iframe* frame = x86_get_current_iframe();
 	if (frame == NULL) {
 		kprintf("Failed to get the current iframe!\n");
 		return 0;
 	}
 
+	// Set Trap Flag (TF) in EFLAGS to enable single-step mode
+	// See Intel SDM Vol. 3A, Section 2.3
 	frame->flags |= (1 << X86_EFLAGS_TF);
 
 	return B_KDEBUG_QUIT;
 }
 
-
 #endif	// KERNEL_BREAKPOINTS
 
 
-// #pragma mark - in-kernel public interface
+// #pragma mark - Public API: Architecture Interface
 
 
 void
@@ -727,67 +828,59 @@ arch_destroy_thread_debug_info(arch_thread_debug_info* info)
 void
 arch_update_thread_single_step()
 {
-	if (iframe* frame = x86_get_user_iframe()) {
-		Thread* thread = thread_get_current_thread();
+	iframe* frame = x86_get_user_iframe();
+	if (frame == NULL)
+		return;
 
-		// set/clear TF in EFLAGS depending on whether single stepping is
-		// desired
-		if (thread->debug_info.flags & B_THREAD_DEBUG_SINGLE_STEP)
-			frame->flags |= (1 << X86_EFLAGS_TF);
-		else
-			frame->flags &= ~(1 << X86_EFLAGS_TF);
-	}
+	Thread* thread = thread_get_current_thread();
+
+	// Set or clear Trap Flag in EFLAGS based on single-step state
+	if (thread->debug_info.flags & B_THREAD_DEBUG_SINGLE_STEP)
+		frame->flags |= (1 << X86_EFLAGS_TF);
+	else
+		frame->flags &= ~(1 << X86_EFLAGS_TF);
 }
 
 
 void
 arch_set_debug_cpu_state(const debug_cpu_state* cpuState)
 {
-	if (iframe* frame = x86_get_user_iframe()) {
-		// For the floating point state to be correct the calling function must
-		// not use these registers (not even indirectly).
-#ifdef __x86_64__
+	iframe* frame = x86_get_user_iframe();
+	if (frame == NULL)
+		return;
+
+	#ifdef __x86_64__
+	Thread* thread = thread_get_current_thread();
+	memcpy(thread->arch_info.user_fpu_state, &cpuState->extended_registers,
+		   sizeof(cpuState->extended_registers));
+	frame->fpu = &thread->arch_info.user_fpu_state;
+	#else
+	if (gHasSSE) {
+		// FXRSTOR requires 16-byte alignment. Use thread's fpu_state buffer
+		// temporarily. Disable interrupts for safe access.
 		Thread* thread = thread_get_current_thread();
-		memcpy(thread->arch_info.user_fpu_state, &cpuState->extended_registers,
-			sizeof(cpuState->extended_registers));
-		frame->fpu = &thread->arch_info.user_fpu_state;
-#else
-		if (gHasSSE) {
-			// Since fxrstor requires 16-byte alignment and this isn't
-			// guaranteed passed buffer, we use our thread's fpu_state field as
-			// temporary buffer. We need to disable interrupts to make use of
-			// it.
-			Thread* thread = thread_get_current_thread();
-			InterruptsLocker locker;
-			memcpy(thread->arch_info.fpu_state, &cpuState->extended_registers,
-				sizeof(cpuState->extended_registers));
-			x86_fxrstor(thread->arch_info.fpu_state);
-		} else {
-			// TODO: Implement! We need to convert the format first.
-//			x86_frstor(&cpuState->extended_registers);
-		}
-#endif
-		set_iframe_registers(frame, cpuState);
+		InterruptsLocker locker;
+		memcpy(thread->arch_info.fpu_state, &cpuState->extended_registers,
+			   sizeof(cpuState->extended_registers));
+		x86_fxrstor(thread->arch_info.fpu_state);
+	} else {
+		// TODO: Implement! Need to convert from FXSAVE format to FNSAVE format
+		// Currently not supported
 	}
+	#endif
+	set_iframe_registers(frame, cpuState);
 }
 
 
 void
 arch_get_debug_cpu_state(debug_cpu_state* cpuState)
 {
-	if (iframe* frame = x86_get_user_iframe())
+	iframe* frame = x86_get_user_iframe();
+	if (frame != NULL)
 		get_cpu_state(thread_get_current_thread(), frame, cpuState);
 }
 
 
-/*!	\brief Retrieves the CPU state for the given thread.
-	The thread must not be running and the thread's scheduler spinlock must be
-	held.
-	\param thread The thread whose CPU state to retrieve.
-	\param cpuState Pointer to pre-allocated storage for the CPU state.
-	\return \c B_OK, if everything goes fine, another error code, if the CPU
-		state could not be retrieved.
-*/
 status_t
 arch_get_thread_debug_cpu_state(Thread* thread, debug_cpu_state* cpuState)
 {
@@ -804,7 +897,7 @@ status_t
 arch_set_breakpoint(void* address)
 {
 	return set_breakpoint(address, X86_INSTRUCTION_BREAKPOINT,
-		X86_BREAKPOINT_LENGTH_1);
+						  X86_BREAKPOINT_LENGTH_1);
 }
 
 
@@ -820,7 +913,7 @@ arch_set_watchpoint(void* address, uint32 type, int32 length)
 {
 	size_t archType, archLength;
 	status_t error = check_watch_point_parameters(address, type, length,
-		archType, archLength);
+												  archType, archLength);
 	if (error != B_OK)
 		return error;
 
@@ -838,8 +931,8 @@ arch_clear_watchpoint(void* address)
 bool
 arch_has_breakpoints(arch_team_debug_info* info)
 {
-	// Reading info->dr7 is atomically, so we don't need to lock. The caller
-	// has to ensure, that the info doesn't go away.
+	// Reading dr7 is atomic, no lock needed
+	// Caller ensures info doesn't disappear
 	return (info->dr7 != X86_BREAKPOINTS_DISABLED_DR7);
 }
 
@@ -850,11 +943,11 @@ status_t
 arch_set_kernel_breakpoint(void* address)
 {
 	status_t error = set_kernel_breakpoint(address, X86_INSTRUCTION_BREAKPOINT,
-		X86_BREAKPOINT_LENGTH_1);
+										   X86_BREAKPOINT_LENGTH_1);
 
 	if (error != B_OK) {
 		panic("arch_set_kernel_breakpoint() failed to set breakpoint: %s",
-			strerror(error));
+			  strerror(error));
 	}
 
 	return error;
@@ -868,7 +961,7 @@ arch_clear_kernel_breakpoint(void* address)
 
 	if (error != B_OK) {
 		panic("arch_clear_kernel_breakpoint() failed to clear breakpoint: %s",
-			strerror(error));
+			  strerror(error));
 	}
 
 	return error;
@@ -880,14 +973,14 @@ arch_set_kernel_watchpoint(void* address, uint32 type, int32 length)
 {
 	size_t archType, archLength;
 	status_t error = check_watch_point_parameters(address, type, length,
-		archType, archLength);
+												  archType, archLength);
 
 	if (error == B_OK)
 		error = set_kernel_breakpoint(address, archType, archLength);
 
 	if (error != B_OK) {
 		panic("arch_set_kernel_watchpoint() failed to set watchpoint: %s",
-			strerror(error));
+			  strerror(error));
 	}
 
 	return error;
@@ -901,7 +994,7 @@ arch_clear_kernel_watchpoint(void* address)
 
 	if (error != B_OK) {
 		panic("arch_clear_kernel_watchpoint() failed to clear watchpoint: %s",
-			strerror(error));
+			  strerror(error));
 	}
 
 	return error;
@@ -910,11 +1003,14 @@ arch_clear_kernel_watchpoint(void* address)
 #endif	// KERNEL_BREAKPOINTS
 
 
-// #pragma mark - x86 implementation interface
+// #pragma mark - x86 Implementation Interface
 
 
-/**
- *	Interrupts are disabled. \a frame is unused, i.e. can be \c NULL.
+/*!	Disables kernel breakpoints and installs user breakpoints on kernel exit
+ * \param frame Unused (can be NULL)
+ *
+ * Interrupts must be disabled. Called before returning to userland to
+ * ensure user-mode debug state is active.
  */
 void
 x86_init_user_debug_at_kernel_exit(iframe* frame)
@@ -924,14 +1020,13 @@ x86_init_user_debug_at_kernel_exit(iframe* frame)
 	if (!(thread->flags & THREAD_FLAGS_BREAKPOINTS_DEFINED))
 		return;
 
-	// disable kernel breakpoints
+	// Disable kernel breakpoints
 	disable_breakpoints();
 
-	// install the user breakpoints
+	// Install user breakpoints
 	GRAB_TEAM_DEBUG_INFO_LOCK(thread->team->debug_info);
 
 	arch_team_debug_info &teamInfo = thread->team->debug_info.arch_info;
-
 	install_breakpoints(teamInfo);
 
 	atomic_or(&thread->flags, THREAD_FLAGS_BREAKPOINTS_INSTALLED);
@@ -940,54 +1035,54 @@ x86_init_user_debug_at_kernel_exit(iframe* frame)
 }
 
 
-/**
- *	Interrupts are disabled.
+/*!	Saves debug register state and switches to kernel breakpoints on entry
+ *
+ * Interrupts must be disabled. Saves DR6 (Debug Status) and DR7 (Control)
+ * to CPU structure for later processing, then installs kernel breakpoints.
  */
 void
 x86_exit_user_debug_at_kernel_entry()
 {
 	Thread* thread = thread_get_current_thread();
 
-	// We need to save the current values of dr6 and dr7 in the CPU structure,
-	// since in case of a debug exception we might overwrite them before
-	// x86_handle_debug_exception() is called. Debug exceptions occur when
-	// hitting a hardware break/watchpoint or when single-stepping.
+	// Save DR6 and DR7 before they might be overwritten by subsequent
+	// debug exceptions. These are needed by x86_handle_debug_exception().
+	// See Intel SDM Vol. 3B, Section 17.2.
 	asm("mov %%dr6, %0" : "=r"(thread->cpu->arch.dr6));
 	asm("mov %%dr7, %0" : "=r"(thread->cpu->arch.dr7));
 
-	// The remainder needs only be done, when user breakpoints are installed.
 	if (!(thread->flags & THREAD_FLAGS_BREAKPOINTS_INSTALLED))
 		return;
 
-	// disable user breakpoints
+	// Disable user breakpoints
 	disable_breakpoints();
 
-	// install kernel breakpoints
+	// Install kernel breakpoints
 	Team* kernelTeam = team_get_kernel_team();
 
 	GRAB_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
-
 	install_breakpoints(kernelTeam->debug_info.arch_info);
+	RELEASE_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 
 	atomic_and(&thread->flags, ~THREAD_FLAGS_BREAKPOINTS_INSTALLED);
-
-	RELEASE_TEAM_DEBUG_INFO_LOCK(kernelTeam->debug_info);
 }
 
 
-/**
- *	Interrupts are disabled and will possibly be enabled by the function.
+/*!	Handles debug exceptions (#DB, vector 1)
+ * \param frame Interrupt frame from exception
+ *
+ * Interrupts disabled on entry, may be enabled during processing.
+ * Processes hardware breakpoints, watchpoints, and single-step exceptions.
+ * See Intel SDM Vol. 3B, Chapter 17.
  */
 void
 x86_handle_debug_exception(iframe* frame)
 {
 	Thread* thread = thread_get_current_thread();
 
-	// Get dr6 and dr7. If the given iframe is a userland frame, the exception
-	// obviously occurred in userland. In that case
-	// x86_exit_user_debug_at_kernel_entry() has already been invoked and dr6
-	// and dr7 are stored in the cpu info. Otherwise we need to fetch the
-	// current values from the registers.
+	// Get debug registers. For userland exceptions, they were saved by
+	// x86_exit_user_debug_at_kernel_entry(). For kernel exceptions,
+	// read them directly.
 	size_t dr6;
 	size_t dr7;
 	if (IFRAME_IS_USER(frame)) {
@@ -1000,11 +1095,11 @@ x86_handle_debug_exception(iframe* frame)
 
 	TRACE(("x86_handle_debug_exception(): DR6: %lx, DR7: %lx\n", dr6, dr7));
 
-	// check, which exception condition applies
+	// Check exception condition (Intel SDM Vol. 3B, Section 17.2.3)
 	if (dr6 & X86_DR6_BREAKPOINT_MASK) {
-		// breakpoint
+		// Hardware breakpoint/watchpoint hit (B0-B3 bits in DR6)
 
-		// check which breakpoint was taken
+		// Determine if it's a watchpoint or instruction breakpoint
 		bool watchpoint = true;
 		for (int32 i = 0; i < X86_BREAKPOINT_COUNT; i++) {
 			if (dr6 & (1 << sDR6B[i])) {
@@ -1015,7 +1110,6 @@ x86_handle_debug_exception(iframe* frame)
 		}
 
 		if (IFRAME_IS_USER(frame)) {
-			// enable interrupts and notify the debugger
 			enable_interrupts();
 
 			if (watchpoint)
@@ -1024,105 +1118,94 @@ x86_handle_debug_exception(iframe* frame)
 				user_debug_breakpoint_hit(false);
 		} else {
 			panic("hit kernel %spoint: dr6: 0x%lx, dr7: 0x%lx",
-				watchpoint ? "watch" : "break", dr6, dr7);
+				  watchpoint ? "watch" : "break", dr6, dr7);
 		}
 	} else if (dr6 & (1 << X86_DR6_BD)) {
-		// general detect exception
-		// Occurs only, if GD in DR7 is set (which we don't do) and someone
-		// tries to write to the debug registers.
+		// General Detect Exception (GD bit in DR7 set and DR access attempted)
+		// We don't use GD, so this is spurious
 		if (IFRAME_IS_USER(frame)) {
 			dprintf("x86_handle_debug_exception(): ignoring spurious general "
-				"detect exception\n");
-
+			"detect exception\n");
 			enable_interrupts();
-		} else
+		} else {
 			panic("spurious general detect exception in kernel mode");
+		}
 	} else if ((dr6 & (1 << X86_DR6_BS)) || sQEmuSingleStepHack) {
-		// single step
+		// Single-step exception (BS bit in DR6 or QEMU workaround)
 
 		if (IFRAME_IS_USER(frame)) {
-			// enable interrupts and notify the debugger
 			enable_interrupts();
-
 			user_debug_single_stepped();
 		} else {
-			// Disable single-stepping -- the next "step" command will re-enable
-			// it, but we don't want it when continuing otherwise.
+			// Kernel single-step
+
+			// Disable single-stepping for safety (next "step" command re-enables)
 			frame->flags &= ~(1 << X86_EFLAGS_TF);
 
-			// Determine whether the exception occurred at a syscall/trap
-			// kernel entry or whether this is genuine kernel single-stepping.
+			// Check if this is syscall entry single-step (common case)
+			// or genuine kernel single-stepping (rare, usually in KDL)
 			bool inKernel = true;
 			if (thread->team != team_get_kernel_team()
 				&& x86_get_user_iframe() == NULL) {
-				// TODO: This is not yet fully correct, since a newly created
-				// thread that hasn't entered userland yet also has this
-				// property.
 				inKernel = false;
-			}
-
-			if (inKernel) {
-				panic("kernel single step");
-			} else {
-				// The thread is a userland thread and it just entered the
-				// kernel when the single-step exception occurred. This happens
-				// e.g. when sysenter is called with single-stepping enabled.
-				// We need to ignore the exception now and send a single-step
-				// notification later, when the thread wants to return from the
-				// kernel.
-				InterruptsSpinLocker threadDebugInfoLocker(
-					thread->debug_info.lock);
-
-				// Check whether the team is still being debugged and set
-				// the B_THREAD_DEBUG_NOTIFY_SINGLE_STEP and
-				// B_THREAD_DEBUG_STOP flags, so that the thread will be
-				// stopped when it is going to leave the kernel and notify the
-				// debugger about the single-step event.
-				int32 teamDebugFlags
-					= atomic_get(&thread->team->debug_info.flags);
-				if (teamDebugFlags & B_TEAM_DEBUG_DEBUGGER_INSTALLED) {
-					atomic_or(&thread->debug_info.flags,
-						B_THREAD_DEBUG_NOTIFY_SINGLE_STEP
-							| B_THREAD_DEBUG_STOP);
-
-					// also set the respective thread flag
-					atomic_or(&thread->flags, THREAD_FLAGS_DEBUG_THREAD);
 				}
-			}
+
+				if (inKernel) {
+					panic("kernel single step");
+				} else {
+					// Single-step exception at syscall/interrupt entry point.
+					// Happens when userland calls syscall with TF set.
+					// Defer notification until kernel exit.
+					InterruptsSpinLocker threadDebugInfoLocker(
+						thread->debug_info.lock);
+
+					int32 teamDebugFlags
+					= atomic_get(&thread->team->debug_info.flags);
+					if (teamDebugFlags & B_TEAM_DEBUG_DEBUGGER_INSTALLED) {
+						atomic_or(&thread->debug_info.flags,
+								  B_THREAD_DEBUG_NOTIFY_SINGLE_STEP
+								  | B_THREAD_DEBUG_STOP);
+
+						atomic_or(&thread->flags, THREAD_FLAGS_DEBUG_THREAD);
+					}
+				}
 		}
 	} else if (dr6 & (1 << X86_DR6_BT)) {
-		// task switch
-		// Occurs only, if T in EFLAGS is set (which we don't do).
+		// Task switch breakpoint (T bit in TSS set)
+		// We don't use this feature
 		if (IFRAME_IS_USER(frame)) {
 			dprintf("x86_handle_debug_exception(): ignoring spurious task switch "
-				"exception\n");
-
+			"exception\n");
 			enable_interrupts();
-		} else
+		} else {
 			panic("spurious task switch exception in kernel mode");
+		}
 	} else {
+		// No recognized condition - spurious exception
 		if (IFRAME_IS_USER(frame)) {
 			TRACE(("x86_handle_debug_exception(): ignoring spurious debug "
-				"exception (no condition recognized)\n"));
-
+			"exception (no condition recognized)\n"));
 			enable_interrupts();
 		} else {
 			panic("spurious debug exception in kernel mode (no condition "
-				"recognized)");
+			"recognized)");
 		}
 	}
 }
 
 
-/**
- *	Interrupts are disabled and will possibly be enabled by the function.
+/*!	Handles breakpoint exceptions (#BP, vector 3, int3 instruction)
+ * \param frame Interrupt frame from exception
+ *
+ * Interrupts disabled on entry, enabled during processing.
+ * Adjusts return address to point to int3 instruction for debugger.
  */
 void
 x86_handle_breakpoint_exception(iframe* frame)
 {
 	TRACE(("x86_handle_breakpoint_exception()\n"));
 
-	// reset eip to the int3 instruction
+	// Reset EIP/RIP to point to int3 instruction (it currently points after)
 	frame->ip--;
 
 	if (!IFRAME_IS_USER(frame)) {
@@ -1131,43 +1214,45 @@ x86_handle_breakpoint_exception(iframe* frame)
 	}
 
 	enable_interrupts();
-
-	user_debug_breakpoint_hit(true);
+	user_debug_breakpoint_hit(true);  // software breakpoint
 }
 
 
+/*!	Initializes user debugging support
+ *
+ * Reads kernel settings and registers debugger commands.
+ */
 void
 x86_init_user_debug()
 {
-	// get debug settings
+	// Load QEMU single-step workaround setting
 	if (void* handle = load_driver_settings("kernel")) {
 		sQEmuSingleStepHack = get_driver_boolean_parameter(handle,
-			"qemu_single_step_hack", false, false);;
+														   "qemu_single_step_hack", false, false);
 
 		unload_driver_settings(handle);
 	}
 
-#if KERNEL_BREAKPOINTS
-	// install debugger commands
+	#if KERNEL_BREAKPOINTS
+	// Register kernel debugger commands
 	add_debugger_command_etc("breakpoints", &debugger_breakpoints,
-		"Lists current break-/watchpoints",
-		"\n"
-		"Lists the current kernel break-/watchpoints.\n", 0);
+							 "Lists current break-/watchpoints",
+						  "\n"
+						  "Lists the current kernel break-/watchpoints.\n", 0);
 	add_debugger_command_alias("watchpoints", "breakpoints", NULL);
 	add_debugger_command_etc("breakpoint", &debugger_breakpoint,
-		"Set/clears a breakpoint",
-		"<address> [ clear ]\n"
-		"Sets respectively clears the breakpoint at address <address>.\n", 0);
+							 "Set/clears a breakpoint",
+						  "<address> [ clear ]\n"
+						  "Sets respectively clears the breakpoint at address <address>.\n", 0);
 	add_debugger_command_etc("watchpoint", &debugger_watchpoint,
-		"Set/clears a watchpoint",
-		"<address> <address> ( [ rw ] [ <size> ] | clear )\n"
-		"Sets respectively clears the watchpoint at address <address>.\n"
-		"If \"rw\" is given the new watchpoint is a read/write watchpoint\n"
-		"otherwise a write watchpoint only.\n", 0);
+							 "Set/clears a watchpoint",
+						  "<address> <address> ( [ rw ] [ <size> ] | clear )\n"
+						  "Sets respectively clears the watchpoint at address <address>.\n"
+						  "If \"rw\" is given the new watchpoint is a read/write watchpoint\n"
+						  "otherwise a write watchpoint only.\n", 0);
 	add_debugger_command_etc("step", &debugger_single_step,
-		"Single-steps to the next instruction",
-		"\n"
-		"Single-steps to the next instruction.\n", 0);
-#endif
+							 "Single-steps to the next instruction",
+						  "\n"
+						  "Single-steps to the next instruction.\n", 0);
+	#endif
 }
-

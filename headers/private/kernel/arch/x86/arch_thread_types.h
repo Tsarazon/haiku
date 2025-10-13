@@ -19,12 +19,12 @@
 
 
 namespace BKernel {
-    struct Thread;
+	struct Thread;
 }
 
 
 #define _ALIGNED(bytes) __attribute__((aligned(bytes)))
-	// move this to somewhere else, maybe BeBuild.h?
+// move this to somewhere else, maybe BeBuild.h?
 
 
 #ifndef __x86_64__
@@ -37,7 +37,7 @@ struct farcall {
 
 // architecture specific thread info
 struct arch_thread {
-#ifdef __x86_64__
+	#ifdef __x86_64__
 	// Back pointer to the containing Thread structure. The GS segment base is
 	// pointed here, used to get the current thread.
 	BKernel::Thread* thread;
@@ -50,21 +50,23 @@ struct arch_thread {
 	uintptr_t		instruction_pointer;
 
 	uint64			user_gs_base;
-#else
+
+	uint32			signal_delivery_depth;
+	#else
 	struct farcall	current_stack;
 	struct farcall	interrupt_stack;
-#endif
+	#endif
 
-#ifndef __x86_64__
+	#ifndef __x86_64__
 	// 512 byte floating point save point - this must be 16 byte aligned
 	uint8			fpu_state[512] _ALIGNED(16);
-#else
+	#else
 	// floating point save point - this must be 64 byte aligned for xsave and
 	// have enough space for all the registers, at least 2560 bytes according
 	// to Intel Architecture Instruction Set Extensions Programming Reference,
 	// Section 3.2.4, table 3-8
 	uint8			user_fpu_state[2560] _ALIGNED(64);
-#endif
+	#endif
 
 	addr_t			GetFramePointer() const;
 } _ALIGNED(16);
