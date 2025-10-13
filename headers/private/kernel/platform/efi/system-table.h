@@ -5,6 +5,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <SupportDefs.h>
 
 #include <efi/types.h>
 #include <efi/boot-services.h>

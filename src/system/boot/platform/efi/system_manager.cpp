@@ -8,6 +8,7 @@
 
 
 #include <string.h>
+#include <new>
 
 #include <KernelExport.h>
 #include <boot/platform.h>
@@ -121,7 +122,7 @@ EFISystemManager::ValidateSystemTable(const efi_system_table* table)
 
 	// Check signature
 	if (table->Hdr.Signature != EFI_SYSTEM_TABLE_SIGNATURE) {
-		TRACE(("EFISystemManager: invalid signature: 0x%016llx (expected 0x%016llx)\n",
+		TRACE(("EFISystemManager: invalid signature: 0x%016lx (expected 0x%016lx)\n",
 			table->Hdr.Signature, EFI_SYSTEM_TABLE_SIGNATURE));
 		return false;
 	}
