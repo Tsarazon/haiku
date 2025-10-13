@@ -8,7 +8,6 @@
 
 
 #include <string.h>
-#include <new>
 
 #include <KernelExport.h>
 #include <boot/platform.h>
@@ -55,7 +54,7 @@ EFISystemManager::Initialize(efi_handle imageHandle,
 	}
 
 	// Allocate singleton instance
-	sInstance = new(std::nothrow) EFISystemManager();
+	sInstance = new EFISystemManager();
 	if (sInstance == NULL) {
 		TRACE(("EFISystemManager::Initialize: failed to allocate instance\n"));
 		return B_NO_MEMORY;
