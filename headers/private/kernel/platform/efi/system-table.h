@@ -5,9 +5,14 @@
 #pragma once
 
 #include <stdint.h>
-#include <SupportDefs.h>
 
 #include <efi/types.h>
+
+// Forward declare status_t for boot loader context
+#ifndef _STATUS_T_DECLARED
+#define _STATUS_T_DECLARED
+typedef int32_t status_t;
+#endif
 #include <efi/boot-services.h>
 #include <efi/runtime-services.h>
 #include <efi/protocol/simple-text-input.h>
