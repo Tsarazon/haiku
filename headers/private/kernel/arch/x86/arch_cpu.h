@@ -122,14 +122,14 @@
 #define IA32_MSR_TSC_AUX				0xc0000103
 
 // AMD MSR registers
-#define MSR_F10H_HWCR						0xc0010015
-#define 	HWCR_TSCFREQSEL					(1 << 24)
-#define MSR_K8_UCODE_UPDATE				0xc0010020
-#define K8_MSR_IPM						0xc0010055
-#define MSR_F10H_PSTATEDEF(x)				(0xc0010064 + (x))
-#define 	PSTATEDEF_EN					(1ULL << 63)
-#define MSR_F10H_DE_CFG					0xc0011029
-#define 	DE_CFG_SERIALIZE_LFENCE			(1 << 1)
+#define MSR_F10H_HWCR 0xc0010015
+#define HWCR_TSCFREQSEL (1 << 24)
+#define MSR_K8_UCODE_UPDATE 0xc0010020
+#define K8_MSR_IPM 0xc0010055
+#define MSR_F10H_PSTATEDEF(x) (0xc0010064 + (x))
+#define PSTATEDEF_EN (1ULL << 63)
+#define MSR_F10H_DE_CFG 0xc0011029
+#define DE_CFG_SERIALIZE_LFENCE (1 << 1)
 
 #define MSR_AMD_CPPC_CAP1				0xc00102b0
 #define		AMD_CPPC_LOWEST_PERF(x)		((x) & 0xff)
@@ -179,10 +179,10 @@
 #define	IA32_HWP_REQUEST_MINIMUM_VALID					(1ULL << 63)
 
 // IA32_MSR_PAT bits
-#define IA32_MSR_PAT_ENTRY_MASK							0x7ULL
-#define IA32_MSR_PAT_ENTRY_SHIFT(x)						(x * 8)
-#define IA32_MSR_PAT_TYPE_UNCACHEABLE					0x0ULL
-#define IA32_MSR_PAT_TYPE_WRITE_COMBINING				0x1ULL
+#define IA32_MSR_PAT_ENTRY_MASK 0x7ULL
+#define IA32_MSR_PAT_ENTRY_SHIFT(x) (x * 8)
+#define IA32_MSR_PAT_TYPE_UNCACHEABLE 0x0ULL
+#define IA32_MSR_PAT_TYPE_WRITE_COMBINING 0x1ULL
 #define IA32_MSR_PAT_TYPE_WRITE_THROUGH					0x4ULL
 #define IA32_MSR_PAT_TYPE_WRITE_PROTECTED				0x5ULL
 #define IA32_MSR_PAT_TYPE_WRITE_BACK					0x6ULL
@@ -191,7 +191,7 @@
 // cpuid leaves
 #define IA32_CPUID_LEAF_MWAIT				0x5
 #define IA32_CPUID_LEAF_XSTATE				0xd
-#define IA32_CPUID_LEAF_TSC					0x15
+#define IA32_CPUID_LEAF_TSC 0x15
 #define IA32_CPUID_LEAF_FREQUENCY			0x16
 
 // x86 features from cpuid eax 1, edx register
@@ -227,7 +227,7 @@
 #define IA32_FEATURE_HTT	(1 << 28) // hyperthreading
 #define IA32_FEATURE_TM		(1 << 29) // thermal monitor
 #define IA32_FEATURE_IA64	(1 << 30) // IA64 processor emulating x86
-#define IA32_FEATURE_PBE	(1 << 31) // pending break enable
+#define IA32_FEATURE_PBE	(1U << 31) // pending break enable
 
 // x86 features from cpuid eax 1, ecx register
 // reference http://www.intel.com/Assets/en_US/PDF/appnote/241618.pdf (Table 5-4)
@@ -262,7 +262,7 @@
 #define IA32_FEATURE_EXT_AVX		(1 << 28) // Advanced Vector Extensions
 #define IA32_FEATURE_EXT_F16C		(1 << 29) // 16-bit FP conversion
 #define IA32_FEATURE_EXT_RDRND		(1 << 30) // RDRAND instruction
-#define IA32_FEATURE_EXT_HYPERVISOR	(1 << 31) // Running on a hypervisor
+#define IA32_FEATURE_EXT_HYPERVISOR	(1U << 31) // Running on a hypervisor
 
 // x86 features from cpuid eax 0x80000001, ecx register (AMD)
 #define IA32_FEATURE_AMD_EXT_CMPLEGACY	(1 << 1)	// Core MP legacy mode
@@ -279,7 +279,7 @@
 #define IA32_FEATURE_AMD_EXT_RDTSCP		(1 << 27) // rdtscp instruction
 #define IA32_FEATURE_AMD_EXT_LONG		(1 << 29) // long mode
 #define IA32_FEATURE_AMD_EXT_3DNOWEXT	(1 << 30) // 3DNow! extensions
-#define IA32_FEATURE_AMD_EXT_3DNOW		(1 << 31) // 3DNow!
+#define IA32_FEATURE_AMD_EXT_3DNOW		(1U << 31) // 3DNow!
 
 // some of the features from cpuid eax 0x80000001, edx register (AMD) are also
 // available on Intel processors
@@ -346,7 +346,7 @@
 #define IA32_FEATURE_AVX512CD	(1 << 28) // AVX-512 Conflict Detection Instructions
 #define IA32_FEATURE_SHA_NI		(1 << 29) // SHA extensions
 #define IA32_FEATURE_AVX512BW	(1 << 30) // AVX-512 Byte and Word Instructions
-#define IA32_FEATURE_AVX512VI	(1 << 31) // AVX-512 Vector Length Extensions
+#define IA32_FEATURE_AVX512VI	(1U << 31) // AVX-512 Vector Length Extensions
 
 // x86 features from cpuid eax 7, ecx register
 // reference http://www.intel.com/Assets/en_US/PDF/appnote/241618.pdf (Table 3-8)
@@ -376,7 +376,7 @@
 #define IA32_FEATURE_STIBP			(1 << 27)	// STIBP Speculation Control
 #define IA32_FEATURE_L1D_FLUSH		(1 << 28)	// L1D_FLUSH supported
 #define IA32_FEATURE_ARCH_CAPABILITIES	(1 << 29)	// IA32_ARCH_CAPABILITIES MSR
-#define IA32_FEATURE_SSBD			(1 << 31)	// Speculative Store Bypass Disable
+#define IA32_FEATURE_SSBD			(1U << 31)	// Speculative Store Bypass Disable
 
 // x86 features from cpuid eax 0xd, ecx 1, eax register
 // reference http://www.intel.com/Assets/en_US/PDF/appnote/241618.pdf (Table 3-8)

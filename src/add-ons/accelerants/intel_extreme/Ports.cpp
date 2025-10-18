@@ -9,9 +9,6 @@
  *		Rudolf Cornelissen, ruud@highsand-juicylake.nl
  */
 
-/*
- * Port Configuration & Management - Gen 6+ only
- */
 
 #include "Ports.h"
 
@@ -22,6 +19,11 @@
 #include <Debug.h>
 #include <KernelExport.h>
 
+#undef TRACE
+#define TRACE(x...) _sPrintf("intel_extreme: " x)
+#define ERROR(x...) _sPrintf("intel_extreme: " x)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+
 #include "accelerant.h"
 #include "accelerant_protos.h"
 #include "intel_extreme.h"
@@ -31,18 +33,6 @@
 #include "TigerLakePLL.h"
 
 #include <new>
-
-
-#undef TRACE
-#define TRACE_PORTS
-#ifdef TRACE_PORTS
-#   define TRACE(x...) _sPrintf("intel_extreme: " x)
-#else
-#   define TRACE(x...)
-#endif
-
-#define ERROR(x...) _sPrintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
 static bool
@@ -209,48 +199,6 @@ Port::SetPipe(Pipe* pipe)
 
 
 status_t
-Port::_ConfigurePipeComponents(const display_timing& timing, bool enableScaling)
-{
-	if (fPipe == NULL) {
-		ERROR("%s: No pipe assigned to port %s\n", __func__, PortName());
-		return B_ERROR;
-	}
-
-	// Configure PanelFitter if it exists
-	PanelFitter* fitter = fPipe->PFT();
-	if (fitter != NULL) {
-		if (enableScaling) {
-			fitter->Enable(timing);
-			TRACE("%s: PanelFitter enabled for %s\n", __func__, PortName());
-		} else {
-			// For ports that don't need scaling, still enable with timing
-			fitter->Enable(timing);
-		}
-	}
-
-	// Configure and train FDI link if it exists
-	FDILink* link = fPipe->FDI();
-	if (link != NULL) {
-		uint32 lanes = 0;
-		uint32 linkBandwidth = 0;
-		uint32 bitsPerPixel = 0;
-
-		link->PreTrain(const_cast<display_timing*>(&timing),
-			&linkBandwidth, &lanes, &bitsPerPixel);
-
-		fPipe->SetFDILink(timing, linkBandwidth, lanes, bitsPerPixel);
-
-		link->Train(const_cast<display_timing*>(&timing), lanes);
-
-		TRACE("%s: FDI configured: %u lanes, %u MHz, %u bpp\n",
-			__func__, lanes, linkBandwidth, bitsPerPixel);
-	}
-
-	return B_OK;
-}
-
-
-status_t
 Port::Power(bool enabled)
 {
 	if (fPipe == NULL) {
@@ -344,7 +292,9 @@ Port::PipePreference()
 	CALLED();
 	// Ideally we could just return INTEL_PIPE_ANY for all devices by default, but
 	// this doesn't quite work yet. We need to use the BIOS presetup pipes for now.
-	// Gen 6+ pipe preference logic
+	if (gInfo->shared_info->device_type.Generation() < 4)
+		return INTEL_PIPE_ANY;
+
 	// Notes:
 	// - The BIOSes seen sofar do not use PIPE C by default.
 	// - The BIOSes seen sofar program transcoder A to PIPE A, etc.
@@ -425,8 +375,13 @@ Port::_SetI2CSignals(void* cookie, int clock, int data)
 	addr_t ioRegister = (addr_t)cookie;
 	uint32 value;
 
-	// Gen 6+: preserve reserved bits manually (removed Gen 2-3 fixed values)
-	value = read32(ioRegister) & I2C_RESERVED;
+	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_83x)) {
+		// on these chips, the reserved values are fixed
+		value = 0;
+	} else {
+		// on all others, we have to preserve them manually
+		value = read32(ioRegister) & I2C_RESERVED;
+	}
 
 	// if we send clk or data, we always send low logic level;
 	// if we want to send high level, we actually receive and let the
@@ -1066,10 +1021,18 @@ AnalogPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	status_t status = _ConfigurePipeComponents(target->timing, false);
-	if (status != B_OK)
-		return status;
-
+	PanelFitter* fitter = fPipe->PFT();
+	if (fitter != NULL)
+		fitter->Enable(target->timing);
+	FDILink* link = fPipe->FDI();
+	if (link != NULL) {
+		uint32 lanes = 0;
+		uint32 linkBandwidth = 0;
+		uint32 bitsPerPixel = 0;
+		link->PreTrain(&target->timing, &linkBandwidth, &lanes, &bitsPerPixel);
+		fPipe->SetFDILink(target->timing, linkBandwidth, lanes, bitsPerPixel);
+		link->Train(&target->timing, lanes);
+	}
 	pll_divisors divisors;
 	compute_pll_divisors(&target->timing, &divisors, false);
 
@@ -1122,7 +1085,10 @@ pipe_index
 LVDSPort::PipePreference()
 {
 	CALLED();
-	// Gen 6+ LVDS pipe preference
+	// Older devices have hardcoded pipe/port mappings, so just use that
+	if (gInfo->shared_info->device_type.Generation() < 4)
+		return INTEL_PIPE_B;
+
 	// Ideally we could just return INTEL_PIPE_ANY for the newer devices, but
 	// this doesn't quite work yet.
 
@@ -1172,8 +1138,34 @@ LVDSPort::IsConnected()
 			return false;
 		}
 		// TODO: Skip if eDP support
+	} else if (gInfo->shared_info->device_type.Generation() <= 4) {
+		// Older generations don't have LVDS detection. If not mobile skip.
+		if (!gInfo->shared_info->device_type.IsMobile()) {
+			TRACE("LVDS: Skipping LVDS detection due to gen and not mobile\n");
+			return false;
+		}
+		// If mobile, try to grab EDID
+		// Linux seems to look at lid status for LVDS port detection
+		// If we don't get EDID, we can use vbios native mode or vesa?
+		if (!HasEDID()) {
+			if (gInfo->shared_info->has_vesa_edid_info) {
+				TRACE("LVDS: Using VESA edid info\n");
+				memcpy(&fEDIDInfo, &gInfo->shared_info->vesa_edid_info,
+					sizeof(edid1_info));
+				if (fEDIDState != B_OK) {
+					fEDIDState = B_OK;
+					// HasEDID now true
+					edid_dump(&fEDIDInfo);
+				}
+			} else if (gInfo->shared_info->got_vbt) {
+				TRACE("LVDS: No EDID, but force enabled as we have a VBT\n");
+				return true;
+			} else {
+				TRACE("LVDS: Couldn't find any valid EDID!\n");
+				return false;
+			}
+		}
 	}
-	// Gen 6+ SoC (without PCH) LVDS detection removed - not applicable
 
 	// Try getting EDID, as the LVDS port doesn't overlap with anything else,
 	// we don't run the risk of getting someone else's data.
@@ -1274,15 +1266,31 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	status_t status = _ConfigurePipeComponents(hardwareTarget, needsScaling);
-	if (status != B_OK)
-		return status;
+	PanelFitter* fitter = fPipe->PFT();
+	if (fitter != NULL)
+		fitter->Enable(hardwareTarget);
+	FDILink* link = fPipe->FDI();
+	if (link != NULL) {
+		uint32 lanes = 0;
+		uint32 linkBandwidth = 0;
+		uint32 bitsPerPixel = 0;
+		link->PreTrain(&hardwareTarget, &linkBandwidth, &lanes, &bitsPerPixel);
+		fPipe->SetFDILink(hardwareTarget, linkBandwidth, lanes, bitsPerPixel);
+		link->Train(&hardwareTarget, lanes);
+	}
 
 	pll_divisors divisors;
 	compute_pll_divisors(&hardwareTarget, &divisors, true);
 
 	uint32 lvds = read32(_PortRegister())
 		| LVDS_PORT_EN | LVDS_A0A2_CLKA_POWER_UP;
+
+	if (gInfo->shared_info->device_type.Generation() == 4) {
+		// LVDS_A3_POWER_UP == 24bpp
+		// otherwise, 18bpp
+		if ((lvds & LVDS_A3_POWER_MASK) != LVDS_A3_POWER_UP)
+			lvds |= LVDS_18BIT_DITHER;
+	}
 
 	// LVDS on PCH needs set before display enable
 	if (gInfo->shared_info->pch_info == INTEL_PCH_CPT) {
@@ -1319,7 +1327,7 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 
 	uint32 extraPLLFlags = 0;
 
-	// DPLL mode LVDS (Gen 6+ always uses this)
+	// DPLL mode LVDS for i915+
 	if (gInfo->shared_info->device_type.Generation() >= 3)
 		extraPLLFlags |= DISPLAY_PLL_MODE_LVDS | DISPLAY_PLL_2X_CLOCK;
 
@@ -1332,7 +1340,8 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 		extraPLLFlags);
 
 	if (gInfo->shared_info->device_type.Generation() != 4) {
-		// Gen 6+: Power on Panel (Gen 4 G45 check obsolete)
+		// G45: no need to power the panel off
+		// Power on Panel
 		write32(panelControl,
 			read32(panelControl) | PANEL_CONTROL_POWER_TARGET_ON);
 		read32(panelControl);
@@ -1347,13 +1356,30 @@ LVDSPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	fPipe->ConfigureTimings(target, !needsScaling);
 
 	if (needsScaling) {
-		// Gen 6+ panel fitter configuration removed - handled at transcoder level
+		if (gInfo->shared_info->device_type.Generation() <= 4) {
+			// Enable panel fitter in automatic mode. It will figure out
+			// the scaling ratios automatically.
+			uint32 panelFitterControl = read32(INTEL_PANEL_FIT_CONTROL);
+			panelFitterControl |= PANEL_FITTER_ENABLED;
+			panelFitterControl &= ~(PANEL_FITTER_SCALING_MODE_MASK
+				| PANEL_FITTER_PIPE_MASK);
+			panelFitterControl |= PANEL_FITTER_PIPE_B;
+			// LVDS is always on pipe B.
+			write32(INTEL_PANEL_FIT_CONTROL, panelFitterControl);
+		}
 		// TODO do we need to do anything on later generations?
 	} else {
-		// Gen 6+: We don't need to do anything more, the
-		// scaling is handled at the transcoder level. We may want to
-		// configure dithering, but the code below ignores the previous
-		// value in the register and may mess things up so we should do
+		if (gInfo->shared_info->device_type.Generation() == 4
+			|| gInfo->shared_info->device_type.Generation() == 3) {
+			// Bypass the panel fitter
+			uint32 panelFitterControl = read32(INTEL_PANEL_FIT_CONTROL);
+			panelFitterControl &= ~PANEL_FITTER_ENABLED;
+			write32(INTEL_PANEL_FIT_CONTROL, panelFitterControl);
+		} else {
+			// We don't need to do anything more for later generations, the
+			// scaling is handled at the transcoder level. We may want to
+			// configure dithering, but the code below ignores the previous
+			// value in the register and may mess things up so we should do
 			// this in a safeer way. For now, assume the BIOS did the right
 			// thing.
 #if 0
@@ -1443,9 +1469,18 @@ DigitalPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 	}
 
 	// Setup PanelFitter and Train FDI if it exists
-	status_t status = _ConfigurePipeComponents(target->timing, false);
-	if (status != B_OK)
-		return status;
+	PanelFitter* fitter = fPipe->PFT();
+	if (fitter != NULL)
+		fitter->Enable(target->timing);
+	FDILink* link = fPipe->FDI();
+	if (link != NULL) {
+		uint32 lanes = 0;
+		uint32 linkBandwidth = 0;
+		uint32 bitsPerPixel = 0;
+		link->PreTrain(&target->timing, &linkBandwidth, &lanes, &bitsPerPixel);
+		fPipe->SetFDILink(target->timing, linkBandwidth, lanes, bitsPerPixel);
+		link->Train(&target->timing, lanes);
+	}
 
 	pll_divisors divisors;
 	compute_pll_divisors(&target->timing, &divisors, false);
@@ -1495,8 +1530,7 @@ HDMIPort::IsConnected()
 		return false;
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	// Gen 6+ uses VBT for port configuration
-	if (deviceConfigCount > 0) {
+	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());
@@ -1528,17 +1562,16 @@ HDMIPort::_PortRegister()
 {
 	// on PCH there's an additional port sandwiched in
 	bool hasPCH = (gInfo->shared_info->pch_info != INTEL_PCH_NONE);
-	// ValleyView is Gen 7 SoC with special HDMI port registers
-	bool isValleyView = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
+	bool fourthGen = gInfo->shared_info->device_type.InGroup(INTEL_GROUP_VLV);
 
 	switch (PortIndex()) {
 		case INTEL_PORT_B:
-			if (isValleyView)
-				return GEN4_HDMI_PORT_B;  // Note: GEN4 name is misleading, these are VLV regs
+			if (fourthGen)
+				return GEN4_HDMI_PORT_B;
 			return hasPCH ? PCH_HDMI_PORT_B : INTEL_HDMI_PORT_B;
 		case INTEL_PORT_C:
-			if (isValleyView)
-				return GEN4_HDMI_PORT_C;  // Note: GEN4 name is misleading, these are VLV regs
+			if (fourthGen)
+				return GEN4_HDMI_PORT_C;
 			return hasPCH ? PCH_HDMI_PORT_C : INTEL_HDMI_PORT_C;
 		case INTEL_PORT_D:
 			if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_CHV))
@@ -1566,7 +1599,9 @@ pipe_index
 DisplayPort::PipePreference()
 {
 	CALLED();
-	// Gen 6+ pipe preference logic
+	if (gInfo->shared_info->device_type.Generation() <= 4)
+		return INTEL_PIPE_ANY;
+
 	// Notes:
 	// - The BIOSes seen sofar do not use PIPE C by default.
 	// - Looks like BIOS selected Transcoder (A,B,C) is not always same as selected Pipe (A,B,C)
@@ -1672,8 +1707,7 @@ DisplayPort::SetupI2c(i2c_bus *bus)
 	CALLED();
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	// Gen 6+ uses VBT for port configuration
-	if (deviceConfigCount > 0) {
+	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
 		if (!_IsDisplayPortInVBT())
 			return Port::SetupI2c(bus);
 	}
@@ -1694,8 +1728,7 @@ DisplayPort::IsConnected()
 		return false;
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	// Gen 6+ uses VBT for port configuration
-	if (deviceConfigCount > 0) {
+	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());
@@ -1982,10 +2015,13 @@ DisplayPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 		return B_ERROR;
 	}
 
-	// Gen 6+ display port configuration
 	status_t result = B_OK;
-	display_timing hardwareTarget = target->timing;
-	bool needsScaling = false;
+	if (gInfo->shared_info->device_type.Generation() <= 4) {
+		fPipe->ConfigureTimings(target);
+		result = _SetPortLinkGen4(target->timing);
+	} else {
+		display_timing hardwareTarget = target->timing;
+		bool needsScaling = false;
 		if ((PortIndex() == INTEL_PORT_A)
 			&& (gInfo->shared_info->device_type.IsMobile() || _IsEDPPort())) {
 			// For internal panels, we may need to set the timings according to the panel
@@ -2090,6 +2126,7 @@ DisplayPort::SetDisplayMode(display_mode* target, uint32 colorMode)
 			// Keep monitor at native mode and scale image to that
 			fPipe->ConfigureScalePos(target);
 		}
+	}
 
 	// Set fCurrentMode to our set display mode
 	memcpy(&fCurrentMode, target, sizeof(display_mode));
@@ -2251,8 +2288,7 @@ DigitalDisplayInterface::SetupI2c(i2c_bus *bus)
 	CALLED();
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	// Gen 6+ uses VBT for port configuration
-	if (deviceConfigCount > 0) {
+	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
 		if (!_IsDisplayPortInVBT())
 			return Port::SetupI2c(bus);
 	}
@@ -2323,8 +2359,7 @@ DigitalDisplayInterface::IsConnected()
 	}
 
 	const uint32 deviceConfigCount = gInfo->shared_info->device_config_count;
-	// Gen 6+ uses VBT for port configuration
-	if (deviceConfigCount > 0) {
+	if (gInfo->shared_info->device_type.Generation() >= 6 && deviceConfigCount > 0) {
 		// check VBT mapping
 		if (!_IsPortInVBT()) {
 			TRACE("%s: %s: port not found in VBT\n", __func__, PortName());

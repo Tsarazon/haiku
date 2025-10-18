@@ -9,17 +9,10 @@
 
 #include "power.h"
 
-
 #undef TRACE
-#define TRACE_POWER
-#ifdef TRACE_POWER
-#	define TRACE(x...) dprintf("intel_extreme:" x)
-#else
-#	define TRACE(x...)
-#endif
-
+#define TRACE(x...) dprintf("intel_extreme: " x)
 #define ERROR(x...) dprintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
 status_t

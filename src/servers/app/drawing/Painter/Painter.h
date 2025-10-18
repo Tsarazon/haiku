@@ -44,8 +44,8 @@ class ServerFont;
 
 
 // Defines for SIMD support.
-#define APPSERVER_SIMD_MMX	(1 << 0)
-#define APPSERVER_SIMD_SSE	(1 << 1)
+constexpr uint32 APPSERVER_SIMD_MMX = (1 << 0);
+constexpr uint32 APPSERVER_SIMD_SSE = (1 << 1);
 
 
 class Painter {
@@ -253,6 +253,19 @@ public:
 									int32 offsetY);
 
 private:
+	class BitmapPainter;
+	class SolidPatternGuard;
+
+	friend class BitmapPainter;
+
+	// Constants
+	static constexpr float kPixelCenterOffset = 0.5f;
+	static constexpr int kDefaultEllipseDivisions = 12;
+	static constexpr int kMaxEllipseDivisions = 4096;
+	static constexpr float kDefaultGradientDistance = 100.0f;
+	static constexpr float kGradientOffsetScale = 255.0f;
+
+	// Coordinate alignment
 			float				_Align(float coord, bool round,
 									bool centerOffset) const;
 			void				_Align(BPoint* point, bool round,
@@ -263,8 +276,6 @@ private:
 									bool centerOffset = true) const;
 			BRect				_Clipped(const BRect& rect) const;
 
-			void				_UpdateFont() const;
-			void				_UpdateLineWidth();
 			void				_UpdateDrawingMode();
 			void				_SetRendererColor(const rgb_color& color) const;
 
@@ -305,10 +316,10 @@ private:
 
 			void				_CalcLinearGradientTransform(BPoint startPoint,
 									BPoint endPoint, agg::trans_affine& mtx,
-									float gradient_d2 = 100.0f) const;
+									float gradient_d2 = kDefaultGradientDistance) const;
 			void				_CalcRadialGradientTransform(BPoint center,
 									agg::trans_affine& mtx,
-									float gradient_d2 = 100.0f) const;
+									float gradient_d2 = kDefaultGradientDistance) const;
 
 			void				_MakeGradient(const BGradient& gradient,
 									int32 colorCount, uint32* colors,
@@ -324,11 +335,6 @@ private:
 									GradientFunction function,
 									agg::trans_affine& gradientTransform,
 									int gradientStop = 100);
-
-private:
-	class BitmapPainter;
-
-	friend class BitmapPainter; // needed only for gcc2
 
 private:
 	// for internal coordinate rounding/transformation

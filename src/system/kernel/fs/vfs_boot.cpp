@@ -358,6 +358,11 @@ get_boot_partitions(KMessage& bootVolume, PartitionStack& partitions)
 	KDiskDeviceManager::CreateDefault();
 	KDiskDeviceManager *manager = KDiskDeviceManager::Default();
 
+	// Scan for all available disk systems (BFS, FAT, ISO9660, etc.) BEFORE
+	// scanning devices. This ensures all file system modules are loaded.
+	dprintf("Scanning for disk systems...\n");
+	manager->RescanDiskSystems();
+
 	status = manager->InitialDeviceScan();
 	if (status != B_OK) {
 		dprintf("KDiskDeviceManager::InitialDeviceScan() returned error: %s\n",
@@ -365,6 +370,36 @@ get_boot_partitions(KMessage& bootVolume, PartitionStack& partitions)
 		// InitialDeviceScan returns error if one (or more) partitions are
 		// determined to be invalid. The partition we are trying to boot from
 		// may be usuable anyway, so don't fail here.
+	}
+
+	// For USB boot devices, give additional time for device initialization
+	// USB controllers and devices may need extra time to be detected
+	int32 retryCount = 0;
+	const int32 maxRetries = 5;
+	const bigtime_t retryDelay = 500000; // 500ms
+
+	while (retryCount < maxRetries) {
+		KDiskDevice *device;
+		int32 cookie = 0;
+		int deviceCount = 0;
+		while ((device = manager->NextDevice(&cookie)) != NULL) {
+			deviceCount++;
+		}
+
+		if (deviceCount > 0) {
+			dprintf("Found %d device(s) on attempt %d\n", deviceCount, retryCount + 1);
+			break;
+		}
+
+		retryCount++;
+		if (retryCount < maxRetries) {
+			dprintf("No devices found yet, waiting %" B_PRId64 " ms before retry %d/%d...\n",
+				(int64)(retryDelay / 1000), retryCount + 1, maxRetries);
+			snooze(retryDelay);
+			// Rescan for new devices
+			manager->RescanDiskSystems();
+			status = manager->InitialDeviceScan();
+		}
 	}
 
 #if KDEBUG
@@ -477,8 +512,24 @@ vfs_mount_boot_file_system(kernel_args* args)
 	if (status < B_OK) {
 		panic("get_boot_partitions failed!");
 	}
+
+	dprintf("vfs_mount_boot_file_system: Found %" B_PRId32 " potential boot partition(s)\n",
+		partitions.CountItems());
+
 	if (partitions.IsEmpty()) {
-		panic("did not find any boot partitions! @! syslog | tail 15");
+		// Dump boot volume info for debugging
+		dprintf("\n=== BOOT VOLUME INFO ===\n");
+		bootVolume.Dump(&dprintf);
+		dprintf("\n=== ALL DETECTED DEVICES ===\n");
+		KDiskDeviceManager *manager = KDiskDeviceManager::Default();
+		KDiskDevice *device;
+		int32 cookie = 0;
+		int deviceCount = 0;
+		while ((device = manager->NextDevice(&cookie)) != NULL) {
+			dprintf("Device %d:\n", deviceCount++);
+			device->Dump(true, 0);
+		}
+		panic("did not find any boot partitions!");
 	}
 
 	dev_t bootDevice = -1;

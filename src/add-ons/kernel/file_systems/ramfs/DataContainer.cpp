@@ -215,7 +215,7 @@ status_t
 DataContainer::WriteAt(off_t offset, const void *_buffer, size_t size,
 	size_t *bytesWritten)
 {
-	PRINT("DataContainer::WriteAt(%lld, %p, %lu, %p), fSize: %lld\n", offset, _buffer, size, bytesWritten, fSize);
+	PRINT("DataContainer::WriteAt(%ld, %p, %lu, %p), fSize: %ld\n", offset, _buffer, size, bytesWritten, fSize);
 
 	const uint8 *buffer = (const uint8*)_buffer;
 	status_t error = (buffer && offset >= 0 && bytesWritten
@@ -247,7 +247,7 @@ DataContainer::WriteAt(off_t offset, const void *_buffer, size_t size,
 	// cache mode
 	error = _DoCacheIO(offset, (uint8*)buffer, size, bytesWritten, true);
 
-	PRINT("DataContainer::WriteAt() done: %lx, fSize: %lld\n", error, fSize);
+	PRINT("DataContainer::WriteAt() done: %x, fSize: %ld\n", error, fSize);
 	return error;
 }
 

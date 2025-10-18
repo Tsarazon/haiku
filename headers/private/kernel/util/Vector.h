@@ -16,7 +16,6 @@ template<typename Value> class VectorIterator;
 // for convenience
 #define _VECTOR_TEMPLATE_LIST template<typename Value>
 #define _VECTOR_CLASS_NAME Vector<Value>
-#define _VECTOR_CLASS_TYPE typename Vector<Value>
 
 /*!
 	\class Vector
@@ -251,7 +250,7 @@ _VECTOR_CLASS_NAME::Vector(const Vector& other)
 	\return A reference to this vector.
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE&
+Vector<Value>&
 _VECTOR_CLASS_NAME::operator=(const Vector& other)
 {
 	if (this != &other) {
@@ -288,7 +287,7 @@ _VECTOR_CLASS_NAME::Vector(Vector&& other)
 	\return A reference to this vector.
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE&
+Vector<Value>&
 _VECTOR_CLASS_NAME::operator=(Vector&& other)
 {
 	if (this != &other) {
@@ -466,7 +465,7 @@ _VECTOR_CLASS_NAME::Remove(const Value &value)
 			removed), or Null(), if \a index was out of range.
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Erase(int32 index)
 {
 	if (index >= 0 && index < fItemCount) {
@@ -487,7 +486,7 @@ _VECTOR_CLASS_NAME::Erase(int32 index)
 			(in this case including End()).
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Erase(const Iterator &iterator)
 {
 	int32 index = _IteratorIndex(iterator);
@@ -542,7 +541,7 @@ _VECTOR_CLASS_NAME::MakeEmpty()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Begin()
 {
 	return Iterator(fItems);
@@ -558,7 +557,7 @@ _VECTOR_CLASS_NAME::Begin()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::Begin() const
 {
 	return ConstIterator(fItems);
@@ -574,7 +573,7 @@ _VECTOR_CLASS_NAME::Begin() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::End()
 {
 	return Iterator(fItems + fItemCount);
@@ -590,7 +589,7 @@ _VECTOR_CLASS_NAME::End()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::End() const
 {
 	return ConstIterator(fItems + fItemCount);
@@ -606,7 +605,7 @@ _VECTOR_CLASS_NAME::End() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Null()
 {
 	return Iterator(NULL);
@@ -622,7 +621,7 @@ _VECTOR_CLASS_NAME::Null()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::Null() const
 {
 	return ConstIterator(NULL);
@@ -635,7 +634,7 @@ _VECTOR_CLASS_NAME::Null() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::IteratorForIndex(int32 index)
 {
 	if (index >= 0 && index <= fItemCount)
@@ -650,7 +649,7 @@ _VECTOR_CLASS_NAME::IteratorForIndex(int32 index)
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::IteratorForIndex(int32 index) const
 {
 	if (index >= 0 && index <= fItemCount)
@@ -721,7 +720,7 @@ _VECTOR_CLASS_NAME::IndexOf(const Value &value, int32 start) const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Find(const Value &value)
 {
 	return Find(value, Begin());
@@ -738,7 +737,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value)
 			invalid.
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE::Iterator
+typename Vector<Value>::Iterator
 _VECTOR_CLASS_NAME::Find(const Value &value, const Iterator &start)
 {
 	int32 index = IndexOf(value, _IteratorIndex(start));
@@ -756,7 +755,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value, const Iterator &start)
 */
 _VECTOR_TEMPLATE_LIST
 inline
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::Find(const Value &value) const
 {
 	return Find(value, Begin());
@@ -773,7 +772,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value) const
 			invalid.
 */
 _VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_TYPE::ConstIterator
+typename Vector<Value>::ConstIterator
 _VECTOR_CLASS_NAME::Find(const Value &value, const ConstIterator &start) const
 {
 	int32 index = IndexOf(value, _IteratorIndex(start));

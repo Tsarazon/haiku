@@ -150,8 +150,8 @@ ECHOSTATUS OsAllocateNonPaged
 	
 	if ( NULL == *ppMemAddr )
 	{
-		ECHO_DEBUGPRINTF( ("OsAllocateNonPaged : Failed on %ld bytes\n",
-								 dwByteCt) );
+		ECHO_DEBUGPRINTF( ("OsAllocateNonPaged : Failed on %u bytes\n",
+		dwByteCt) );
 		ECHO_DEBUGBREAK();				 
 		return ECHOSTATUS_NO_MEM;
 	}
@@ -159,7 +159,7 @@ ECHOSTATUS OsAllocateNonPaged
 	OsZeroMemory( *ppMemAddr, dwByteCt );
 	
 	gAllocNonPagedCount++;
-	ECHO_DEBUGPRINTF(("gAllocNonPagedCount %ld\n",gAllocNonPagedCount));
+	ECHO_DEBUGPRINTF(("gAllocNonPagedCount %u\n",gAllocNonPagedCount));
 	
 	return ECHOSTATUS_OK;
 	
@@ -179,7 +179,7 @@ ECHOSTATUS OsFreeNonPaged
 	echo_mem_free( pMemAddr );
 
 	gAllocNonPagedCount--;
-	ECHO_DEBUGPRINTF(("gAllocNonPagedCount %ld\n",gAllocNonPagedCount));
+	ECHO_DEBUGPRINTF(("gAllocNonPagedCount %u\n",gAllocNonPagedCount));
 
 	return ECHOSTATUS_OK;
 
@@ -215,7 +215,7 @@ COsSupport::COsSupport
 
 COsSupport::~COsSupport()
 {
-	ECHO_DEBUGPRINTF(("COsSupport is all gone - m_dwPageBlockCount %ld\n",m_dwPageBlockCount));
+	ECHO_DEBUGPRINTF(("COsSupport is all gone - m_dwPageBlockCount %u\n",m_dwPageBlockCount));
 }
 
 //
@@ -277,14 +277,14 @@ ECHOSTATUS COsSupport::AllocPhysPageBlock
 	// Allocate
 	//
 	dwRoundedBytes = (dwBytes + (PAGE_SIZE - 1)) & ~(PAGE_SIZE - 1);
-	ECHO_DEBUGPRINTF(("COsSupport::AllocPhysPageBlock - dwBytes %ld  dwRoundedBytes %ld\n",
+	ECHO_DEBUGPRINTF(("COsSupport::AllocPhysPageBlock - dwBytes %u  dwRoundedBytes %u\n",
 							dwBytes,dwRoundedBytes));
 	
 	pPageBlock = echo_mem_alloc ( dwRoundedBytes );
 
 	if (NULL == pPageBlock)
 	{
-		ECHO_DEBUGPRINTF(("AllocPhysPageBlock failed for %ld bytes\n",dwBytes));
+		ECHO_DEBUGPRINTF(("AllocPhysPageBlock failed for %u bytes\n",dwBytes));
 
 		pPageBlock = NULL;
 		return ECHOSTATUS_NO_MEM;
@@ -296,7 +296,7 @@ ECHOSTATUS COsSupport::AllocPhysPageBlock
 	
 #ifdef _DEBUG
 	m_dwPageBlockCount++;
-	ECHO_DEBUGPRINTF(("\tm_dwPageBlockCount %ld\n",m_dwPageBlockCount));
+	ECHO_DEBUGPRINTF(("\tm_dwPageBlockCount %u\n",m_dwPageBlockCount));
 #endif
 	
 	return ECHOSTATUS_OK;
@@ -320,7 +320,7 @@ ECHOSTATUS COsSupport::FreePhysPageBlock
 	
 #ifdef _DEBUG
 	m_dwPageBlockCount--;
-	ECHO_DEBUGPRINTF(("\tm_dwPageBlockCount %ld\n",m_dwPageBlockCount));
+	ECHO_DEBUGPRINTF(("\tm_dwPageBlockCount %u\n",m_dwPageBlockCount));
 #endif
 	
 	return ECHOSTATUS_OK;

@@ -226,7 +226,7 @@ wb840_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
 	status = acquire_sem_etc(device->txSem, 1, B_TIMEOUT, ETHER_TRANSMIT_TIMEOUT);
 	if (status < B_OK) {
 		write32(device->reg_base + WB_TXSTART, 0xFFFFFFFF);
-		LOG((DEVICE_NAME": write: acquiring sem failed: %ld, %s\n",
+		LOG((DEVICE_NAME": write: acquiring sem failed: %d, %s\n",
 			status, strerror(status)));
 		atomic_add(&device->txLock, -1);
 		*num_bytes = 0;

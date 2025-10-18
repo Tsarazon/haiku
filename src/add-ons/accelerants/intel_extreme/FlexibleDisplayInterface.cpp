@@ -18,15 +18,8 @@
 #include "accelerant.h"
 #include "intel_extreme.h"
 
-
 #undef TRACE
-#define TRACE_FDI
-#ifdef TRACE_FDI
-#   define TRACE(x...) _sPrintf("intel_extreme: " x)
-#else
-#   define TRACE(x...)
-#endif
-
+#define TRACE(x...) _sPrintf("intel_extreme: " x)
 #define ERROR(x...) _sPrintf("intel_extreme: " x)
 #define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
@@ -117,7 +110,11 @@ void
 FDITransmitter::DisablePLL()
 {
 	CALLED();
-	// Gen 6+ FDI PLL control
+	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_ILK)) {
+		// on IronLake the FDI PLL is always enabled, so no point in trying...
+		return;
+	}
+
 	uint32 targetRegister = FDI_TX_CTL(fPipeIndex);
 	write32(targetRegister, read32(targetRegister) & ~FDI_TX_PLL_ENABLED);
 	read32(targetRegister);
@@ -340,14 +337,16 @@ FDILink::Train(display_timing* target, uint32 lanes)
 	Receiver().SwitchClock(true);
 	Transmitter().EnablePLL(lanes);
 
-	// Gen 6+ FDI training
-	// TODO: Only _AutoTrain on IVYB Stepping B or later, otherwise _ManualTrain
+	// TODO: Only _AutoTrain on IVYB Stepping B or later
+	// otherwise, _ManualTrain
 	if (gInfo->shared_info->device_type.Generation() >= 7)
 		result = _AutoTrain(lanes);
 	else if (gInfo->shared_info->device_type.Generation() == 6)
 		result = _SnbTrain(lanes);
+	else if (gInfo->shared_info->device_type.Generation() == 5)
+		result = _IlkTrain(lanes);
 	else
-		result = B_ERROR;  // Gen < 6 not supported
+		result = _NormalTrain(lanes);
 #endif
 
 	TRACE("%s: FDI TX ctrl after: 0x%" B_PRIx32 "\n", __func__, read32(txControl));

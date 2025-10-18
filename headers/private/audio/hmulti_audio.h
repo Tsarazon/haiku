@@ -14,7 +14,21 @@
 
 #include <Drivers.h>
 #ifndef ASSERT
-#include <Debug.h>
+	#ifdef _KERNEL_MODE
+		// Use kernel debug header for ASSERT in kernel drivers
+		// Kernel ASSERT uses panic() for failures
+		#if KDEBUG
+			#define ASSERT(x) \
+				do { \
+					if (!(x)) \
+						panic("ASSERT FAILED (%s:%d): %s", __FILE__, __LINE__, #x); \
+				} while (0)
+		#else
+			#define ASSERT(x) do { } while(0)
+		#endif
+	#else
+		#include <Debug.h>
+	#endif
 #endif
 
 #define B_MULTI_DRIVER_BASE (B_AUDIO_DRIVER_BASE+20)

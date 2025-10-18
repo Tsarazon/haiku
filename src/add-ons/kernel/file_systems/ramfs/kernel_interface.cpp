@@ -192,8 +192,8 @@ ramfs_lookup(fs_volume* _volume, fs_vnode* _dir, const char* entryName,
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
-	FUNCTION(("dir: (%llu), entry: `%s'\n", (dir ? dir->GetID() : -1),
-		entryName));
+	FUNCTION("dir: (%lu), entry: `%s'\n", (dir ? dir->GetID() : -1),
+		entryName);
 
 	// check for non-directories
 	if (dir == NULL)
@@ -234,7 +234,7 @@ static status_t
 ramfs_get_vnode(fs_volume* _volume, ino_t vnid, fs_vnode* node, int* _type,
 	uint32* _flags, bool reenter)
 {
-	FUNCTION(("node: %lld\n", vnid));
+	FUNCTION("node: %ld\n", vnid);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node *foundNode = NULL;
 
@@ -271,7 +271,7 @@ ramfs_write_vnode(fs_volume* /*fs*/, fs_vnode* DARG(_node), bool /*reenter*/)
 static status_t
 ramfs_remove_vnode(fs_volume* _volume, fs_vnode* _node, bool /*reenter*/)
 {
-	FUNCTION(("node: %lld\n", ((Node*)_node)->GetID()));
+	FUNCTION("node: %ld\n", ((Node*)_node)->GetID());
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
 
@@ -398,7 +398,7 @@ static status_t
 ramfs_create_symlink(fs_volume* _volume, fs_vnode* _dir, const char *name,
 	const char *path, int mode)
 {
-	FUNCTION(("name: `%s', path: `%s'\n", name, path));
+	FUNCTION("name: `%s', path: `%s'\n", name, path);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
@@ -457,7 +457,7 @@ static status_t
 ramfs_link(fs_volume* _volume, fs_vnode* _dir, const char *name,
 	fs_vnode* _node)
 {
-	FUNCTION(("name: `%s'\n", name));
+	FUNCTION("name: `%s'\n", name);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 	Node* node = (Node*)_node->private_node;
@@ -502,7 +502,7 @@ ramfs_link(fs_volume* _volume, fs_vnode* _dir, const char *name,
 static status_t
 ramfs_unlink(fs_volume* _volume, fs_vnode* _dir, const char *name)
 {
-	FUNCTION(("name: `%s'\n", name));
+	FUNCTION("name: `%s'\n", name);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 	status_t error = B_OK;
@@ -553,8 +553,8 @@ ramfs_rename(fs_volume* _volume, fs_vnode* _oldDir, const char *oldName,
 	Directory* oldDir = dynamic_cast<Directory*>((Node*)_oldDir->private_node);
 	Directory* newDir = dynamic_cast<Directory*>((Node*)_newDir->private_node);
 
-	FUNCTION(("old dir: %lld, old name: `%s', new dir: %lld, new name: `%s'\n",
-		oldDir->GetID(), oldName, newDir->GetID(), newName));
+	FUNCTION("old dir: %ld, old name: `%s', new dir: %ld, new name: `%s'\n",
+		oldDir->GetID(), oldName, newDir->GetID(), newName);
 
 	VolumeWriteLocker locker(volume);
 	if (!locker.IsLocked())
@@ -686,7 +686,7 @@ ramfs_read_stat(fs_volume* _volume, fs_vnode* _node, struct stat *st)
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
 
-	FUNCTION(("node: %lld\n", node->GetID()));
+	FUNCTION("node: %ld\n", node->GetID());
 
 	VolumeReadLocker locker(volume);
 	if (!locker.IsLocked())
@@ -714,7 +714,7 @@ static status_t
 ramfs_write_stat(fs_volume* _volume, fs_vnode* _node, const struct stat *st,
 	uint32 mask)
 {
-	FUNCTION(("mask: %lx\n", mask));
+	FUNCTION("mask: %x\n", mask);
 
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
@@ -793,7 +793,7 @@ static status_t
 ramfs_create(fs_volume* _volume, fs_vnode* _dir, const char *name, int openMode,
 	int mode, void** _cookie, ino_t *vnid)
 {
-	FUNCTION(("name: `%s', open mode: %x, mode: %x\n", name, openMode, mode));
+	FUNCTION("name: `%s', open mode: %x, mode: %x\n", name, openMode, mode);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
@@ -887,7 +887,7 @@ ramfs_create_special_node(fs_volume *_volume, fs_vnode *_dir, const char *name,
 	fs_vnode *subVnode, mode_t mode, uint32 flags, fs_vnode *_superVnode,
 	ino_t *vnid)
 {
-	FUNCTION(("name: `%s', mode: %x\n", name, mode));
+	FUNCTION("name: `%s', mode: %x\n", name, mode);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
@@ -954,7 +954,7 @@ ramfs_open(fs_volume* _volume, fs_vnode* _node, int openMode, void** _cookie)
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
 
-	FUNCTION(("node: %lld\n", node->GetID()));
+	FUNCTION("node: %ld\n", node->GetID());
 
 	VolumeReadLocker readLocker(volume);
 	if (!readLocker.IsLocked())
@@ -1005,7 +1005,7 @@ ramfs_close(fs_volume* _volume, fs_vnode* _node, void* /*cookie*/)
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
 
-	FUNCTION(("node: %lld\n", node->GetID()));
+	FUNCTION("node: %ld\n", node->GetID());
 
 	VolumeReadLocker locker(volume);
 	if (!locker.IsLocked())
@@ -1191,7 +1191,7 @@ private:
 static status_t
 ramfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char *name, int mode)
 {
-	FUNCTION(("name: `%s', mode: %x\n", name, mode));
+	FUNCTION("name: `%s', mode: %x\n", name, mode);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
@@ -1251,7 +1251,7 @@ ramfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char *name, int mode)
 static status_t
 ramfs_remove_dir(fs_volume* _volume, fs_vnode* _dir, const char *name)
 {
-	FUNCTION(("name: `%s'\n", name));
+	FUNCTION("name: `%s'\n", name);
 	Volume* volume = (Volume*)_volume->private_volume;
 	Directory* dir = dynamic_cast<Directory*>((Node*)_dir->private_node);
 
@@ -1299,7 +1299,7 @@ ramfs_open_dir(fs_volume* /*fs*/, fs_vnode* _node, void** _cookie)
 //	Volume *volume = (Volume*)fs;
 	Node* node = (Node*)_node->private_node;
 
-	FUNCTION(("dir: (%Lu)\n", node->GetID()));
+	FUNCTION("dir: (%ld)\n", node->GetID());
 
 	if (!node->IsDirectory())
 		RETURN_ERROR(B_NOT_A_DIRECTORY);
@@ -1334,7 +1334,7 @@ static status_t
 ramfs_close_dir(fs_volume* /*fs*/, fs_vnode* DARG(_node), void* _cookie)
 {
 	FUNCTION_START();
-	FUNCTION(("dir: (%Lu)\n", ((Node*)_node)->GetID()));
+	FUNCTION("dir: (%ld)\n", ((Node*)_node)->GetID());
 	// No locking needed, since the Directory is guaranteed to live at this
 	// time and for iterators there is a separate locking.
 	DirectoryCookie *cookie = (DirectoryCookie*)_cookie;
@@ -1361,7 +1361,7 @@ ramfs_read_dir(fs_volume* _volume, fs_vnode* DARG(_node), void* _cookie,
 	Volume* volume = (Volume*)_volume->private_volume;
 	DARG(Node *node = (Node*)_node; )
 
-	FUNCTION(("dir: (%Lu)\n", node->GetID()));
+	FUNCTION("dir: (%ld)\n", node->GetID());
 	DirectoryCookie *cookie = (DirectoryCookie*)_cookie;
 
 	VolumeReadLocker locker(volume);
@@ -1657,7 +1657,7 @@ ramfs_open_attr(fs_volume* _volume, fs_vnode* _node, const char *name,
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
 
-	FUNCTION(("node: %lld\n", node->GetID()));
+	FUNCTION("node: %ld\n", node->GetID());
 
 	status_t error = B_OK;
 
@@ -1712,10 +1712,9 @@ ramfs_open_attr(fs_volume* _volume, fs_vnode* _node, const char *name,
 static status_t
 ramfs_close_attr(fs_volume* _volume, fs_vnode* _node, void* _cookie)
 {
-	FUNCTION(("node: %lld\n", node->GetID()));
-
 	Volume* volume = (Volume*)_volume->private_volume;
 	Node* node = (Node*)_node->private_node;
+	FUNCTION("node: %ld\n", node->GetID());
 
 	VolumeWriteLocker locker(volume);
 	if (!locker.IsLocked())
@@ -2115,7 +2114,7 @@ ramfs_open_query(fs_volume* _volume, const char *queryString, uint32 flags,
 	port_id port, uint32 token, void** _cookie)
 {
 	FUNCTION_START();
-	PRINT("query = \"%s\", flags = %lu, port_id = %" B_PRId32 ", token = %" B_PRId32 "\n",
+	PRINT("query = \"%s\", flags = %u, port_id = %" B_PRId32 ", token = %" B_PRId32 "\n",
 		queryString, flags, port, token);
 
 	Volume* volume = (Volume*)_volume->private_volume;

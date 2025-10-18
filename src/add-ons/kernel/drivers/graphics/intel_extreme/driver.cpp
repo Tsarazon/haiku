@@ -27,16 +27,10 @@
 #include <PCI.h>
 #include <SupportDefs.h>
 
-
-#define TRACE_DRIVER
-#ifdef TRACE_DRIVER
-#	define TRACE(x...) dprintf("intel_extreme: " x)
-#else
-#	define TRACE(x) ;
-#endif
-
+#undef TRACE
+#define TRACE(x...) dprintf("intel_extreme: " x)
 #define ERROR(x...) dprintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
 #define MAX_CARDS 4

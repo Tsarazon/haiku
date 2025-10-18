@@ -15,23 +15,16 @@
 #include "commands.h"
 
 #include <Debug.h>
+
+#undef TRACE
+#define TRACE(x...) _sPrintf("intel_extreme: " x)
+#define ERROR(x...) _sPrintf("intel_extreme: " x)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include <AGP.h>
-
-
-#undef TRACE
-//#define TRACE_OVERLAY
-#ifdef TRACE_OVERLAY
-#	define TRACE(x...) _sPrintf("intel_extreme: " x)
-#else
-#	define TRACE(x...)
-#endif
-
-#define ERROR(x...) _sPrintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
 #define NUM_HORIZONTAL_TAPS		5
@@ -247,7 +240,7 @@ update_overlay(bool updateCoefficients)
 	queue.PutWaitFor(COMMAND_WAIT_FOR_OVERLAY_FLIP);
 	queue.PutFlush();
 
-	TRACE("%s: UP: %lx, TST: %lx, ST: %lx, CMD: %lx (%lx), ERR: %lx\n",
+	TRACE("%s: UP: %x, TST: %x, ST: %x, CMD: %x (%x), ERR: %x\n",
 		__func__, read32(INTEL_OVERLAY_UPDATE),
 		read32(INTEL_OVERLAY_TEST), read32(INTEL_OVERLAY_STATUS),
 		*(((uint32*)gInfo->overlay_registers) + 0x68/4), read32(0x30168),
@@ -269,7 +262,7 @@ show_overlay(void)
 	queue.PutOverlayFlip(COMMAND_OVERLAY_ON, true);
 	queue.PutFlush();
 
-	TRACE("%s: UP: %lx, TST: %lx, ST: %lx, CMD: %lx (%lx), ERR: %lx\n",
+	TRACE("%s: UP: %x, TST: %x, ST: %x, CMD: %x (%x), ERR: %x\n",
 		__func__, read32(INTEL_OVERLAY_UPDATE),
 		read32(INTEL_OVERLAY_TEST), read32(INTEL_OVERLAY_STATUS),
 		*(((uint32*)gInfo->overlay_registers) + 0x68/4),
@@ -322,11 +315,14 @@ intel_overlay_count(const display_mode* mode)
 const uint32*
 intel_overlay_supported_spaces(const display_mode* mode)
 {
-	// Gen 6+ overlay color space support
 	static const uint32 kSupportedSpaces[] = {B_RGB15, B_RGB16, B_RGB32,
 		B_YCbCr422, 0};
+	static const uint32 kSupportedi965Spaces[] = {B_YCbCr422, 0};
+	intel_shared_info &sharedInfo = *gInfo->shared_info;
 
-	// Gen 6+ supports same as legacy (removed i965-specific limitation)
+	if (sharedInfo.device_type.InGroup(INTEL_GROUP_96x))
+		return kSupportedi965Spaces;
+
 	return kSupportedSpaces;
 }
 
@@ -345,7 +341,7 @@ const overlay_buffer*
 intel_allocate_overlay_buffer(color_space colorSpace, uint16 width,
 	uint16 height)
 {
-	TRACE("%s(width %u, height %u, colorSpace %lu)\n", __func__, width,
+	TRACE("%s(width %u, height %u, colorSpace %u)\n", __func__, width,
 		height, colorSpace);
 
 	intel_shared_info &sharedInfo = *gInfo->shared_info;
@@ -413,7 +409,7 @@ intel_allocate_overlay_buffer(color_space colorSpace, uint16 width,
 	buffer->buffer_dma = (uint8*)gInfo->shared_info->physical_graphics_memory
 		+ overlay->buffer_offset;
 
-	TRACE("%s: base=%x, offset=%x, address=%x, physical address=%x\n",
+	TRACE("%s: base=%lx, offset=%x, address=%p, physical address=%p\n",
 		__func__, overlay->buffer_base, overlay->buffer_offset,
 		buffer->buffer, buffer->buffer_dma);
 
@@ -628,11 +624,16 @@ intel_configure_overlay(overlay_token overlayToken,
 		// the result will be wrong, too.
 		registers->source_width_rgb = right - left;
 		registers->source_height_rgb = bottom - top;
-		// Gen 6+ RGB source bytes calculation (removed Gen 2 formula)
-		int yaddress = overlay->buffer_offset;
-		int yswidth = view->width << 1;
-		registers->source_bytes_per_row_rgb = (((((yaddress
-			+ yswidth + 0x3f) >> 6) - (yaddress >> 6)) << 1) - 1) << 2;
+		if (gInfo->shared_info->device_type.InFamily(INTEL_FAMILY_8xx)) {
+			registers->source_bytes_per_row_rgb = (((overlay->buffer_offset
+				+ (view->width << 1) + 0x1f) >> 5)
+				- (overlay->buffer_offset >> 5) - 1) << 2;
+		} else {
+			int yaddress = overlay->buffer_offset;
+			int yswidth = view->width << 1;
+			registers->source_bytes_per_row_rgb = (((((yaddress
+				+ yswidth + 0x3f) >> 6) - (yaddress >> 6)) << 1) - 1) << 2;
+		}
 
 		// horizontal scaling
 		registers->scale_rgb.horizontal_downscale_factor
@@ -650,7 +651,7 @@ intel_configure_overlay(overlay_token overlayToken,
 		registers->vertical_scale_rgb = verticalScale >> 12;
 		registers->vertical_scale_uv = verticalScaleUV >> 12;
 
-		TRACE("scale: h = %ld.%ld, v = %ld.%ld\n", horizontalScale >> 12,
+		TRACE("scale: h = %u.%u, v = %u.%u\n", horizontalScale >> 12,
 			horizontalScale & 0xfff, verticalScale >> 12,
 			verticalScale & 0xfff);
 

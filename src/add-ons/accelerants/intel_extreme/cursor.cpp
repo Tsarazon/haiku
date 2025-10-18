@@ -87,32 +87,15 @@ intel_set_cursor_shape(uint16 width, uint16 height, uint16 hotX, uint16 hotY,
 void
 intel_move_cursor(uint16 _x, uint16 _y)
 {
-	if (gInfo == NULL || gInfo->shared_info == NULL) {
-		ERROR("%s: Invalid accelerant state\n", __func__);
-		return;
-	}
+	int32 x = (int32)_x - gInfo->shared_info->cursor_hot_x;
+	int32 y = (int32)_y - gInfo->shared_info->cursor_hot_x;
 
-	const intel_shared_info& info = *gInfo->shared_info;
-
-	// FIX: use cursor_hot_y instead of cursor_hot_x for y coordinate
-	int32 x = (int32)_x - info.cursor_hot_x;
-	int32 y = (int32)_y - info.cursor_hot_y;
-
-	// Handle negative coordinates
 	if (x < 0)
-		x = (-x) | CURSOR_POSITION_NEGATIVE;
+		x = -x | CURSOR_POSITION_NEGATIVE;
 	if (y < 0)
-		y = (-y) | CURSOR_POSITION_NEGATIVE;
+		y = -y | CURSOR_POSITION_NEGATIVE;
 
-	// Ensure coordinates are within valid range
-	x &= CURSOR_POSITION_MASK | CURSOR_POSITION_NEGATIVE;
-	y &= CURSOR_POSITION_MASK | CURSOR_POSITION_NEGATIVE;
-
-	// Write cursor position
 	write32(INTEL_CURSOR_POSITION, (y << 16) | x);
-
-	TRACE("%s: Cursor moved to (%d, %d) -> hw(%d, %d)\n",
-		__func__, _x, _y, x, y);
 }
 
 

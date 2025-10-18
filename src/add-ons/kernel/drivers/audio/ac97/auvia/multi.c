@@ -30,6 +30,7 @@
  */
 
 #include <OS.h>
+#include <stdlib.h>
 #include <string.h>
 #include <MediaDefs.h>
 #include "hmulti_audio.h"

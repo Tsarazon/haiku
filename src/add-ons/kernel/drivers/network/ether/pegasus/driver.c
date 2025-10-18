@@ -272,7 +272,7 @@ setup_endpoints(const usb_interface_info *uii, pegasus_dev *dev)
 	size_t ep = 0;
 	for(; ep < uii->endpoint_count; ep++){
 		usb_endpoint_descriptor *ed = uii->endpoint[ep].descr;
-		DPRINTF_INFO("try endpoint:%ld %x %x %lx\n", ep, ed->attributes,
+		DPRINTF_INFO("try endpoint:%zu %x %x %x\n", ep, ed->attributes,
 			ed->endpoint_address, uii->endpoint[ep].handle);
 		if ((ed->attributes & USB_ENDPOINT_ATTR_MASK) == USB_ENDPOINT_ATTR_BULK) {
 			if ((ed->endpoint_address & USB_ENDPOINT_ADDR_DIR_IN)
@@ -289,7 +289,7 @@ setup_endpoints(const usb_interface_info *uii, pegasus_dev *dev)
 	dev->pipe_in = uii->endpoint[epts[0]].handle;
 	dev->pipe_out = uii->endpoint[epts[1]].handle;
 	dev->pipe_intr = uii->endpoint[epts[2]].handle;
-	DPRINTF_INFO("endpoint:%lx %lx %lx\n", dev->pipe_in, dev->pipe_out, dev->pipe_intr);
+	DPRINTF_INFO("endpoint:%x %x %x\n", dev->pipe_in, dev->pipe_out, dev->pipe_intr);
 
 	return ((epts[0] > -1) && (epts[1] > -1) && (epts[2] > -1)) ? B_OK : B_ENTRY_NOT_FOUND;
 }
@@ -300,7 +300,7 @@ pegasus_rx_callback(void *cookie, status_t status, void *data, size_t actual_len
 {
 	pegasus_dev *dev = (pegasus_dev *)cookie;
 
-	DPRINTF_INFO("pegasus_rx_callback() %ld %ld\n", status, actual_len);
+	DPRINTF_INFO("pegasus_rx_callback() %d %zu\n", status, actual_len);
 	if (status == B_CANCELED) {
 		/* cancelled: device is unplugged */
 		DPRINTF_ERR("pegasus_rx_callback() cancelled\n");
@@ -311,7 +311,7 @@ pegasus_rx_callback(void *cookie, status_t status, void *data, size_t actual_len
 	dev->rx_actual_length = actual_len;
 	dev->rx_status = status;	/* B_USB_STATUS_* */
 	release_sem(dev->rx_sem_cb);
-	DPRINTF_INFO("pegasus_rx_callback release sem %ld\n", dev->rx_sem_cb);
+	DPRINTF_INFO("pegasus_rx_callback release sem %d\n", dev->rx_sem_cb);
 }
 
 
@@ -320,7 +320,7 @@ pegasus_tx_callback(void *cookie, status_t status, void *data, size_t actual_len
 {
 	pegasus_dev *dev = (pegasus_dev *)cookie;
 
-	DPRINTF_INFO("pegasus_tx_callback() %ld %ld\n", status, actual_len);
+	DPRINTF_INFO("pegasus_tx_callback() %d %zu\n", status, actual_len);
 	if (status == B_CANCELED) {
 		/* cancelled: device is unplugged */
 		DPRINTF_ERR("pegasus_tx_callback() cancelled\n");
@@ -331,7 +331,7 @@ pegasus_tx_callback(void *cookie, status_t status, void *data, size_t actual_len
 	dev->tx_actual_length = actual_len;
 	dev->tx_status = status;	/* B_USB_STATUS_* */
 	release_sem(dev->tx_sem_cb);
-	DPRINTF_INFO("pegasus_tx_callback release sem %ld\n", dev->tx_sem_cb);
+	DPRINTF_INFO("pegasus_tx_callback release sem %d\n", dev->tx_sem_cb);
 }
 
 
@@ -533,14 +533,14 @@ pegasus_device_read(driver_cookie *cookie, off_t position, void *buffer, size_t 
 	// copy buffer
 	size = dev->rx_actual_length;
 	if (size > MAX_FRAME_SIZE || (size - 2) > *_length) {
-		DPRINTF_ERR("ERROR read: bad frame size %ld\n", size);
+		DPRINTF_ERR("ERROR read: bad frame size %zd\n", size);
 		size = *_length;
 	} else if (size < *_length)
 		*_length = size - 2;
 
 	memcpy(buffer, dev->rx_buffer, size);
 
-	DPRINTF_INFO("read done %ld\n", *_length);
+	DPRINTF_INFO("read done %zu\n", *_length);
 
 rx_done:
 	release_sem(dev->rx_sem);
@@ -555,7 +555,7 @@ pegasus_device_write(driver_cookie *cookie, off_t position,	const void *buffer, 
 	status_t status;
 	uint16 frameSize;
 
-	DPRINTF_INFO("device %p write %ld\n", cookie, *_length);
+	DPRINTF_INFO("device %p write %zu\n", cookie, *_length);
 
 	if (pegasus_checkdeviceinfo(dev = cookie->device) != B_OK) {
 		DPRINTF_ERR("EINVAL\n");
@@ -674,7 +674,7 @@ pegasus_device_control(driver_cookie *cookie, uint32 op,
 			return B_OK;
 
 		case ETHER_GETFRAMESIZE:
-			DPRINTF_INFO("control() ETHER_GETFRAMESIZE, framesize = %ld (MTU = %ld)\n", device->maxframesize,  device->maxframesize - ENET_HEADER_SIZE);
+			DPRINTF_INFO("control() ETHER_GETFRAMESIZE, framesize = %u (MTU = %u)\n", device->maxframesize,  device->maxframesize - ENET_HEADER_SIZE);
 			*(uint32*)arg = device->maxframesize;
 			return B_OK;
 

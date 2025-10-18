@@ -1,0 +1,64 @@
+# Критичные warnings для исправления в Haiku OS
+# Приоритет: ВЫСОКИЙ - потенциальные runtime баги
+
+## КРИТИЧНО: sizeof-pointer-memaccess (6 уникальных мест)
+## Риск: Buffer overflow / неполное копирование данных
+## Все в одном файле - libsolv (портированная библиотека)
+
+src/libs/libsolv/solv/sha2.c:623   - memset(context, sizeof(context)) должно быть sizeof(*context)
+src/libs/libsolv/solv/sha2.c:644   - memset(context, sizeof(context)) должно быть sizeof(*context)
+src/libs/libsolv/solv/sha2.c:953   - memset(context, sizeof(context)) должно быть sizeof(*context)
+src/libs/libsolv/solv/sha2.c:973   - memset(context, sizeof(context)) должно быть sizeof(*context)
+src/libs/libsolv/solv/sha2.c:1028  - memset(context, sizeof(context)) должно быть sizeof(*context)
+src/libs/libsolv/solv/sha2.c:1048  - memset(context, sizeof(context)) должно быть sizeof(*context)
+
+Примечание: Это портированный код (libsolv), но баги очевидны и критичны.
+
+---
+
+## ВАЖНО: maybe-uninitialized (6 уникальных мест в Haiku коде)
+## Риск: Неопределённое поведение, потенциальные крэши
+## НЕ включает unzip (старый портированный код)
+
+src/apps/poorman/libhttpd/libhttpd.c:3587              - переменная 'envp' может быть не инициализирована
+src/add-ons/kernel/file_systems/btrfs/BTree.cpp:718   - переменная 'upperLimit' может быть не инициализирована
+src/add-ons/kernel/file_systems/btrfs/BTree.cpp:744   - переменная 'itemSize' может быть не инициализирована
+src/bin/network/telnet/commands.c:2864                - переменная 'res' может быть не инициализирована
+src/add-ons/kernel/file_systems/netfs/shared/RequestFlattener.cpp:30  - переменная 'buffer' может быть не инициализирована
+
+Примечание: Нужно проверить каждый случай - возможны ложные срабатывания.
+
+---
+
+## СРЕДНИЙ ПРИОРИТЕТ: format warnings (10 файлов в Haiku коде)
+## Риск: Проблемы на разных архитектурах, неправильный вывод
+
+src/bin/rc/compile.cpp:157                - %ld для int32
+src/tools/fs_shell/fd.cpp:44              - %lld для fssh_off_t (long int)
+src/bin/listimage.c:36                    - field width * expects int, получает long unsigned int (2 места)
+src/bin/listimage.c:41                    - %u для long unsigned int (2 места)
+src/add-ons/kernel/file_systems/ntfs/lowntfs.c:1053   - %llu для u64 (long unsigned)
+src/add-ons/kernel/file_systems/ntfs/lowntfs.c:1194   - %llu для u64
+src/add-ons/kernel/file_systems/ntfs/utils/mkntfs.c:3393  - %lli для s64 (long int)
+src/add-ons/kernel/file_systems/ntfs/utils/mkntfs.c:3477  - %llu для s64
+
+Примечание: Использовать B_PRId32, B_PRId64 и т.д. из SupportDefs.h
+
+---
+
+## НЕ ИСПРАВЛЯТЬ (причины):
+
+- unzip warnings (28 x Wrestrict + 8 x Wmaybe-uninitialized) - старый портированный код
+- glibc/musl warnings (70+ Wincompatible-pointer-types) - портированный код
+- Waddress-of-packed-member (138 шт.) - намеренный дизайн Haiku для packed structures
+- Wsign-compare (770 шт.) - стиль кода, не критично
+- Wunused-* (200+ шт.) - чистка кода, не баги
+
+---
+
+## Итого для исправления:
+- 1 файл (libsolv sha2.c) - 6 критичных багов
+- 5 файлов - потенциальные uninitialized переменные
+- 7 файлов - format string несоответствия
+
+Всего: 13 файлов, ~22 изменения

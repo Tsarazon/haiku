@@ -41,3 +41,14 @@ MEMORY_CAPSULE_SONNET.md
 # clangd related tooling for IDE code completion
 compile_commands.json
 buildtools
+
+# VM and QEMU files
+*.qcow2
+OVMF_VARS*.fd
+
+# Backup files
+*.bak
+*.backup
+
+# Photos and images (project-specific)
+photo_*.jpg

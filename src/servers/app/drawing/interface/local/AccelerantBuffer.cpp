@@ -5,23 +5,31 @@
 
 //! A RenderingBuffer implementation that accesses graphics memory directly.
 
-
 #include "AccelerantBuffer.h"
+
+#include <utility>
+
+namespace {
+	constexpr uint32 kDefaultDimension = 0;
+	constexpr color_space kDefaultColorSpace = B_NO_COLOR_SPACE;
+	constexpr status_t kNotInitializedStatus = B_NO_INIT;
+	constexpr status_t kInitializedStatus = B_OK;
+}
 
 
 AccelerantBuffer::AccelerantBuffer()
-	: fDisplayModeSet(false),
-	  fFrameBufferConfigSet(false),
-	  fIsOffscreenBuffer(false)
+:
+fDisplayMode{},
+fFrameBufferConfig{},
+fFlags(FLAG_NONE)
 {
 }
 
 
 AccelerantBuffer::AccelerantBuffer(const display_mode& mode,
-		const frame_buffer_config& config)
-	: fDisplayModeSet(false),
-	  fFrameBufferConfigSet(false),
-	  fIsOffscreenBuffer(false)
+								   const frame_buffer_config& config)
+:
+AccelerantBuffer()
 {
 	SetDisplayMode(mode);
 	SetFrameBufferConfig(config);
@@ -29,13 +37,24 @@ AccelerantBuffer::AccelerantBuffer(const display_mode& mode,
 
 
 AccelerantBuffer::AccelerantBuffer(const AccelerantBuffer& other,
-		bool offscreenBuffer)
-	: fDisplayMode(other.fDisplayMode),
-	  fFrameBufferConfig(other.fFrameBufferConfig),
-	  fDisplayModeSet(other.fDisplayModeSet),
-	  fFrameBufferConfigSet(other.fFrameBufferConfigSet),
-	  fIsOffscreenBuffer(other.fIsOffscreenBuffer || offscreenBuffer)
+								   bool offscreenBuffer)
+:
+fDisplayMode(other.fDisplayMode),
+fFrameBufferConfig(other.fFrameBufferConfig),
+fFlags(other.fFlags)
 {
+	if (offscreenBuffer || other.HasFlag(FLAG_OFFSCREEN_BUFFER))
+		SetFlag(FLAG_OFFSCREEN_BUFFER, true);
+}
+
+
+AccelerantBuffer::AccelerantBuffer(AccelerantBuffer&& other) noexcept
+:
+fDisplayMode(std::move(other.fDisplayMode)),
+fFrameBufferConfig(std::move(other.fFrameBufferConfig)),
+fFlags(other.fFlags)
+{
+	other.fFlags = FLAG_NONE;
 }
 
 
@@ -44,36 +63,85 @@ AccelerantBuffer::~AccelerantBuffer()
 }
 
 
+AccelerantBuffer&
+AccelerantBuffer::operator=(AccelerantBuffer&& other) noexcept
+{
+	if (this != &other) {
+		fDisplayMode = std::move(other.fDisplayMode);
+		fFrameBufferConfig = std::move(other.fFrameBufferConfig);
+		fFlags = other.fFlags;
+
+		other.fFlags = FLAG_NONE;
+	}
+	return *this;
+}
+
+
+bool
+AccelerantBuffer::HasFlag(uint8_t flag) const noexcept
+{
+	return (fFlags & flag) == flag;
+}
+
+
+void
+AccelerantBuffer::SetFlag(uint8_t flag, bool value) noexcept
+{
+	if (value) {
+		fFlags |= flag;
+	} else {
+		fFlags &= ~flag;
+	}
+}
+
+
+bool
+AccelerantBuffer::IsInitialized() const noexcept
+{
+	return HasFlag(FLAG_DISPLAY_MODE_SET)
+	&& HasFlag(FLAG_FRAME_BUFFER_CONFIG_SET);
+}
+
+
+uint32
+AccelerantBuffer::GetDimensionOrDefault(uint32 value) const noexcept
+{
+	return IsInitialized() ? value : kDefaultDimension;
+}
+
+
 status_t
 AccelerantBuffer::InitCheck() const
 {
-	if (fDisplayModeSet && fFrameBufferConfigSet)
-		return B_OK;
-	
-	return B_NO_INIT;
+	return IsInitialized() ? kInitializedStatus : kNotInitializedStatus;
 }
 
 
 color_space
 AccelerantBuffer::ColorSpace() const
 {
-	if (InitCheck() == B_OK)
-		return (color_space)fDisplayMode.space;
-	
-	return B_NO_COLOR_SPACE;
+	if (!IsInitialized())
+		return kDefaultColorSpace;
+
+	return static_cast<color_space>(fDisplayMode.space);
 }
 
 
 void*
 AccelerantBuffer::Bits() const
 {
-	if (InitCheck() != B_OK)
-		return NULL;
+	if (!IsInitialized())
+		return nullptr;
 
-	uint8* bits = (uint8*)fFrameBufferConfig.frame_buffer;
+	auto* bits = static_cast<uint8*>(fFrameBufferConfig.frame_buffer);
+	if (bits == nullptr)
+		return nullptr;
 
-	if (fIsOffscreenBuffer)
-		bits += fDisplayMode.virtual_height * fFrameBufferConfig.bytes_per_row;
+	if (HasFlag(FLAG_OFFSCREEN_BUFFER)) {
+		const uint32 offset = static_cast<uint32>(fDisplayMode.virtual_height)
+		* fFrameBufferConfig.bytes_per_row;
+		bits += offset;
+	}
 
 	return bits;
 }
@@ -82,30 +150,21 @@ AccelerantBuffer::Bits() const
 uint32
 AccelerantBuffer::BytesPerRow() const
 {
-	if (InitCheck() == B_OK)
-		return fFrameBufferConfig.bytes_per_row;
-	
-	return 0;
+	return GetDimensionOrDefault(fFrameBufferConfig.bytes_per_row);
 }
 
 
 uint32
 AccelerantBuffer::Width() const
 {
-	if (InitCheck() == B_OK)
-		return fDisplayMode.virtual_width;
-	
-	return 0;
+	return GetDimensionOrDefault(fDisplayMode.virtual_width);
 }
 
 
 uint32
 AccelerantBuffer::Height() const
 {
-	if (InitCheck() == B_OK)
-		return fDisplayMode.virtual_height;
-	
-	return 0;
+	return GetDimensionOrDefault(fDisplayMode.virtual_height);
 }
 
 
@@ -113,7 +172,7 @@ void
 AccelerantBuffer::SetDisplayMode(const display_mode& mode)
 {
 	fDisplayMode = mode;
-	fDisplayModeSet = true;
+	SetFlag(FLAG_DISPLAY_MODE_SET, true);
 }
 
 
@@ -121,12 +180,12 @@ void
 AccelerantBuffer::SetFrameBufferConfig(const frame_buffer_config& config)
 {
 	fFrameBufferConfig = config;
-	fFrameBufferConfigSet = true;
+	SetFlag(FLAG_FRAME_BUFFER_CONFIG_SET, true);
 }
 
 
 void
 AccelerantBuffer::SetOffscreenBuffer(bool offscreenBuffer)
 {
-	fIsOffscreenBuffer = offscreenBuffer;
+	SetFlag(FLAG_OFFSCREEN_BUFFER, offscreenBuffer);
 }

@@ -1099,8 +1099,8 @@ public:
 	//
 	virtual BOOL IsProfessionalSpdif()
 		{ 
-			ECHO_DEBUGPRINTF(("CDspCommObject::IsProfessionalSpdif - flags are 0x%lx\n",
-									GetFlags()));
+			ECHO_DEBUGPRINTF(("CDspCommObject::IsProfessionalSpdif - flags are 0x%x\n",
+			GetFlags()));
 			return( ( GetFlags() & DSP_FLAG_PROFESSIONAL_SPDIF ) ? TRUE : FALSE ); 
 		}
 
@@ -1112,8 +1112,8 @@ public:
 			else
 				ClearFlags( DSP_FLAG_PROFESSIONAL_SPDIF );
 			
-			ECHO_DEBUGPRINTF(("CDspCommObject::SetProfessionalSpdif - flags are now 0x%lx\n",
-									GetFlags()));	
+			ECHO_DEBUGPRINTF(("CDspCommObject::SetProfessionalSpdif - flags are now 0x%x\n",
+			GetFlags()));
 		}
 		
 	//

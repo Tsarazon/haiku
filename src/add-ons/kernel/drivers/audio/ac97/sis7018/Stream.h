@@ -7,6 +7,7 @@
 #ifndef _SiS7018_STREAM_H_
 #define _SiS7018_STREAM_H_
 
+#include <OS.h>
 
 #include "hmulti_audio.h"
 

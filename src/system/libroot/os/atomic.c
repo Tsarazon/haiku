@@ -11,42 +11,6 @@
 #include <syscalls.h>
 
 
-/* Runtime ARM architecture capability detection */
-static bool sAtomicCapsInitialized = false;
-static uint32 sAtomicCapabilities = 0;
-
-#define ATOMIC_CAP_CAS32        (1 << 0)
-#define ATOMIC_CAP_CAS64        (1 << 1)
-#define ATOMIC_CAP_FETCH_ADD    (1 << 2)
-#define ATOMIC_CAP_WEAK_CAS     (1 << 3)
-
-
-static void
-detect_atomic_capabilities(void)
-{
-	if (sAtomicCapsInitialized)
-		return;
-		
-#ifdef __ARM_ARCH__
-	/* Detect ARMv7+ LDREX/STREX support */
-	if (__ARM_ARCH__ >= 7) {
-		sAtomicCapabilities |= ATOMIC_CAP_CAS32;
-		sAtomicCapabilities |= ATOMIC_CAP_FETCH_ADD;
-		sAtomicCapabilities |= ATOMIC_CAP_WEAK_CAS;
-	}
-	if (__ARM_ARCH__ >= 8) {
-		sAtomicCapabilities |= ATOMIC_CAP_CAS64;
-	}
-#elif defined(__x86_64__) || defined(__i386__)
-	/* x86 always supports atomic operations natively */
-	sAtomicCapabilities = ATOMIC_CAP_CAS32 | ATOMIC_CAP_CAS64 
-		                 | ATOMIC_CAP_FETCH_ADD | ATOMIC_CAP_WEAK_CAS;
-#endif
-	
-	sAtomicCapsInitialized = true;
-}
-
-
 #ifdef ATOMIC_FUNCS_ARE_SYSCALLS
 
 void
@@ -169,6 +133,41 @@ extern int32_t __sync_fetch_and_add_4(int32_t *value, int32_t addValue)
 #if !(__GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ >= 7) || defined(__clang__))
 
 /* Fallback implementations when compiler doesn't support __atomic builtins */
+
+/* Runtime ARM architecture capability detection */
+static bool sAtomicCapsInitialized = false;
+static uint32 sAtomicCapabilities = 0;
+
+#define ATOMIC_CAP_CAS32        (1 << 0)
+#define ATOMIC_CAP_CAS64        (1 << 1)
+#define ATOMIC_CAP_FETCH_ADD    (1 << 2)
+#define ATOMIC_CAP_WEAK_CAS     (1 << 3)
+
+
+static void
+detect_atomic_capabilities(void)
+{
+	if (sAtomicCapsInitialized)
+		return;
+
+#ifdef __ARM_ARCH__
+	/* Detect ARMv7+ LDREX/STREX support */
+	if (__ARM_ARCH__ >= 7) {
+		sAtomicCapabilities |= ATOMIC_CAP_CAS32;
+		sAtomicCapabilities |= ATOMIC_CAP_FETCH_ADD;
+		sAtomicCapabilities |= ATOMIC_CAP_WEAK_CAS;
+	}
+	if (__ARM_ARCH__ >= 8) {
+		sAtomicCapabilities |= ATOMIC_CAP_CAS64;
+	}
+#elif defined(__x86_64__) || defined(__i386__)
+	/* x86 always supports atomic operations natively */
+	sAtomicCapabilities = ATOMIC_CAP_CAS32 | ATOMIC_CAP_CAS64
+		                 | ATOMIC_CAP_FETCH_ADD | ATOMIC_CAP_WEAK_CAS;
+#endif
+
+	sAtomicCapsInitialized = true;
+}
 
 bool
 atomic_compare_exchange_weak_ordered(int32* value, int32* expected, 

@@ -237,17 +237,17 @@ x86_unexpected_exception(iframe* frame)
 			// Map FPU status flags to signal codes (IEEE 754)
 			if ((fpuStatus & FE_INVALID) != 0)
 				signalCode = FPE_FLTINV;      // Invalid operation
-				else if ((fpuStatus & FE_DENORMAL) != 0)
-					signalCode = FPE_FLTUND;      // Denormal operand
-					else if ((fpuStatus & FE_DIVBYZERO) != 0)
-						signalCode = FPE_FLTDIV;      // Divide by zero
-						else if ((fpuStatus & FE_OVERFLOW) != 0)
-							signalCode = FPE_FLTOVF;      // Overflow
-							else if ((fpuStatus & FE_UNDERFLOW) != 0)
-								signalCode = FPE_FLTUND;      // Underflow
-								else if ((fpuStatus & FE_INEXACT) != 0)
-									signalCode = FPE_FLTRES;      // Inexact result
-									break;
+			else if ((fpuStatus & FE_DENORMAL) != 0)
+				signalCode = FPE_FLTUND;      // Denormal operand
+			else if ((fpuStatus & FE_DIVBYZERO) != 0)
+				signalCode = FPE_FLTDIV;      // Divide by zero
+			else if ((fpuStatus & FE_OVERFLOW) != 0)
+				signalCode = FPE_FLTOVF;      // Overflow
+			else if ((fpuStatus & FE_UNDERFLOW) != 0)
+				signalCode = FPE_FLTUND;      // Underflow
+			else if ((fpuStatus & FE_INEXACT) != 0)
+				signalCode = FPE_FLTRES;      // Inexact result
+			break;
 		}
 
 		case 17: 	// Alignment Check Exception (#AC)

@@ -352,7 +352,7 @@ wb_tx_nobuf(wb_device* info)
 	for (limit = info->txSent; limit > 0; limit--) {
 		status = info->txDescriptor[info->txInterruptIndex].wb_status;
 
-		LOG(("wb_tx_nobuf, status: %lx\n", status));
+		LOG(("wb_tx_nobuf, status: %x\n", status));
 		if (status & WB_TXSTAT_TXERR) {
 			LOG(("TX_STAT_ERR\n"));
 			break;
@@ -457,7 +457,7 @@ wb_interrupt(void* arg)
 		}
 
 		if (status & WB_ISR_BUS_ERR) {
-			LOG(("WB_ISR_BUS_ERROR: %lx\n", (status & WB_ISR_BUSERRTYPE) >> 4));
+			LOG(("WB_ISR_BUS_ERROR: %x\n", (status & WB_ISR_BUSERRTYPE) >> 4));
 			//wb_reset(device);
 		}
 
@@ -495,13 +495,13 @@ wb_create_semaphores(wb_device* device)
 {
 	device->rxSem = create_sem(0, "wb840 receive");
 	if (device->rxSem < B_OK) {
-		LOG(("Couldn't create sem, sem_id %ld\n", device->rxSem));
+		LOG(("Couldn't create sem, sem_id %d\n", device->rxSem));
 		return device->rxSem;
 	}
 
 	device->txSem = create_sem(WB_TX_LIST_CNT, "wb840 transmit");
 	if (device->txSem < B_OK) {
-		LOG(("Couldn't create sem, sem_id %ld\n", device->txSem));
+		LOG(("Couldn't create sem, sem_id %d\n", device->txSem));
 		delete_sem(device->rxSem);
 		return device->txSem;
 	}

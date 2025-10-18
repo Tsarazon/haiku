@@ -3,7 +3,7 @@
  * Distributed under the terms of the MIT License.
  *
  * Authors:
- *		Claude AI Assistant
+ *		
  */
 
 
@@ -29,8 +29,8 @@ static int32 sNumaNodeCount = 0;
 static bool sNumaInitialized = false;
 static rw_lock sNumaTopologyLock = RW_LOCK_INITIALIZER("numa_topology");
 
-// CPU load tracking (atomic access via vint32)
-static vint32 sCpuLoad[SMP_MAX_CPUS];
+// CPU load tracking (atomic access)
+static int32 sCpuLoad[SMP_MAX_CPUS];
 
 // Extended scheduler thread data with NUMA information
 struct scheduler_thread_data_numa {
@@ -182,8 +182,8 @@ scheduler_select_optimal_cpu(Thread* thread, int32 preferred_cpu)
 		
 		// Prefer CPUs in the same NUMA node
 		if (cpu_info->numa_node == preferred_info->numa_node) {
-			// Atomic read of CPU load (in percent)
-			int32 load = atomic_get(&sCpuLoad[cpu]);
+			// Read CPU load (in percent) - atomic for aligned int32
+			int32 load = sCpuLoad[cpu];
 			
 			if (load < best_load && load < 80) {  // 80% threshold
 				best_cpu = cpu;

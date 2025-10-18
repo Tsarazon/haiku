@@ -241,7 +241,11 @@ inline void
 FSCapabilitiesBase<CapabilityCount>::Dump() const
 {
 	D(
-		PRINT(("FSCapabilities[%s]\n", capabilities.to_string().c_str()));
+		char buffer[CapabilityCount + 1];
+		for (int capabilityIndex = 0; capabilityIndex < CapabilityCount; capabilityIndex++)
+			buffer[capabilityIndex] = capabilities.test(capabilityIndex) ? '1' : '0';
+		buffer[CapabilityCount] = '\0';
+		PRINT(("FSCapabilities[%s]\n", buffer));
 	)
 }
 

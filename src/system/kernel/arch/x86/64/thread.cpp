@@ -123,13 +123,13 @@ validate_kernel_stack(Thread* thread)
 	addr_t stack_top = (addr_t)thread->kernel_stack_top;
 
 	if (current_sp < stack_base + MIN_KERNEL_STACK_RESERVE) {
-		panic("kernel stack overflow: thread %ld sp=%#lx base=%#lx (used %zu/%zu bytes)",
+		panic("kernel stack overflow: thread %d sp=%#lx base=%#lx (used %zu/%zu bytes)",
 			  thread->id, current_sp, stack_base,
 		stack_top - current_sp, stack_top - stack_base);
 	}
 
 	if (current_sp >= stack_top) {
-		panic("kernel stack underflow: thread %ld sp=%#lx top=%#lx",
+		panic("kernel stack underflow: thread %d sp=%#lx top=%#lx",
 			  thread->id, current_sp, stack_top);
 	}
 }
@@ -171,9 +171,9 @@ dump_thread_context(Thread* thread, iframe* frame)
 		return;
 	}
 
-	kprintf("\n=== Thread %ld (%s) Context ===\n", thread->id,
-			thread->name != NULL ? thread->name : "<unnamed>");
-	kprintf("Team: %ld State: %d Priority: %d\n",
+	kprintf("\n=== Thread %d (%s) ===\n", thread->id,
+			thread->name[0] != '\0' ? thread->name : "<unnamed>");
+	kprintf("Team: %d State: %d Priority: %d\n",
 			thread->team != NULL ? thread->team->id : -1,
 		 thread->state, thread->priority);
 	kprintf("Flags: %#x\n", thread->flags);
@@ -197,7 +197,7 @@ dump_thread_context(Thread* thread, iframe* frame)
 			thread->arch_info.signal_delivery_depth);
 
 	if (frame != NULL) {
-		kprintf("\nIframe type: %d\n", frame->type);
+		kprintf("\nIframe type: %lu\n", (uint64)frame->type);
 		kprintf("RIP: %#018lx  RSP: %#018lx  RBP: %#018lx\n",
 				frame->ip, frame->user_sp, frame->bp);
 		kprintf("RAX: %#018lx  RBX: %#018lx  RCX: %#018lx\n",
@@ -210,8 +210,8 @@ dump_thread_context(Thread* thread, iframe* frame)
 				frame->r11, frame->r12, frame->r13);
 		kprintf("R14: %#018lx  R15: %#018lx\n",
 				frame->r14, frame->r15);
-		kprintf("CS: %#06x  SS: %#06x  FLAGS: %#018lx  ERR: %#lx  VEC: %ld\n",
-				frame->cs, frame->ss, frame->flags, frame->error_code, frame->vector);
+		kprintf("CS: %#06lx  SS: %#06lx  FLAGS: %#018lx  ERR: %#lx  VEC: %ld\n",
+				(uint64)frame->cs, (uint64)frame->ss, frame->flags, frame->error_code, frame->vector);
 	}
 
 	kprintf("================================\n\n");
@@ -227,8 +227,8 @@ x86_restart_syscall(iframe* frame)
 	Thread* thread = thread_get_current_thread();
 	ASSERT(thread != NULL);
 
-	atomic_and(&thread->flags, ~THREAD_FLAGS_RESTART_SYSCALL);
-	atomic_or(&thread->flags, THREAD_FLAGS_SYSCALL_RESTARTED);
+	atomic_and((int32*)&thread->flags, ~THREAD_FLAGS_RESTART_SYSCALL);
+	atomic_or((int32*)&thread->flags, THREAD_FLAGS_SYSCALL_RESTARTED);
 
 	frame->ax = frame->orig_rax;
 
@@ -554,31 +554,31 @@ arch_setup_signal_frame(Thread* thread, struct sigaction* action,
 
 	validate_kernel_stack(thread);
 
-	uint32 depth = atomic_add(&thread->arch_info.signal_delivery_depth, 1);
+	uint32 depth = atomic_add((int32*)&thread->arch_info.signal_delivery_depth, 1);
 	if (depth >= MAX_NESTED_SIGNALS) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 		dump_thread_context(thread, NULL);
-		panic("signal storm detected: %u nested signals in thread %ld",
+		panic("signal storm detected: %u nested signals in thread %d",
 			  depth + 1, thread->id);
 		return B_NOT_ALLOWED;
 	}
 
 	iframe* frame = x86_get_current_iframe();
 	if (frame == NULL) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 		panic("arch_setup_signal_frame: no iframe");
 		return B_BAD_VALUE;
 	}
 
 	if (!IFRAME_IS_USER(frame)) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 		dump_thread_context(thread, frame);
-		panic("arch_setup_signal_frame: not user iframe, type %d", frame->type);
+		panic("arch_setup_signal_frame: not user iframe, type %lu", (uint64)frame->type);
 		return B_BAD_VALUE;
 	}
 
 	if (!is_user_address_valid(frame->user_sp)) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 		dump_thread_context(thread, frame);
 		panic("arch_setup_signal_frame: invalid user sp %#lx", frame->user_sp);
 		return B_BAD_ADDRESS;
@@ -610,7 +610,7 @@ arch_setup_signal_frame(Thread* thread, struct sigaction* action,
 		ASSERT(((addr_t)frame->fpu & 63) == 0);
 
 		if (!validate_fpu_state((const savefpu*)frame->fpu)) {
-			atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+			atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 			dump_thread_context(thread, frame);
 			panic("arch_setup_signal_frame: corrupted FPU state in iframe");
 			return B_BAD_DATA;
@@ -636,23 +636,23 @@ arch_setup_signal_frame(Thread* thread, struct sigaction* action,
 	size_t frameSize = sizeof(*signalFrameData) + sizeof(frame->ip);
 	uint8* userStack = get_signal_stack(thread, frame, action, frameSize);
 	if (userStack == NULL) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 		return B_NO_MEMORY;
 	}
 
-	ASSERT(is_stack_aligned((addr_t)userStack + sizeof(frame->ip)));
+	ASSERT(is_stack_aligned((addr_t)userStack));
 
 	signal_frame_data* userSignalFrameData
 	= (signal_frame_data*)(userStack + sizeof(frame->ip));
 
 	if (user_memcpy(userSignalFrameData, signalFrameData,
 		sizeof(*signalFrameData)) != B_OK) {
-		atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+		atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 	return B_BAD_ADDRESS;
 		}
 
 		if (user_memcpy(userStack, &frame->ip, sizeof(frame->ip)) != B_OK) {
-			atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+			atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 			return B_BAD_ADDRESS;
 		}
 
@@ -660,7 +660,7 @@ arch_setup_signal_frame(Thread* thread, struct sigaction* action,
 
 		addr_t commPageAddress = (addr_t)thread->team->commpage_address;
 		if (!is_user_address_valid(commPageAddress)) {
-			atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+			atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 			dump_thread_context(thread, frame);
 			panic("arch_setup_signal_frame: invalid commpage");
 			return B_BAD_ADDRESS;
@@ -674,7 +674,7 @@ arch_setup_signal_frame(Thread* thread, struct sigaction* action,
 		arch_cpu_disable_user_access();
 
 		if (!is_user_address_valid(handlerAddress)) {
-			atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+			atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 			dump_thread_context(thread, frame);
 			panic("arch_setup_signal_frame: invalid handler address %#lx",
 				  handlerAddress);
@@ -702,12 +702,12 @@ arch_restore_signal_frame(struct signal_frame_data* signalFrameData)
 
 	if (thread->arch_info.signal_delivery_depth == 0) {
 		dump_thread_context(thread, NULL);
-		panic("arch_restore_signal_frame: depth underflow in thread %ld",
+		panic("arch_restore_signal_frame: depth underflow in thread %d",
 			  thread->id);
 		return B_BAD_VALUE;
 	}
 
-	atomic_add(&thread->arch_info.signal_delivery_depth, -1);
+	atomic_add((int32*)&thread->arch_info.signal_delivery_depth, -1);
 
 	iframe* frame = x86_get_current_iframe();
 	if (frame == NULL) {
@@ -738,7 +738,7 @@ arch_restore_signal_frame(struct signal_frame_data* signalFrameData)
 	if (!validate_fpu_state((const savefpu*)&signalFrameData->context.uc_mcontext.fpu)) {
 		dump_thread_context(thread, frame);
 		panic("arch_restore_signal_frame: corrupted FPU state from userspace, "
-		"thread %ld may have corrupted signal frame", thread->id);
+		"thread %d", thread->id);
 		return B_BAD_DATA;
 	}
 

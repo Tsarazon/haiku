@@ -7,19 +7,12 @@
 
 #include "accelerant.h"
 
-#include <math.h>
-
-
 #undef TRACE
-#define TRACE_PLL
-#ifdef TRACE_PLL
-#   define TRACE(x...) _sPrintf("intel_extreme: " x)
-#else
-#   define TRACE(x...)
-#endif
-
+#define TRACE(x...) _sPrintf("intel_extreme: " x)
 #define ERROR(x...) _sPrintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+
+#include <math.h>
 
 
 /**

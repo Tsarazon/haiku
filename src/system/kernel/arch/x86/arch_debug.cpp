@@ -24,11 +24,29 @@
 #include <elf.h>
 #include <kernel.h>
 #include <kimage.h>
+#include <team.h>
 #include <thread.h>
 #include <vm/vm.h>
 #include <vm/vm_types.h>
 #include <vm/VMAddressSpace.h>
 #include <vm/VMArea.h>
+
+// External declarations
+extern bool gHasXsave;
+
+// DR7 debug register bit field mappings (Intel SDM Vol. 3B, Section 17.2.4)
+// These arrays are also defined in arch_user_debugger.cpp for user breakpoints
+static const size_t sDR7Len[4] = { 18, 22, 26, 30 };  // LEN field LSB positions
+static const size_t sDR7RW[4] = { 16, 20, 24, 28 };   // R/W field LSB positions
+static const size_t sDR7L[4] = { 0, 2, 4, 6 };        // Local Enable bits
+static const size_t sDR7G[4] = { 1, 3, 5, 7 };        // Global Enable bits
+
+// Error codes for breakpoint/watchpoint operations
+// These should eventually be added to Errors.h
+#define B_NO_MORE_BREAKPOINTS ((status_t)0x80000100)
+#define B_NO_MORE_WATCHPOINTS ((status_t)0x80000101)
+#define B_BREAKPOINT_NOT_FOUND ((status_t)0x80000102)
+#define B_WATCHPOINT_NOT_FOUND ((status_t)0x80000103)
 
 
 // Stack frame structure for x86 calling convention
@@ -245,6 +263,7 @@ get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
  *
  * Reference: Intel SDM Vol. 3A, Section 6.14.1
  */
+__attribute__((unused))
 static void
 set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 {
@@ -374,6 +393,7 @@ set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
  *
  * Reference: Intel SDM Vol. 1, Chapter 13 (System Programming for Instruction Set Extensions)
  */
+__attribute__((unused))
 static void
 get_cpu_state(Thread* thread, iframe* frame, debug_cpu_state* cpuState)
 {
@@ -575,6 +595,7 @@ clear_breakpoint(arch_team_debug_info& info, void* address, bool watchpoint)
  * Acquires team debug info lock before modifying breakpoint state.
  * Interrupts are disabled to prevent race conditions with breakpoint exceptions.
  */
+__attribute__((unused))
 static status_t
 set_breakpoint(void* address, size_t type, size_t length)
 {
@@ -597,6 +618,7 @@ set_breakpoint(void* address, size_t type, size_t length)
 
 
 /*!	User-facing API to clear breakpoint (wrapper with locking) */
+__attribute__((unused))
 static status_t
 clear_breakpoint(void* address, bool watchpoint)
 {
@@ -640,6 +662,7 @@ install_breakpoints_per_cpu(void* /*cookie*/, int cpu)
 
 
 /*!	Sets kernel-wide breakpoint visible on all CPUs */
+__attribute__((unused))
 static status_t
 set_kernel_breakpoint(void* address, size_t type, size_t length)
 {
@@ -666,6 +689,7 @@ set_kernel_breakpoint(void* address, size_t type, size_t length)
 
 
 /*!	Clears kernel-wide breakpoint from all CPUs */
+__attribute__((unused))
 static status_t
 clear_kernel_breakpoint(void* address, bool watchpoint)
 {
@@ -1016,8 +1040,8 @@ print_stack_frame(Thread* thread, addr_t ip, addr_t calleeBp, addr_t bp,
 	if (calleeBp > bp)
 		frameDelta = 0;  // Kernel/user space transition
 
-		status_t status = lookup_symbol(thread, ip, &baseAddress, &symbol, &image,
-										&exactMatch);
+	status_t status = lookup_symbol(thread, ip, &baseAddress, &symbol, &image,
+									&exactMatch);
 
 		// Print frame header: index, frame pointer, delta, return address
 		kprintf("%2" B_PRId32 " %0*lx (+%4ld) %0*lx   ", callIndex,

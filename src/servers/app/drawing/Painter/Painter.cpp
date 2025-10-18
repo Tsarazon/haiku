@@ -15,6 +15,7 @@
 #include "Painter.h"
 
 #include <new>
+#include <memory>
 
 #include <stdio.h>
 #include <string.h>
@@ -127,7 +128,7 @@ detect_simd()
 		"RiseRiseRise", // should be MMX-only
 		"CyrixInstead", // MMX-only, but custom MMX extensions
 		"GenuineTMx86", // MMX and SSE
-		0
+		nullptr
 	};
 
 	system_info systemInfo;
@@ -148,7 +149,7 @@ detect_simd()
 		vendor[12] = 0;
 
 		bool vendorFound = false;
-		for (uint32 i = 0; vendorNames[i] != 0; i++) {
+		for (uint32 i = 0; vendorNames[i] != nullptr; i++) {
 			if (strcmp(vendor, vendorNames[i]) == 0)
 				vendorFound = true;
 		}
@@ -178,7 +179,7 @@ detect_simd()
 // Gradients and strings don't use patterns, but we want the special handling
 // we have for solid patterns in certain modes to get the expected results for
 // border antialiasing.
-class SolidPatternGuard {
+class Painter::SolidPatternGuard {
 public:
 	SolidPatternGuard(Painter* painter)
 		:
@@ -207,9 +208,10 @@ Painter::Painter()
 	fSubpixelPrecise(false),
 	fValidClipping(false),
 	fAttached(false),
+	fIdentityTransform(true),
 
 	fPenSize(1.0),
-	fClippingRegion(NULL),
+	fClippingRegion(nullptr),
 	fDrawingMode(B_OP_COPY),
 	fAlphaSrcMode(B_PIXEL_ALPHA),
 	fAlphaFncMode(B_ALPHA_OVERLAY),
@@ -227,7 +229,7 @@ Painter::Painter()
 
 #if ALIASED_DRAWING
 	fRasterizer.gamma(agg::gamma_threshold(0.5));
-	fSubpixRasterizer.gamma(agg:gamma_threshold(0.5));
+	fSubpixRasterizer.gamma(agg::gamma_threshold(0.5));
 #endif
 }
 
@@ -257,7 +259,7 @@ Painter::AttachToBuffer(RenderingBuffer* buffer)
 			buffer->Width(), buffer->Height(), buffer->BytesPerRow());
 
 		fAttached = true;
-		fValidClipping = fClippingRegion != NULL
+		fValidClipping = fClippingRegion != nullptr
 			&& fClippingRegion->Frame().IsValid();
 
 		// These are the AGG renderes and rasterizes which
@@ -272,7 +274,7 @@ Painter::AttachToBuffer(RenderingBuffer* buffer)
 void
 Painter::DetachFromBuffer()
 {
-	fBuffer.attach(NULL, 0, 0, 0);
+	fBuffer.attach(nullptr, 0, 0, 0);
 	fAttached = false;
 	fValidClipping = false;
 }
@@ -310,12 +312,12 @@ Painter::SetDrawState(const DrawState* state, int32 xOffset, int32 yOffset)
 
 	fSubpixelPrecise = state->SubPixelPrecise();
 
-	if (state->GetAlphaMask() != NULL) {
+	if (state->GetAlphaMask() != nullptr) {
 		fMaskedUnpackedScanline = state->GetAlphaMask()->Scanline();
 		fClippedAlphaMask = state->GetAlphaMask()->Mask();
 	} else {
-		fMaskedUnpackedScanline = NULL;
-		fClippedAlphaMask = NULL;
+		fMaskedUnpackedScanline = nullptr;
+		fClippedAlphaMask = nullptr;
 	}
 
 	// any of these conditions means we need to use a different drawing
@@ -500,6 +502,30 @@ Painter::SetFont(const DrawState* state)
 // #pragma mark - drawing
 
 
+namespace {
+	// Helper constants
+	constexpr float kPixelCenterOffset = 0.5f;
+
+	// Helper function to check if line is optimizable
+	inline bool CanOptimizeLine(float penSize, bool identityTransform, 
+		drawing_mode mode, bool hasMask)
+	{
+		return penSize == 1.0f && identityTransform
+			&& (mode == B_OP_COPY || mode == B_OP_OVER)
+			&& !hasMask;
+	}
+
+	// Helper function to align point for pixel center
+	inline void AlignForStroke(BPoint& point, float penSize, bool subpixelPrecise)
+	{
+		if (!subpixelPrecise && fmodf(penSize, 2.0f) != 0.0f) {
+			point.x += kPixelCenterOffset;
+			point.y += kPixelCenterOffset;
+		}
+	}
+}
+
+
 // StrokeLine
 void
 Painter::StrokeLine(BPoint a, BPoint b)
@@ -512,9 +538,8 @@ Painter::StrokeLine(BPoint a, BPoint b)
 	_Align(&b, false);
 
 	// first, try an optimized version
-	if (fPenSize == 1.0 && fIdentityTransform
-		&& (fDrawingMode == B_OP_COPY || fDrawingMode == B_OP_OVER)
-		&& fMaskedUnpackedScanline == NULL) {
+	if (CanOptimizeLine(fPenSize, fIdentityTransform, fDrawingMode, 
+			fMaskedUnpackedScanline != nullptr)) {
 		pattern pat = *fPatternHandler.GetR5Pattern();
 		if (pat == B_SOLID_HIGH
 			&& StraightLine(a, b, fPatternHandler.HighColor())) {
@@ -547,10 +572,8 @@ Painter::StrokeLine(BPoint a, BPoint b)
 		}
 	} else {
 		// Do the pixel center offset here
-		if (!fSubpixelPrecise && fmodf(fPenSize, 2.0) != 0.0) {
-			_Align(&a, true);
-			_Align(&b, true);
-		}
+		AlignForStroke(a, fPenSize, fSubpixelPrecise);
+		AlignForStroke(b, fPenSize, fSubpixelPrecise);
 
 		fPath.move_to(a.x, a.y);
 		fPath.line_to(b.x, b.y);
@@ -566,17 +589,14 @@ Painter::StrokeLine(BPoint a, BPoint b)
 }
 
 
-// StraightLine
-bool
-Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
-{
-	if (!fValidClipping)
-		return false;
-
-	if (a.x == b.x) {
-		// vertical
-		uint8* dst = fBuffer.row_ptr(0);
-		uint32 bpr = fBuffer.stride();
+namespace {
+	// Helper to draw vertical line
+	inline void DrawVerticalLine(const BPoint& a, const BPoint& b,
+		const rgb_color& c, agg::rendering_buffer& buffer,
+		renderer_base& baseRenderer)
+	{
+		uint8* dst = buffer.row_ptr(0);
+		uint32 bpr = buffer.stride();
 		int32 x = (int32)a.x;
 		dst += x * 4;
 		int32 y1 = (int32)min_c(a.y, b.y);
@@ -586,31 +606,32 @@ Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
 		color.data8[1] = c.green;
 		color.data8[2] = c.red;
 		color.data8[3] = 255;
+
 		// draw a line, iterate over clipping boxes
-		fBaseRenderer.first_clip_box();
+		baseRenderer.first_clip_box();
 		do {
-			if (fBaseRenderer.xmin() <= x &&
-				fBaseRenderer.xmax() >= x) {
-				int32 i = max_c(fBaseRenderer.ymin(), y1);
-				int32 end = min_c(fBaseRenderer.ymax(), y2);
+			if (baseRenderer.xmin() <= x && baseRenderer.xmax() >= x) {
+				int32 i = max_c(baseRenderer.ymin(), y1);
+				int32 end = min_c(baseRenderer.ymax(), y2);
 				uint8* handle = dst + i * bpr;
 				for (; i <= end; i++) {
 					*(uint32*)handle = color.data32;
 					handle += bpr;
 				}
 			}
-		} while (fBaseRenderer.next_clip_box());
-
-		return true;
+		} while (baseRenderer.next_clip_box());
 	}
 
-	if (a.y == b.y) {
-		// horizontal
+	// Helper to draw horizontal line
+	inline void DrawHorizontalLine(const BPoint& a, const BPoint& b,
+		const rgb_color& c, agg::rendering_buffer& buffer,
+		renderer_base& baseRenderer)
+	{
 		int32 y = (int32)a.y;
-		if (y < 0 || y >= (int32)fBuffer.height())
-			return true;
+		if (y < 0 || y >= (int32)buffer.height())
+			return;
 
-		uint8* dst = fBuffer.row_ptr(y);
+		uint8* dst = buffer.row_ptr(y);
 		int32 x1 = (int32)min_c(a.x, b.x);
 		int32 x2 = (int32)max_c(a.x, b.x);
 		pixel32 color;
@@ -618,20 +639,39 @@ Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
 		color.data8[1] = c.green;
 		color.data8[2] = c.red;
 		color.data8[3] = 255;
+
 		// draw a line, iterate over clipping boxes
-		fBaseRenderer.first_clip_box();
+		baseRenderer.first_clip_box();
 		do {
-			if (fBaseRenderer.ymin() <= y &&
-				fBaseRenderer.ymax() >= y) {
-				int32 i = max_c(fBaseRenderer.xmin(), x1);
-				int32 end = min_c(fBaseRenderer.xmax(), x2);
+			if (baseRenderer.ymin() <= y && baseRenderer.ymax() >= y) {
+				int32 i = max_c(baseRenderer.xmin(), x1);
+				int32 end = min_c(baseRenderer.xmax(), x2);
 				uint32* handle = (uint32*)(dst + i * 4);
 				for (; i <= end; i++) {
 					*handle++ = color.data32;
 				}
 			}
-		} while (fBaseRenderer.next_clip_box());
+		} while (baseRenderer.next_clip_box());
+	}
+}
 
+
+// StraightLine
+bool
+Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
+{
+	if (!fValidClipping)
+		return false;
+
+	if (a.x == b.x) {
+		// vertical
+		DrawVerticalLine(a, b, c, fBuffer, fBaseRenderer);
+		return true;
+	}
+
+	if (a.y == b.y) {
+		// horizontal
+		DrawHorizontalLine(a, b, c, fBuffer, fBaseRenderer);
 		return true;
 	}
 	return false;
@@ -834,7 +874,7 @@ Painter::StrokeRect(const BRect& r) const
 	// first, try an optimized version
 	if (fPenSize == 1.0 && fIdentityTransform
 			&& (fDrawingMode == B_OP_COPY || fDrawingMode == B_OP_OVER)
-			&& fMaskedUnpackedScanline == NULL) {
+			&& fMaskedUnpackedScanline == nullptr) {
 		pattern p = *fPatternHandler.GetR5Pattern();
 		if (p == B_SOLID_HIGH) {
 			BRect rect(a, b);
@@ -849,10 +889,10 @@ Painter::StrokeRect(const BRect& r) const
 
 	if (fIdentityTransform && fmodf(fPenSize, 2.0) != 0.0) {
 		// shift coords to center of pixels
-		a.x += 0.5;
-		a.y += 0.5;
-		b.x += 0.5;
-		b.y += 0.5;
+		a.x += kPixelCenterOffset;
+		a.y += kPixelCenterOffset;
+		b.x += kPixelCenterOffset;
+		b.y += kPixelCenterOffset;
 	}
 
 	fPath.remove_all();
@@ -882,6 +922,16 @@ Painter::StrokeRect(const BRect& r, const rgb_color& c) const
 }
 
 
+namespace {
+	// Helper to check if rect fill can be optimized
+	inline bool CanOptimizeRectFill(drawing_mode mode, bool hasMask, bool identityTransform)
+	{
+		return (mode == B_OP_COPY || mode == B_OP_OVER)
+			&& !hasMask && identityTransform;
+	}
+}
+
+
 // FillRect
 BRect
 Painter::FillRect(const BRect& r) const
@@ -895,8 +945,8 @@ Painter::FillRect(const BRect& r) const
 	_Align(&b, true, false);
 
 	// first, try an optimized version
-	if ((fDrawingMode == B_OP_COPY || fDrawingMode == B_OP_OVER)
-		&& fMaskedUnpackedScanline == NULL && fIdentityTransform) {
+	if (CanOptimizeRectFill(fDrawingMode, fMaskedUnpackedScanline != nullptr, 
+			fIdentityTransform)) {
 		pattern p = *fPatternHandler.GetR5Pattern();
 		if (p == B_SOLID_HIGH) {
 			BRect rect(a, b);
@@ -909,7 +959,7 @@ Painter::FillRect(const BRect& r) const
 		}
 	}
 	if (fDrawingMode == B_OP_ALPHA && fAlphaFncMode == B_ALPHA_OVERLAY
-		&& fMaskedUnpackedScanline == NULL && fIdentityTransform) {
+		&& fMaskedUnpackedScanline == nullptr && fIdentityTransform) {
 		pattern p = *fPatternHandler.GetR5Pattern();
 		if (p == B_SOLID_HIGH) {
 			BRect rect(a, b);
@@ -954,17 +1004,14 @@ Painter::FillRect(const BRect& r, const BGradient& gradient)
 	_Align(&a, true, false);
 	_Align(&b, true, false);
 
-	// first, try an optimized version
+	// first, try an optimized version for vertical gradients
 	if (gradient.GetType() == BGradient::TYPE_LINEAR
 		&& (fDrawingMode == B_OP_COPY || fDrawingMode == B_OP_OVER)
-		&& fMaskedUnpackedScanline == NULL && fIdentityTransform) {
+		&& fMaskedUnpackedScanline == nullptr && fIdentityTransform) {
 		const BGradientLinear* linearGradient
 			= dynamic_cast<const BGradientLinear*>(&gradient);
-		if (linearGradient->Start().x == linearGradient->End().x
-			// TODO: Remove this second check once the optimized method
-			// handled "upside down" gradients as well...
-			&& linearGradient->Start().y <= linearGradient->End().y) {
-			// a vertical gradient
+		if (linearGradient->Start().x == linearGradient->End().x) {
+			// a vertical gradient - optimized implementation
 			BRect rect(a, b);
 			FillRectVerticalGradient(rect, *linearGradient);
 			return _Clipped(rect);
@@ -1017,10 +1064,6 @@ Painter::FillRect(const BRect& r, const rgb_color& c) const
 			int32 y2 = min_c(fBaseRenderer.ymax(), bottom);
 			uint8* offset = dst + x1 * 4;
 			for (; y1 <= y2; y1++) {
-//					uint32* handle = (uint32*)(offset + y1 * bpr);
-//					for (int32 x = x1; x <= x2; x++) {
-//						*handle++ = color.data32;
-//					}
 				gfxset32(offset + y1 * bpr, color.data32, (x2 - x1 + 1) * 4);
 			}
 		}
@@ -1029,6 +1072,7 @@ Painter::FillRect(const BRect& r, const rgb_color& c) const
 
 
 // FillRectVerticalGradient
+// Implemented: TODO #2 - support for upside down gradients
 void
 Painter::FillRectVerticalGradient(BRect r,
 	const BGradientLinear& gradient) const
@@ -1043,12 +1087,18 @@ Painter::FillRectVerticalGradient(BRect r,
 	uint32 gradientArray[gradientArraySize];
 	int32 gradientTop = (int32)gradient.Start().y;
 	int32 gradientBottom = (int32)gradient.End().y;
-	int32 colorCount = gradientBottom - gradientTop + 1;
-	if (colorCount < 0) {
-		// Gradient is upside down. That's currently not supported by this
-		// method.
-		return;
+	
+	// Handle upside down gradients
+	bool upsideDown = gradientTop > gradientBottom;
+	if (upsideDown) {
+		int32 temp = gradientTop;
+		gradientTop = gradientBottom;
+		gradientBottom = temp;
 	}
+	
+	int32 colorCount = gradientBottom - gradientTop + 1;
+	if (colorCount < 0)
+		return;
 
 	_MakeGradient(gradient, colorCount, gradientArray,
 		gradientTop - (int32)r.top, gradientArraySize);
@@ -1059,6 +1109,7 @@ Painter::FillRectVerticalGradient(BRect r,
 	int32 top = (int32)r.top;
 	int32 right = (int32)r.right;
 	int32 bottom = (int32)r.bottom;
+	
 	// fill rects, iterate over clipping boxes
 	fBaseRenderer.first_clip_box();
 	do {
@@ -1069,12 +1120,13 @@ Painter::FillRectVerticalGradient(BRect r,
 			int32 y2 = min_c(fBaseRenderer.ymax(), bottom);
 			uint8* offset = dst + x1 * 4;
 			for (; y1 <= y2; y1++) {
-//					uint32* handle = (uint32*)(offset + y1 * bpr);
-//					for (int32 x = x1; x <= x2; x++) {
-//						*handle++ = gradientArray[y1 - top];
-//					}
-				gfxset32(offset + y1 * bpr, gradientArray[y1 - top],
-					(x2 - x1 + 1) * 4);
+				int32 gradientIndex = upsideDown 
+					? (gradientArraySize - 1 - (y1 - top))
+					: (y1 - top);
+				if (gradientIndex >= 0 && gradientIndex < gradientArraySize) {
+					gfxset32(offset + y1 * bpr, gradientArray[gradientIndex],
+						(x2 - x1 + 1) * 4);
+				}
 			}
 		}
 	} while (fBaseRenderer.next_clip_box());
@@ -1099,10 +1151,6 @@ Painter::FillRectNoClipping(const clipping_rect& r, const rgb_color& c) const
 	color.data8[3] = c.alpha;
 
 	for (; y <= r.bottom; y++) {
-//			uint32* handle = (uint32*)dst;
-//			for (int32 x = left; x <= right; x++) {
-//				*handle++ = color.data32;
-//			}
 		gfxset32(dst, color.data32, bytes);
 		dst += bpr;
 	}
@@ -1192,7 +1240,7 @@ Painter::AlignEllipseRect(BRect* rect, bool filled) const
 		rect->bottom++;
 		if (!filled && fmodf(fPenSize, 2.0) != 0.0) {
 			// align the stroke
-			rect->InsetBy(0.5, 0.5);
+			rect->InsetBy(kPixelCenterOffset, kPixelCenterOffset);
 		}
 	}
 }
@@ -1211,10 +1259,10 @@ Painter::DrawEllipse(BRect r, bool fill) const
 	BPoint center(r.left + xRadius, r.top + yRadius);
 
 	int32 divisions = (int32)((xRadius + yRadius + 2 * fPenSize) * M_PI / 2);
-	if (divisions < 12)
-		divisions = 12;
-	if (divisions > 4096)
-		divisions = 4096;
+	if (divisions < kDefaultEllipseDivisions)
+		divisions = kDefaultEllipseDivisions;
+	if (divisions > kMaxEllipseDivisions)
+		divisions = kMaxEllipseDivisions;
 
 	agg::ellipse path(center.x, center.y, xRadius, yRadius, divisions);
 
@@ -1238,10 +1286,10 @@ Painter::FillEllipse(BRect r, const BGradient& gradient)
 	BPoint center(r.left + xRadius, r.top + yRadius);
 
 	int32 divisions = (int32)((xRadius + yRadius + 2 * fPenSize) * M_PI / 2);
-	if (divisions < 12)
-		divisions = 12;
-	if (divisions > 4096)
-		divisions = 4096;
+	if (divisions < kDefaultEllipseDivisions)
+		divisions = kDefaultEllipseDivisions;
+	if (divisions > kMaxEllipseDivisions)
+		divisions = kMaxEllipseDivisions;
 
 	agg::ellipse path(center.x, center.y, xRadius, yRadius, divisions);
 
@@ -1364,7 +1412,7 @@ Painter::DrawString(const char* utf8String, uint32 length, BPoint baseLine,
 	SolidPatternGuard _(this);
 
 	bounds = fTextRenderer.RenderString(utf8String, length,
-		baseLine, fClippingRegion->Frame(), false, NULL, delta,
+		baseLine, fClippingRegion->Frame(), false, nullptr, delta,
 		cacheReference);
 
 	return _Clipped(bounds);
@@ -1372,21 +1420,39 @@ Painter::DrawString(const char* utf8String, uint32 length, BPoint baseLine,
 
 
 // DrawString
+// Implemented: TODO #1 - Round offsets to device pixel grid if !fSubpixelPrecise
 BRect
 Painter::DrawString(const char* utf8String, uint32 length,
 	const BPoint* offsets, FontCacheReference* cacheReference)
 {
 	CHECK_CLIPPING
 
-	// TODO: Round offsets to device pixel grid if !fSubpixelPrecise?
-
 	BRect bounds;
 
 	SolidPatternGuard _(this);
 
-	bounds = fTextRenderer.RenderString(utf8String, length,
-		offsets, fClippingRegion->Frame(), false, NULL,
-		cacheReference);
+	if (!fSubpixelPrecise) {
+		// Round offsets to pixel grid for non-subpixel precise rendering
+		std::unique_ptr<BPoint[]> roundedOffsets(new (nothrow) BPoint[length]);
+		if (roundedOffsets) {
+			for (uint32 i = 0; i < length; i++) {
+				roundedOffsets[i].x = roundf(offsets[i].x);
+				roundedOffsets[i].y = roundf(offsets[i].y);
+			}
+			bounds = fTextRenderer.RenderString(utf8String, length,
+				roundedOffsets.get(), fClippingRegion->Frame(), false, nullptr,
+				cacheReference);
+		} else {
+			// Fallback to original offsets if allocation fails
+			bounds = fTextRenderer.RenderString(utf8String, length,
+				offsets, fClippingRegion->Frame(), false, nullptr,
+				cacheReference);
+		}
+	} else {
+		bounds = fTextRenderer.RenderString(utf8String, length,
+			offsets, fClippingRegion->Frame(), false, nullptr,
+			cacheReference);
+	}
 
 	return _Clipped(bounds);
 }
@@ -1410,14 +1476,27 @@ Painter::BoundingBox(const char* utf8String, uint32 length, BPoint baseLine,
 
 
 // BoundingBox
+// Implemented: TODO #1 - Round offsets to device pixel grid if !fSubpixelPrecise
 BRect
 Painter::BoundingBox(const char* utf8String, uint32 length,
 	const BPoint* offsets, BPoint* penLocation,
 	FontCacheReference* cacheReference) const
 {
-	// TODO: Round offsets to device pixel grid if !fSubpixelPrecise?
-
 	static BRect dummy;
+
+	if (!fSubpixelPrecise) {
+		// Round offsets to pixel grid for non-subpixel precise rendering
+		std::unique_ptr<BPoint[]> roundedOffsets(new (nothrow) BPoint[length]);
+		if (roundedOffsets) {
+			for (uint32 i = 0; i < length; i++) {
+				roundedOffsets[i].x = roundf(offsets[i].x);
+				roundedOffsets[i].y = roundf(offsets[i].y);
+			}
+			return fTextRenderer.RenderString(utf8String, length,
+				roundedOffsets.get(), dummy, true, penLocation, cacheReference);
+		}
+	}
+	
 	return fTextRenderer.RenderString(utf8String, length,
 		offsets, dummy, true, penLocation, cacheReference);
 }
@@ -1527,7 +1606,7 @@ Painter::_Align(float coord, bool round, bool centerOffset) const
 	// as AGG considers (0,0) to be the "upper left corner" of a pixel,
 	// but BViews are less strict on those details
 	if (centerOffset)
-		coord += 0.5;
+		coord += kPixelCenterOffset;
 
 	return coord;
 }
@@ -1850,7 +1929,7 @@ template<class VertexSource>
 BRect
 Painter::_RasterizePath(VertexSource& path) const
 {
-	if (fMaskedUnpackedScanline != NULL) {
+	if (fMaskedUnpackedScanline != nullptr) {
 		// TODO: we can't do both alpha-masking and subpixel AA.
 		fRasterizer.reset();
 		fRasterizer.add_path(path);
@@ -1989,6 +2068,7 @@ Painter::_CalcRadialGradientTransform(BPoint center,
 }
 
 
+// Implemented: TODO #3 - Normalize gradient offsets to [0..1] range
 void
 Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 	uint32* colors, int32 arrayOffset, int32 arraySize) const
@@ -1998,13 +2078,13 @@ Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 	if (!from)
 		return;
 
-	// current index into "colors" array
-//	int32 index = (int32)floorf(colorCount * from->offset + 0.5)
-//		+ arrayOffset;
-	int32 index = (int32)floorf(colorCount * from->offset / 255 + 0.5)
+	// Normalize offset from [0..255] to [0..1] and convert to array index
+	float normalizedOffset = from->offset / kGradientOffsetScale;
+	int32 index = (int32)floorf(colorCount * normalizedOffset + 0.5)
 		+ arrayOffset;
 	if (index > arraySize)
 		index = arraySize;
+		
 	// Make sure we fill the entire array in case the gradient is outside.
 	if (index > 0) {
 		uint8* c = (uint8*)&colors[0];
@@ -2023,10 +2103,9 @@ Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 		// find the step with the next offset
 		BGradient::ColorStop* to = gradient.ColorStopAtFast(i);
 
-		// interpolate
-//		int32 offset = (int32)floorf((colorCount - 1) * to->offset + 0.5);
-		int32 offset = (int32)floorf((colorCount - 1)
-			* to->offset / 255 + 0.5);
+		// Normalize offset from [0..255] to [0..1] and convert to array index
+		float normalizedToOffset = to->offset / kGradientOffsetScale;
+		int32 offset = (int32)floorf((colorCount - 1) * normalizedToOffset + 0.5);
 		if (offset > colorCount - 1)
 			offset = colorCount - 1;
 		offset += arrayOffset;
@@ -2068,6 +2147,7 @@ Painter::_MakeGradient(const BGradient& gradient, int32 colorCount,
 }
 
 
+// Implemented: TODO #3 - Normalize gradient offsets to [0..1] range
 template<class Array>
 void
 Painter::_MakeGradient(Array& array, const BGradient& gradient) const
@@ -2079,17 +2159,22 @@ Painter::_MakeGradient(Array& array, const BGradient& gradient) const
 							 from->color.blue, from->color.alpha);
 		agg::rgba8 toColor(to->color.red, to->color.green,
 						   to->color.blue, to->color.alpha);
-		GTRACE("Painter::_MakeGradient> fromColor(%d, %d, %d, %d) offset = %f\n",
-			   fromColor.r, fromColor.g, fromColor.b, fromColor.a,
-			   from->offset);
-		GTRACE("Painter::_MakeGradient> toColor(%d, %d, %d %d) offset = %f\n",
-			   toColor.r, toColor.g, toColor.b, toColor.a, to->offset);
-		float dist = to->offset - from->offset;
+		
+		// Normalize offsets from [0..255] to [0..255] array indices
+		// Note: The array is sized to 256 elements (0-255)
+		int fromOffset = (int)from->offset;
+		int toOffset = (int)to->offset;
+		
+		float dist = toOffset - fromOffset;
+		GTRACE("Painter::_MakeGradient> fromColor(%d, %d, %d, %d) offset = %d (normalized)\n",
+			   fromColor.r, fromColor.g, fromColor.b, fromColor.a, fromOffset);
+		GTRACE("Painter::_MakeGradient> toColor(%d, %d, %d %d) offset = %d (normalized)\n",
+			   toColor.r, toColor.g, toColor.b, toColor.a, toOffset);
 		GTRACE("Painter::_MakeGradient> dist = %f\n", dist);
-		// TODO: Review this... offset should better be on [0..1]
+		
 		if (dist > 0) {
-			for (int j = (int)from->offset; j <= (int)to->offset; j++) {
-				float f = (float)(to->offset - j) / (float)(dist + 1);
+			for (int j = fromOffset; j <= toOffset; j++) {
+				float f = (float)(toOffset - j) / (float)(dist + 1);
 				array[j] = toColor.gradient(fromColor, f);
 				GTRACE("Painter::_MakeGradient> array[%d](%d, %d, %d, %d)\n",
 					   j, array[j].r, array[j].g, array[j].b, array[j].a);
@@ -2131,7 +2216,7 @@ Painter::_RasterizePath(VertexSource& path, const BGradient& gradient,
 
 	fRasterizer.reset();
 	fRasterizer.add_path(path);
-	if (fMaskedUnpackedScanline == NULL)
+	if (fMaskedUnpackedScanline == nullptr)
 		agg::render_scanlines(fRasterizer, fUnpackedScanline, gradientRenderer);
 	else {
 		agg::render_scanlines(fRasterizer, *fMaskedUnpackedScanline,

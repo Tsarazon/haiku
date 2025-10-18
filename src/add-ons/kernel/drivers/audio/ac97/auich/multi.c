@@ -32,6 +32,7 @@
 #include <driver_settings.h>
 #include <OS.h>
 #include <MediaDefs.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 

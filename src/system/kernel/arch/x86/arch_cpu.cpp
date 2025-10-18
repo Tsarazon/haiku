@@ -52,7 +52,6 @@ static const uint32 CPUID_LEAF_EXTENDED_STATE = 0x0d;
 static const uint32 CPUID_LEAF_FREQUENCY = 0x16;
 static const uint32 CPUID_LEAF_HYBRID_INFO = 0x1a;
 static const uint32 CPUID_LEAF_V2_TOPOLOGY = 0x1f;
-static const uint32 IA32_CPUID_LEAF_TSC = 0x15;
 
 // AMD Extended CPUID Leaves (AMD APM Vol. 3)
 static const uint32 CPUID_LEAF_AMD_EXTENDED = 0x80000001;
@@ -73,8 +72,8 @@ static const uint32 AMD_FAMILY_17H = 0x17;
 static const uint32 AMD_FAMILY_19H = 0x19;
 
 // Pentium errata model thresholds
-static const uint32 PENTIUM_III_MAX_MODEL = 13;
-static const uint32 PENTIUM_4_MAX_MODEL = 6;
+static const int32 PENTIUM_III_MAX_MODEL = 13;
+static const int32 PENTIUM_4_MAX_MODEL = 6;
 
 // Intel topology level types (CPUID.1Fh/0Bh.ECX[15:8])
 static const int TOPOLOGY_LEVEL_TYPE_SMT = 1;
@@ -87,29 +86,18 @@ static const uint32 MICROCODE_DEFAULT_SIZE = 2000;
 static const uint32 MICROCODE_MAX_TABLE_ENTRIES = 1024;
 
 // AMD MSR constants
-static const uint32 MSR_F10H_HWCR = 0xc0010015;
 static const uint32 MSR_F10H_PSTATEDEF_BASE = 0xc0010064;
-static const uint32 HWCR_TSCFREQSEL = (1 << 24);
-static const uint32 PSTATEDEF_EN = (1ULL << 63);
 
 // AMD K8 C1E control bits (AMD BKDG)
 static const uint64 K8_SMIONCMPHALT = (1ULL << 27);
 static const uint64 K8_C1EONCMPHALT = (1ULL << 28);
 static const uint64 K8_CMPHALT = (K8_SMIONCMPHALT | K8_C1EONCMPHALT);
-static const uint32 K8_MSR_IPM = 0xc0010055;
 
 // PAT MSR entry manipulation
 static const uint32 IA32_MSR_PAT_ENTRY_SHIFT_BASE = 0;
-static const uint32 IA32_MSR_PAT_ENTRY_MASK = 0xff;
-static const uint32 IA32_MSR_PAT_TYPE_WRITE_COMBINING = 0x01;
 
-static inline uint32 IA32_MSR_PAT_ENTRY_SHIFT(uint32 entry) {
-	return IA32_MSR_PAT_ENTRY_SHIFT_BASE + (entry * 8);
-}
 
 // AMD DE_CFG MSR
-static const uint32 MSR_F10H_DE_CFG = 0xc0011029;
-static const uint32 DE_CFG_SERIALIZE_LFENCE = (1 << 1);
 
 
 // CPU vendor identification strings (CPUID.0 EBX:EDX:ECX)
@@ -422,11 +410,6 @@ namespace {
 	}
 
 
-	static inline uint32
-	MSR_F10H_PSTATEDEF(uint32 index)
-	{
-		return MSR_F10H_PSTATEDEF_BASE + index;
-	}
 
 } // anonymous namespace
 

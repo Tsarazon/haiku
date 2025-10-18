@@ -10,10 +10,14 @@
 #include "driver.h"
 #include "device.h"
 #include "intel_extreme.h"
-#include "utility.h"
 
 #include <OS.h>
 #include <KernelExport.h>
+
+#undef TRACE
+#define TRACE(x...) dprintf("intel_extreme: " x)
+#define ERROR(x...) dprintf("intel_extreme: " x)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 #include <Drivers.h>
 #include <PCI.h>
 #include <SupportDefs.h>
@@ -26,15 +30,7 @@
 
 #define DEBUG_COMMANDS
 
-#define TRACE_DEVICE
-#ifdef TRACE_DEVICE
-#	define TRACE(x...) dprintf("intel_extreme: " x)
-#else
-#	define TRACE(x) ;
-#endif
-
-#define ERROR(x...) dprintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
+// TRACE, ERROR, and CALLED macros are defined in utility.h
 
 
 /* device hooks prototypes */

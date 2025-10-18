@@ -16,7 +16,7 @@
 #include <boot/platform.h>
 
 
-static const size_t kChunkSize = 16 * B_PAGE_SIZE;
+static const size_t kChunkSize = 32 * B_PAGE_SIZE;
 
 kernel_args gKernelArgs;
 KMessage gBootVolume;

@@ -1,6 +1,7 @@
 #ifndef USB_MIDI_H
 #define USB_MIDI_H
 
+#include <stdlib.h>
 #include <usb/USB_audio.h>
 
 // (Partial) USB Class Definitions for MIDI Devices, version 1.0
@@ -149,10 +150,10 @@ private:
 	usb_midi_event_packet_v2*	fBuffer;
 	size_t						fCapacity;
 	
-	// Haiku native atomics - vint32 instead of std::atomic
-	vint32	fWritePos;		// Current write position
-	vint32	fReadPos;		// Current read position
-	vint32	fGeneration;		// Generation counter for ABA problem protection
+	// Haiku native atomics - int32 with atomic operations
+	int32	fWritePos;		// Current write position
+	int32	fReadPos;		// Current read position
+	int32	fGeneration;		// Generation counter for ABA problem protection
 	
 	bigtime_t	fLastFlushTime;	// Last buffer flush timestamp
 
@@ -207,7 +208,7 @@ public:
 		
 		// Memory write barrier - ensure write is visible before updating position
 		// This is critical for correctness on multi-core systems
-		memory_write_barrier();
+		__atomic_thread_fence(__ATOMIC_RELEASE);
 		
 		// Update write position atomically
 		atomic_set(&fWritePos, nextWrite);
@@ -237,7 +238,7 @@ public:
 		packet = fBuffer[currentRead];
 		
 		// Memory read barrier - ensure read completes before updating position
-		memory_read_barrier();
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
 		
 		// Calculate next read position (circular buffer)
 		int32 nextRead = (currentRead + 1) % fCapacity;
@@ -264,8 +265,8 @@ public:
 	// Get current number of events in buffer (non-atomic, for monitoring)
 	size_t Count() const
 	{
-		int32 write = atomic_get(&fWritePos);
-		int32 read = atomic_get(&fReadPos);
+		int32 write = atomic_get(const_cast<int32*>(&fWritePos));
+		int32 read = atomic_get(const_cast<int32*>(&fReadPos));
 		
 		if (write >= read)
 			return write - read;
@@ -279,14 +280,14 @@ public:
 	// Check if buffer is empty
 	bool IsEmpty() const
 	{
-		return atomic_get(&fReadPos) == atomic_get(&fWritePos);
+		return atomic_get(const_cast<int32*>(&fReadPos)) == atomic_get(const_cast<int32*>(&fWritePos));
 	}
 	
 	// Check if buffer is full
 	bool IsFull() const
 	{
-		int32 write = atomic_get(&fWritePos);
-		int32 read = atomic_get(&fReadPos);
+		int32 write = atomic_get(const_cast<int32*>(&fWritePos));
+		int32 read = atomic_get(const_cast<int32*>(&fReadPos));
 		int32 nextWrite = (write + 1) % fCapacity;
 		return nextWrite == read;
 	}
@@ -294,7 +295,7 @@ public:
 	// Get generation counter (for debugging ABA issues)
 	int32 Generation() const
 	{
-		return atomic_get(&fGeneration);
+		return atomic_get(const_cast<int32*>(&fGeneration));
 	}
 	
 	// Prevent copying (no copy constructor/assignment)

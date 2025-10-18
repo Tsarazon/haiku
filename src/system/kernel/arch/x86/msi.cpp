@@ -10,6 +10,7 @@
 #include <debug.h>
 #include <interrupts.h>
 #include <lock.h>
+#include <smp.h>
 
 
 struct MSIConfiguration {

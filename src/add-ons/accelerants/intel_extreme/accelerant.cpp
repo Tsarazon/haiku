@@ -10,9 +10,12 @@
 #include "accelerant_protos.h"
 #include "accelerant.h"
 
-#include "utility.h"
-
 #include <Debug.h>
+
+#undef TRACE
+#define TRACE(x...) _sPrintf("intel_extreme: " x)
+#define ERROR(x...) _sPrintf("intel_extreme: " x)
+#define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,18 +26,6 @@
 
 #include <AGP.h>
 #include <AutoDeleterOS.h>
-
-
-#undef TRACE
-#define TRACE_ACCELERANT
-#ifdef TRACE_ACCELERANT
-#	define TRACE(x...) _sPrintf("intel_extreme: " x)
-#else
-#	define TRACE(x...)
-#endif
-
-#define ERROR(x...) _sPrintf("intel_extreme: " x)
-#define CALLED(x...) TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
 struct accelerant_info* gInfo;
@@ -134,36 +125,45 @@ init_common(int device, bool isClone)
 			+ gInfo->shared_info->overlay_offset);
 	}
 
-	// Gen 6+: No 3D context allocation needed (Gen 4 i965 code removed)
+	if (gInfo->shared_info->device_type.InGroup(INTEL_GROUP_96x)) {
+		// allocate some extra memory for the 3D context
+		if (intel_allocate_memory(INTEL_i965_3D_CONTEXT_SIZE,
+				B_APERTURE_NON_RESERVED, gInfo->context_base) == B_OK) {
+			gInfo->context_offset = gInfo->context_base
+				- (addr_t)gInfo->shared_info->graphics_memory;
+		}
+	}
 
 	gInfo->pipe_count = 0;
 
-	// Determine pipe count based on generation
-	int pipeCnt = 2;  // Default for older GPUs (Gen 6)
+	// Allocate all of our pipes
+	int pipeCnt = 2;
 	if (gInfo->shared_info->device_type.Generation() >= 12)
 		pipeCnt = 4;
 	else if (gInfo->shared_info->device_type.Generation() >= 7)
 		pipeCnt = 3;
 
-	// Array for mapping indices to constants
-	static const pipe_index pipeIndices[] = {
-		INTEL_PIPE_A, INTEL_PIPE_B, INTEL_PIPE_C, INTEL_PIPE_D
-	};
-
-	// Allocate pipes with error checking
-	for (int i = 0; i < pipeCnt && i < MAX_PIPES; i++) {
-		gInfo->pipes[i] = new(std::nothrow) Pipe(pipeIndices[i]);
-
-		if (gInfo->pipes[i] == NULL) {
-			ERROR("%s: Failed to allocate pipe %d\n", __func__, i);
-			// Clean up already created pipes
-			for (int j = 0; j < i; j++) {
-				delete gInfo->pipes[j];
-				gInfo->pipes[j] = NULL;
-			}
-			return B_NO_MEMORY;
+	for (int i = 0; i < pipeCnt; i++) {
+		switch (i) {
+			case 0:
+				gInfo->pipes[i] = new(std::nothrow) Pipe(INTEL_PIPE_A);
+				break;
+			case 1:
+				gInfo->pipes[i] = new(std::nothrow) Pipe(INTEL_PIPE_B);
+				break;
+			case 2:
+				gInfo->pipes[i] = new(std::nothrow) Pipe(INTEL_PIPE_C);
+				break;
+			case 3:
+				gInfo->pipes[i] = new(std::nothrow) Pipe(INTEL_PIPE_D);
+				break;
+			default:
+				ERROR("%s: Unknown pipe %d\n", __func__, i);
 		}
-		gInfo->pipe_count++;
+		if (gInfo->pipes[i] == NULL)
+			ERROR("%s: Error allocating pipe %d\n", __func__, i);
+		else
+			gInfo->pipe_count++;
 	}
 
 	return B_OK;
@@ -174,31 +174,18 @@ init_common(int device, bool isClone)
 static void
 uninit_common(void)
 {
-	if (gInfo == NULL)
-		return;
+	intel_free_memory(gInfo->context_base);
 
-	// Free 3D context memory (if allocated)
-	if (gInfo->context_base != 0)
-		intel_free_memory(gInfo->context_base);
+	delete_area(gInfo->regs_area);
+	delete_area(gInfo->shared_info_area);
 
-	// Delete areas in reverse order of creation
-	if (gInfo->regs_area >= 0) {
-		delete_area(gInfo->regs_area);
-		gInfo->regs_area = -1;
-	}
+	gInfo->regs_area = gInfo->shared_info_area = -1;
 
-	if (gInfo->shared_info_area >= 0) {
-		delete_area(gInfo->shared_info_area);
-		gInfo->shared_info_area = -1;
-	}
-
-	// Close device handle only for clones
-	if (gInfo->is_clone && gInfo->device >= 0)
+	// close the file handle ONLY if we're the clone
+	if (gInfo->is_clone)
 		close(gInfo->device);
 
-	// Free structure
 	free(gInfo);
-	gInfo = NULL;  // Important to prevent use-after-free
 }
 
 
@@ -242,77 +229,6 @@ has_connected_port(port_index portIndex, uint32 type)
 }
 
 
-// Helper structure for port type information
-struct PortProbeInfo {
-	port_index start;
-	port_index end;
-	const char* name;
-	Port* (*factory)(port_index);
-};
-
-
-// Factory functions for creating ports
-static Port* CreateDisplayPort(port_index idx)
-{
-	return new(std::nothrow) DisplayPort(idx);
-}
-
-
-static Port* CreateDDIPort(port_index idx)
-{
-	return new(std::nothrow) DigitalDisplayInterface(idx);
-}
-
-
-static Port* CreateHDMIPort(port_index idx)
-{
-	return new(std::nothrow) HDMIPort(idx);
-}
-
-
-static Port* CreateDVIPort(port_index idx)
-{
-	return new(std::nothrow) DigitalPort(idx, "DVI");
-}
-
-
-static Port* CreateLVDS()
-{
-	return new(std::nothrow) LVDSPort();
-}
-
-
-static Port* CreateAnalog()
-{
-	return new(std::nothrow) AnalogPort();
-}
-
-
-// Universal port probing function
-static status_t
-_ProbePortRange(const PortProbeInfo& info, bool& foundAny)
-{
-	for (int i = info.start; i <= info.end && gInfo->port_count < MAX_PORTS; i++) {
-		TRACE("Probing %s %d\n", info.name, i);
-
-		Port* port = info.factory((port_index)i);
-		if (port == NULL) {
-			ERROR("Failed to allocate %s port %d\n", info.name, i);
-			return B_NO_MEMORY;
-		}
-
-		if (port->IsConnected()) {
-			foundAny = true;
-			gInfo->ports[gInfo->port_count++] = port;
-		} else {
-			delete port;
-		}
-	}
-
-	return B_OK;
-}
-
-
 static status_t
 probe_ports()
 {
@@ -343,46 +259,90 @@ probe_ports()
 	bool foundLVDS = false;
 	bool foundDP = false;
 	bool foundDDI = false;
-	status_t result;
 
 	gInfo->port_count = 0;
+#if 0
+	// make sure I2C hardware controller is off (we use bit-banging)
+	if (gInfo->shared_info->device_type.Generation() >= 5) {
+		write32(INTEL_DSPCLK_GATE_D,
+			read32(INTEL_DSPCLK_GATE_D) | PCH_GMBUSUNIT_CLK_GATE_DIS);
+		read32(INTEL_DSPCLK_GATE_D);
 
-	// Check DisplayPort on older GPUs (pre-DDI)
+		write32(INTEL_GEN9_CLKGATE_DIS_4,
+			read32(INTEL_GEN9_CLKGATE_DIS_4) | BXT_GMBUSUNIT_CLK_GATE_DIS);
+		read32(INTEL_GEN9_CLKGATE_DIS_4);
+
+		write32(INTEL_GMBUS0, 0); //reset, idle
+		write32(INTEL_GMBUS4, 0); //block interrupts
+	}
+#endif
+
+	// Display Port
 	if (!gInfo->shared_info->device_type.HasDDI()) {
-		PortProbeInfo dpInfo = {
-			INTEL_PORT_A, INTEL_PORT_D,
-			"DisplayPort", CreateDisplayPort
-		};
-		result = _ProbePortRange(dpInfo, foundDP);
-		if (result != B_OK)
-			return result;
+		for (int i = INTEL_PORT_A; i <= INTEL_PORT_D; i++) {
+			TRACE("Probing DisplayPort %d\n", i);
+			Port* displayPort = new(std::nothrow) DisplayPort((port_index)i);
+			if (displayPort == NULL)
+				return B_NO_MEMORY;
+
+			if (displayPort->IsConnected()) {
+				foundDP = true;
+				gInfo->ports[gInfo->port_count++] = displayPort;
+			} else
+				delete displayPort;
+		}
 	}
 
-	// Check Digital Display Interface on newer GPUs
+	// Digital Display Interface (for DP, HDMI, DVI and eDP)
 	if (gInfo->shared_info->device_type.HasDDI()) {
-		port_index maxPort = INTEL_PORT_F;
+		int maxPort = INTEL_PORT_F;
 		if (gInfo->shared_info->device_type.Generation() >= 12)
 			maxPort = INTEL_PORT_G;
+		for (int i = INTEL_PORT_A; i <= maxPort; i++) {
+			TRACE("Probing DDI %d\n", i);
 
-		PortProbeInfo ddiInfo = {
-			INTEL_PORT_A, maxPort,
-			"DDI", CreateDDIPort
-		};
-		result = _ProbePortRange(ddiInfo, foundDDI);
-		if (result != B_OK)
-			return result;
+			Port* ddiPort
+				= new(std::nothrow) DigitalDisplayInterface((port_index)i);
+
+			if (ddiPort == NULL)
+				return B_NO_MEMORY;
+
+			if (ddiPort->IsConnected()) {
+				foundDDI = true;
+				gInfo->ports[gInfo->port_count++] = ddiPort;
+			} else
+				delete ddiPort;
+		}
 	}
 
-	// Check HDMI ports (only if no DDI, skip already claimed ports)
+#if 0
+	// never execute this as the 'standard' DisplayPort class called above already handles it.
+	if (!gInfo->shared_info->device_type.HasDDI()) {
+		// Ensure DP_A isn't already taken
+		TRACE("Probing eDP\n");
+		if (!has_connected_port((port_index)INTEL_PORT_A, INTEL_PORT_TYPE_ANY)) {
+			// also always try eDP, it'll also just fail if not applicable
+			Port* eDPPort = new(std::nothrow) EmbeddedDisplayPort();
+			if (eDPPort == NULL)
+				return B_NO_MEMORY;
+			if (eDPPort->IsConnected())
+				gInfo->ports[gInfo->port_count++] = eDPPort;
+			else
+				delete eDPPort;
+		}
+	}
+#endif
+
 	if (!gInfo->shared_info->device_type.HasDDI()) {
 		for (int i = INTEL_PORT_B; i <= INTEL_PORT_D; i++) {
+			TRACE("Probing HDMI %d\n", i);
 			if (has_connected_port((port_index)i, INTEL_PORT_TYPE_ANY)) {
-				TRACE("Port %d already claimed\n", i);
+				// Ensure port not already claimed by something like DDI
+				TRACE("Port already claimed\n");
 				continue;
 			}
 
-			TRACE("Probing HDMI %d\n", i);
-			Port* hdmiPort = CreateHDMIPort((port_index)i);
+			Port* hdmiPort = new(std::nothrow) HDMIPort((port_index)i);
 			if (hdmiPort == NULL)
 				return B_NO_MEMORY;
 
@@ -393,55 +353,52 @@ probe_ports()
 		}
 	}
 
-	// Check LVDS panel (only on non-DDI chipsets)
+	// always try the LVDS port when chipset supports it, it'll simply fail if not applicable
 	if (!gInfo->shared_info->device_type.HasDDI()) {
 		TRACE("Probing LVDS\n");
-		Port* lvdsPort = CreateLVDS();
+		Port* lvdsPort = new(std::nothrow) LVDSPort();
 		if (lvdsPort == NULL)
 			return B_NO_MEMORY;
-
 		if (lvdsPort->IsConnected()) {
 			foundLVDS = true;
 			gInfo->ports[gInfo->port_count++] = lvdsPort;
 			gInfo->head_mode |= HEAD_MODE_LVDS_PANEL;
 			gInfo->head_mode |= HEAD_MODE_B_DIGITAL;
-		} else {
+		} else
 			delete lvdsPort;
-		}
 	}
 
-	// Check DVI fallback (if no other digital ports found)
 	if (!gInfo->shared_info->device_type.HasDDI()) {
 		if (!has_connected_port(INTEL_PORT_ANY, INTEL_PORT_TYPE_ANY)) {
-			TRACE("Probing DVI fallback\n");
-			PortProbeInfo dviInfo = {
-				INTEL_PORT_B, INTEL_PORT_C,
-				"DVI", CreateDVIPort
-			};
-			bool foundDVI = false;
-			result = _ProbePortRange(dviInfo, foundDVI);
-			if (result != B_OK)
-				return result;
+			TRACE("Probing DVI\n");
+			// there's neither DisplayPort nor HDMI so far, assume DVI B
+			for (port_index index = INTEL_PORT_B; index <= INTEL_PORT_C;
+					index = (port_index)(index + 1)) {
+				Port* dviPort = new(std::nothrow) DigitalPort(index, "DVI");
+				if (dviPort == NULL)
+					return B_NO_MEMORY;
 
-			if (foundDVI)
-				gInfo->head_mode |= HEAD_MODE_B_DIGITAL;
+				if (dviPort->IsConnected()) {
+					gInfo->ports[gInfo->port_count++] = dviPort;
+					gInfo->head_mode |= HEAD_MODE_B_DIGITAL;
+				} else
+					delete dviPort;
+			}
 		}
 	}
 
-	// Check analog VGA (Gen <= 8 with internal CRT support)
+	// then finally always try the analog port when chipsets supports it
 	if (gInfo->shared_info->device_type.Generation() <= 8
 		&& gInfo->shared_info->internal_crt_support) {
 		TRACE("Probing Analog\n");
-		Port* analogPort = CreateAnalog();
+		Port* analogPort = new(std::nothrow) AnalogPort();
 		if (analogPort == NULL)
 			return B_NO_MEMORY;
-
 		if (analogPort->IsConnected()) {
 			gInfo->ports[gInfo->port_count++] = analogPort;
 			gInfo->head_mode |= HEAD_MODE_A_ANALOG;
-		} else {
+		} else
 			delete analogPort;
-		}
 	}
 
 	if (gInfo->port_count == 0)
@@ -651,8 +608,11 @@ intel_get_accelerant_device_info(accelerant_device_info* info)
 
 	DeviceType* type = &gInfo->shared_info->device_type;
 
-	// Gen 6+ naming (removed Gen < 6: INTEL_FAMILY_8xx, INTEL_FAMILY_9xx)
-	if (type->InFamily(INTEL_FAMILY_SOC0))
+	if (type->InFamily(INTEL_FAMILY_8xx))
+		strcpy(info->name, "Intel Extreme");
+	else if (type->InFamily(INTEL_FAMILY_9xx))
+		strcpy(info->name, "Intel GMA");
+	else if (type->InFamily(INTEL_FAMILY_SOC0))
 		strcpy(info->name, "Intel Atom");
 	else if (type->InFamily(INTEL_FAMILY_SER5))
 		strcpy(info->name, "Intel HD/Iris");

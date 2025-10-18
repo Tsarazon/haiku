@@ -10,13 +10,9 @@
  *		John Scipione, jscipione@gmail.com
  */
 
-
 //!	Accelerant based HWInterface implementation
 
-
 #include "AccelerantHWInterface.h"
-
-#include <new>
 
 #include <dirent.h>
 #include <edid.h>
@@ -33,6 +29,7 @@
 #include <unistd.h>
 
 #include <Accelerant.h>
+#include <Autolock.h>
 #include <Cursor.h>
 #include <Directory.h>
 #include <FindDirectory.h>
@@ -50,9 +47,7 @@
 #include "ServerProtocol.h"
 #include "SystemPalette.h"
 
-
-using std::nothrow;
-
+#include <algorithm>
 
 #ifdef DEBUG_DRIVER_MODULE
 #	include <stdio.h>
@@ -62,34 +57,23 @@ using std::nothrow;
 #endif
 
 
-const int32 kDefaultParamsCount = 64;
+namespace {
+	bool use_fail_safe_video_mode() {
+		char buffer[B_FILE_NAME_LENGTH];
+		size_t size = sizeof(buffer);
 
-
-bool
-operator==(const display_mode& a, const display_mode& b)
-{
-	return memcmp(&a, &b, sizeof(display_mode)) == 0;
-}
-
-
-bool
-use_fail_safe_video_mode()
-{
-	char buffer[B_FILE_NAME_LENGTH];
-	size_t size = sizeof(buffer);
-
-	status_t status = _kern_get_safemode_option(
-		B_SAFEMODE_FAIL_SAFE_VIDEO_MODE, buffer, &size);
-	if (status == B_OK) {
-		if (!strncasecmp(buffer, "true", size)
-			|| !strncasecmp(buffer, "yes", size)
-			|| !strncasecmp(buffer, "on", size)
-			|| !strncasecmp(buffer, "enabled", size)) {
-			return true;
+		status_t status = _kern_get_safemode_option(
+			B_SAFEMODE_FAIL_SAFE_VIDEO_MODE, buffer, &size);
+		if (status == B_OK) {
+			if (!strncasecmp(buffer, "true", size)
+				|| !strncasecmp(buffer, "yes", size)
+				|| !strncasecmp(buffer, "on", size)
+				|| !strncasecmp(buffer, "enabled", size)) {
+				return true;
+			}
 		}
+		return false;
 	}
-
-	return false;
 }
 
 
@@ -101,130 +85,103 @@ AccelerantHWInterface::AccelerantHWInterface()
 	HWInterface(),
 	fCardFD(-1),
 	fAccelerantImage(-1),
-	fAccelerantHook(NULL),
-	fEngineToken(NULL),
+	fAccelerantHook(nullptr),
+	fEngineToken(nullptr),
 	fSyncToken(),
-
-	// required hooks
-	fAccGetModeCount(NULL),
-	fAccGetModeList(NULL),
-	fAccGetFrameBufferConfig(NULL),
-	fAccSetDisplayMode(NULL),
-	fAccGetDisplayMode(NULL),
-	fAccGetPixelClockLimits(NULL),
-
-	// optional accelerant hooks
-	fAccGetTimingConstraints(NULL),
-	fAccProposeDisplayMode(NULL),
-	fAccSetCursorShape(NULL),
-	fAccSetCursorBitmap(NULL),
-	fAccMoveCursor(NULL),
-	fAccShowCursor(NULL),
-
-	// dpms hooks
-	fAccDPMSCapabilities(NULL),
-	fAccDPMSMode(NULL),
-	fAccSetDPMSMode(NULL),
-
-	// brightness hooks
-	fAccSetBrightness(NULL),
-	fAccGetBrightness(NULL),
-
-	// overlay hooks
-	fAccOverlayCount(NULL),
-	fAccOverlaySupportedSpaces(NULL),
-	fAccOverlaySupportedFeatures(NULL),
-	fAccAllocateOverlayBuffer(NULL),
-	fAccReleaseOverlayBuffer(NULL),
-	fAccGetOverlayConstraints(NULL),
-	fAccAllocateOverlay(NULL),
-	fAccReleaseOverlay(NULL),
-	fAccConfigureOverlay(NULL),
-
+	fAccGetModeCount(nullptr),
+	fAccGetModeList(nullptr),
+	fAccGetFrameBufferConfig(nullptr),
+	fAccSetDisplayMode(nullptr),
+	fAccGetDisplayMode(nullptr),
+	fAccGetPixelClockLimits(nullptr),
+	fAccGetTimingConstraints(nullptr),
+	fAccProposeDisplayMode(nullptr),
+	fAccGetPreferredDisplayMode(nullptr),
+	fAccGetMonitorInfo(nullptr),
+	fAccGetEDIDInfo(nullptr),
+	fAccSetCursorShape(nullptr),
+	fAccSetCursorBitmap(nullptr),
+	fAccMoveCursor(nullptr),
+	fAccShowCursor(nullptr),
+	fAccDPMSCapabilities(nullptr),
+	fAccDPMSMode(nullptr),
+	fAccSetDPMSMode(nullptr),
+	fAccSetBrightness(nullptr),
+	fAccGetBrightness(nullptr),
+	fAccOverlaySupportedSpaces(nullptr),
+	fAccOverlaySupportedFeatures(nullptr),
+	fAccAllocateOverlayBuffer(nullptr),
+	fAccReleaseOverlayBuffer(nullptr),
+	fAccGetOverlayConstraints(nullptr),
+	fAccAllocateOverlay(nullptr),
+	fAccReleaseOverlay(nullptr),
+	fAccConfigureOverlay(nullptr),
 	fModeCount(0),
-	fModeList(NULL),
-
-	fBackBuffer(NULL),
-	fFrontBuffer(new (nothrow) AccelerantBuffer()),
-
+	fModeList(nullptr),
+	fBackBuffer(nullptr),
+	fFrontBuffer(new AccelerantBuffer()),
+	fLastOverlayColorSpace(B_NO_COLOR_SPACE),
 	fInitialModeSwitch(true),
-
+	fFrameBufferConfigValid(false),
 	fRetraceSemaphore(-1),
-
-	fRectParams(new (nothrow) fill_rect_params[kDefaultParamsCount]),
+	fParamsLock("accelerant params"),
+	fRectParams(new fill_rect_params[kDefaultParamsCount]),
 	fRectParamsCount(kDefaultParamsCount),
-	fBlitParams(new (nothrow) blit_params[kDefaultParamsCount]),
+	fBlitParams(new blit_params[kDefaultParamsCount]),
 	fBlitParamsCount(kDefaultParamsCount)
 {
 	fDisplayMode.virtual_width = 0;
 	fDisplayMode.virtual_height = 0;
 	fDisplayMode.space = B_RGB32;
 
-	// NOTE: I have no clue what I'm doing here.
-	//fSyncToken.counter = 0;
-	//fSyncToken.engine_id = 0;
 	memset(&fSyncToken, 0, sizeof(sync_token));
 }
 
 
 AccelerantHWInterface::~AccelerantHWInterface()
 {
-	delete[] fRectParams;
-	delete[] fBlitParams;
-
-	delete[] fModeList;
 }
 
 
-/*!	Opens the first available graphics device and initializes it.
-
-	\return B_OK on success or an appropriate error message on failure.
-*/
 status_t
 AccelerantHWInterface::Initialize()
 {
 	status_t ret = HWInterface::Initialize();
+	if (ret < B_OK)
+		return ret;
 
-	if (!fRectParams || !fBlitParams)
-		return B_NO_MEMORY;
-
-	if (ret >= B_OK) {
-		for (int32 i = 0; fCardFD != B_ENTRY_NOT_FOUND; i++) {
-			fCardFD = _OpenGraphicsDevice(i);
-			if (fCardFD < 0) {
-				ATRACE(("Failed to open graphics device\n"));
-				continue;
-			}
-
-			if (_OpenAccelerant(fCardFD) == B_OK)
-				break;
-
-			close(fCardFD);
-			// _OpenAccelerant() failed, try to open next graphics card
+	for (int32 i = 0; fCardFD != B_ENTRY_NOT_FOUND; i++) {
+		fCardFD = _OpenGraphicsDevice(i);
+		if (fCardFD < 0) {
+			ATRACE(("Failed to open graphics device\n"));
+			continue;
 		}
 
-		return fCardFD >= 0 ? B_OK : fCardFD;
+		if (_OpenAccelerant(fCardFD) == B_OK)
+			break;
+
+		close(fCardFD);
 	}
-	return ret;
+
+	return fCardFD >= 0 ? B_OK : fCardFD;
 }
 
 
-/*!	Proceeds with a recursive scan, avoiding vesa and framebuffer devices.
-
-
-	\return Whether a device path matching the \a deviceNumber is found.
-*/
 bool
-AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, int &count,
-	char *_path)
+AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, 
+	int& count, char* _path)
 {
 	ATRACE(("_RecursiveScan directory: %s\n", directory));
 
 	BEntry entry;
 	BDirectory dir(directory);
+	
 	while (dir.GetNextEntry(&entry) == B_OK) {
 		BPath path;
 		entry.GetPath(&path);
+		
+		// TODO: We do not need to avoid the "vesa" or "framebuffer" drivers 
+		// this way once they been ported to the new driver architecture
 		if (!strcmp(path.Path(), "/dev/graphics/vesa")
 			|| !strcmp(path.Path(), "/dev/graphics/framebuffer")) {
 			continue;
@@ -235,7 +192,7 @@ AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, i
 				return true;
 		} else {
 			if (count == deviceNumber) {
-				strlcpy(_path, path.Path(), PATH_MAX);
+				strlcpy(_path, path.Path(), kMaxPathLength);
 				return true;
 			}
 			count++;
@@ -245,27 +202,14 @@ AccelerantHWInterface::_RecursiveScan(const char* directory, int deviceNumber, i
 }
 
 
-/*!	Opens a graphics device for read-write access.
-
-	The \a deviceNumber is relative to the number of graphics devices that can
-	be opened. One represents the first card that can be opened (not necessarily
-	the first one listed in the directory).
-
-	Graphics drivers must be able to be opened more than once, so we really get
-	the first working entry.
-
-	\param deviceNumber Number identifying which graphics card to open
-	       (1 for first card).
-
-	\return The file descriptor of the opened graphics device.
-*/
 int
 AccelerantHWInterface::_OpenGraphicsDevice(int deviceNumber)
 {
 	int device = -1;
 	int count = 0;
+	
 	if (!use_fail_safe_video_mode()) {
-		char path[PATH_MAX];
+		char path[kMaxPathLength];
 		if (_RecursiveScan("/dev/graphics/", deviceNumber, count, path))
 			device = open(path, B_READ_WRITE);
 	}
@@ -274,7 +218,6 @@ AccelerantHWInterface::_OpenGraphicsDevice(int deviceNumber)
 	if (device == -1 && count < deviceNumber) {
 		device = open("/dev/graphics/vesa", B_READ_WRITE);
 		if (device > 0) {
-			// store the device, so that we can access the planar blitter
 			fVGADevice = device;
 		} else {
 			device = open("/dev/graphics/framebuffer", B_READ_WRITE);
@@ -291,7 +234,7 @@ AccelerantHWInterface::_OpenGraphicsDevice(int deviceNumber)
 status_t
 AccelerantHWInterface::_OpenAccelerant(int device)
 {
-	char signature[1024];
+	char signature[kSignatureLength];
 	if (ioctl(device, B_GET_ACCELERANT_SIGNATURE,
 			&signature, sizeof(signature)) != B_OK) {
 		return B_ERROR;
@@ -306,6 +249,7 @@ AccelerantHWInterface::_OpenAccelerant(int device)
 	BStringList addOnPaths;
 	BPathFinder::FindPaths(B_FIND_PATH_ADD_ONS_DIRECTORY, leafPath.String(),
 		addOnPaths);
+	
 	int32 count = addOnPaths.CountStrings();
 	for (int32 i = 0; i < count; i++) {
 		const char* path = addOnPaths.StringAt(i).String();
@@ -325,9 +269,8 @@ AccelerantHWInterface::_OpenAccelerant(int device)
 				return B_ERROR;
 			}
 
-			init_accelerant initAccelerant;
-			initAccelerant = (init_accelerant)fAccelerantHook(
-				B_INIT_ACCELERANT, NULL);
+			init_accelerant initAccelerant = (init_accelerant)fAccelerantHook(
+				B_INIT_ACCELERANT, nullptr);
 			if (!initAccelerant || initAccelerant(device) != B_OK) {
 				ATRACE(("InitAccelerant unsuccessful\n"));
 				unload_add_on(fAccelerantImage);
@@ -347,8 +290,8 @@ AccelerantHWInterface::_OpenAccelerant(int device)
 			signature);
 
 		uninit_accelerant uninitAccelerant = (uninit_accelerant)
-			fAccelerantHook(B_UNINIT_ACCELERANT, NULL);
-		if (uninitAccelerant != NULL)
+			fAccelerantHook(B_UNINIT_ACCELERANT, nullptr);
+		if (uninitAccelerant != nullptr)
 			uninitAccelerant();
 
 		unload_add_on(fAccelerantImage);
@@ -363,51 +306,54 @@ status_t
 AccelerantHWInterface::_SetupDefaultHooks()
 {
 	// required
-	fAccGetModeCount
-		= (accelerant_mode_count)fAccelerantHook(B_ACCELERANT_MODE_COUNT, NULL);
-	fAccGetModeList = (get_mode_list)fAccelerantHook(B_GET_MODE_LIST, NULL);
+	fAccGetModeCount = 
+		(accelerant_mode_count)fAccelerantHook(B_ACCELERANT_MODE_COUNT, nullptr);
+	fAccGetModeList = (get_mode_list)fAccelerantHook(B_GET_MODE_LIST, nullptr);
 	fAccGetFrameBufferConfig = (get_frame_buffer_config)fAccelerantHook(
-		B_GET_FRAME_BUFFER_CONFIG, NULL);
-	fAccSetDisplayMode
-		= (set_display_mode)fAccelerantHook(B_SET_DISPLAY_MODE, NULL);
-	fAccGetDisplayMode
-		= (get_display_mode)fAccelerantHook(B_GET_DISPLAY_MODE, NULL);
+		B_GET_FRAME_BUFFER_CONFIG, nullptr);
+	fAccSetDisplayMode = 
+		(set_display_mode)fAccelerantHook(B_SET_DISPLAY_MODE, nullptr);
+	fAccGetDisplayMode = 
+		(get_display_mode)fAccelerantHook(B_GET_DISPLAY_MODE, nullptr);
 	fAccGetPixelClockLimits = (get_pixel_clock_limits)fAccelerantHook(
-		B_GET_PIXEL_CLOCK_LIMITS, NULL);
+		B_GET_PIXEL_CLOCK_LIMITS, nullptr);
 
 	if (!fAccGetFrameBufferConfig || !fAccGetModeCount || !fAccGetModeList
-			|| !fAccSetDisplayMode || !fAccGetDisplayMode || !fAccGetPixelClockLimits) {
+			|| !fAccSetDisplayMode || !fAccGetDisplayMode 
+			|| !fAccGetPixelClockLimits) {
 		return B_ERROR;
 	}
 
 	// optional
 	fAccGetTimingConstraints = (get_timing_constraints)fAccelerantHook(
-		B_GET_TIMING_CONSTRAINTS, NULL);
+		B_GET_TIMING_CONSTRAINTS, nullptr);
 	fAccProposeDisplayMode = (propose_display_mode)fAccelerantHook(
-		B_PROPOSE_DISPLAY_MODE, NULL);
+		B_PROPOSE_DISPLAY_MODE, nullptr);
 	fAccGetPreferredDisplayMode = (get_preferred_display_mode)fAccelerantHook(
-		B_GET_PREFERRED_DISPLAY_MODE, NULL);
-	fAccGetMonitorInfo
-		= (get_monitor_info)fAccelerantHook(B_GET_MONITOR_INFO, NULL);
-	fAccGetEDIDInfo = (get_edid_info)fAccelerantHook(B_GET_EDID_INFO, NULL);
+		B_GET_PREFERRED_DISPLAY_MODE, nullptr);
+	fAccGetMonitorInfo = 
+		(get_monitor_info)fAccelerantHook(B_GET_MONITOR_INFO, nullptr);
+	fAccGetEDIDInfo = (get_edid_info)fAccelerantHook(B_GET_EDID_INFO, nullptr);
 
 	// cursor
-	fAccSetCursorShape
-		= (set_cursor_shape)fAccelerantHook(B_SET_CURSOR_SHAPE, NULL);
-	fAccSetCursorBitmap
-		= (set_cursor_bitmap)fAccelerantHook(B_SET_CURSOR_BITMAP, NULL);
-	fAccMoveCursor = (move_cursor)fAccelerantHook(B_MOVE_CURSOR, NULL);
-	fAccShowCursor = (show_cursor)fAccelerantHook(B_SHOW_CURSOR, NULL);
+	fAccSetCursorShape = 
+		(set_cursor_shape)fAccelerantHook(B_SET_CURSOR_SHAPE, nullptr);
+	fAccSetCursorBitmap = 
+		(set_cursor_bitmap)fAccelerantHook(B_SET_CURSOR_BITMAP, nullptr);
+	fAccMoveCursor = (move_cursor)fAccelerantHook(B_MOVE_CURSOR, nullptr);
+	fAccShowCursor = (show_cursor)fAccelerantHook(B_SHOW_CURSOR, nullptr);
 
 	// dpms
-	fAccDPMSCapabilities
-		= (dpms_capabilities)fAccelerantHook(B_DPMS_CAPABILITIES, NULL);
-	fAccDPMSMode = (dpms_mode)fAccelerantHook(B_DPMS_MODE, NULL);
-	fAccSetDPMSMode = (set_dpms_mode)fAccelerantHook(B_SET_DPMS_MODE, NULL);
+	fAccDPMSCapabilities = 
+		(dpms_capabilities)fAccelerantHook(B_DPMS_CAPABILITIES, nullptr);
+	fAccDPMSMode = (dpms_mode)fAccelerantHook(B_DPMS_MODE, nullptr);
+	fAccSetDPMSMode = (set_dpms_mode)fAccelerantHook(B_SET_DPMS_MODE, nullptr);
 
 	// brightness
-	fAccGetBrightness = (get_brightness)fAccelerantHook(B_GET_BRIGHTNESS, NULL);
-	fAccSetBrightness = (set_brightness)fAccelerantHook(B_SET_BRIGHTNESS, NULL);
+	fAccGetBrightness = 
+		(get_brightness)fAccelerantHook(B_GET_BRIGHTNESS, nullptr);
+	fAccSetBrightness = 
+		(set_brightness)fAccelerantHook(B_SET_BRIGHTNESS, nullptr);
 
 	return B_OK;
 }
@@ -417,36 +363,35 @@ void
 AccelerantHWInterface::_UpdateHooksAfterModeChange()
 {
 	// overlay
-	fAccOverlayCount = (overlay_count)fAccelerantHook(B_OVERLAY_COUNT, NULL);
 	fAccOverlaySupportedSpaces = (overlay_supported_spaces)fAccelerantHook(
-		B_OVERLAY_SUPPORTED_SPACES, NULL);
+		B_OVERLAY_SUPPORTED_SPACES, nullptr);
 	fAccOverlaySupportedFeatures = (overlay_supported_features)fAccelerantHook(
-		B_OVERLAY_SUPPORTED_FEATURES, NULL);
+		B_OVERLAY_SUPPORTED_FEATURES, nullptr);
 	fAccAllocateOverlayBuffer = (allocate_overlay_buffer)fAccelerantHook(
-		B_ALLOCATE_OVERLAY_BUFFER, NULL);
+		B_ALLOCATE_OVERLAY_BUFFER, nullptr);
 	fAccReleaseOverlayBuffer = (release_overlay_buffer)fAccelerantHook(
-		B_RELEASE_OVERLAY_BUFFER, NULL);
+		B_RELEASE_OVERLAY_BUFFER, nullptr);
 	fAccGetOverlayConstraints = (get_overlay_constraints)fAccelerantHook(
-		B_GET_OVERLAY_CONSTRAINTS, NULL);
-	fAccAllocateOverlay
-		= (allocate_overlay)fAccelerantHook(B_ALLOCATE_OVERLAY, NULL);
-	fAccReleaseOverlay
-		= (release_overlay)fAccelerantHook(B_RELEASE_OVERLAY, NULL);
-	fAccConfigureOverlay
-		= (configure_overlay)fAccelerantHook(B_CONFIGURE_OVERLAY, NULL);
+		B_GET_OVERLAY_CONSTRAINTS, nullptr);
+	fAccAllocateOverlay = 
+		(allocate_overlay)fAccelerantHook(B_ALLOCATE_OVERLAY, nullptr);
+	fAccReleaseOverlay = 
+		(release_overlay)fAccelerantHook(B_RELEASE_OVERLAY, nullptr);
+	fAccConfigureOverlay = 
+		(configure_overlay)fAccelerantHook(B_CONFIGURE_OVERLAY, nullptr);
 }
 
 
 status_t
 AccelerantHWInterface::Shutdown()
 {
-	if (fAccelerantHook != NULL) {
-		uninit_accelerant uninitAccelerant
-			= (uninit_accelerant)fAccelerantHook(B_UNINIT_ACCELERANT, NULL);
-		if (uninitAccelerant != NULL)
+	if (fAccelerantHook != nullptr) {
+		uninit_accelerant uninitAccelerant = 
+			(uninit_accelerant)fAccelerantHook(B_UNINIT_ACCELERANT, nullptr);
+		if (uninitAccelerant != nullptr)
 			uninitAccelerant();
 
-		fAccelerantHook = NULL;
+		fAccelerantHook = nullptr;
 	}
 
 	if (fAccelerantImage >= 0) {
@@ -463,36 +408,66 @@ AccelerantHWInterface::Shutdown()
 }
 
 
-/*!	Finds the mode in the mode list that is closest to the mode specified.
-	As long as the mode list is not empty, this method will always succeed.
-*/
+bool
+AccelerantHWInterface::_CompareModes(const display_mode& a, 
+	const display_mode& b) const
+{
+	return a.virtual_width == b.virtual_width
+		&& a.virtual_height == b.virtual_height
+		&& a.space == b.space
+		&& a.timing.pixel_clock == b.timing.pixel_clock
+		&& a.timing.h_display == b.timing.h_display
+		&& a.timing.v_display == b.timing.v_display;
+}
+
+
+bool
+AccelerantHWInterface::_IsValidMode(const display_mode& mode) const
+{
+	// Basic sanity checks
+	return mode.virtual_width > 0 
+		&& mode.virtual_height > 0
+		&& mode.virtual_width <= 32768
+		&& mode.virtual_height <= 32768
+		&& mode.space != B_NO_COLOR_SPACE;
+}
+
+
 status_t
 AccelerantHWInterface::_FindBestMode(const display_mode& compareMode,
-	float compareAspectRatio, display_mode& modeFound, int32 *_diff) const
+	float compareAspectRatio, display_mode& modeFound, int32* _diff) const
 {
-	int32 bestDiff = 0;
+	int32 bestDiff = INT_MAX;
 	int32 bestIndex = -1;
+	
 	for (int32 i = 0; i < fModeCount; i++) {
-		display_mode& mode = fModeList[i];
+		const display_mode& mode = fModeList[i];
 		float aspectRatio = 0;
 
 		if (compareAspectRatio != 0 && mode.timing.v_display != 0)
-			aspectRatio = mode.timing.h_display / mode.timing.v_display;
+			aspectRatio = static_cast<float>(mode.timing.h_display) 
+				/ mode.timing.v_display;
 
-		// compute some random equality score
-		// TODO: check if these scores make sense
-		int32 diff
-			= 1000 * abs(mode.timing.h_display - compareMode.timing.h_display)
-			+ 1000 * abs(mode.timing.v_display - compareMode.timing.v_display)
-			+ abs(mode.timing.h_total * mode.timing.v_total
-					- compareMode.timing.h_total * compareMode.timing.v_total)
-				/ 100
-			+ abs((int)(mode.timing.pixel_clock - compareMode.timing.pixel_clock))
-				/ 100
-			+ (int32)(500 * fabs(aspectRatio - compareAspectRatio))
-			+ 100 * abs((int)(mode.space - compareMode.space));
+		// Weighted scoring system for mode matching
+		// Priority: resolution > aspect ratio > color space > timing
+		int32 resolutionDiff = 1000 * abs(mode.timing.h_display 
+				- compareMode.timing.h_display)
+			+ 1000 * abs(mode.timing.v_display - compareMode.timing.v_display);
+		
+		int32 aspectDiff = static_cast<int32>(
+			500 * fabs(aspectRatio - compareAspectRatio));
+		
+		int32 colorSpaceDiff = 100 * abs(
+			static_cast<int>(mode.space - compareMode.space));
+		
+		int32 timingDiff = abs(mode.timing.h_total * mode.timing.v_total
+				- compareMode.timing.h_total * compareMode.timing.v_total) / 100
+			+ abs(static_cast<int>(mode.timing.pixel_clock 
+				- compareMode.timing.pixel_clock)) / 100;
 
-		if (bestIndex == -1 || diff < bestDiff) {
+		int32 diff = resolutionDiff + aspectDiff + colorSpaceDiff + timingDiff;
+
+		if (diff < bestDiff) {
 			bestDiff = diff;
 			bestIndex = i;
 		}
@@ -502,28 +477,16 @@ AccelerantHWInterface::_FindBestMode(const display_mode& compareMode,
 		return B_ERROR;
 
 	modeFound = fModeList[bestIndex];
-	if (_diff != 0)
+	if (_diff != nullptr)
 		*_diff = bestDiff;
 
 	return B_OK;
 }
 
 
-/*!	This method is used for the initial mode set only - because that one
-	should really not fail.
-
-	Basically we try to set all modes as found in the mode list the driver
-	returned, but we start with the one that best fits the originally
-	desired mode.
-
-	The mode list must have been retrieved already.
-*/
 status_t
 AccelerantHWInterface::_SetFallbackMode(display_mode& newMode) const
 {
-	// At first, we search the closest display mode from the list of
-	// supported modes - if that fails, we just take one
-
 	if (_FindBestMode(newMode, 0, newMode) == B_OK
 		&& fAccSetDisplayMode(&newMode) == B_OK) {
 		return B_OK;
@@ -532,7 +495,6 @@ AccelerantHWInterface::_SetFallbackMode(display_mode& newMode) const
 	// That failed as well, this looks like a bug in the graphics
 	// driver, but we have to try to be as forgiving as possible
 	// here - just take the first mode that works!
-
 	for (int32 i = 0; i < fModeCount; i++) {
 		newMode = fModeList[i];
 		if (fAccSetDisplayMode(&newMode) == B_OK)
@@ -545,80 +507,82 @@ AccelerantHWInterface::_SetFallbackMode(display_mode& newMode) const
 
 
 status_t
+AccelerantHWInterface::_TrySetMode(const display_mode& mode)
+{
+	display_mode newMode = mode;
+	
+	status_t status = use_fail_safe_video_mode() 
+		? B_ERROR : fAccSetDisplayMode(&newMode);
+		
+	if (status != B_OK && fInitialModeSwitch) {
+		// If this is the initial mode switch, we try a number of fallback
+		// modes first, before we have to fail
+		if (fModeList == nullptr) {
+			status = _UpdateModeList();
+			if (status != B_OK)
+				return status;
+		}
+
+		status = use_fail_safe_video_mode()
+			? B_ERROR : _SetFallbackMode(newMode);
+			
+		if (status != B_OK) {
+			// The driver doesn't allow us the mode switch - this usually
+			// means we have a driver that doesn't allow mode switches at
+			// all. All we can do now is to ask the driver which mode we can
+			// use - this is always necessary for VESA mode, for example.
+			if (fAccGetDisplayMode(&newMode) != B_OK)
+				return B_ERROR;
+
+			if (!_IsValidMode(newMode))
+				return B_BAD_DATA;
+
+			status = B_OK;
+		}
+	}
+	
+	if (status == B_OK)
+		fDisplayMode = newMode;
+		
+	return status;
+}
+
+
+status_t
 AccelerantHWInterface::SetMode(const display_mode& mode)
 {
 	AutoWriteLocker _(this);
-	// TODO: There are places this function can fail,
-	// maybe it needs to roll back changes in case of an
-	// error.
 
-	// prevent from doing the unnecessary
-	if (fModeCount > 0 && fFrontBuffer.IsSet() && fDisplayMode == mode) {
-		// TODO: better comparison of display modes
+	// Improved mode comparison
+	if (fModeCount > 0 && fFrontBuffer.IsSet() 
+		&& _CompareModes(fDisplayMode, mode)) {
 		return B_OK;
 	}
 
-	// some safety checks
-	// TODO: more of those!
+	// Enhanced mode validation
 	if (!_IsValidMode(mode))
 		return B_BAD_VALUE;
 
 	if (!fFrontBuffer.IsSet())
 		return B_NO_INIT;
 
-	// just try to set the mode - we let the graphics driver
-	// approve or deny the request, as it should know best
-
-	display_mode newMode = mode;
-
-	status_t status = B_ERROR;
-	if (!use_fail_safe_video_mode() || !fInitialModeSwitch)
-		status = fAccSetDisplayMode(&newMode);
+	status_t status = _TrySetMode(mode);
 	if (status != B_OK) {
-		ATRACE(("setting display mode failed\n"));
-		if (!fInitialModeSwitch)
-			return status;
-
-		if (fModeList == NULL) {
-			status = _UpdateModeList();
-			if (status != B_OK)
-				return status;
-		}
-
-		// If this is the initial mode switch, we try a number of fallback
-		// modes first, before we have to fail
-
-		status = use_fail_safe_video_mode()
-			? B_ERROR : _SetFallbackMode(newMode);
-		if (status != B_OK) {
-			// The driver doesn't allow us the mode switch - this usually
-			// means we have a driver that doesn't allow mode switches at
-			// all.
-			// All we can do now is to ask the driver which mode we can
-			// use - this is always necessary for VESA mode, for example.
-			if (fAccGetDisplayMode(&newMode) != B_OK)
-				return B_ERROR;
-
-			// TODO: check if the mode returned is valid!
-			if (!_IsValidMode(newMode))
-				return B_BAD_DATA;
-
-			// TODO: if the mode switch before fails as well, we must forbid
-			//	any uses of this class!
-			status = B_OK;
-		}
+		fFrameBufferConfigValid = false;
+		return status;
 	}
 
-	fDisplayMode = newMode;
 	fInitialModeSwitch = false;
 
 	// update frontbuffer
 	fFrontBuffer->SetDisplayMode(fDisplayMode);
-	if (_UpdateFrameBufferConfig() != B_OK) {
-		// TODO: if this fails, we're basically toasted - we need to handle this
-		//	differently to crashing later on!
-		return B_ERROR;
+	status = _UpdateFrameBufferConfig();
+	if (status != B_OK) {
+		fFrameBufferConfigValid = false;
+		return status;
 	}
+
+	fFrameBufferConfigValid = true;
 
 	// Update the frame buffer used by the on-screen KDL
 #ifndef HAIKU_TARGET_PLATFORM_LIBBE_TEST
@@ -642,32 +606,37 @@ AccelerantHWInterface::SetMode(const display_mode& mode)
 		// NOTE: backbuffer is always B_RGBA32, this simplifies the
 		// drawing backend implementation tremendously for the time
 		// being. The color space conversion is handled in CopyBackToFront()
-
+		
 		fBackBuffer.Unset();
 
-		fBackBuffer.SetTo(new(nothrow) MallocBuffer(
+		fBackBuffer.SetTo(new MallocBuffer(
 			fFrontBuffer->Width(), fFrontBuffer->Height()));
 
-		status = fBackBuffer.IsSet()
-			? fBackBuffer->InitCheck() : B_NO_MEMORY;
+		status = fBackBuffer.IsSet() ? fBackBuffer->InitCheck() : B_NO_MEMORY;
 		if (status < B_OK) {
 			fBackBuffer.Unset();
 			return status;
 		}
-		// clear out backbuffer, alpha is 255 this way
 		memset(fBackBuffer->Bits(), 255, fBackBuffer->BitsLength());
 	}
 
 	// update color palette configuration if necessary
-	if (fDisplayMode.space == B_CMAP8)
-		_SetSystemPalette();
-	else if (fDisplayMode.space == B_GRAY8)
-		_SetGrayscalePalette();
+	_InitializePalette();
 
 	// notify all listeners about the mode change
 	_NotifyFrameBufferChanged();
 
 	return status;
+}
+
+
+void
+AccelerantHWInterface::_InitializePalette()
+{
+	if (fDisplayMode.space == B_CMAP8)
+		_SetSystemPalette();
+	else if (fDisplayMode.space == B_GRAY8)
+		_SetGrayscalePalette();
 }
 
 
@@ -688,12 +657,11 @@ AccelerantHWInterface::_UpdateModeList()
 	if (fModeCount <= 0)
 		return B_ERROR;
 
-	delete[] fModeList;
-	fModeList = new(nothrow) display_mode[fModeCount];
+	fModeList.reset(new display_mode[fModeCount]);
 	if (!fModeList)
 		return B_NO_MEMORY;
 
-	if (fAccGetModeList(fModeList) != B_OK) {
+	if (fAccGetModeList(fModeList.get()) != B_OK) {
 		ATRACE(("unable to get mode list\n"));
 		return B_ERROR;
 	}
@@ -711,7 +679,6 @@ AccelerantHWInterface::_UpdateFrameBufferConfig()
 	}
 
 	fFrontBuffer->SetFrameBufferConfig(fFrameBufferConfig);
-
 	return B_OK;
 }
 
@@ -719,9 +686,9 @@ AccelerantHWInterface::_UpdateFrameBufferConfig()
 status_t
 AccelerantHWInterface::GetDeviceInfo(accelerant_device_info* info)
 {
-	get_accelerant_device_info GetAccelerantDeviceInfo
-		= (get_accelerant_device_info)fAccelerantHook(
-			B_GET_ACCELERANT_DEVICE_INFO, NULL);
+	get_accelerant_device_info GetAccelerantDeviceInfo = 
+		(get_accelerant_device_info)fAccelerantHook(
+			B_GET_ACCELERANT_DEVICE_INFO, nullptr);
 	if (!GetAccelerantDeviceInfo) {
 		ATRACE(("No B_GET_ACCELERANT_DEVICE_INFO hook found\n"));
 		return B_UNSUPPORTED;
@@ -734,6 +701,9 @@ AccelerantHWInterface::GetDeviceInfo(accelerant_device_info* info)
 status_t
 AccelerantHWInterface::GetFrameBufferConfig(frame_buffer_config& config)
 {
+	if (!fFrameBufferConfigValid)
+		return B_NO_INIT;
+		
 	config = fFrameBufferConfig;
 	return B_OK;
 }
@@ -744,19 +714,19 @@ AccelerantHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 {
 	AutoReadLocker _(this);
 
-	if (_count == NULL || _modes == NULL)
+	if (_count == nullptr || _modes == nullptr)
 		return B_BAD_VALUE;
 
 	status_t status = B_OK;
 
-	if (fModeList == NULL)
+	if (fModeList == nullptr)
 		status = _UpdateModeList();
 
 	if (status >= B_OK) {
-		*_modes = new(nothrow) display_mode[fModeCount];
+		*_modes = new display_mode[fModeCount];
 		if (*_modes) {
 			*_count = fModeCount;
-			memcpy(*_modes, fModeList, sizeof(display_mode) * fModeCount);
+			memcpy(*_modes, fModeList.get(), sizeof(display_mode) * fModeCount);
 		} else {
 			*_count = 0;
 			status = B_NO_MEMORY;
@@ -767,10 +737,10 @@ AccelerantHWInterface::GetModeList(display_mode** _modes, uint32* _count)
 
 
 status_t
-AccelerantHWInterface::GetPixelClockLimits(display_mode *mode, uint32* _low,
+AccelerantHWInterface::GetPixelClockLimits(display_mode* mode, uint32* _low,
 	uint32* _high)
 {
-	if (mode == NULL || _low == NULL || _high == NULL)
+	if (mode == nullptr || _low == nullptr || _high == nullptr)
 		return B_BAD_VALUE;
 
 	AutoReadLocker _(this);
@@ -782,7 +752,7 @@ status_t
 AccelerantHWInterface::GetTimingConstraints(
 	display_timing_constraints* constraints)
 {
-	if (constraints == NULL)
+	if (constraints == nullptr)
 		return B_BAD_VALUE;
 
 	AutoReadLocker _(this);
@@ -798,18 +768,17 @@ status_t
 AccelerantHWInterface::ProposeMode(display_mode* candidate,
 	const display_mode* _low, const display_mode* _high)
 {
-	if (candidate == NULL || _low == NULL || _high == NULL)
+	if (candidate == nullptr || _low == nullptr || _high == nullptr)
 		return B_BAD_VALUE;
 
 	AutoReadLocker _(this);
 
-	if (fAccProposeDisplayMode == NULL)
+	if (fAccProposeDisplayMode == nullptr)
 		return B_UNSUPPORTED;
 
 	// avoid const issues
-	display_mode high, low;
-	high = *_high;
-	low = *_low;
+	display_mode high = *_high;
+	display_mode low = *_low;
 
 	return fAccProposeDisplayMode(candidate, &low, &high);
 }
@@ -820,13 +789,13 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 {
 	status_t status = B_NOT_SUPPORTED;
 
-	if (fAccGetPreferredDisplayMode != NULL) {
+	if (fAccGetPreferredDisplayMode != nullptr) {
 		status = fAccGetPreferredDisplayMode(preferredMode);
 		if (status == B_OK)
 			return B_OK;
 	}
 
-	if (fAccGetEDIDInfo != NULL) {
+	if (fAccGetEDIDInfo != nullptr) {
 		edid1_info info;
 		uint32 version;
 		status = fAccGetEDIDInfo(&info, sizeof(info), &version);
@@ -835,7 +804,7 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 		if (version != EDID_VERSION_1)
 			return B_NOT_SUPPORTED;
 
-		if (fModeList == NULL) {
+		if (fModeList == nullptr) {
 			status = _UpdateModeList();
 			if (status != B_OK)
 				return status;
@@ -846,12 +815,12 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 		int32 bestDiff = INT_MAX;
 
 		// find preferred mode from EDID info
+		// Prioritize the first detailed timing as it's typically the preferred mode
 		for (uint32 i = 0; i < EDID1_NUM_DETAILED_MONITOR_DESC; ++i) {
 			if (info.detailed_monitor[i].monitor_desc_type
 					!= EDID1_IS_DETAILED_TIMING)
 				continue;
 
-			// construct basic mode and find it in the mode list
 			const edid1_detailed_timing& timing
 				= info.detailed_monitor[i].data.detailed_timing;
 			if (timing.h_active < 640 || timing.v_active < 350)
@@ -862,7 +831,7 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 				aspectRatio = 1.0f * timing.h_size / timing.v_size;
 
 			display_mode modeFound;
-			display_mode mode;
+			display_mode mode = {};
 
 			mode.timing.pixel_clock = timing.pixel_clock * 10;
 			mode.timing.h_display = timing.h_active;
@@ -880,8 +849,6 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 			mode.virtual_width = mode.timing.h_display;
 			mode.virtual_height = mode.timing.v_display;
 
-			// TODO: eventually ignore detailed modes for the preferred one
-			// if there are more than one usable?
 			int32 diff;
 			if (_FindBestMode(mode, aspectRatio, modeFound, &diff) == B_OK) {
 				status = B_OK;
@@ -889,6 +856,9 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 					bestMode = modeFound;
 					bestDiff = diff;
 				}
+				// Prefer the first detailed timing (typically the native resolution)
+				if (i == 0)
+					break;
 			}
 		}
 
@@ -900,18 +870,31 @@ AccelerantHWInterface::GetPreferredMode(display_mode* preferredMode)
 }
 
 
+void
+AccelerantHWInterface::_AppendMonitorName(char* destination, size_t destSize,
+	const char* source) const
+{
+	size_t currentLen = strlen(destination);
+	if (currentLen > 0 && currentLen < destSize - 2) {
+		strlcat(destination, " / ", destSize);
+		currentLen += 3;
+	}
+	strlcat(destination, source, destSize);
+}
+
+
 status_t
 AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 {
 	status_t status = B_NOT_SUPPORTED;
 
-	if (fAccGetMonitorInfo != NULL) {
+	if (fAccGetMonitorInfo != nullptr) {
 		status = fAccGetMonitorInfo(info);
 		if (status == B_OK)
 			return B_OK;
 	}
 
-	if (fAccGetEDIDInfo == NULL)
+	if (fAccGetEDIDInfo == nullptr)
 		return status;
 
 	edid1_info edid;
@@ -935,7 +918,7 @@ AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 	info->height = edid.display.v_size;
 
 	for (uint32 i = 0; i < EDID1_NUM_DETAILED_MONITOR_DESC; ++i) {
-		edid1_detailed_monitor *monitor = &edid.detailed_monitor[i];
+		edid1_detailed_monitor* monitor = &edid.detailed_monitor[i];
 
 		switch (monitor->monitor_desc_type) {
 			case EDID1_SERIAL_NUMBER:
@@ -944,15 +927,12 @@ AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 				break;
 
 			case EDID1_MONITOR_NAME:
-				// There can be several of these; in this case we'll just
-				// overwrite the previous entries
-				// TODO: we could append them as well
-				strlcpy(info->name, monitor->data.monitor_name,
-					sizeof(info->name));
+				// Append multiple monitor names if present
+				_AppendMonitorName(info->name, sizeof(info->name),
+					monitor->data.monitor_name);
 				break;
 
-			case EDID1_MONITOR_RANGES:
-			{
+			case EDID1_MONITOR_RANGES: {
 				edid1_monitor_range& range = monitor->data.monitor_range;
 
 				info->min_horizontal_frequency = range.min_h;
@@ -963,11 +943,11 @@ AccelerantHWInterface::GetMonitorInfo(monitor_info* info)
 				break;
 			}
 
-			case EDID1_IS_DETAILED_TIMING:
-			{
+			case EDID1_IS_DETAILED_TIMING: {
 				edid1_detailed_timing& timing = monitor->data.detailed_timing;
 				info->width = timing.h_size / 10.0;
 				info->height = timing.v_size / 10.0;
+				break;
 			}
 
 			default:
@@ -989,7 +969,7 @@ AccelerantHWInterface::RetraceSemaphore()
 
 	accelerant_retrace_semaphore AccelerantRetraceSemaphore =
 		(accelerant_retrace_semaphore)fAccelerantHook(
-			B_ACCELERANT_RETRACE_SEMAPHORE, NULL);
+			B_ACCELERANT_RETRACE_SEMAPHORE, nullptr);
 	if (!AccelerantRetraceSemaphore)
 		fRetraceSemaphore = B_UNSUPPORTED;
 	else
@@ -1088,11 +1068,11 @@ AccelerantHWInterface::GetDriverPath(BString& string)
 	//	is always the path name of its driver (that's the case for
 	//	all of our drivers)
 	char path[B_PATH_NAME_LENGTH];
-	get_accelerant_clone_info getCloneInfo;
-	getCloneInfo = (get_accelerant_clone_info)fAccelerantHook(
-		B_GET_ACCELERANT_CLONE_INFO, NULL);
+	get_accelerant_clone_info getCloneInfo = 
+		(get_accelerant_clone_info)fAccelerantHook(
+			B_GET_ACCELERANT_CLONE_INFO, nullptr);
 
-	if (getCloneInfo == NULL)
+	if (getCloneInfo == nullptr)
 		return B_NOT_SUPPORTED;
 
 	getCloneInfo((void*)path);
@@ -1107,14 +1087,8 @@ AccelerantHWInterface::GetDriverPath(BString& string)
 overlay_token
 AccelerantHWInterface::AcquireOverlayChannel()
 {
-	if (fAccAllocateOverlay == NULL
-		|| fAccReleaseOverlay == NULL)
-		return NULL;
-
-	// The current display mode only matters at the time we're planning on
-	// showing the overlay channel on screen - that's why we can't use
-	// the B_OVERLAY_COUNT hook.
-	// TODO: remove fAccOverlayCount if we're not going to need it at all.
+	if (fAccAllocateOverlay == nullptr || fAccReleaseOverlay == nullptr)
+		return nullptr;
 
 	return fAccAllocateOverlay();
 }
@@ -1123,7 +1097,7 @@ AccelerantHWInterface::AcquireOverlayChannel()
 void
 AccelerantHWInterface::ReleaseOverlayChannel(overlay_token token)
 {
-	if (token == NULL)
+	if (token == nullptr)
 		return;
 
 	fAccReleaseOverlay(token);
@@ -1134,9 +1108,9 @@ status_t
 AccelerantHWInterface::GetOverlayRestrictions(const Overlay* overlay,
 	overlay_restrictions* restrictions)
 {
-	if (overlay == NULL || restrictions == NULL)
+	if (overlay == nullptr || restrictions == nullptr)
 		return B_BAD_VALUE;
-	if (fAccGetOverlayConstraints == NULL)
+	if (fAccGetOverlayConstraints == nullptr)
 		return B_NOT_SUPPORTED;
 
 	overlay_constraints constraints;
@@ -1162,10 +1136,10 @@ bool
 AccelerantHWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 	color_space colorSpace)
 {
-	if (fAccOverlaySupportedSpaces == NULL
-		|| fAccGetOverlayConstraints == NULL
-		|| fAccAllocateOverlayBuffer == NULL
-		|| fAccReleaseOverlayBuffer == NULL)
+	if (fAccOverlaySupportedSpaces == nullptr
+		|| fAccGetOverlayConstraints == nullptr
+		|| fAccAllocateOverlayBuffer == nullptr
+		|| fAccReleaseOverlayBuffer == nullptr)
 		return false;
 
 	// Note: we can't really check the size of the overlay upfront - we
@@ -1176,11 +1150,11 @@ AccelerantHWInterface::CheckOverlayRestrictions(int32 width, int32 height,
 	// check color space
 
 	const uint32* spaces = fAccOverlaySupportedSpaces(&fDisplayMode);
-	if (spaces == NULL)
+	if (spaces == nullptr)
 		return false;
 
 	for (int32 i = 0; spaces[i] != 0; i++) {
-		if (spaces[i] == (uint32)colorSpace)
+		if (spaces[i] == static_cast<uint32>(colorSpace))
 			return true;
 	}
 
@@ -1192,8 +1166,8 @@ const overlay_buffer*
 AccelerantHWInterface::AllocateOverlayBuffer(int32 width, int32 height,
 	color_space space)
 {
-	if (fAccAllocateOverlayBuffer == NULL)
-		return NULL;
+	if (fAccAllocateOverlayBuffer == nullptr)
+		return nullptr;
 
 	return fAccAllocateOverlayBuffer(space, width, height);
 }
@@ -1202,7 +1176,7 @@ AccelerantHWInterface::AllocateOverlayBuffer(int32 width, int32 height,
 void
 AccelerantHWInterface::FreeOverlayBuffer(const overlay_buffer* buffer)
 {
-	if (buffer == NULL || fAccReleaseOverlayBuffer == NULL)
+	if (buffer == nullptr || fAccReleaseOverlayBuffer == nullptr)
 		return;
 
 	fAccReleaseOverlayBuffer(buffer);
@@ -1212,8 +1186,11 @@ AccelerantHWInterface::FreeOverlayBuffer(const overlay_buffer* buffer)
 void
 AccelerantHWInterface::ConfigureOverlay(Overlay* overlay)
 {
-	// TODO: this only needs to be done on mode changes!
-	overlay->SetColorSpace(fDisplayMode.space);
+	// Only update color space when display mode changes
+	if (fLastOverlayColorSpace != fDisplayMode.space) {
+		overlay->SetColorSpace(fDisplayMode.space);
+		fLastOverlayColorSpace = static_cast<color_space>(fDisplayMode.space);
+	}
 
 	fAccConfigureOverlay(overlay->OverlayToken(), overlay->OverlayBuffer(),
 		overlay->OverlayWindow(), overlay->OverlayView());
@@ -1224,7 +1201,7 @@ void
 AccelerantHWInterface::HideOverlay(Overlay* overlay)
 {
 	fAccConfigureOverlay(overlay->OverlayToken(), overlay->OverlayBuffer(),
-		NULL, NULL);
+		nullptr, nullptr);
 }
 
 
@@ -1235,25 +1212,26 @@ void
 AccelerantHWInterface::SetCursor(ServerCursor* cursor)
 {
 	// cursor should never be NULL, but let us be safe!!
-	if (cursor == NULL || LockExclusiveAccess() == false)
+	if (cursor == nullptr || LockExclusiveAccess() == false)
 		return;
 
 	bool cursorSet = false;
 
-	if (fAccSetCursorBitmap != NULL) {
+	if (fAccSetCursorBitmap != nullptr) {
 		// Bitmap cursor
 		// TODO are x and y switched for this, too?
-		uint16 xHotSpot = (uint16)cursor->GetHotSpot().x;
-		uint16 yHotSpot = (uint16)cursor->GetHotSpot().y;
+		uint16 xHotSpot = static_cast<uint16>(cursor->GetHotSpot().x);
+		uint16 yHotSpot = static_cast<uint16>(cursor->GetHotSpot().y);
 
-		uint16 width = (uint16)cursor->Bounds().Width();
-		uint16 height = (uint16)cursor->Bounds().Height();
+		uint16 width = static_cast<uint16>(cursor->Bounds().Width());
+		uint16 height = static_cast<uint16>(cursor->Bounds().Height());
 
 		// Time to talk to the accelerant!
 		cursorSet = fAccSetCursorBitmap(width, height, xHotSpot,
-			yHotSpot, cursor->ColorSpace(), (uint16)cursor->BytesPerRow(),
+			yHotSpot, cursor->ColorSpace(), 
+			static_cast<uint16>(cursor->BytesPerRow()),
 			cursor->Bits()) == B_OK;
-	} else if (cursor->CursorData() != NULL && fAccSetCursorShape != NULL) {
+	} else if (cursor->CursorData() != nullptr && fAccSetCursorShape != nullptr) {
 		// BeOS BCursor, 16x16 monochrome
 		uint8 size = cursor->CursorData()[0];
 		// CursorData()[1] is color depth (always monochrome)
@@ -1302,12 +1280,12 @@ AccelerantHWInterface::SetCursor(ServerCursor* cursor)
 			fFloatingOverlaysLock.Unlock();
 		}
 		// and we need to update our position
-		if (fAccMoveCursor != NULL)
-			fAccMoveCursor((uint16)fCursorLocation.x,
-				(uint16)fCursorLocation.y);
+		if (fAccMoveCursor != nullptr)
+			fAccMoveCursor(static_cast<uint16>(fCursorLocation.x),
+				static_cast<uint16>(fCursorLocation.y));
 	}
 
-	if (fAccShowCursor != NULL)
+	if (fAccShowCursor != nullptr)
 		fAccShowCursor(cursorSet);
 
 	UnlockExclusiveAccess();
@@ -1325,8 +1303,8 @@ AccelerantHWInterface::SetCursorVisible(bool visible)
 	HWInterface::SetCursorVisible(visible);
 
 	if (fHardwareCursorEnabled && LockExclusiveAccess()) {
-		if (fAccShowCursor != NULL)
-				fAccShowCursor(visible);
+		if (fAccShowCursor != nullptr)
+			fAccShowCursor(visible);
 		else
 			fHardwareCursorEnabled = false;
 
@@ -1341,11 +1319,11 @@ AccelerantHWInterface::MoveCursorTo(float x, float y)
 	HWInterface::MoveCursorTo(x, y);
 
 	if (fHardwareCursorEnabled && LockExclusiveAccess()) {
-		if (fAccMoveCursor != NULL)
-				fAccMoveCursor((uint16)x, (uint16)y);
+		if (fAccMoveCursor != nullptr)
+			fAccMoveCursor(static_cast<uint16>(x), static_cast<uint16>(y));
 		else {
 			fHardwareCursorEnabled = false;
-			if (fAccShowCursor != NULL)
+			if (fAccShowCursor != nullptr)
 				fAccShowCursor(false);
 		}
 
@@ -1381,7 +1359,7 @@ AccelerantHWInterface::IsDoubleBuffered() const
 void
 AccelerantHWInterface::_CopyBackToFront(/*const*/ BRegion& region)
 {
-	return HWInterface::_CopyBackToFront(region);
+	HWInterface::_CopyBackToFront(region);
 }
 
 
@@ -1397,31 +1375,30 @@ AccelerantHWInterface::_DrawCursor(IntRect area) const
 
 
 void
-AccelerantHWInterface::_RegionToRectParams(/*const*/ BRegion* region,
+AccelerantHWInterface::_RegionToRectParams(const BRegion* region,
 	uint32* count) const
 {
+	BAutolock lock(fParamsLock);
+	
 	*count = region->CountRects();
-	// TODO: locking!!
+	
 	if (fRectParamsCount < *count) {
 		fRectParamsCount = (*count / kDefaultParamsCount + 1)
 			* kDefaultParamsCount;
-		// NOTE: realloc() could be used instead...
-		fill_rect_params* params
-			= new (nothrow) fill_rect_params[fRectParamsCount];
-		if (params) {
-			delete[] fRectParams;
-			fRectParams = params;
-		} else {
-			*count = fRectParamsCount;
-		}
+		fRectParams.reset(new fill_rect_params[fRectParamsCount]);
+	}
+
+	if (!fRectParams) {
+		*count = 0;
+		return;
 	}
 
 	for (uint32 i = 0; i < *count; i++) {
 		clipping_rect r = region->RectAtInt(i);
-		fRectParams[i].left = (uint16)r.left;
-		fRectParams[i].top = (uint16)r.top;
-		fRectParams[i].right = (uint16)r.right;
-		fRectParams[i].bottom = (uint16)r.bottom;
+		fRectParams[i].left = static_cast<uint16>(r.left);
+		fRectParams[i].top = static_cast<uint16>(r.top);
+		fRectParams[i].right = static_cast<uint16>(r.right);
+		fRectParams[i].bottom = static_cast<uint16>(r.bottom);
 	}
 }
 
@@ -1449,10 +1426,9 @@ AccelerantHWInterface::_NativeColor(const rgb_color& color) const
 		case B_RGB32_BIG:
 		case B_RGBA32_BIG:
 		case B_RGB32_LITTLE:
-		case B_RGBA32_LITTLE: {
-			return (uint32)((color.alpha << 24) | (color.red << 16)
+		case B_RGBA32_LITTLE:
+			return static_cast<uint32>((color.alpha << 24) | (color.red << 16)
 				| (color.green << 8) | color.blue);
-		}
 	}
 	return 0;
 }
@@ -1462,22 +1438,23 @@ void
 AccelerantHWInterface::_SetSystemPalette()
 {
 	set_indexed_colors setIndexedColors = (set_indexed_colors)fAccelerantHook(
-		B_SET_INDEXED_COLORS, NULL);
-	if (setIndexedColors == NULL)
+		B_SET_INDEXED_COLORS, nullptr);
+	if (setIndexedColors == nullptr)
 		return;
 
 	const rgb_color* palette = SystemPalette();
-	uint8 colors[3 * 256];
+	constexpr uint32 colorCount = 256;
+	uint8 colors[3 * colorCount];
 		// the color table is an array with 3 bytes per color
 	uint32 j = 0;
 
-	for (int32 i = 0; i < 256; i++) {
+	for (uint32 i = 0; i < colorCount; i++) {
 		colors[j++] = palette[i].red;
 		colors[j++] = palette[i].green;
 		colors[j++] = palette[i].blue;
 	}
 
-	setIndexedColors(256, 0, colors, 0);
+	setIndexedColors(colorCount, 0, colors, 0);
 }
 
 
@@ -1485,30 +1462,32 @@ void
 AccelerantHWInterface::_SetGrayscalePalette()
 {
 	set_indexed_colors setIndexedColors = (set_indexed_colors)fAccelerantHook(
-		B_SET_INDEXED_COLORS, NULL);
-	if (setIndexedColors == NULL)
+		B_SET_INDEXED_COLORS, nullptr);
+	if (setIndexedColors == nullptr)
 		return;
 
-	uint8 colors[3 * 256];
+	constexpr uint32 colorCount = 256;
+	uint8 colors[3 * colorCount];
 		// the color table is an array with 3 bytes per color
 	uint32 j = 0;
 
 	if (fFrontBuffer->Width() > fFrontBuffer->BytesPerRow()) {
 		// VGA 16 color grayscale planar mode
-		for (int32 i = 0; i < 256; i++) {
-			colors[j++] = (i & 0xf) * 17;
-			colors[j++] = (i & 0xf) * 17;
-			colors[j++] = (i & 0xf) * 17;
+		for (uint32 i = 0; i < colorCount; i++) {
+			uint8 value = (i & 0xf) * 17;
+			colors[j++] = value;
+			colors[j++] = value;
+			colors[j++] = value;
 		}
 
-		setIndexedColors(256, 0, colors, 0);
+		setIndexedColors(colorCount, 0, colors, 0);
 	} else {
-		for (int32 i = 0; i < 256; i++) {
+		for (uint32 i = 0; i < colorCount; i++) {
 			colors[j++] = i;
 			colors[j++] = i;
 			colors[j++] = i;
 		}
 
-		setIndexedColors(256, 0, colors, 0);
+		setIndexedColors(colorCount, 0, colors, 0);
 	}
 }

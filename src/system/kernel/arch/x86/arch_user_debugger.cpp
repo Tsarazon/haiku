@@ -698,9 +698,9 @@ debugger_breakpoint(int argc, char** argv)
 		call_all_cpus_sync(install_breakpoints_per_cpu, NULL);
 	else
 		kprintf("Failed to %s breakpoint: %s\n", clear ? "clear" : "install",
-				strerror(error));
+			strerror(error));
 
-		return 0;
+	return 0;
 }
 
 
@@ -763,9 +763,9 @@ debugger_watchpoint(int argc, char** argv)
 		call_all_cpus_sync(install_breakpoints_per_cpu, NULL);
 	else
 		kprintf("Failed to %s watchpoint: %s\n", clear ? "clear" : "install",
-				strerror(error));
+			strerror(error));
 
-		return 0;
+	return 0;
 }
 
 

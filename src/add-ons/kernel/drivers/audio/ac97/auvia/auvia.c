@@ -37,6 +37,7 @@
  
 #include <KernelExport.h>
 #include <PCI.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include "auvia.h"

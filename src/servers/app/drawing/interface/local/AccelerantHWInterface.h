@@ -14,8 +14,11 @@
 #include "HWInterface.h"
 
 #include <AutoDeleter.h>
+#include <Locker.h>
 #include <image.h>
 #include <video_overlay.h>
+
+#include <memory>
 
 
 class AccelerantBuffer;
@@ -90,28 +93,43 @@ public:
 
 protected:
 	virtual	void				_CopyBackToFront(/*const*/ BRegion& region);
-
 	virtual	void				_DrawCursor(IntRect area) const;
 
 private:
+	static constexpr int32 kDefaultParamsCount = 64;
+	static constexpr int32 kMaxPathLength = PATH_MAX;
+	static constexpr int32 kSignatureLength = 1024;
+	static constexpr int32 kMonitorNameMaxLength = 256;
+
 			int					_OpenGraphicsDevice(int deviceNumber);
-			bool				_RecursiveScan(const char* directory, int deviceNumber,
-									int& count, char* _path);
+			bool				_RecursiveScan(const char* directory, 
+									int deviceNumber, int& count, char* _path);
 			status_t			_OpenAccelerant(int device);
 			status_t			_SetupDefaultHooks();
 			void				_UpdateHooksAfterModeChange();
 			status_t			_UpdateModeList();
 			status_t			_UpdateFrameBufferConfig();
-			void				_RegionToRectParams(/*const*/ BRegion* region,
-									uint32* count) const;
-			uint32				_NativeColor(const rgb_color& color) const;
+			
+			// Mode management helpers
 			status_t			_FindBestMode(const display_mode& compareMode,
 									float compareAspectRatio,
 									display_mode& modeFound,
-									int32 *_diff = NULL) const;
+									int32* _diff = nullptr) const;
 			status_t			_SetFallbackMode(display_mode& mode) const;
+			status_t			_TrySetMode(const display_mode& mode);
+			void				_InitializePalette();
 			void				_SetSystemPalette();
 			void				_SetGrayscalePalette();
+			bool				_IsValidMode(const display_mode& mode) const;
+			bool				_CompareModes(const display_mode& a, 
+									const display_mode& b) const;
+			
+			// Helper functions
+			void				_RegionToRectParams(const BRegion* region,
+									uint32* count) const;
+			uint32				_NativeColor(const rgb_color& color) const;
+			void				_AppendMonitorName(char* destination, 
+									size_t destSize, const char* source) const;
 
 private:
 			int					fCardFD;
@@ -149,7 +167,6 @@ private:
 			get_brightness		fAccGetBrightness;
 
 			// overlay hooks
-			overlay_count				fAccOverlayCount;
 			overlay_supported_spaces	fAccOverlaySupportedSpaces;
 			overlay_supported_features	fAccOverlaySupportedFeatures;
 			allocate_overlay_buffer		fAccAllocateOverlayBuffer;
@@ -160,8 +177,8 @@ private:
 			configure_overlay			fAccConfigureOverlay;
 
 			frame_buffer_config	fFrameBufferConfig;
-			int					fModeCount;
-			display_mode*		fModeList;
+			int32				fModeCount;
+			std::unique_ptr<display_mode[]> fModeList;
 
 			ObjectDeleter<RenderingBuffer>
 								fBackBuffer;
@@ -169,13 +186,16 @@ private:
 								fFrontBuffer;
 
 			display_mode		fDisplayMode;
+			color_space			fLastOverlayColorSpace;
 			bool				fInitialModeSwitch;
+			bool				fFrameBufferConfigValid;
 
 			sem_id				fRetraceSemaphore;
 
-	mutable	fill_rect_params*	fRectParams;
+	mutable	BLocker				fParamsLock;
+	mutable	std::unique_ptr<fill_rect_params[]> fRectParams;
 	mutable	uint32				fRectParamsCount;
-	mutable	blit_params*		fBlitParams;
+	mutable	std::unique_ptr<blit_params[]> fBlitParams;
 	mutable	uint32				fBlitParamsCount;
 };
 

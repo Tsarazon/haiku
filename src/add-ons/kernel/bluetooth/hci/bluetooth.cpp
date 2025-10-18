@@ -317,7 +317,7 @@ PostACL(hci_id hciId, net_buffer* buffer)
 
 	TRACE("%s: index 0x%" B_PRIx32 " try to send bt packet of %" B_PRIu32
 		" bytes (flags 0x%" B_PRIx32 "):\n", __func__, device->index,
-		buffer->size, buffer->flags);
+		buffer->size, buffer->buffer_flags);
 
 	// TODO: ATOMIC! any other thread should stop here
 	do {
