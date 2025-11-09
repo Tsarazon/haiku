@@ -15,46 +15,146 @@
 
 #include <stdio.h>
 
-#include "DrawingModeAdd.h"
-#include "DrawingModeAlphaCC.h"
-#include "DrawingModeAlphaCO.h"
-#include "DrawingModeAlphaCOSolid.h"
-#include "DrawingModeAlphaPC.h"
-#include "DrawingModeAlphaPCSolid.h"
-#include "DrawingModeAlphaPO.h"
-#include "DrawingModeAlphaPOSolid.h"
-#include "DrawingModeBlend.h"
+// NEW: Template-based drawing mode infrastructure
+#include "DrawingModePolicy.h"
+#include "DrawingModeTemplate.h"
+
+// Migrated to templates: Add, Subtract, Blend, Min, Max, Over, Erase, Invert
+// Migrated to templates: AlphaCC, AlphaCO, AlphaPC, AlphaPO (with solid optimizations)
+
+// Not yet migrated (still using old implementation):
 #include "DrawingModeCopy.h"
 #include "DrawingModeCopySolid.h"
-#include "DrawingModeErase.h"
-#include "DrawingModeInvert.h"
-#include "DrawingModeMin.h"
-#include "DrawingModeMax.h"
-#include "DrawingModeOver.h"
-#include "DrawingModeOverSolid.h"
 #include "DrawingModeSelect.h"
-#include "DrawingModeSubtract.h"
 
-#include "DrawingModeAddSUBPIX.h"
-#include "DrawingModeAlphaCCSUBPIX.h"
-#include "DrawingModeAlphaCOSUBPIX.h"
-#include "DrawingModeAlphaCOSolidSUBPIX.h"
-#include "DrawingModeAlphaPCSUBPIX.h"
-#include "DrawingModeAlphaPOSUBPIX.h"
-#include "DrawingModeAlphaPOSolidSUBPIX.h"
-#include "DrawingModeBlendSUBPIX.h"
+// SUBPIX versions (not yet migrated):
 #include "DrawingModeCopySUBPIX.h"
 #include "DrawingModeCopySolidSUBPIX.h"
-#include "DrawingModeEraseSUBPIX.h"
-#include "DrawingModeInvertSUBPIX.h"
-#include "DrawingModeMinSUBPIX.h"
-#include "DrawingModeMaxSUBPIX.h"
-#include "DrawingModeOverSUBPIX.h"
-#include "DrawingModeOverSolidSUBPIX.h"
 #include "DrawingModeSelectSUBPIX.h"
-#include "DrawingModeSubtractSUBPIX.h"
 
 #include "PatternHandler.h"
+
+// #pragma mark - NEW: Table-driven mode dispatch infrastructure
+
+// NEW: Structure holding function pointers for a drawing mode
+struct DrawingModeEntry {
+	PixelFormat::blend_pixel_f pixel;
+	PixelFormat::blend_line hline;
+	PixelFormat::blend_solid_span solid_hspan;
+	PixelFormat::blend_solid_span solid_vspan;
+	PixelFormat::blend_color_span color_hspan;
+	PixelFormat::blend_solid_span solid_hspan_subpix;
+};
+
+// NEW: Helper to construct table entries at compile time
+template<typename Policy>
+static constexpr DrawingModeEntry MakeModeEntry() {
+	return {
+		DrawingModeImpl<Policy>::blend_pixel,
+		DrawingModeImpl<Policy>::blend_hline,
+		DrawingModeImpl<Policy>::blend_solid_hspan,
+		DrawingModeImpl<Policy>::blend_solid_vspan,
+		DrawingModeImpl<Policy>::blend_color_hspan,
+		DrawingModeImpl<Policy>::blend_solid_hspan_subpix
+	};
+}
+
+// NEW: Helper for Alpha modes (which use AlphaModeImpl template)
+template<typename Policy>
+static constexpr DrawingModeEntry MakeAlphaModeEntry() {
+	return {
+		AlphaModeImpl<Policy>::blend_pixel,
+		AlphaModeImpl<Policy>::blend_hline,
+		AlphaModeImpl<Policy>::blend_solid_hspan,
+		AlphaModeImpl<Policy>::blend_solid_vspan,
+		AlphaModeImpl<Policy>::blend_color_hspan,
+		AlphaModeImpl<Policy>::blend_solid_hspan_subpix
+	};
+}
+
+// NEW: Helper for pattern-filtered modes (Over, Invert) that use DrawingModeImpl for color_hspan
+template<typename Policy>
+static constexpr DrawingModeEntry MakePatternFilteredEntry() {
+	return {
+		PatternFilteredModeImpl<Policy>::blend_pixel,
+		PatternFilteredModeImpl<Policy>::blend_hline,
+		PatternFilteredModeImpl<Policy>::blend_solid_hspan,
+		PatternFilteredModeImpl<Policy>::blend_solid_vspan,
+		DrawingModeImpl<Policy>::blend_color_hspan,  // No pattern filtering
+		PatternFilteredModeImpl<Policy>::blend_solid_hspan_subpix
+	};
+}
+
+// NEW: Helper for solid pattern optimization (B_OP_OVER)
+template<typename Policy>
+static constexpr DrawingModeEntry MakeSolidPatternFilteredEntry() {
+	return {
+		SolidPatternFilteredModeImpl<Policy>::blend_pixel,
+		SolidPatternFilteredModeImpl<Policy>::blend_hline,
+		SolidPatternFilteredModeImpl<Policy>::blend_solid_hspan,
+		SolidPatternFilteredModeImpl<Policy>::blend_solid_vspan,
+		DrawingModeImpl<Policy>::blend_color_hspan,  // No pattern filtering
+		SolidPatternFilteredModeImpl<Policy>::blend_solid_hspan_subpix
+	};
+}
+
+// NEW: Helper for solid Alpha modes optimization (AlphaCC, AlphaCO, AlphaPC, AlphaPO)
+template<typename Policy>
+static constexpr DrawingModeEntry MakeSolidAlphaModeEntry() {
+	return {
+		SolidAlphaModeImpl<Policy>::blend_pixel,
+		SolidAlphaModeImpl<Policy>::blend_hline,
+		SolidAlphaModeImpl<Policy>::blend_solid_hspan,
+		SolidAlphaModeImpl<Policy>::blend_solid_vspan,
+		AlphaModeImpl<Policy>::blend_color_hspan,  // Use AlphaModeImpl for color_hspan
+		SolidAlphaModeImpl<Policy>::blend_solid_hspan_subpix
+	};
+}
+
+// NEW: Mode dispatch table for simple modes (will be populated incrementally)
+// Index corresponds to drawing_mode enum values
+// For now, we only populate entries for modes we're ready to migrate
+static const DrawingModeEntry MODE_TABLE[] = {
+	// B_OP_COPY = 0 - not yet migrated (uses old implementation)
+	{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr },
+	// B_OP_OVER = 1 - MIGRATED (pattern-filtered)
+	MakePatternFilteredEntry<OverPolicy>(),
+	// B_OP_ERASE = 2 - MIGRATED (pattern-filtered, special color_hspan)
+	{
+		PatternFilteredModeImpl<ErasePolicy>::blend_pixel,
+		PatternFilteredModeImpl<ErasePolicy>::blend_hline,
+		PatternFilteredModeImpl<ErasePolicy>::blend_solid_hspan,
+		PatternFilteredModeImpl<ErasePolicy>::blend_solid_vspan,
+		blend_color_hspan_erase,  // Special: uses LowColor instead of colors parameter
+		PatternFilteredModeImpl<ErasePolicy>::blend_solid_hspan_subpix
+	},
+	// B_OP_INVERT = 3 - MIGRATED (pattern-filtered)
+	MakePatternFilteredEntry<InvertPolicy>(),
+	// B_OP_ADD = 4 - READY for migration
+	MakeModeEntry<AddPolicy>(),
+	// B_OP_SUBTRACT = 5 - READY for migration
+	MakeModeEntry<SubtractPolicy>(),
+	// B_OP_BLEND = 6 - READY for migration
+	MakeModeEntry<BlendPolicy>(),
+	// B_OP_MIN = 7 - READY for migration  
+	MakeModeEntry<MinPolicy>(),
+	// B_OP_MAX = 8 - READY for migration
+	MakeModeEntry<MaxPolicy>(),
+	// B_OP_SELECT = 9 - not yet migrated
+	{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr },
+	// B_OP_ALPHA = 10 - handled separately (see alpha mode table below)
+	{ nullptr, nullptr, nullptr, nullptr, nullptr, nullptr },
+};
+
+// NEW: Alpha mode dispatch table (4 variants: CC, CO, PC, PO)
+static const DrawingModeEntry ALPHA_MODE_TABLE[] = {
+	MakeAlphaModeEntry<AlphaCCPolicy>(),  // Constant-Composite
+	MakeAlphaModeEntry<AlphaCOPolicy>(),  // Constant-Overlay
+	MakeAlphaModeEntry<AlphaPCPolicy>(),  // Pixel-Composite
+	MakeAlphaModeEntry<AlphaPOPolicy>(),  // Pixel-Overlay
+};
+
+// #pragma mark - OLD: Original blend functions (will be removed in Phase 5)
 
 // blend_pixel_empty
 void
@@ -162,38 +262,51 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 	switch (mode) {
 		// These drawing modes discard source pixels
 		// which have the current low color.
-		case B_OP_OVER:
+		case B_OP_OVER: {
+			// NEW: Use template-based implementation with solid pattern optimization
 			if (fPatternHandler->IsSolid()) {
-				fBlendPixel = blend_pixel_over_solid;
-				fBlendHLine = blend_hline_over_solid;
-				fBlendSolidHSpan = blend_solid_hspan_over_solid;
-				fBlendSolidVSpan = blend_solid_vspan_over_solid;
-				fBlendSolidHSpanSubpix = blend_solid_hspan_over_solid_subpix;
+				// Optimized version for solid patterns
+				static constexpr DrawingModeEntry solidEntry = MakeSolidPatternFilteredEntry<OverPolicy>();
+				fBlendPixel = solidEntry.pixel;
+				fBlendHLine = solidEntry.hline;
+				fBlendSolidHSpan = solidEntry.solid_hspan;
+				fBlendSolidVSpan = solidEntry.solid_vspan;
+				fBlendColorHSpan = solidEntry.color_hspan;
+				fBlendSolidHSpanSubpix = solidEntry.solid_hspan_subpix;
 			} else {
-				fBlendPixel = blend_pixel_over;
-				fBlendHLine = blend_hline_over;
-				fBlendSolidHSpanSubpix = blend_solid_hspan_over_subpix;
-				fBlendSolidHSpan = blend_solid_hspan_over;
-				fBlendSolidVSpan = blend_solid_vspan_over;
+				// Pattern version
+				const DrawingModeEntry& entry = MODE_TABLE[B_OP_OVER];
+				fBlendPixel = entry.pixel;
+				fBlendHLine = entry.hline;
+				fBlendSolidHSpan = entry.solid_hspan;
+				fBlendSolidVSpan = entry.solid_vspan;
+				fBlendColorHSpan = entry.color_hspan;
+				fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 			}
-			fBlendColorHSpan = blend_color_hspan_over;
 			break;
-		case B_OP_ERASE:
-			fBlendPixel = blend_pixel_erase;
-			fBlendHLine = blend_hline_erase;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_erase_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_erase;
-			fBlendSolidVSpan = blend_solid_vspan_erase;
-			fBlendColorHSpan = blend_color_hspan_erase;
+		}
+		case B_OP_ERASE: {
+			// NEW: Use template-based implementation
+			const DrawingModeEntry& entry = MODE_TABLE[B_OP_ERASE];
+			fBlendPixel = entry.pixel;
+			fBlendHLine = entry.hline;
+			fBlendSolidHSpan = entry.solid_hspan;
+			fBlendSolidVSpan = entry.solid_vspan;
+			fBlendColorHSpan = entry.color_hspan;
+			fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 			break;
-		case B_OP_INVERT:
-			fBlendPixel = blend_pixel_invert;
-			fBlendHLine = blend_hline_invert;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_invert_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_invert;
-			fBlendSolidVSpan = blend_solid_vspan_invert;
-			fBlendColorHSpan = blend_color_hspan_invert;
+		}
+		case B_OP_INVERT: {
+			// NEW: Use template-based implementation
+			const DrawingModeEntry& entry = MODE_TABLE[B_OP_INVERT];
+			fBlendPixel = entry.pixel;
+			fBlendHLine = entry.hline;
+			fBlendSolidHSpan = entry.solid_hspan;
+			fBlendSolidVSpan = entry.solid_vspan;
+			fBlendColorHSpan = entry.color_hspan;
+			fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 			break;
+		}
 		case B_OP_SELECT:
 			fBlendPixel = blend_pixel_select;
 			fBlendHLine = blend_hline_select;
@@ -222,46 +335,61 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 				fBlendColorHSpan = blend_color_hspan_copy;
 			}
 			break;
-		case B_OP_ADD:
-			fBlendPixel = blend_pixel_add;
-			fBlendHLine = blend_hline_add;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_add_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_add;
-			fBlendSolidVSpan = blend_solid_vspan_add;
-			fBlendColorHSpan = blend_color_hspan_add;
-			break;
-		case B_OP_SUBTRACT:
-			fBlendPixel = blend_pixel_subtract;
-			fBlendHLine = blend_hline_subtract;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_subtract_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_subtract;
-			fBlendSolidVSpan = blend_solid_vspan_subtract;
-			fBlendColorHSpan = blend_color_hspan_subtract;
-			break;
-		case B_OP_BLEND:
-			fBlendPixel = blend_pixel_blend;
-			fBlendHLine = blend_hline_blend;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_blend_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_blend;
-			fBlendSolidVSpan = blend_solid_vspan_blend;
-			fBlendColorHSpan = blend_color_hspan_blend;
-			break;
-		case B_OP_MIN:
-			fBlendPixel = blend_pixel_min;
-			fBlendHLine = blend_hline_min;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_min_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_min;
-			fBlendSolidVSpan = blend_solid_vspan_min;
-			fBlendColorHSpan = blend_color_hspan_min;
-			break;
-		case B_OP_MAX:
-			fBlendPixel = blend_pixel_max;
-			fBlendHLine = blend_hline_max;
-			fBlendSolidHSpanSubpix = blend_solid_hspan_max_subpix;
-			fBlendSolidHSpan = blend_solid_hspan_max;
-			fBlendSolidVSpan = blend_solid_vspan_max;
-			fBlendColorHSpan = blend_color_hspan_max;
-			break;
+		case B_OP_ADD: {
+		// NEW: Use template-based implementation
+		const DrawingModeEntry& entry = MODE_TABLE[B_OP_ADD];
+		fBlendPixel = entry.pixel;
+		fBlendHLine = entry.hline;
+		fBlendSolidHSpan = entry.solid_hspan;
+		fBlendSolidVSpan = entry.solid_vspan;
+		fBlendColorHSpan = entry.color_hspan;
+		fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+		break;
+	}
+		case B_OP_SUBTRACT: {
+		// NEW: Use template-based implementation
+		const DrawingModeEntry& entry = MODE_TABLE[B_OP_SUBTRACT];
+		fBlendPixel = entry.pixel;
+		fBlendHLine = entry.hline;
+		fBlendSolidHSpan = entry.solid_hspan;
+		fBlendSolidVSpan = entry.solid_vspan;
+		fBlendColorHSpan = entry.color_hspan;
+		fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+		break;
+	}
+		case B_OP_BLEND: {
+		// NEW: Use template-based implementation
+		const DrawingModeEntry& entry = MODE_TABLE[B_OP_BLEND];
+		fBlendPixel = entry.pixel;
+		fBlendHLine = entry.hline;
+		fBlendSolidHSpan = entry.solid_hspan;
+		fBlendSolidVSpan = entry.solid_vspan;
+		fBlendColorHSpan = entry.color_hspan;
+		fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+		break;
+	}
+		case B_OP_MIN: {
+		// NEW: Use template-based implementation
+		const DrawingModeEntry& entry = MODE_TABLE[B_OP_MIN];
+		fBlendPixel = entry.pixel;
+		fBlendHLine = entry.hline;
+		fBlendSolidHSpan = entry.solid_hspan;
+		fBlendSolidVSpan = entry.solid_vspan;
+		fBlendColorHSpan = entry.color_hspan;
+		fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+		break;
+	}
+		case B_OP_MAX: {
+		// NEW: Use template-based implementation
+		const DrawingModeEntry& entry = MODE_TABLE[B_OP_MAX];
+		fBlendPixel = entry.pixel;
+		fBlendHLine = entry.hline;
+		fBlendSolidHSpan = entry.solid_hspan;
+		fBlendSolidVSpan = entry.solid_vspan;
+		fBlendColorHSpan = entry.color_hspan;
+		fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+		break;
+	}
 
 		// This drawing mode is the only one considering
 		// alpha at all. In B_CONSTANT_ALPHA, the alpha
@@ -273,60 +401,93 @@ PixelFormat::SetDrawingMode(drawing_mode mode, source_alpha alphaSrcMode,
 		// four possible combinations of alpha enabled drawing.
 		case B_OP_ALPHA:
 			if (alphaSrcMode == B_CONSTANT_ALPHA) {
+				// NEW: Use template-based Alpha mode implementation with solid optimization
 				if (alphaFncMode == B_ALPHA_OVERLAY) {
+					// AlphaCO - Constant Overlay
 					if (fPatternHandler->IsSolid()) {
-						fBlendPixel = blend_pixel_alpha_co_solid;
-						fBlendHLine = blend_hline_alpha_co_solid;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_co_solid_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_co_solid;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_co_solid;
+						// Optimized version for solid patterns
+						static constexpr DrawingModeEntry solidEntry = MakeSolidAlphaModeEntry<AlphaCOPolicy>();
+						fBlendPixel = solidEntry.pixel;
+						fBlendHLine = solidEntry.hline;
+						fBlendSolidHSpan = solidEntry.solid_hspan;
+						fBlendSolidVSpan = solidEntry.solid_vspan;
+						fBlendColorHSpan = solidEntry.color_hspan;
+						fBlendSolidHSpanSubpix = solidEntry.solid_hspan_subpix;
 					} else {
-						fBlendPixel = blend_pixel_alpha_co;
-						fBlendHLine = blend_hline_alpha_co;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_co_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_co;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_co;
+						// Pattern version
+						const DrawingModeEntry& entry = ALPHA_MODE_TABLE[1];
+						fBlendPixel = entry.pixel;
+						fBlendHLine = entry.hline;
+						fBlendSolidHSpan = entry.solid_hspan;
+						fBlendSolidVSpan = entry.solid_vspan;
+						fBlendColorHSpan = entry.color_hspan;
+						fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 					}
-					fBlendColorHSpan = blend_color_hspan_alpha_co;
 				} else if (alphaFncMode == B_ALPHA_COMPOSITE) {
-					fBlendPixel = blend_pixel_alpha_cc;
-					fBlendHLine = blend_hline_alpha_cc;
-					fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_cc_subpix;
-					fBlendSolidHSpan = blend_solid_hspan_alpha_cc;
-					fBlendSolidVSpan = blend_solid_vspan_alpha_cc;
-					fBlendColorHSpan = blend_color_hspan_alpha_cc;
+					// AlphaCC - Constant Composite
+					if (fPatternHandler->IsSolid()) {
+						// Optimized version for solid patterns
+						static constexpr DrawingModeEntry solidEntry = MakeSolidAlphaModeEntry<AlphaCCPolicy>();
+						fBlendPixel = solidEntry.pixel;
+						fBlendHLine = solidEntry.hline;
+						fBlendSolidHSpan = solidEntry.solid_hspan;
+						fBlendSolidVSpan = solidEntry.solid_vspan;
+						fBlendColorHSpan = solidEntry.color_hspan;
+						fBlendSolidHSpanSubpix = solidEntry.solid_hspan_subpix;
+					} else {
+						// Pattern version
+						const DrawingModeEntry& entry = ALPHA_MODE_TABLE[0];
+						fBlendPixel = entry.pixel;
+						fBlendHLine = entry.hline;
+						fBlendSolidHSpan = entry.solid_hspan;
+						fBlendSolidVSpan = entry.solid_vspan;
+						fBlendColorHSpan = entry.color_hspan;
+						fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
+					}
 				}
 			} else if (alphaSrcMode == B_PIXEL_ALPHA){
+				// NEW: Use template-based Alpha mode implementation with solid optimization
 				if (alphaFncMode == B_ALPHA_OVERLAY) {
+					// AlphaPO - Pixel Overlay
 					if (fPatternHandler->IsSolid()) {
-						fBlendPixel = blend_pixel_alpha_po_solid;
-						fBlendHLine = blend_hline_alpha_po_solid;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_po_solid_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_po_solid;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_po_solid;
+						// Optimized version for solid patterns
+						static constexpr DrawingModeEntry solidEntry = MakeSolidAlphaModeEntry<AlphaPOPolicy>();
+						fBlendPixel = solidEntry.pixel;
+						fBlendHLine = solidEntry.hline;
+						fBlendSolidHSpan = solidEntry.solid_hspan;
+						fBlendSolidVSpan = solidEntry.solid_vspan;
+						fBlendColorHSpan = solidEntry.color_hspan;
+						fBlendSolidHSpanSubpix = solidEntry.solid_hspan_subpix;
 					} else {
-						fBlendPixel = blend_pixel_alpha_po;
-						fBlendHLine = blend_hline_alpha_po;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_po_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_po;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_po;
+						// Pattern version
+						const DrawingModeEntry& entry = ALPHA_MODE_TABLE[3];
+						fBlendPixel = entry.pixel;
+						fBlendHLine = entry.hline;
+						fBlendSolidHSpan = entry.solid_hspan;
+						fBlendSolidVSpan = entry.solid_vspan;
+						fBlendColorHSpan = entry.color_hspan;
+						fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 					}
-					fBlendColorHSpan = blend_color_hspan_alpha_po;
 				} else if (alphaFncMode == B_ALPHA_COMPOSITE) {
+					// AlphaPC - Pixel Composite
 					if (fPatternHandler->IsSolid()) {
-						fBlendPixel = blend_pixel_alpha_pc_solid;
-						fBlendHLine = blend_hline_alpha_pc_solid;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_pc_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_pc_solid;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_pc_solid;
-						fBlendColorHSpan = blend_color_hspan_alpha_pc_solid;
+						// Optimized version for solid patterns
+						static constexpr DrawingModeEntry solidEntry = MakeSolidAlphaModeEntry<AlphaPCPolicy>();
+						fBlendPixel = solidEntry.pixel;
+						fBlendHLine = solidEntry.hline;
+						fBlendSolidHSpan = solidEntry.solid_hspan;
+						fBlendSolidVSpan = solidEntry.solid_vspan;
+						fBlendColorHSpan = solidEntry.color_hspan;
+						fBlendSolidHSpanSubpix = solidEntry.solid_hspan_subpix;
 					} else {
-						fBlendPixel = blend_pixel_alpha_pc;
-						fBlendHLine = blend_hline_alpha_pc;
-						fBlendSolidHSpanSubpix = blend_solid_hspan_alpha_pc_subpix;
-						fBlendSolidHSpan = blend_solid_hspan_alpha_pc;
-						fBlendSolidVSpan = blend_solid_vspan_alpha_pc;
-						fBlendColorHSpan = blend_color_hspan_alpha_pc;
+						// Pattern version
+						const DrawingModeEntry& entry = ALPHA_MODE_TABLE[2];
+						fBlendPixel = entry.pixel;
+						fBlendHLine = entry.hline;
+						fBlendSolidHSpan = entry.solid_hspan;
+						fBlendSolidVSpan = entry.solid_vspan;
+						fBlendColorHSpan = entry.color_hspan;
+						fBlendSolidHSpanSubpix = entry.solid_hspan_subpix;
 					}
 				} else if (alphaFncMode == B_ALPHA_COMPOSITE_SOURCE_IN) {
 					SetAggCompOpAdapter<alpha_src_in>();
