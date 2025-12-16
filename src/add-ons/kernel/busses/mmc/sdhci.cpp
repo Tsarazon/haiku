@@ -131,7 +131,7 @@ SdhciBus::SdhciBus(struct registers* registers, uint8_t irq, bool poll)
 
 	// Finally, configure some useful interrupts
 	EnableInterrupts(SDHCI_INT_CMD_CMP | SDHCI_INT_CARD_REM
-		| SDHCI_INT_TRANS_CMP);
+		| SDHCI_INT_TRANS_CMP | SDHCI_INT_COMMAND_TIMEOUT);
 
 	// We want to see the other bits in the status register, but not have an
 	// interrupt trigger on them (we get a "command complete" interrupt on
@@ -200,14 +200,14 @@ SdhciBus::ExecuteCommand(uint8_t command, uint32_t argument, uint32_t* response)
 	// it leaves no chance for the upper layers to handle the problem. So we
 	// just say we're busy and the caller can retry later.
 	// Note that this should normally never happen: the command line is busy
-	// only during command execution, and we don't leave this function with ac
+	// only during command execution, and we don't leave this function with a
 	// command running.
 	if (fRegisters->present_state.CommandInhibit()) {
-		panic("Command execution impossible, command inhibit\n");
+		TRACE_ALWAYS("Command execution impossible, command inhibit\n");
 		return B_BUSY;
 	}
 	if (fRegisters->present_state.DataInhibit()) {
-		panic("Command execution unwise, data inhibit\n");
+		TRACE_ALWAYS("Command execution unwise, data inhibit\n");
 		return B_BUSY;
 	}
 
