@@ -497,7 +497,7 @@ InputServer::HandleSetMethod(BMessage* message)
 	if (cookie == gKeymapMethod.fOwner->Cookie()) {
 		SetActiveMethod(&gKeymapMethod);
 	} else {
-		AutoLocker lock(gInputMethodListLocker);
+		BAutolock lock(gInputMethodListLocker);
 		if (!lock.IsLocked())
 			return;
 
@@ -633,7 +633,7 @@ void
 InputServer::_DeviceStarted(InputDeviceListItem& item)
 {
 	if (item.Type() == B_POINTING_DEVICE && item.Running()) {
-		AutoLocker lock(fRunningMouseListLocker);
+		BAutolock lock(fRunningMouseListLocker);
 		if (lock.IsLocked())
 			fRunningMouseList.Add(item.Name());
 	}
@@ -643,7 +643,7 @@ void
 InputServer::_DeviceStopping(InputDeviceListItem& item)
 {
 	if (item.Type() == B_POINTING_DEVICE) {
-		AutoLocker lock(fRunningMouseListLocker);
+		BAutolock lock(fRunningMouseListLocker);
 		if (lock.IsLocked())
 			fRunningMouseList.Remove(item.Name());
 	}
@@ -652,7 +652,7 @@ InputServer::_DeviceStopping(InputDeviceListItem& item)
 MouseSettings*
 InputServer::_RunningMouseSettings()
 {
-	AutoLocker lock(fRunningMouseListLocker);
+	BAutolock lock(fRunningMouseListLocker);
 	if (!lock.IsLocked() || fRunningMouseList.IsEmpty())
 		return &fDefaultMouseSettings;
 	return _GetSettingsForMouse(fRunningMouseList.First());
@@ -661,7 +661,7 @@ InputServer::_RunningMouseSettings()
 void
 InputServer::_RunningMiceSettings(BList& settings)
 {
-	AutoLocker lock(fRunningMouseListLocker);
+	BAutolock lock(fRunningMouseListLocker);
 	if (!lock.IsLocked())
 		return;
 
@@ -931,7 +931,7 @@ InputServer::EnqueueDeviceMessage(BMessage* message)
 {
 	CALLED();
 
-	AutoLocker lock(fEventQueueLock);
+	BAutolock lock(fEventQueueLock);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -960,7 +960,7 @@ InputServer::EnqueueMethodMessage(BMessage* message)
 	}
 #endif
 
-	AutoLocker lock(fEventQueueLock);
+	BAutolock lock(fEventQueueLock);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -976,7 +976,7 @@ InputServer::EnqueueMethodMessage(BMessage* message)
 status_t
 InputServer::SetNextMethod(bool direction)
 {
-	AutoLocker lock(gInputMethodListLocker);
+	BAutolock lock(gInputMethodListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1036,7 +1036,7 @@ status_t
 InputServer::GetDeviceInfo(const char* name, input_device_type* _type,
 	bool* _isRunning)
 {
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1058,7 +1058,7 @@ status_t
 InputServer::GetDeviceInfos(BMessage* msg)
 {
 	CALLED();
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1075,7 +1075,7 @@ InputServer::UnregisterDevices(BInputServerDevice& serverDevice,
 	input_device_ref** devices)
 {
 	CALLED();
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1125,7 +1125,7 @@ InputServer::RegisterDevices(BInputServerDevice& serverDevice,
 	if (devices == NULL)
 		return B_BAD_VALUE;
 
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1175,7 +1175,7 @@ InputServer::StartStopDevices(const char* name, input_device_type type,
 	bool doStart)
 {
 	CALLED();
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1219,7 +1219,7 @@ status_t
 InputServer::StartStopDevices(BInputServerDevice& serverDevice, bool doStart)
 {
 	CALLED();
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1256,7 +1256,7 @@ InputServer::ControlDevices(const char* name, input_device_type type,
 	uint32 code, BMessage* message)
 {
 	CALLED();
-	AutoLocker lock(fInputDeviceListLocker);
+	BAutolock lock(fInputDeviceListLocker);
 	if (!lock.IsLocked())
 		return B_ERROR;
 
@@ -1361,7 +1361,7 @@ InputServer::_EventLoop()
 
 		EventList events;
 		{
-			AutoLocker lock(fEventQueueLock);
+			BAutolock lock(fEventQueueLock);
 			if (lock.IsLocked()) {
 				events.AddList(&fEventQueue);
 				fEventQueue.MakeEmpty();
@@ -1546,7 +1546,7 @@ InputServer::_MethodizeEvents(EventList& events)
 	}
 
 	{
-		AutoLocker lock(fEventQueueLock);
+		BAutolock lock(fEventQueueLock);
 		if (lock.IsLocked()) {
 			events.AddList(&fMethodQueue);
 			fMethodQueue.MakeEmpty();
@@ -1616,7 +1616,7 @@ bool
 InputServer::_FilterEvents(EventList& events)
 {
 	CALLED();
-	AutoLocker lock(gInputFilterListLocker);
+	BAutolock lock(gInputFilterListLocker);
 	if (!lock.IsLocked())
 		return false;
 

@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <Application.h>
+#include <Autolock.h>
 #include <Debug.h>
 #include <FindDirectory.h>
 #include <InputServerDevice.h>
@@ -36,23 +37,6 @@
 typedef BObjectList<BMessage> EventList;
 
 class BottomlineWindow;
-
-// RAII helper - internal only, not exported
-class AutoLocker {
-public:
-	explicit AutoLocker(BLocker& locker) noexcept
-		: fLocker(locker), fLocked(locker.Lock()) {}
-	~AutoLocker() { if (fLocked) fLocker.Unlock(); }
-	
-	[[nodiscard]] bool IsLocked() const noexcept { return fLocked; }
-	
-	AutoLocker(const AutoLocker&) = delete;
-	AutoLocker& operator=(const AutoLocker&) = delete;
-
-private:
-	BLocker& fLocker;
-	bool fLocked;
-};
 
 class InputDeviceListItem {
 public:
