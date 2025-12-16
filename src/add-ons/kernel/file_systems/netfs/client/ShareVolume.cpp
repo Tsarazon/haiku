@@ -2172,12 +2172,12 @@ ShareVolume::_HandleEntryCreatedRequest(EntryCreatedRequest* request)
 	status_t error = _GetLocalNodeID(request->directoryID, &vnida, true);
 	if (error == B_OK)
 		error = _GetLocalNodeID(request->nodeID, &vnidc, true);
-		PRINT("ShareVolume::_HandleEntryCreatedRequest(): error: 0x%" B_PRIx32
-			", name: \"%s\", dir: %" B_PRIdINO " (remote: (%" B_PRIdDEV ", %"
-			B_PRIdINO ")), node: %" B_PRIdINO " (remote: (%" B_PRIdDEV ", %"
-			B_PRIdINO "))\n", error, name, vnida,
-			request->directoryID.volumeID, request->directoryID.nodeID, vnidc,
-			request->nodeID.volumeID, request->nodeID.nodeID);
+	PRINT("ShareVolume::_HandleEntryCreatedRequest(): error: 0x%" B_PRIx32
+		", name: \"%s\", dir: %" B_PRIdINO " (remote: (%" B_PRIdDEV ", %"
+		B_PRIdINO ")), node: %" B_PRIdINO " (remote: (%" B_PRIdDEV ", %"
+		B_PRIdINO "))\n", error, name, vnida,
+		request->directoryID.volumeID, request->directoryID.nodeID, vnidc,
+		request->nodeID.volumeID, request->nodeID.nodeID);
 
 	// send notifications / do additional processing
 	if (request->queryUpdate) {
