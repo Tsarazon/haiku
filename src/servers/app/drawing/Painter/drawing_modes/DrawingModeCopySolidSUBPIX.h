@@ -10,8 +10,14 @@
 #ifndef DRAWING_MODE_COPY_SOLID_SUBPIX_H
 #define DRAWING_MODE_COPY_SOLID_SUBPIX_H
 
-#include "DrawingModeOverSUBPIX.h"
+#include "DrawingMode.h"
 #include "GlobalSubpixelSettings.h"
+
+// BLEND_OVER_SUBPIX - wrapper around BLEND_SUBPIX macro
+#define BLEND_OVER_SUBPIX(d, r, g, b, a1, a2, a3) \
+{ \
+	BLEND_SUBPIX(d, r, g, b, a1, a2, a3) \
+}
 
 
 // blend_solid_hspan_copy_solid_subpix

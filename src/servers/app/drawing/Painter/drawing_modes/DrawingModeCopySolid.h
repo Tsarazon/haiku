@@ -9,7 +9,22 @@
 #ifndef DRAWING_MODE_COPY_SOLID_H
 #define DRAWING_MODE_COPY_SOLID_H
 
-#include "DrawingModeOver.h"
+#include "DrawingMode.h"
+
+// BLEND_OVER - wrapper around BLEND macro
+#define BLEND_OVER(d, r, g, b, a) \
+{ \
+	BLEND(d, r, g, b, a) \
+}
+
+// ASSIGN_OVER - direct pixel assignment
+#define ASSIGN_OVER(d, r, g, b) \
+{ \
+	d[0] = (b); \
+	d[1] = (g); \
+	d[2] = (r); \
+	d[3] = 255; \
+}
 
 // blend_pixel_copy_solid
 void

@@ -169,20 +169,79 @@ typedef PixelFormat::agg_buffer		agg_buffer;
 //
 // This macro assumes source alpha in range 0..65025 and
 // composes the source color over a possibly semi-transparent background.
-// TODO: implement a faster version
+// Optimized inline expansion without extra division.
 #define BLEND_COMPOSITE16(d, r, g, b, a) \
 { \
-	uint16 _a = (a) / 255; \
-	BLEND_COMPOSITE(d, r, g, b, _a); \
+	pixel32 _p; \
+	_p.data32 = *(uint32*)d; \
+	if (_p.data8[3] == 255) { \
+		/* Opaque dest - use 16-bit linear interpolation */ \
+		d[0] = (((((b) - _p.data8[0]) * (a)) + (_p.data8[0] << 16)) >> 16); \
+		d[1] = (((((g) - _p.data8[1]) * (a)) + (_p.data8[1] << 16)) >> 16); \
+		d[2] = (((((r) - _p.data8[2]) * (a)) + (_p.data8[2] << 16)) >> 16); \
+		d[3] = 255; \
+	} else { \
+		if (_p.data8[3] == 0) { \
+			/* Transparent dest - copy source */ \
+			d[0] = (b); \
+			d[1] = (g); \
+			d[2] = (r); \
+			d[3] = (a) / 255; \
+		} else { \
+			/* Semi-transparent dest - full Porter-Duff compositing */ \
+			uint32 alphaRest = 65025 - (a); \
+			uint32 alphaTemp = (a) * 255 + _p.data8[3] * alphaRest; \
+			uint32 alphaDest = _p.data8[3] * alphaRest; \
+			uint32 alphaSrc = 255 * (a); \
+			d[0] = (_p.data8[0] * alphaDest + (b) * alphaSrc) / alphaTemp; \
+			d[1] = (_p.data8[1] * alphaDest + (g) * alphaSrc) / alphaTemp; \
+			d[2] = (_p.data8[2] * alphaDest + (r) * alphaSrc) / alphaTemp; \
+			d[3] = alphaTemp / 65025; \
+		} \
+	} \
 }
 
 // BLEND_COMPOSITE16_SUBPIX
+//
+// Subpixel LCD rendering version with separate alpha per RGB channel.
+// Optimized inline expansion without extra divisions.
 #define BLEND_COMPOSITE16_SUBPIX(d, r, g, b, a1, a2, a3) \
 { \
-	uint16 _a1 = (a1) / 255; \
-	uint16 _a2 = (a2) / 255; \
-	uint16 _a3 = (a3) / 255; \
-	BLEND_COMPOSITE_SUBPIX(d, r, g, b, _a1, _a2, _a3); \
+	pixel32 _p; \
+	_p.data32 = *(uint32*)d; \
+	if (_p.data8[3] == 255) { \
+		/* Opaque dest - use 16-bit linear interpolation */ \
+		d[0] = (((((b) - _p.data8[0]) * (a1)) + (_p.data8[0] << 16)) >> 16); \
+		d[1] = (((((g) - _p.data8[1]) * (a2)) + (_p.data8[1] << 16)) >> 16); \
+		d[2] = (((((r) - _p.data8[2]) * (a3)) + (_p.data8[2] << 16)) >> 16); \
+		d[3] = 255; \
+	} else { \
+		if (_p.data8[3] == 0) { \
+			/* Transparent dest - copy source */ \
+			d[0] = (b); \
+			d[1] = (g); \
+			d[2] = (r); \
+			d[3] = ((a1) + (a2) + (a3)) / 765; /* 765 = 3*255 */ \
+		} else { \
+			/* Semi-transparent dest - full Porter-Duff compositing */ \
+			uint32 alphaRest1 = 65025 - (a1); \
+			uint32 alphaRest2 = 65025 - (a2); \
+			uint32 alphaRest3 = 65025 - (a3); \
+			uint32 alphaTemp1 = (a1) * 255 + _p.data8[3] * alphaRest1; \
+			uint32 alphaTemp2 = (a2) * 255 + _p.data8[3] * alphaRest2; \
+			uint32 alphaTemp3 = (a3) * 255 + _p.data8[3] * alphaRest3; \
+			uint32 alphaDest1 = _p.data8[3] * alphaRest1; \
+			uint32 alphaDest2 = _p.data8[3] * alphaRest2; \
+			uint32 alphaDest3 = _p.data8[3] * alphaRest3; \
+			uint32 alphaSrc1 = 255 * (a1); \
+			uint32 alphaSrc2 = 255 * (a2); \
+			uint32 alphaSrc3 = 255 * (a3); \
+			d[0] = (_p.data8[0] * alphaDest1 + (b) * alphaSrc1) / alphaTemp1; \
+			d[1] = (_p.data8[1] * alphaDest2 + (g) * alphaSrc2) / alphaTemp2; \
+			d[2] = (_p.data8[2] * alphaDest3 + (r) * alphaSrc3) / alphaTemp3; \
+			d[3] = (alphaTemp1 + alphaTemp2 + alphaTemp3) / 195075; /* 195075 = 3*65025 */ \
+		} \
+	} \
 }
 
 static inline
