@@ -23,8 +23,25 @@ class NodeGetter;
 class Transaction;
 
 
-// To be used in Inode::Create() as publishFlags
+// Constants for inode creation flags
 #define BFS_DO_NOT_PUBLISH_VNODE	0x80000000
+
+// Maximum iterations to prevent infinite loops from corrupted data
+#define BFS_MAX_SMALL_DATA_ITERATIONS	256
+#define BFS_MAX_INDIRECT_ITERATIONS		1024
+#define BFS_MAX_DOUBLE_INDIRECT_ITERATIONS	2048
+
+// Preallocation size constants (bytes)
+#define BFS_PREALLOC_SMALL_FILE		(64 * 1024)
+#define BFS_PREALLOC_MEDIUM_FILE	(512 * 1024)
+#define BFS_PREALLOC_INDEX			(64 * 1024)
+#define BFS_PREALLOC_DIRECTORY		(4 * 1024)
+
+// File size thresholds for preallocation decisions (bytes)
+#define BFS_FILE_SIZE_SMALL			(1 * 1024 * 1024)
+#define BFS_FILE_SIZE_MEDIUM		(32 * 1024 * 1024)
+#define BFS_GROWTH_RATE_SMALL		(512 * 1024)
+#define BFS_GROWTH_RATE_MEDIUM		(1 * 1024 * 1024)
 
 
 class Inode : public TransactionListener {
@@ -349,6 +366,8 @@ public:
 
 	status_t SetTo(const Inode* inode)
 	{
+		if (inode == NULL)
+			return B_BAD_VALUE;
 		Unset();
 		fVolume = inode->GetVolume();
 		return CachedBlock::SetTo(fVolume->VnodeToBlock(inode->ID()));
@@ -357,6 +376,8 @@ public:
 	status_t SetToWritable(Transaction& transaction, const Inode* inode,
 		bool empty = false)
 	{
+		if (inode == NULL)
+			return B_BAD_VALUE;
 		Unset();
 		fVolume = inode->GetVolume();
 		return CachedBlock::SetToWritable(transaction,

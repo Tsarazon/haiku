@@ -355,6 +355,8 @@ Inode::Inode(Volume* volume, ino_t id)
 	fCache(NULL),
 	fMap(NULL)
 {
+	ASSERT(volume != NULL);
+	
 	PRINT(("Inode::Inode(volume = %p, id = %" B_PRIdINO ") @ %p\n",
 		volume, id, this));
 
@@ -389,6 +391,8 @@ Inode::Inode(Volume* volume, Transaction& transaction, ino_t id, mode_t mode,
 	fCache(NULL),
 	fMap(NULL)
 {
+	ASSERT(volume != NULL);
+	
 	PRINT(("Inode::Inode(volume = %p, transaction = %p, id = %" B_PRIdINO
 		") @ %p\n", volume, &transaction, id, this));
 
@@ -1667,6 +1671,9 @@ status_t
 Inode::WriteAt(Transaction& transaction, off_t pos, const uint8* buffer,
 	size_t* _length)
 {
+	if (buffer == NULL || _length == NULL)
+		RETURN_ERROR(B_BAD_VALUE);
+
 	InodeReadLocker locker(this);
 
 	// update the last modification time in memory, it will be written

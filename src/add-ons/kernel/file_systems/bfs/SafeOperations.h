@@ -108,30 +108,50 @@ public:
 	
 	// Iterator safety - prevent infinite loops
 	template<typename T>
-	static bool SafeTraversal(T* current, T* (T::*nextFunc)() const, 
+	static bool SafeTraversal(T* current, T* (T::*nextFunc)() const,
 							 bool (T::*isLastFunc)(const void*) const,
 							 const void* container, size_t containerSize,
 							 size_t maxIterations)
 	{
 		if (current == NULL || container == NULL)
 			return false;
-			
+
 		size_t iterations = 0;
 		T* item = current;
-		
+
 		while (item != NULL && !(item->*isLastFunc)(container) && iterations < maxIterations) {
 			if (!IsValidPointer(item, container, containerSize))
 				return false;
-				
+
 			T* next = (item->*nextFunc)();
 			if (next <= item) // Prevent backwards movement
 				return false;
-				
+
 			item = next;
 			iterations++;
 		}
-		
+
 		return iterations < maxIterations;
+	}
+
+	// Safe integer addition with overflow detection
+	// Returns true if overflow would occur, false otherwise
+	// If no overflow, stores result in *result parameter
+	static bool SafeAdd(off_t a, off_t b, off_t* result)
+	{
+		if (result == NULL)
+			return true;
+
+		// Check for positive overflow
+		if (a > 0 && b > 0 && a > INT64_MAX - b)
+			return true;
+
+		// Check for negative overflow (underflow)
+		if (a < 0 && b < 0 && a < INT64_MIN - b)
+			return true;
+
+		*result = a + b;
+		return false;
 	}
 };
 
