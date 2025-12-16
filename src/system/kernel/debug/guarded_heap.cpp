@@ -744,6 +744,7 @@ heap_init_post_sem()
 	initialCache->RemoveArea(area);
 	sGuardedHeap.cache->InsertAreaLocked(area);
 	sGuardedHeap.cache->Unlock();
+	initialCache->ReleaseRef();
 
 	MutexLocker locker(sGuardedHeap.lock);
 	sGuardedHeap.cache->Lock();
@@ -794,7 +795,6 @@ heap_init_post_sem()
 	}
 
 	locker.Unlock();
-	initialCache->ReleaseRef();
 
 	vm_unreserve_memory(reservation.count * B_PAGE_SIZE);
 	vm_page_unreserve_pages(&reservation);
