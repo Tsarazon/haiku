@@ -705,9 +705,7 @@ map_page(VMArea* area, vm_page* page, addr_t address, uint32 protection,
 }
 
 
-/*!	If \a preserveModified is \c true, the caller must hold the lock of the
-	page's cache.
-*/
+/*!	The caller must hold the lock of the page's cache. */
 static inline bool
 unmap_page(VMArea* area, addr_t virtualAddress)
 {
@@ -716,9 +714,7 @@ unmap_page(VMArea* area, addr_t virtualAddress)
 }
 
 
-/*!	If \a preserveModified is \c true, the caller must hold the lock of all
-	mapped pages' caches.
-*/
+/*!	The caller must hold the lock of all mapped pages' caches. */
 static inline void
 unmap_pages(VMArea* area, addr_t base, size_t size)
 {
@@ -831,7 +827,13 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 			// Since VMCache::Resize() can temporarily drop the lock, we must
 			// unlock all lower caches to prevent locking order inversion.
 			cacheChainLocker.Unlock(cache);
-			status_t status = cache->Resize(cache->virtual_base + offset, resizePriority);
+			cacheChainLocker.SetTo(cache);
+
+			// If the cache had other users before, it may have the wrong base.
+			status_t status = cache->Rebase(area->cache_offset, resizePriority);
+			ASSERT_ALWAYS(status == B_OK);
+
+			status = cache->Resize(area->cache_offset + area->Size(), resizePriority);
 			ASSERT_ALWAYS(status == B_OK);
 		}
 
@@ -840,8 +842,6 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 			cache->Commit(newCommitmentPages * B_PAGE_SIZE, priority);
 		}
 
-		if (onlyCacheUser)
-			cache->ReleaseRefAndUnlock();
 		return B_OK;
 	}
 
@@ -883,7 +883,13 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 			// Since VMCache::Rebase() can temporarily drop the lock, we must
 			// unlock all lower caches to prevent locking order inversion.
 			cacheChainLocker.Unlock(cache);
-			status_t status = cache->Rebase(cache->virtual_base + size, resizePriority);
+			cacheChainLocker.SetTo(cache);
+
+			status_t status = cache->Rebase(area->cache_offset + size, resizePriority);
+			ASSERT_ALWAYS(status == B_OK);
+
+			// If the cache had other users before, it may be larger than wanted.
+			status = cache->Resize(cache->virtual_base + area->Size(), resizePriority);
 			ASSERT_ALWAYS(status == B_OK);
 		}
 
@@ -892,9 +898,6 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 			const size_t newCommitmentPages = compute_area_page_commitment(area);
 			cache->Commit(newCommitmentPages * B_PAGE_SIZE, priority);
 		}
-
-		if (onlyCacheUser)
-			cache->ReleaseRefAndUnlock();
 
 		return B_OK;
 	}
@@ -1017,6 +1020,12 @@ cut_area(VMAddressSpace* addressSpace, VMArea* area, addr_t address,
 			free_etc(secondAreaNewProtections, allocationFlags);
 			return error;
 		}
+
+		// If the cache had other users before, it may have the wrong base.
+		// (Let Resize() change commitment, so we don't try to increase
+		// it in this step if we've taken some from this cache already.)
+		error = cache->Rebase(area->cache_offset, -1);
+		ASSERT_ALWAYS(error == B_OK);
 
 		error = cache->Resize(cache->virtual_base + firstNewSize, resizePriority);
 		ASSERT_ALWAYS(error == B_OK);
@@ -1242,7 +1251,7 @@ map_backing_store(VMAddressSpace* addressSpace, VMCache* cache, off_t offset,
 
 	// if this is a private map, we need to create a new cache
 	// to handle the private copies of pages as they are written to
-	VMCache* sourceCache = cache;
+	VMCache* sourceCache = NULL;
 	if (mapping == REGION_PRIVATE_MAP) {
 		VMCache* newCache;
 
@@ -1261,6 +1270,7 @@ map_backing_store(VMAddressSpace* addressSpace, VMCache* cache, off_t offset,
 
 		cache->AddConsumer(newCache);
 
+		sourceCache = cache;
 		cache = newCache;
 	}
 
@@ -1345,10 +1355,10 @@ err2:
 		// We created this cache, so we must delete it again. Note, that we
 		// need to temporarily unlock the source cache or we'll otherwise
 		// deadlock, since VMCache::_RemoveConsumer() will try to lock it, too.
-		if (sourceCache != cache)
+		if (sourceCache != NULL)
 			sourceCache->Unlock();
-		cache->ReleaseRef();
-		if (sourceCache != cache)
+		cache->ReleaseRefAndUnlock();
+		if (sourceCache != NULL)
 			sourceCache->Lock();
 	}
 err1:
@@ -1449,95 +1459,6 @@ wait_if_address_range_is_wired(VMAddressSpace* addressSpace, addr_t base,
 	}
 
 	return false;
-}
-
-
-/*!	Prepares an area to be used for vm_set_kernel_area_debug_protection().
-	It must be called in a situation where the kernel address space may be
-	locked.
-*/
-status_t
-vm_prepare_kernel_area_debug_protection(area_id id, void** cookie)
-{
-	AddressSpaceReadLocker locker;
-	VMArea* area;
-	status_t status = locker.SetFromArea(id, area);
-	if (status != B_OK)
-		return status;
-
-	if (area->page_protections == NULL) {
-		status = allocate_area_page_protections(area);
-		if (status != B_OK)
-			return status;
-	}
-
-	*cookie = (void*)area;
-	return B_OK;
-}
-
-
-/*!	This is a debug helper function that can only be used with very specific
-	use cases.
-	Sets protection for the given address range to the protection specified.
-	If \a protection is 0 then the involved pages will be marked non-present
-	in the translation map to cause a fault on access. The pages aren't
-	actually unmapped however so that they can be marked present again with
-	additional calls to this function. For this to work the area must be
-	fully locked in memory so that the pages aren't otherwise touched.
-	This function does not lock the kernel address space and needs to be
-	supplied with a \a cookie retrieved from a successful call to
-	vm_prepare_kernel_area_debug_protection().
-*/
-status_t
-vm_set_kernel_area_debug_protection(void* cookie, void* _address, size_t size,
-	uint32 protection)
-{
-	// check address range
-	addr_t address = (addr_t)_address;
-	size = PAGE_ALIGN(size);
-
-	if ((address % B_PAGE_SIZE) != 0
-		|| (addr_t)address + size < (addr_t)address
-		|| !IS_KERNEL_ADDRESS(address)
-		|| !IS_KERNEL_ADDRESS((addr_t)address + size)) {
-		return B_BAD_VALUE;
-	}
-
-	// Translate the kernel protection to user protection as we only store that.
-	if ((protection & B_KERNEL_READ_AREA) != 0)
-		protection |= B_READ_AREA;
-	if ((protection & B_KERNEL_WRITE_AREA) != 0)
-		protection |= B_WRITE_AREA;
-
-	VMAddressSpace* addressSpace = VMAddressSpace::GetKernel();
-	VMTranslationMap* map = addressSpace->TranslationMap();
-	VMArea* area = (VMArea*)cookie;
-
-	addr_t offset = address - area->Base();
-	if (area->Size() - offset < size) {
-		panic("protect range not fully within supplied area");
-		return B_BAD_VALUE;
-	}
-
-	if (area->page_protections == NULL) {
-		panic("area has no page protections");
-		return B_BAD_VALUE;
-	}
-
-	// Invalidate the mapping entries so any access to them will fault or
-	// restore the mapping entries unchanged so that lookup will success again.
-	map->Lock();
-	map->DebugMarkRangePresent(address, address + size, protection != 0);
-	map->Unlock();
-
-	// And set the proper page protections so that the fault case will actually
-	// fail and not simply try to map a new page.
-	for (addr_t pageAddress = address; pageAddress < address + size;
-			pageAddress += B_PAGE_SIZE) {
-		set_area_page_protection(area, pageAddress, protection);
-	}
-
-	return B_OK;
 }
 
 
@@ -1993,6 +1914,8 @@ err0:
 		vm_page_unreserve_pages(&reservation);
 	if (reservedMemory > 0)
 		vm_unreserve_memory(reservedMemory);
+
+	ASSERT(wiring != B_ALREADY_WIRED);
 
 	return status;
 }
@@ -4169,7 +4092,7 @@ vm_page_fault(addr_t address, addr_t faultAddress, bool isWrite, bool isExecute,
 	if (status < B_OK) {
 		if (!isUser) {
 			dprintf("vm_page_fault: vm_soft_fault returned error '%s' on fault at "
-				"0x%lx, ip 0x%lx, write %d, kernel, exec %d, thread 0x%" B_PRIx32 "\n",
+				"0x%lx, ip 0x%lx, write %d, kernel, exec %d, thread %" B_PRId32 "\n",
 				strerror(status), address, faultAddress, isWrite, isExecute,
 				thread_get_current_thread_id());
 
@@ -5692,10 +5615,8 @@ get_memory_map_etc(team_id team, const void* address, size_t numBytes,
 	uint32 numEntries = *_numEntries;
 	*_numEntries = 0;
 
-	VMAddressSpace* addressSpace;
 	addr_t virtualAddress = (addr_t)address;
 	addr_t pageOffset = virtualAddress & (B_PAGE_SIZE - 1);
-	phys_addr_t physicalAddress;
 	status_t status = B_OK;
 	int32 index = -1;
 	addr_t offset = 0;
@@ -5707,7 +5628,8 @@ get_memory_map_etc(team_id team, const void* address, size_t numBytes,
 	if (numEntries == 0 || numBytes == 0)
 		return B_BAD_VALUE;
 
-	// in which address space is the address to be found?
+	// get the address space
+	VMAddressSpace* addressSpace;
 	if (IS_USER_ADDRESS(virtualAddress)) {
 		if (team == B_CURRENT_TEAM)
 			addressSpace = VMAddressSpace::GetCurrent();
@@ -5715,12 +5637,12 @@ get_memory_map_etc(team_id team, const void* address, size_t numBytes,
 			addressSpace = VMAddressSpace::Get(team);
 	} else
 		addressSpace = VMAddressSpace::GetKernel();
-
 	if (addressSpace == NULL)
 		return B_ERROR;
 
-	VMTranslationMap* map = addressSpace->TranslationMap();
+	VMAddressSpacePutter addressSpacePutter(addressSpace);
 
+	VMTranslationMap* map = addressSpace->TranslationMap();
 	if (interrupts)
 		map->Lock();
 
@@ -5728,6 +5650,7 @@ get_memory_map_etc(team_id team, const void* address, size_t numBytes,
 		addr_t bytes = min_c(numBytes - offset, B_PAGE_SIZE);
 		uint32 flags;
 
+		phys_addr_t physicalAddress;
 		if (interrupts) {
 			status = map->Query((addr_t)address + offset, &physicalAddress,
 				&flags);
