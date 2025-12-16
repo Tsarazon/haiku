@@ -52,3 +52,31 @@ OVMF_VARS*.fd
 
 # Photos and images (project-specific)
 photo_*.jpg
+DMR.txt
+haiku_hardware_report.txt
+HAIKU_LEGACY_CODE_REMOVAL_ANALYSIS.txt
+haiku_vulkan_magma_implementation_guide.md
+HOW_TO_VERIFY_ISO.md
+ICON_LIB_DEPENDENCIES_ANALYSIS.md
+icon_lib_dependencies_analyzer.py
+ICON_O_MATIC_DEPENDENCIES_ANALYSIS.md
+icon_o_matic_dependencies_analyzer.py
+INPUT_SERVER_ARCHITECTURE.md
+LEGACY_DRIVERS_REMOVAL_LIST.md
+MAGMA_DRIVER_TESTING.md
+Magma_ph3-4.md
+MAGMA_VM_TESTING.md
+PHASE2_CHECKLIST.md
+PHASE2_FINAL_STATUS.md
+PHASE2_USERSPACE_MAGMA_CLIENT_COMPLETE.md
+REAL_MAGMA_TEST.sh
+TOUCHSCREEN_IMPLEMENTATION_GUIDE.md
+UNIFIED_INPUT_ARCHITECTURE.md
+UNIFIED_POINTER_EVENTS.md
+UNIFIED_POINTING_DEVICE_ARCHITECTURE.md
+app_server_anal/APP_SERVER_DEPENDENCIES_ANALYSIS.md
+app_server_anal/app_server_dependencies_analyzer.py
+FILES_CREATED_PHASE1_PHASE2.md
+app_server_anal/APP_SERVER_INTERNAL_DEPENDENCIES.md
+.gitignore
+app_server_anal/app_server_internal_dependencies_analyzer.py
