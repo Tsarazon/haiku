@@ -137,6 +137,22 @@ const device_info kSupportedDevices[] = {
 	{ 0x8086, 0x3a05, "Intel ICH10" },
 	{ 0x8086, 0x3a22, "Intel ICH10" },
 	{ 0x8086, 0x3a25, "Intel ICH10" },
+	// Skylake (6th Gen - 100 Series / Sunrise Point)
+	{ 0x8086, 0x9d03, "Intel Sunrise Point-LP SATA (AHCI)" },
+	{ 0x8086, 0x9d05, "Intel Sunrise Point-LP SATA (RAID)" },
+	{ 0x8086, 0x9d07, "Intel Sunrise Point-LP SATA (RAID)" },
+	{ 0x8086, 0xa102, "Intel Sunrise Point-H SATA (AHCI)" },
+	{ 0x8086, 0xa103, "Intel Sunrise Point-H SATA (AHCI)" },
+	{ 0x8086, 0xa105, "Intel Sunrise Point-H SATA (RAID)" },
+	{ 0x8086, 0xa106, "Intel Sunrise Point-H SATA (RAID)" },
+	{ 0x8086, 0xa107, "Intel Sunrise Point-H SATA (RAID)" },
+	{ 0x8086, 0xa10f, "Intel Sunrise Point-H SATA (RAID)" },
+	// Kaby Lake (7th Gen - 200 Series / Union Point)
+	{ 0x8086, 0xa282, "Intel 200 Series PCH SATA (AHCI)" },
+	{ 0x8086, 0x9dd3, "Intel 200/300 Series PCH SATA (Mobile)" },
+	// Coffee Lake (8th/9th Gen - 300 Series / Cannon Point)
+	{ 0x8086, 0xa352, "Intel Cannon Lake PCH SATA (AHCI)" },
+	{ 0x8086, 0xa353, "Intel Cannon Lake Mobile PCH SATA (AHCI)" },
 	{}
 };
 
