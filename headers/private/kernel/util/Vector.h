@@ -16,6 +16,7 @@ template<typename Value> class VectorIterator;
 // for convenience
 #define _VECTOR_TEMPLATE_LIST template<typename Value>
 #define _VECTOR_CLASS_NAME Vector<Value>
+#define _VECTOR_CLASS_TYPE typename Vector<Value>
 
 /*!
 	\class Vector
@@ -35,14 +36,6 @@ public:
 	Vector(size_t chunkSize = kDefaultChunkSize);
 	~Vector();
 
-	// Copy constructor (existing behavior)
-	Vector(const Vector& other);
-	Vector& operator=(const Vector& other);
-
-	// C++14 move semantics (without STL dependencies)
-	Vector(Vector&& other);
-	Vector& operator=(Vector&& other);
-
 	status_t PushFront(const Value &value);
 	status_t PushBack(const Value &value);
 
@@ -51,16 +44,6 @@ public:
 
 	status_t Add(const Value &value) { return PushBack(value); }
 	status_t Add(const Value &value, int32 index) { return Insert(value, index); }
-
-	// C++14 EmplaceBack with perfect forwarding (without std::forward)
-	template<typename... Args>
-	status_t EmplaceBack(Args&&... args);
-
-	// Reserve capacity to avoid multiple reallocations
-	status_t Reserve(size_t newCapacity);
-
-	// Free unused capacity
-	status_t ShrinkToFit();
 
 	status_t Insert(const Value &value, int32 index);
 	status_t Insert(const Value &value, const Iterator &iterator);
@@ -225,91 +208,6 @@ _VECTOR_CLASS_NAME::Vector(size_t chunkSize)
 	_Resize(0);
 }
 
-// copy constructor
-/*!	\brief Creates a copy of another vector.
-	\param other The vector to copy from.
-*/
-_VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_NAME::Vector(const Vector& other)
-	: fCapacity(0),
-	  fChunkSize(other.fChunkSize),
-	  fItemCount(0),
-	  fItems(NULL)
-{
-	if (other.fItemCount > 0) {
-		if (_Resize(other.fItemCount)) {
-			for (int32 i = 0; i < other.fItemCount; i++)
-				new(fItems + i) Value(other.fItems[i]);
-		}
-	}
-}
-
-// copy assignment operator
-/*!	\brief Assigns the contents of another vector to this one.
-	\param other The vector to copy from.
-	\return A reference to this vector.
-*/
-_VECTOR_TEMPLATE_LIST
-Vector<Value>&
-_VECTOR_CLASS_NAME::operator=(const Vector& other)
-{
-	if (this != &other) {
-		MakeEmpty();
-		if (other.fItemCount > 0) {
-			if (_Resize(other.fItemCount)) {
-				for (int32 i = 0; i < other.fItemCount; i++)
-					new(fItems + i) Value(other.fItems[i]);
-			}
-		}
-	}
-	return *this;
-}
-
-// move constructor
-/*!	\brief Moves resources from another vector (C++14 move semantics).
-	\param other The vector to move from. Left in a valid but empty state.
-*/
-_VECTOR_TEMPLATE_LIST
-_VECTOR_CLASS_NAME::Vector(Vector&& other)
-	: fCapacity(other.fCapacity),
-	  fChunkSize(other.fChunkSize),
-	  fItemCount(other.fItemCount),
-	  fItems(other.fItems)
-{
-	other.fCapacity = 0;
-	other.fItemCount = 0;
-	other.fItems = NULL;
-}
-
-// move assignment operator
-/*!	\brief Move assigns from another vector (C++14 move semantics).
-	\param other The vector to move from. Left in a valid but empty state.
-	\return A reference to this vector.
-*/
-_VECTOR_TEMPLATE_LIST
-Vector<Value>&
-_VECTOR_CLASS_NAME::operator=(Vector&& other)
-{
-	if (this != &other) {
-		// Explicitly call destructors for all existing elements
-		for (int32 i = 0; i < fItemCount; i++)
-			fItems[i].~Value();
-		free(fItems);
-
-		// Move resources from other
-		fCapacity = other.fCapacity;
-		fChunkSize = other.fChunkSize;
-		fItemCount = other.fItemCount;
-		fItems = other.fItems;
-
-		// Leave other in valid but empty state
-		other.fCapacity = 0;
-		other.fItemCount = 0;
-		other.fItems = NULL;
-	}
-	return *this;
-}
-
 // destructor
 /*!	\brief Frees all resources associated with the object.
 
@@ -465,7 +363,7 @@ _VECTOR_CLASS_NAME::Remove(const Value &value)
 			removed), or Null(), if \a index was out of range.
 */
 _VECTOR_TEMPLATE_LIST
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Erase(int32 index)
 {
 	if (index >= 0 && index < fItemCount) {
@@ -486,7 +384,7 @@ _VECTOR_CLASS_NAME::Erase(int32 index)
 			(in this case including End()).
 */
 _VECTOR_TEMPLATE_LIST
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Erase(const Iterator &iterator)
 {
 	int32 index = _IteratorIndex(iterator);
@@ -541,7 +439,7 @@ _VECTOR_CLASS_NAME::MakeEmpty()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Begin()
 {
 	return Iterator(fItems);
@@ -557,7 +455,7 @@ _VECTOR_CLASS_NAME::Begin()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::Begin() const
 {
 	return ConstIterator(fItems);
@@ -573,7 +471,7 @@ _VECTOR_CLASS_NAME::Begin() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::End()
 {
 	return Iterator(fItems + fItemCount);
@@ -589,7 +487,7 @@ _VECTOR_CLASS_NAME::End()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::End() const
 {
 	return ConstIterator(fItems + fItemCount);
@@ -605,7 +503,7 @@ _VECTOR_CLASS_NAME::End() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Null()
 {
 	return Iterator(NULL);
@@ -621,7 +519,7 @@ _VECTOR_CLASS_NAME::Null()
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::Null() const
 {
 	return ConstIterator(NULL);
@@ -634,7 +532,7 @@ _VECTOR_CLASS_NAME::Null() const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::IteratorForIndex(int32 index)
 {
 	if (index >= 0 && index <= fItemCount)
@@ -649,7 +547,7 @@ _VECTOR_CLASS_NAME::IteratorForIndex(int32 index)
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::IteratorForIndex(int32 index) const
 {
 	if (index >= 0 && index <= fItemCount)
@@ -720,7 +618,7 @@ _VECTOR_CLASS_NAME::IndexOf(const Value &value, int32 start) const
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Find(const Value &value)
 {
 	return Find(value, Begin());
@@ -737,7 +635,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value)
 			invalid.
 */
 _VECTOR_TEMPLATE_LIST
-typename Vector<Value>::Iterator
+_VECTOR_CLASS_TYPE::Iterator
 _VECTOR_CLASS_NAME::Find(const Value &value, const Iterator &start)
 {
 	int32 index = IndexOf(value, _IteratorIndex(start));
@@ -755,7 +653,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value, const Iterator &start)
 */
 _VECTOR_TEMPLATE_LIST
 inline
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::Find(const Value &value) const
 {
 	return Find(value, Begin());
@@ -772,7 +670,7 @@ _VECTOR_CLASS_NAME::Find(const Value &value) const
 			invalid.
 */
 _VECTOR_TEMPLATE_LIST
-typename Vector<Value>::ConstIterator
+_VECTOR_CLASS_TYPE::ConstIterator
 _VECTOR_CLASS_NAME::Find(const Value &value, const ConstIterator &start) const
 {
 	int32 index = IndexOf(value, _IteratorIndex(start));
@@ -876,105 +774,6 @@ _VECTOR_CLASS_NAME::_IteratorIndex(const ConstIterator &iterator) const
 			return index;
 	}
 	return -1;
-}
-
-// EmplaceBack
-/*!	\brief Constructs an element in-place at the end of the vector.
-
-	Uses C++14 perfect forwarding without std::forward to construct the
-	element directly in the vector, avoiding temporary object creation.
-
-	\param args Arguments to be forwarded to the Value constructor.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_NO_MEMORY: Insufficient memory for this operation.
-*/
-_VECTOR_TEMPLATE_LIST
-template<typename... Args>
-status_t
-_VECTOR_CLASS_NAME::EmplaceBack(Args&&... args)
-{
-	if (fItemCount >= (int32)fCapacity) {
-		if (!_Resize(fItemCount + 1))
-			return B_NO_MEMORY;
-	} else {
-		fItemCount++;
-	}
-
-	// Placement new with perfect forwarding (no std::forward needed)
-	// The && in the template parameter already provides forwarding semantics
-	new(fItems + fItemCount - 1) Value(static_cast<Args&&>(args)...);
-
-	return B_OK;
-}
-
-// Reserve
-/*!	\brief Reserves capacity for at least the specified number of elements.
-
-	This can be used to avoid multiple reallocations when the final size
-	is known in advance. Does nothing if the requested capacity is less
-	than or equal to the current capacity.
-
-	\param newCapacity The minimum capacity to reserve.
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_NO_MEMORY: Insufficient memory for this operation.
-*/
-_VECTOR_TEMPLATE_LIST
-status_t
-_VECTOR_CLASS_NAME::Reserve(size_t newCapacity)
-{
-	if (newCapacity <= fCapacity)
-		return B_OK;
-
-	// Calculate properly aligned capacity
-	size_t alignedCapacity = ((newCapacity - 1) / fChunkSize + 1) * fChunkSize;
-
-	Value* newItems = (Value*)realloc(fItems, alignedCapacity * sizeof(Value));
-	if (newItems == NULL)
-		return B_NO_MEMORY;
-
-	fItems = newItems;
-	fCapacity = alignedCapacity;
-	return B_OK;
-}
-
-// ShrinkToFit
-/*!	\brief Reduces capacity to match the current size.
-
-	Releases unused memory by shrinking the capacity to exactly fit the
-	current number of elements. This is useful after removing many elements
-	to reclaim memory.
-
-	\return
-	- \c B_OK: Everything went fine.
-	- \c B_NO_MEMORY: Insufficient memory for this operation (original
-	  capacity is retained in this case).
-*/
-_VECTOR_TEMPLATE_LIST
-status_t
-_VECTOR_CLASS_NAME::ShrinkToFit()
-{
-	if (fItemCount >= (int32)fCapacity)
-		return B_OK;  // Already at minimum capacity
-
-	size_t targetCapacity = fItemCount;
-	if (targetCapacity == 0)
-		targetCapacity = 1;  // Keep at least one element allocated
-
-	// Align to chunk size
-	targetCapacity = ((targetCapacity - 1) / fChunkSize + 1) * fChunkSize;
-
-	if (targetCapacity >= fCapacity)
-		return B_OK;  // No shrinking needed after alignment
-
-	Value* newItems = (Value*)realloc(fItems, targetCapacity * sizeof(Value));
-	if (newItems == NULL)
-		return B_NO_MEMORY;  // Keep original capacity on failure
-
-	fItems = newItems;
-	fCapacity = targetCapacity;
-	return B_OK;
 }
 
 #endif	// _VECTOR_H
