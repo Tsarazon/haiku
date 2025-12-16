@@ -7,6 +7,7 @@
 #include "WorkerThread.h"
 
 #include <errno.h>
+#include <new>
 #include <stdio.h>
 
 #include <set>
@@ -309,6 +310,277 @@ WorkerThread::_WriteBootSector(BPath &path)
 
 
 status_t
+WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
+{
+	_SetStatusMessage(B_TRANSLATE("Installing EFI bootloader."));
+
+	// ESP GUID: C12A7328-F81F-11D2-BA4B-00A0C93EC93B
+	const char* kESPTypeString = "EFI system data";
+
+	BPath espPath;
+	bool espFound = false;
+
+	// First: Search ALL partitions (including unmounted) for ESP by GPT type
+	printf("Searching for ESP partition (mounted or unmounted)...\n");
+
+	BDiskDevice device;
+	int32 cookie = 0;
+	while (fDDRoster.GetNextDevice(&device, &cookie) == B_OK) {
+		// Visit all partitions on this device
+		struct ESPVisitor : public BDiskDeviceVisitor {
+			const char* fESPType;
+			BDiskDeviceRoster* fRoster;
+			BPath* fEspPath;
+			bool* fFound;
+
+			ESPVisitor(const char* espType, BDiskDeviceRoster* roster,
+				BPath* path, bool* found)
+				: fESPType(espType), fRoster(roster),
+				  fEspPath(path), fFound(found) {}
+
+			virtual bool Visit(BPartition* partition, int32 level)
+			{
+				if (*fFound)
+					return true; // Already found, stop
+
+				const char* type = partition->Type();
+				if (type == NULL || strcmp(type, fESPType) != 0)
+					return false; // Not ESP, continue
+
+				printf("Found ESP partition: %s\n", partition->Name());
+
+				// Check if already mounted
+				if (partition->IsMounted()) {
+					BPath mountPoint;
+					if (partition->GetMountPoint(&mountPoint) == B_OK) {
+						*fEspPath = mountPoint;
+						*fFound = true;
+						printf("ESP already mounted at: %s\n", mountPoint.Path());
+						return true;
+					}
+				}
+
+				// Not mounted - try to mount it
+				printf("ESP not mounted, attempting to mount...\n");
+				status_t result = partition->Mount();
+				if (result == B_OK) {
+					BPath mountPoint;
+					if (partition->GetMountPoint(&mountPoint) == B_OK) {
+						*fEspPath = mountPoint;
+						*fFound = true;
+						printf("Successfully mounted ESP at: %s\n", mountPoint.Path());
+						return true;
+					}
+				} else {
+					fprintf(stderr, "Warning: Failed to mount ESP: %s\n",
+						strerror(result));
+				}
+
+				return false; // Continue searching
+			}
+		} visitor(kESPTypeString, &fDDRoster, &espPath, &espFound);
+
+		device.VisitEachDescendant(&visitor);
+		if (espFound)
+			break;
+	}
+	
+	// Second pass: Fallback to FAT partition with existing EFI directory
+	// (for MBR or non-standard setups)
+	if (!espFound) {
+		printf("ESP not found by GUID, falling back to FAT + EFI directory detection...\n");
+		BVolumeRoster volumeRoster;
+		BVolume volume;
+		while (volumeRoster.GetNextVolume(&volume) == B_OK) {
+			if (volume.IsReadOnly())
+				continue;
+
+			BDirectory mountPoint;
+			if (volume.GetRootDirectory(&mountPoint) != B_OK)
+				continue;
+
+			BEntry entry;
+			mountPoint.GetEntry(&entry);
+			BPath path;
+			entry.GetPath(&path);
+
+			// Check partition type - must be FAT for ESP
+			BDiskDevice device;
+			BPartition* partition = NULL;
+			status_t result = fDDRoster.GetPartitionForPath(path.Path(),
+				&device, &partition);
+			if (result == B_OK && partition != NULL) {
+				const char* contentType = partition->ContentType();
+				// Only accept FAT partitions as potential ESP
+				if (contentType == NULL ||
+					(strcmp(contentType, kPartitionTypeFAT32) != 0 &&
+					 strcmp(contentType, kPartitionTypeFAT16) != 0 &&
+					 strcmp(contentType, kPartitionTypeFAT12) != 0)) {
+					continue;
+				}
+			} else {
+				// Can't determine partition type, skip
+				continue;
+			}
+
+			// Check if this FAT partition has an existing EFI directory
+			BPath efiCheckPath(path.Path(), "EFI");
+			BEntry efiEntry(efiCheckPath.Path());
+
+			if (!efiEntry.Exists()) {
+				// No existing EFI directory - create it only on FAT partitions
+				result = create_directory(efiCheckPath.Path(), 0755);
+				if (result != B_OK && result != B_FILE_EXISTS) {
+					continue;
+				}
+			}
+
+			espPath = path;
+			espFound = true;
+			printf("Found FAT partition with EFI directory (fallback) at: %s\n",
+				espPath.Path());
+			break;
+		}
+	}
+	
+	if (!espFound) {
+		fprintf(stderr, "Warning: ESP partition not found or not mounted\n");
+		fprintf(stderr, "Please ensure you have a FAT32 partition with GPT type "
+			"'EFI System' or manually mount an ESP.\n");
+		return B_ERROR;
+	}
+	
+	// Source bootloader path
+	BPath loaderSource(targetDirectory.Path(), 
+		"system/boot/efi/haiku_loader.efi");
+	BEntry sourceEntry(loaderSource.Path());
+	if (!sourceEntry.Exists()) {
+		fprintf(stderr, "Error: haiku_loader.efi not found at %s\n", 
+			loaderSource.Path());
+		return B_ENTRY_NOT_FOUND;
+	}
+	
+	// Create target directories: EFI/HAIKU and EFI/BOOT
+	BPath haikuEfiDir(espPath.Path(), "EFI/HAIKU");
+	status_t result = create_directory(haikuEfiDir.Path(), 0755);
+	if (result != B_OK && result != B_FILE_EXISTS) {
+		fprintf(stderr, "Error: Failed to create %s: %s\n",
+			haikuEfiDir.Path(), strerror(result));
+		return result;
+	}
+	
+	BPath bootEfiDir(espPath.Path(), "EFI/BOOT");
+	result = create_directory(bootEfiDir.Path(), 0755);
+	if (result != B_OK && result != B_FILE_EXISTS) {
+		fprintf(stderr, "Error: Failed to create %s: %s\n",
+			bootEfiDir.Path(), strerror(result));
+		return result;
+	}
+	
+	// Determine correct EFI binary name based on architecture
+	const char* efiBootName;
+	#if defined(__x86_64__)
+		efiBootName = "BOOTX64.EFI";
+	#elif defined(__i386__)
+		efiBootName = "BOOTIA32.EFI";
+	#elif defined(__aarch64__) || defined(__ARM_ARCH_8__)
+		efiBootName = "BOOTAA64.EFI";
+	#elif defined(__arm__)
+		efiBootName = "BOOTARM.EFI";
+	#elif defined(__riscv) && (__riscv_xlen == 64)
+		efiBootName = "BOOTRISCV64.EFI";
+	#else
+		efiBootName = "BOOTX64.EFI"; // default to x86_64
+		fprintf(stderr, "Warning: Unknown architecture, defaulting to BOOTX64.EFI\n");
+	#endif
+	
+	// Copy to EFI/HAIKU/haiku_loader.efi
+	BPath haikuLoaderPath(haikuEfiDir.Path(), "haiku_loader.efi");
+	BEntry haikuLoaderEntry(haikuLoaderPath.Path());
+	if (haikuLoaderEntry.Exists())
+		haikuLoaderEntry.Remove();
+	
+	result = _CopyFile(loaderSource.Path(), haikuLoaderPath.Path());
+	if (result != B_OK) {
+		fprintf(stderr, "Error: Failed to copy bootloader to %s: %s\n",
+			haikuLoaderPath.Path(), strerror(result));
+		return result;
+	}
+	
+	// CRITICAL: Copy to fallback location EFI/BOOT/BOOT{ARCH}.EFI
+	// This is essential for stubborn UEFI implementations (e.g., Lenovo M720Q)
+	// that ignore boot entries and only look for the fallback bootloader
+	BPath fallbackPath(bootEfiDir.Path(), efiBootName);
+	BEntry fallbackEntry(fallbackPath.Path());
+	if (fallbackEntry.Exists())
+		fallbackEntry.Remove();
+	
+	result = _CopyFile(loaderSource.Path(), fallbackPath.Path());
+	if (result != B_OK) {
+		fprintf(stderr, "Error: Failed to copy bootloader to %s: %s\n",
+			fallbackPath.Path(), strerror(result));
+		return result;
+	}
+	
+	printf("EFI bootloader installed successfully:\n");
+	printf("  - %s\n", haikuLoaderPath.Path());
+	printf("  - %s (fallback for UEFI)\n", fallbackPath.Path());
+	
+	_SetStatusMessage(B_TRANSLATE("EFI bootloader installed."));
+	
+	return B_OK;
+}
+
+
+status_t
+WorkerThread::_CopyFile(const char* source, const char* destination)
+{
+	// Simple file copy helper for EFI bootloader installation
+	BFile sourceFile(source, B_READ_ONLY);
+	status_t result = sourceFile.InitCheck();
+	if (result != B_OK) {
+		fprintf(stderr, "Error: Failed to open source file %s: %s\n",
+			source, strerror(result));
+		return result;
+	}
+	
+	BFile destFile(destination, B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
+	result = destFile.InitCheck();
+	if (result != B_OK) {
+		fprintf(stderr, "Error: Failed to create destination file %s: %s\n",
+			destination, strerror(result));
+		return result;
+	}
+	
+	// Copy in 64KB chunks for better performance
+	const size_t kBufferSize = 65536;
+	char* buffer = new(std::nothrow) char[kBufferSize];
+	if (buffer == NULL)
+		return B_NO_MEMORY;
+	
+	ssize_t bytesRead;
+	while ((bytesRead = sourceFile.Read(buffer, kBufferSize)) > 0) {
+		ssize_t bytesWritten = destFile.Write(buffer, bytesRead);
+		if (bytesWritten != bytesRead) {
+			delete[] buffer;
+			fprintf(stderr, "Error: Write failed during file copy\n");
+			return B_IO_ERROR;
+		}
+	}
+	
+	delete[] buffer;
+	
+	if (bytesRead < 0) {
+		fprintf(stderr, "Error: Read failed during file copy: %s\n",
+			strerror(bytesRead));
+		return (status_t)bytesRead;
+	}
+	
+	return B_OK;
+}
+
+
+status_t
 WorkerThread::_LaunchFinishScript(BPath &path)
 {
 	_SetStatusMessage(B_TRANSLATE("Finishing installation."));
@@ -582,6 +854,22 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 	err = _WriteBootSector(targetDirectory);
 	if (err != B_OK)
 		return _InstallationError(err);
+
+	// Install UEFI bootloader to ESP partition
+	// This is critical for modern UEFI systems and fixes boot issues on
+	// systems like Lenovo M720Q that require the fallback bootloader location.
+	// Note: This may fail gracefully on BIOS-only systems, which is expected.
+	err = _InstallEFIBootloader(targetDirectory);
+	if (err != B_OK) {
+		// Log warning but don't fail installation
+		// System might be BIOS-only or ESP not properly set up
+		fprintf(stderr, "Warning: Failed to install EFI bootloader: %s\n", 
+			strerror(err));
+		fprintf(stderr, "This is expected on BIOS-only systems.\n");
+		fprintf(stderr, "If you're installing to a UEFI system, please ensure:\n");
+		fprintf(stderr, "  1. You have a FAT32 partition with GPT type 'EFI System'\n");
+		fprintf(stderr, "  2. The ESP partition is mounted\n");
+	}
 
 	err = _LaunchFinishScript(targetDirectory);
 	if (err != B_OK)

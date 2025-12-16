@@ -40,6 +40,10 @@ public:
 
 private:
 			status_t			_WriteBootSector(BPath& path);
+			status_t			_InstallEFIBootloader(
+								const BPath& targetDirectory);
+			status_t			_CopyFile(const char* source,
+								const char* destination);
 			status_t			_LaunchFinishScript(BPath& path);
 
 			status_t			_PerformInstall(partition_id sourcePartitionID,
