@@ -33,7 +33,6 @@ AddFilesToPackage add-ons kernel busses ata :
 	legacy_sata
 	silicon_image_3112
 	highpoint_ide_pci
-	ide_isa@x86
 	;
 
 AddFilesToPackage add-ons kernel busses i2c :
@@ -305,7 +304,6 @@ AddBootModuleSymlinksToPackage
 	dpc
 	efi_gpt
 	generic_ide_pci
-	ide_isa@x86
 	isa@x86,x86_64
 	intel
 	it8211
