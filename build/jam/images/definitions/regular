@@ -176,17 +176,9 @@ SYSTEM_ADD_ONS_ACCELERANTS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
 		ati.accelerant
 		intel_extreme.accelerant
-		matrox.accelerant
 		nvidia.accelerant
-		radeon.accelerant
 		radeon_hd.accelerant
-		via.accelerant
 	}@ # x86,x86_64
-	x86 @{
-		3dfx.accelerant
-		neomagic.accelerant
-		s3.accelerant
-	}@ # x86
 	virtio_gpu.accelerant
 ] ;
 
@@ -215,7 +207,6 @@ SYSTEM_ADD_ONS_MEDIA += [ FFilterByBuildFeatures
 	cortex_audioadapter.media_addon
 	cortex_flanger.media_addon
 	cortex_logging_consumer.media_addon
-	dvb.media_addon@x86
 	equalizer.media_addon
 	hmulti_audio.media_addon
 	#legacy.media_addon
@@ -271,15 +262,10 @@ SYSTEM_ADD_ONS_SCREENSAVERS += [ FFilterByBuildFeatures
 ] ;
 
 SYSTEM_ADD_ONS_DRIVERS_AUDIO +=
-	auich
-	auvia
 	echo3g
-	emuxki
-	es1370
 	hda
 	ice1712
 	usb_audio
-	sis7018
 ;
 
 SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD +=
@@ -290,21 +276,12 @@ SYSTEM_ADD_ONS_DRIVERS_GRAPHICS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
 		ati
 		intel_extreme
-		matrox
 		nvidia
-		radeon
 		radeon_hd
-		via
 	}@ # x86,x86_64
-	x86 @{
-		3dfx
-		neomagic
-		s3
-	}@ # x86
 ] ;
 
 SYSTEM_ADD_ONS_DRIVERS_MIDI +=
-	emuxki
 	ice1712
 	usb_midi
 ;

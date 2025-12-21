@@ -31,8 +31,6 @@ AddFilesToPackage add-ons kernel busses ata :
 	generic_ide_pci
 	it8211
 	legacy_sata
-	silicon_image_3112
-	highpoint_ide_pci
 	;
 
 AddFilesToPackage add-ons kernel busses i2c :
@@ -170,9 +168,6 @@ AddDriversToPackage bus :
 	;
 AddDriversToPackage disk virtual :
 	nbd
-	;
-AddDriversToPackage dvb :
-	cx23882
 	;
 AddDriversToPackage graphics
 	: $(SYSTEM_ADD_ONS_DRIVERS_GRAPHICS) ;
@@ -321,8 +316,6 @@ AddBootModuleSymlinksToPackage
 	scsi_cd
 	scsi_disk
 	scsi_periph
-	silicon_image_3112
-	highpoint_ide_pci
 	sdhci
 	usb
 	usb_disk

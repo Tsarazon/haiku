@@ -15,8 +15,6 @@ AddFilesToPackage add-ons kernel busses ata :
 	generic_ide_pci
 	it8211
 	legacy_sata
-	silicon_image_3112
-	highpoint_ide_pci
 	;
 AddFilesToPackage add-ons kernel busses pci :
 	<pci>designware@riscv64
@@ -242,8 +240,6 @@ AddBootModuleSymlinksToPackage
 	generic_ide_pci
 	it8211
 	legacy_sata
-	silicon_image_3112
-	highpoint_ide_pci
 	<usb>uhci
 	<usb>ohci
 	<usb>ehci

@@ -55,7 +55,6 @@ AddFilesToNetBootArchive system add-ons kernel busses agp_gart :
 	;
 AddFilesToNetBootArchive system add-ons kernel busses ide :
 	generic_ide_pci
-	silicon_image_3112
 	;
 AddFilesToNetBootArchive system add-ons kernel busses scsi :
 	ahci
@@ -128,7 +127,6 @@ AddBootModuleSymlinksToNetBootArchive
 	$(SYSTEM_ADD_ONS_BUS_MANAGERS)
 	ahci
 	generic_ide_pci
-	silicon_image_3112
 	$(SYSTEM_ADD_ONS_FILE_SYSTEMS)
 	ata_adapter
 	scsi_periph

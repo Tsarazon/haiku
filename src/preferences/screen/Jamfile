@@ -3,7 +3,6 @@ SubDir HAIKU_TOP src preferences screen ;
 AddSubDirSupportedPlatforms libbe_test ;
 
 UsePrivateHeaders [ FDirName graphics common ] ;
-UsePrivateHeaders [ FDirName graphics radeon ] ;
 UsePrivateHeaders interface preferences ;
 
 Application Screen :
