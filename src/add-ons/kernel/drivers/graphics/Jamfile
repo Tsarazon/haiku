@@ -6,7 +6,6 @@ SubInclude HAIKU_TOP src add-ons kernel drivers graphics common ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics framebuffer ;
 
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics intel_extreme ;
-SubInclude HAIKU_TOP src add-ons kernel drivers graphics nvidia ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics radeon_hd ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics skeleton ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics vesa ;

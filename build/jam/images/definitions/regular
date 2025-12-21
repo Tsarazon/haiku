@@ -176,7 +176,6 @@ SYSTEM_ADD_ONS_ACCELERANTS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
 		ati.accelerant
 		intel_extreme.accelerant
-		nvidia.accelerant
 		radeon_hd.accelerant
 	}@ # x86,x86_64
 	virtio_gpu.accelerant
@@ -262,9 +261,7 @@ SYSTEM_ADD_ONS_SCREENSAVERS += [ FFilterByBuildFeatures
 ] ;
 
 SYSTEM_ADD_ONS_DRIVERS_AUDIO +=
-	echo3g
 	hda
-	ice1712
 	usb_audio
 ;
 
@@ -276,13 +273,11 @@ SYSTEM_ADD_ONS_DRIVERS_GRAPHICS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
 		ati
 		intel_extreme
-		nvidia
 		radeon_hd
 	}@ # x86,x86_64
 ] ;
 
 SYSTEM_ADD_ONS_DRIVERS_MIDI +=
-	ice1712
 	usb_midi
 ;
 

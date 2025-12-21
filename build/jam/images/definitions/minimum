@@ -310,7 +310,6 @@ SYSTEM_ADD_ONS_DRIVERS_MIDI = ;
 
 SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 	x86,x86_64,riscv64 @{
-		3com
 		atheros813x
 		atheros81xx
 		attansic_l1
@@ -323,15 +322,12 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 		intel22x
 		jmicron2x0
 		marvell_yukon
-		nforce
 		pcnet
 		rtl8125
 		rtl8139
 		rtl81xx
 		sis19x
-		sis900
 		syskonnect
-		via_rhine
 		vmxnet
 		vt612x
 	}@ # x86,x86_64,riscv64

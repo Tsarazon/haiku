@@ -49,7 +49,6 @@ AddFilesToPackage add-ons kernel generic :
 	ata_adapter
 	bios@x86,x86_64
 	dpc
-	mpu401
 	scsi_periph
 	<module>tty
 	;

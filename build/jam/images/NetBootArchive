@@ -8,7 +8,6 @@ SYSTEM_NETWORK_PROTOCOLS = ipv4 tcp udp icmp unix ;
 
 SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 	x86,x86_64 @{
-		3com
 		atheros813x
 		atheros81xx
 		attansic_l2
@@ -17,11 +16,8 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 		ipro100
 		ipro1000
 		marvell_yukon
-		nforce
 		rtl8139
-		sis900
 		syskonnect
-		via_rhine
 	}@ # x86,x86_64
 
 	etherpci
