@@ -6,4 +6,3 @@ SubInclude HAIKU_TOP src tests add-ons kernel file_systems userlandfs cdda ;
 SubInclude HAIKU_TOP src tests add-ons kernel file_systems userlandfs nfs4 ;
 SubInclude HAIKU_TOP src tests add-ons kernel file_systems userlandfs ntfs ;
 SubInclude HAIKU_TOP src tests add-ons kernel file_systems userlandfs ramfs ;
-SubInclude HAIKU_TOP src tests add-ons kernel file_systems userlandfs reiserfs ;

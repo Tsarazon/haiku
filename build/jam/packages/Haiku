@@ -29,7 +29,6 @@ AddFilesToPackage add-ons kernel busses agp_gart :
 
 AddFilesToPackage add-ons kernel busses ata :
 	generic_ide_pci
-	it8211
 	legacy_sata
 	;
 
@@ -300,7 +299,6 @@ AddBootModuleSymlinksToPackage
 	generic_ide_pci
 	isa@x86,x86_64
 	intel
-	it8211
 	legacy_sata
 	mmc
 	mmc_disk

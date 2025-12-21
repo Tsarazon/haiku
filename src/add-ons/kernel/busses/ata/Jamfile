@@ -1,5 +1,4 @@
 SubDir HAIKU_TOP src add-ons kernel busses ata ;
 
 SubInclude HAIKU_TOP src add-ons kernel busses ata generic_ide_pci ;
-SubInclude HAIKU_TOP src add-ons kernel busses ata it8211 ;
 SubInclude HAIKU_TOP src add-ons kernel busses ata legacy_sata ;

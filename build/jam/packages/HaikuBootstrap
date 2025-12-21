@@ -13,7 +13,6 @@ AddFilesToPackage add-ons kernel busses agp_gart :
 
 AddFilesToPackage add-ons kernel busses ata :
 	generic_ide_pci
-	it8211
 	legacy_sata
 	;
 AddFilesToPackage add-ons kernel busses pci :
@@ -237,7 +236,6 @@ AddBootModuleSymlinksToPackage
 	scsi_periph
 	ahci
 	generic_ide_pci
-	it8211
 	legacy_sata
 	<usb>uhci
 	<usb>ohci

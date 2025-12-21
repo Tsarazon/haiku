@@ -383,7 +383,6 @@ SYSTEM_ADD_ONS_FILE_SYSTEMS =
 	ntfs
 	packagefs
 	ramfs
-	reiserfs
 	udf
 	write_overlay
 ;
