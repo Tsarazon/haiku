@@ -1,0 +1,8 @@
+SubDir HAIKU_TOP src libs thorvg loaders webp ;
+
+# WebP decoder for ThorVG
+# Uses SubInclude for subdirectories to give each rescaler.cpp its own grist
+
+SubInclude HAIKU_TOP src libs thorvg loaders webp dec ;
+SubInclude HAIKU_TOP src libs thorvg loaders webp dsp ;
+SubInclude HAIKU_TOP src libs thorvg loaders webp utils ;

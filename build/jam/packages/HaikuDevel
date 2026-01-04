@@ -64,6 +64,7 @@ AddHeaderDirectoryToPackage glibc ;
 AddHeaderDirectoryToPackage libs alm ;
 AddHeaderDirectoryToPackage libs glut GL ;
 AddHeaderDirectoryToPackage libs linprog ;
+AddHeaderDirectoryToPackage libs thorvg ;
 AddHeaderDirectoryToPackage os ;
 AddHeaderDirectoryToPackage posix ;
 

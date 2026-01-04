@@ -1,0 +1,299 @@
+SubDir HAIKU_TOP src libs thorvg loaders lottie jerryscript ;
+
+# JerryScript - Lightweight JavaScript engine for IoT
+# https://github.com/pando-project/jerryscript
+# Used by ThorVG for Lottie Expressions support
+
+#------------------------------------------------------------------------------
+# Compiler Flags
+#------------------------------------------------------------------------------
+
+local jerryC++Flags = ;
+
+jerryC++Flags += -std=c++14 ;
+jerryC++Flags += -fno-exceptions -fno-rtti ;
+jerryC++Flags += -Wno-sign-compare -Wno-old-style-declaration ;
+jerryC++Flags += -Wno-unused-parameter -Wno-empty-body ;
+
+# Suppress warnings in third-party code
+jerryC++Flags += -w ;
+
+SubDirC++Flags $(jerryC++Flags) ;
+
+#------------------------------------------------------------------------------
+# Include Paths
+#------------------------------------------------------------------------------
+
+SubDirHdrs $(SUBDIR) jerry-core include ;
+SubDirHdrs $(SUBDIR) jerry-core ;
+SubDirHdrs $(SUBDIR) jerry-core api ;
+SubDirHdrs $(SUBDIR) jerry-core ecma base ;
+SubDirHdrs $(SUBDIR) jerry-core ecma builtin-objects ;
+SubDirHdrs $(SUBDIR) jerry-core ecma builtin-objects typedarray ;
+SubDirHdrs $(SUBDIR) jerry-core ecma operations ;
+SubDirHdrs $(SUBDIR) jerry-core jcontext ;
+SubDirHdrs $(SUBDIR) jerry-core jmem ;
+SubDirHdrs $(SUBDIR) jerry-core jrt ;
+SubDirHdrs $(SUBDIR) jerry-core lit ;
+SubDirHdrs $(SUBDIR) jerry-core parser js ;
+SubDirHdrs $(SUBDIR) jerry-core parser regexp ;
+SubDirHdrs $(SUBDIR) jerry-core vm ;
+
+#------------------------------------------------------------------------------
+# Source Directories
+#------------------------------------------------------------------------------
+
+local sourceDirs =
+	jerry-core/api
+	jerry-core/ecma/base
+	jerry-core/ecma/builtin-objects
+	jerry-core/ecma/builtin-objects/typedarray
+	jerry-core/ecma/operations
+	jerry-core/jcontext
+	jerry-core/jmem
+	jerry-core/jrt
+	jerry-core/lit
+	jerry-core/parser/js
+	jerry-core/parser/regexp
+	jerry-core/vm
+;
+
+#------------------------------------------------------------------------------
+# Source Files
+#------------------------------------------------------------------------------
+
+local jerrySources =
+	# api
+	jerryscript.cpp
+
+	# ecma/base
+	ecma-alloc.cpp
+	ecma-errors.cpp
+	ecma-extended-info.cpp
+	ecma-gc.cpp
+	ecma-helpers-collection.cpp
+	ecma-helpers-conversion.cpp
+	ecma-helpers.cpp
+	ecma-helpers-errol.cpp
+	ecma-helpers-external-pointers.cpp
+	ecma-helpers-number.cpp
+	ecma-helpers-string.cpp
+	ecma-helpers-value.cpp
+	ecma-init-finalize.cpp
+	ecma-lcache.cpp
+	ecma-literal-storage.cpp
+	ecma-module.cpp
+	ecma-property-hashmap.cpp
+
+	# ecma/builtin-objects
+	ecma-builtin-aggregateerror.cpp
+	ecma-builtin-aggregateerror-prototype.cpp
+	ecma-builtin-arraybuffer.cpp
+	ecma-builtin-arraybuffer-prototype.cpp
+	ecma-builtin-array.cpp
+	ecma-builtin-array-iterator-prototype.cpp
+	ecma-builtin-array-prototype.cpp
+	ecma-builtin-array-prototype-unscopables.cpp
+	ecma-builtin-async-from-sync-iterator-prototype.cpp
+	ecma-builtin-async-function.cpp
+	ecma-builtin-async-function-prototype.cpp
+	ecma-builtin-async-generator.cpp
+	ecma-builtin-async-generator-function.cpp
+	ecma-builtin-async-generator-prototype.cpp
+	ecma-builtin-async-iterator-prototype.cpp
+	ecma-builtin-atomics.cpp
+	ecma-builtin-bigint.cpp
+	ecma-builtin-bigint-prototype.cpp
+	ecma-builtin-boolean.cpp
+	ecma-builtin-boolean-prototype.cpp
+	ecma-builtin-dataview.cpp
+	ecma-builtin-dataview-prototype.cpp
+	ecma-builtin-date.cpp
+	ecma-builtin-date-prototype.cpp
+	ecma-builtin-error.cpp
+	ecma-builtin-error-prototype.cpp
+	ecma-builtin-evalerror.cpp
+	ecma-builtin-evalerror-prototype.cpp
+	ecma-builtin-function.cpp
+	ecma-builtin-function-prototype.cpp
+	ecma-builtin-generator.cpp
+	ecma-builtin-generator-function.cpp
+	ecma-builtin-generator-prototype.cpp
+	ecma-builtin-global.cpp
+	ecma-builtin-handlers.cpp
+	ecma-builtin-helpers.cpp
+	ecma-builtin-helpers-date.cpp
+	ecma-builtin-helpers-error.cpp
+	ecma-builtin-helpers-sort.cpp
+	ecma-builtin-intrinsic.cpp
+	ecma-builtin-iterator-prototype.cpp
+	ecma-builtin-map.cpp
+	ecma-builtin-map-iterator-prototype.cpp
+	ecma-builtin-map-prototype.cpp
+	ecma-builtin-math.cpp
+	ecma-builtin-number.cpp
+	ecma-builtin-number-prototype.cpp
+	ecma-builtin-object.cpp
+	ecma-builtin-object-prototype.cpp
+	ecma-builtin-promise.cpp
+	ecma-builtin-promise-prototype.cpp
+	ecma-builtin-proxy.cpp
+	ecma-builtin-rangeerror.cpp
+	ecma-builtin-rangeerror-prototype.cpp
+	ecma-builtin-referenceerror.cpp
+	ecma-builtin-referenceerror-prototype.cpp
+	ecma-builtin-reflect.cpp
+	ecma-builtin-regexp.cpp
+	ecma-builtin-regexp-prototype.cpp
+	ecma-builtin-regexp-string-iterator-prototype.cpp
+	ecma-builtins.cpp
+	ecma-builtin-set.cpp
+	ecma-builtin-set-iterator-prototype.cpp
+	ecma-builtin-set-prototype.cpp
+	ecma-builtin-shared-arraybuffer.cpp
+	ecma-builtin-shared-arraybuffer-prototype.cpp
+	ecma-builtin-string.cpp
+	ecma-builtin-string-iterator-prototype.cpp
+	ecma-builtin-string-prototype.cpp
+	ecma-builtin-symbol.cpp
+	ecma-builtin-symbol-prototype.cpp
+	ecma-builtin-syntaxerror.cpp
+	ecma-builtin-syntaxerror-prototype.cpp
+	ecma-builtin-typeerror.cpp
+	ecma-builtin-typeerror-prototype.cpp
+	ecma-builtin-type-error-thrower.cpp
+	ecma-builtin-urierror.cpp
+	ecma-builtin-urierror-prototype.cpp
+	ecma-builtin-weakmap.cpp
+	ecma-builtin-weakmap-prototype.cpp
+	ecma-builtin-weakref.cpp
+	ecma-builtin-weakref-prototype.cpp
+	ecma-builtin-weakset.cpp
+	ecma-builtin-weakset-prototype.cpp
+
+	# ecma/builtin-objects/typedarray
+	ecma-builtin-bigint64array.cpp
+	ecma-builtin-bigint64array-prototype.cpp
+	ecma-builtin-biguint64array.cpp
+	ecma-builtin-biguint64array-prototype.cpp
+	ecma-builtin-float32array.cpp
+	ecma-builtin-float32array-prototype.cpp
+	ecma-builtin-float64array.cpp
+	ecma-builtin-float64array-prototype.cpp
+	ecma-builtin-int16array.cpp
+	ecma-builtin-int16array-prototype.cpp
+	ecma-builtin-int32array.cpp
+	ecma-builtin-int32array-prototype.cpp
+	ecma-builtin-int8array.cpp
+	ecma-builtin-int8array-prototype.cpp
+	ecma-builtin-typedarray.cpp
+	ecma-builtin-typedarray-helpers.cpp
+	ecma-builtin-typedarray-prototype.cpp
+	ecma-builtin-uint16array.cpp
+	ecma-builtin-uint16array-prototype.cpp
+	ecma-builtin-uint32array.cpp
+	ecma-builtin-uint32array-prototype.cpp
+	ecma-builtin-uint8array.cpp
+	ecma-builtin-uint8array-prototype.cpp
+	ecma-builtin-uint8clampedarray.cpp
+	ecma-builtin-uint8clampedarray-prototype.cpp
+
+	# ecma/operations
+	ecma-arguments-object.cpp
+	ecma-arraybuffer-object.cpp
+	ecma-array-object.cpp
+	ecma-async-generator-object.cpp
+	ecma-atomics-object.cpp
+	ecma-bigint.cpp
+	ecma-bigint-object.cpp
+	ecma-big-uint.cpp
+	ecma-boolean-object.cpp
+	ecma-comparison.cpp
+	ecma-container-object.cpp
+	ecma-conversion.cpp
+	ecma-dataview-object.cpp
+	ecma-eval.cpp
+	ecma-exceptions.cpp
+	ecma-function-object.cpp
+	ecma-get-put-value.cpp
+	ecma-iterator-object.cpp
+	ecma-jobqueue.cpp
+	ecma-lex-env.cpp
+	ecma-number-object.cpp
+	ecma-objects.cpp
+	ecma-objects-general.cpp
+	ecma-promise-object.cpp
+	ecma-proxy-object.cpp
+	ecma-reference.cpp
+	ecma-regexp-object.cpp
+	ecma-shared-arraybuffer-object.cpp
+	ecma-string-object.cpp
+	ecma-symbol-object.cpp
+	ecma-typedarray-object.cpp
+
+	# jcontext
+	jcontext.cpp
+
+	# jmem
+	jmem-allocator.cpp
+	jmem-heap.cpp
+	jmem-poolman.cpp
+
+	# jrt
+	jrt-fatals.cpp
+	jrt-logging.cpp
+
+	# lit
+	lit-char-helpers.cpp
+	lit-magic-strings.cpp
+	lit-strings.cpp
+
+	# parser/js
+	byte-code.cpp
+	common.cpp
+	js-lexer.cpp
+	js-parser.cpp
+	js-parser-expr.cpp
+	js-parser-mem.cpp
+	js-parser-module.cpp
+	js-parser-statm.cpp
+	js-parser-tagged-template-literal.cpp
+	js-parser-util.cpp
+	js-scanner.cpp
+	js-scanner-ops.cpp
+	js-scanner-util.cpp
+	parser-errors.cpp
+
+	# parser/regexp
+	re-bytecode.cpp
+	re-compiler.cpp
+	re-parser.cpp
+
+	# vm
+	opcodes.cpp
+	opcodes-ecma-arithmetics.cpp
+	opcodes-ecma-bitwise.cpp
+	opcodes-ecma-relational-equality.cpp
+	vm.cpp
+	vm-stack.cpp
+	vm-utils.cpp
+;
+
+#------------------------------------------------------------------------------
+# Build Library
+#------------------------------------------------------------------------------
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		local sourceDir ;
+		for sourceDir in $(sourceDirs) {
+			SEARCH_SOURCE
+				+= [ FDirName $(HAIKU_TOP) src libs thorvg loaders lottie jerryscript $(sourceDir) ] ;
+		}
+
+		StaticLibrary [ MultiArchDefaultGristFiles libjerryscript.a ] :
+			$(jerrySources)
+			;
+	}
+}

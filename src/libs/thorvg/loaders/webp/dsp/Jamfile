@@ -1,0 +1,35 @@
+SubDir HAIKU_TOP src libs thorvg loaders webp dsp ;
+
+local webpC++Flags = -std=c++14 -fno-exceptions -fno-rtti -Wno-unused-parameter ;
+SubDirC++Flags $(webpC++Flags) ;
+
+# ThorVG headers
+UseLibraryHeaders thorvg ;
+SubDirHdrs [ FDirName $(HAIKU_TOP) src libs thorvg ] ;
+SubDirHdrs [ FDirName $(HAIKU_TOP) src libs thorvg common ] ;
+
+SubDirHdrs $(SUBDIR:P) ;
+SubDirHdrs $(SUBDIR:P) webp ;
+SubDirHdrs $(SUBDIR:P) utils ;
+
+local sources =
+	alpha_processing.cpp
+	argb.cpp
+	cpu.cpp
+	dec_clip_tables.cpp
+	dec.cpp
+	filters.cpp
+	lossless.cpp
+	rescaler.cpp
+	upsampling.cpp
+	yuv.cpp
+;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		StaticLibrary [ MultiArchDefaultGristFiles libwebp_dsp.a ] :
+			$(sources)
+			;
+	}
+}

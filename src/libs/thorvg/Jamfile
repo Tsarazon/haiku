@@ -1,0 +1,474 @@
+SubDir HAIKU_TOP src libs thorvg ;
+
+# ThorVG - A lightweight portable vector graphics library
+# https://github.com/thorvg/thorvg
+# Version: 1.0.0
+#
+# Build configuration for Haiku OS
+# Converted from Meson build system
+
+THORVG_VERSION = 1.0.0 ;
+
+#------------------------------------------------------------------------------
+# Build Configuration Options
+#------------------------------------------------------------------------------
+
+# Rendering Engines
+THORVG_SW_ENGINE ?= 1 ;         # Software renderer (always enabled)
+THORVG_GL_ENGINE ?= 0 ;         # OpenGL renderer (optional)
+
+# Image/Animation Loaders
+THORVG_SVG_LOADER ?= 1 ;        # SVG loader
+THORVG_LOTTIE_LOADER ?= 1 ;     # Lottie animation loader
+THORVG_TTF_LOADER ?= 1 ;        # TrueType font loader
+THORVG_PNG_LOADER ?= 1 ;        # PNG loader (built-in)
+THORVG_JPG_LOADER ?= 1 ;        # JPEG loader (built-in)
+THORVG_WEBP_LOADER ?= 1 ;       # WebP loader (built-in)
+
+# Savers
+THORVG_GIF_SAVER ?= 1 ;         # GIF saver
+
+# Features
+THORVG_THREADS ?= 1 ;           # Multi-threading support
+THORVG_FILE_IO ?= 1 ;           # File I/O support
+THORVG_LOG ?= 0 ;               # Debug logging
+THORVG_CAPI ?= 1 ;              # C API bindings
+THORVG_LOTTIE_EXPRESSIONS ?= 1 ; # Lottie Expressions (JavaScript)
+
+# SIMD Vectorization
+THORVG_SIMD ?= avx ;
+
+#------------------------------------------------------------------------------
+# Architecture Detection and SIMD Configuration
+#------------------------------------------------------------------------------
+
+if $(TARGET_ARCH) = arm64 || $(TARGET_ARCH) = arm {
+	if $(THORVG_SIMD) = avx {
+		THORVG_SIMD = neon ;
+	}
+}
+
+#------------------------------------------------------------------------------
+# Compiler Flags
+#------------------------------------------------------------------------------
+
+local thorvgC++Flags = ;
+
+# C++14 standard
+thorvgC++Flags += -std=c++14 ;
+
+# Optimization flags (match Meson defaults)
+thorvgC++Flags += -fno-exceptions -fno-rtti ;
+thorvgC++Flags += -fno-stack-protector -fno-math-errno ;
+thorvgC++Flags += -fno-unwind-tables -fno-asynchronous-unwind-tables ;
+thorvgC++Flags += -Woverloaded-virtual -Wno-unknown-pragmas ;
+
+# Library export
+thorvgC++Flags += -DTVG_EXPORT -DTVG_BUILD ;
+
+# Version string
+thorvgC++Flags += -DTHORVG_VERSION_STRING="\\\"$(THORVG_VERSION)\\\"" ;
+
+#------------------------------------------------------------------------------
+# SIMD Flags
+#------------------------------------------------------------------------------
+
+if $(THORVG_SIMD) = avx {
+	thorvgC++Flags += -DTHORVG_AVX_VECTOR_SUPPORT=1 -mavx ;
+}
+else if $(THORVG_SIMD) = neon {
+	thorvgC++Flags += -DTHORVG_NEON_VECTOR_SUPPORT=1 ;
+	if $(TARGET_ARCH) = arm {
+		thorvgC++Flags += -mfpu=neon ;
+	}
+}
+
+#------------------------------------------------------------------------------
+# Feature Configuration Defines
+#------------------------------------------------------------------------------
+
+if $(THORVG_SW_ENGINE) = 1 {
+	thorvgC++Flags += -DTHORVG_SW_RASTER_SUPPORT=1 ;
+}
+
+if $(THORVG_GL_ENGINE) = 1 {
+	thorvgC++Flags += -DTHORVG_GL_RASTER_SUPPORT=1 ;
+}
+
+if $(THORVG_THREADS) = 1 {
+	thorvgC++Flags += -DTHORVG_THREAD_SUPPORT=1 ;
+}
+
+if $(THORVG_FILE_IO) = 1 {
+	thorvgC++Flags += -DTHORVG_FILE_IO_SUPPORT=1 ;
+}
+
+if $(THORVG_LOG) = 1 {
+	thorvgC++Flags += -DTHORVG_LOG_ENABLED=1 ;
+}
+
+if $(THORVG_SVG_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_SVG_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_LOTTIE_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_LOTTIE_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_TTF_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_TTF_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_PNG_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_PNG_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_JPG_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_JPG_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_WEBP_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_WEBP_LOADER_SUPPORT=1 ;
+}
+
+if $(THORVG_GIF_SAVER) = 1 {
+	thorvgC++Flags += -DTHORVG_GIF_SAVER_SUPPORT=1 ;
+}
+
+if $(THORVG_CAPI) = 1 {
+	thorvgC++Flags += -DTHORVG_CAPI_BINDING_SUPPORT=1 ;
+}
+
+if $(THORVG_LOTTIE_EXPRESSIONS) = 1 && $(THORVG_LOTTIE_LOADER) = 1 {
+	thorvgC++Flags += -DTHORVG_LOTTIE_EXPRESSIONS_SUPPORT=1 ;
+}
+
+SubDirC++Flags $(thorvgC++Flags) ;
+
+#------------------------------------------------------------------------------
+# Include Paths
+#------------------------------------------------------------------------------
+
+# Public headers
+UseLibraryHeaders thorvg ;
+
+# Internal headers
+SubDirHdrs $(SUBDIR) common ;
+SubDirHdrs $(SUBDIR) renderer ;
+SubDirHdrs $(SUBDIR) loaders ;
+SubDirHdrs $(SUBDIR) loaders raw ;
+
+if $(THORVG_SW_ENGINE) = 1 {
+	SubDirHdrs $(SUBDIR) renderer sw_engine ;
+}
+
+if $(THORVG_GL_ENGINE) = 1 {
+	SubDirHdrs $(SUBDIR) renderer gl_engine ;
+}
+
+if $(THORVG_SVG_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders svg ;
+}
+
+if $(THORVG_LOTTIE_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders lottie ;
+	SubDirHdrs $(SUBDIR) loaders lottie rapidjson ;
+	if $(THORVG_LOTTIE_EXPRESSIONS) = 1 {
+		SubDirHdrs $(SUBDIR) loaders lottie jerryscript jerry-core include ;
+	}
+}
+
+if $(THORVG_TTF_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders ttf ;
+}
+
+if $(THORVG_PNG_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders png ;
+}
+
+if $(THORVG_JPG_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders jpg ;
+}
+
+if $(THORVG_WEBP_LOADER) = 1 {
+	SubDirHdrs $(SUBDIR) loaders webp ;
+	SubDirHdrs $(SUBDIR) loaders webp dec ;
+	SubDirHdrs $(SUBDIR) loaders webp dsp ;
+	SubDirHdrs $(SUBDIR) loaders webp utils ;
+	SubDirHdrs $(SUBDIR) loaders webp webp ;
+}
+
+if $(THORVG_GIF_SAVER) = 1 {
+	SubDirHdrs $(SUBDIR) savers gif ;
+}
+
+if $(THORVG_CAPI) = 1 {
+	SubDirHdrs $(SUBDIR) bindings capi ;
+}
+
+#------------------------------------------------------------------------------
+# Source Directories
+#------------------------------------------------------------------------------
+
+local sourceDirs =
+	common
+	renderer
+	loaders
+	loaders/raw
+;
+
+if $(THORVG_SW_ENGINE) = 1 {
+	sourceDirs += renderer/sw_engine ;
+}
+
+if $(THORVG_GL_ENGINE) = 1 {
+	sourceDirs += renderer/gl_engine ;
+}
+
+if $(THORVG_SVG_LOADER) = 1 {
+	sourceDirs += loaders/svg ;
+}
+
+if $(THORVG_LOTTIE_LOADER) = 1 {
+	sourceDirs += loaders/lottie ;
+}
+
+if $(THORVG_TTF_LOADER) = 1 {
+	sourceDirs += loaders/ttf ;
+}
+
+if $(THORVG_PNG_LOADER) = 1 {
+	sourceDirs += loaders/png ;
+}
+
+if $(THORVG_JPG_LOADER) = 1 {
+	sourceDirs += loaders/jpg ;
+}
+
+if $(THORVG_WEBP_LOADER) = 1 {
+	sourceDirs += loaders/webp ;
+}
+
+if $(THORVG_GIF_SAVER) = 1 {
+	sourceDirs += savers/gif ;
+}
+
+if $(THORVG_CAPI) = 1 {
+	sourceDirs += bindings/capi ;
+}
+
+#------------------------------------------------------------------------------
+# Source Files (filenames only - paths handled via SEARCH_SOURCE)
+#------------------------------------------------------------------------------
+
+# Common
+local commonSources =
+	tvgColor.cpp
+	tvgCompressor.cpp
+	tvgMath.cpp
+	tvgStr.cpp
+;
+
+# Renderer
+local rendererSources =
+	tvgAccessor.cpp
+	tvgAnimation.cpp
+	tvgCanvas.cpp
+	tvgFill.cpp
+	tvgInitializer.cpp
+	tvgLoader.cpp
+	tvgPaint.cpp
+	tvgPicture.cpp
+	tvgRender.cpp
+	tvgSaver.cpp
+	tvgScene.cpp
+	tvgShape.cpp
+	tvgTaskScheduler.cpp
+	tvgText.cpp
+;
+
+# SW Engine
+local swEngineSources = ;
+if $(THORVG_SW_ENGINE) = 1 {
+	swEngineSources =
+		tvgSwFill.cpp
+		tvgSwImage.cpp
+		tvgSwMath.cpp
+		tvgSwMemPool.cpp
+		tvgSwPostEffect.cpp
+		tvgSwRaster.cpp
+		tvgSwRenderer.cpp
+		tvgSwRle.cpp
+		tvgSwShape.cpp
+		tvgSwStroke.cpp
+	;
+}
+
+# GL Engine
+local glEngineSources = ;
+if $(THORVG_GL_ENGINE) = 1 {
+	glEngineSources =
+		tvgGl.cpp
+		tvgGlEffect.cpp
+		tvgGlGeometry.cpp
+		tvgGlGpuBuffer.cpp
+		tvgGlProgram.cpp
+		tvgGlRenderer.cpp
+		tvgGlRenderPass.cpp
+		tvgGlRenderTarget.cpp
+		tvgGlRenderTask.cpp
+		tvgGlShader.cpp
+		tvgGlShaderSrc.cpp
+		tvgGlTessellator.cpp
+	;
+}
+
+# Raw Loader (always included)
+local rawLoaderSources =
+	tvgRawLoader.cpp
+;
+
+# SVG Loader
+local svgLoaderSources = ;
+if $(THORVG_SVG_LOADER) = 1 {
+	svgLoaderSources =
+		tvgSvgCssStyle.cpp
+		tvgSvgLoader.cpp
+		tvgSvgPath.cpp
+		tvgSvgSceneBuilder.cpp
+		tvgSvgUtil.cpp
+		tvgXmlParser.cpp
+	;
+}
+
+# Lottie Loader
+local lottieLoaderSources = ;
+if $(THORVG_LOTTIE_LOADER) = 1 {
+	lottieLoaderSources =
+		tvgLottieAnimation.cpp
+		tvgLottieBuilder.cpp
+		tvgLottieExpressions.cpp
+		tvgLottieInterpolator.cpp
+		tvgLottieLoader.cpp
+		tvgLottieModel.cpp
+		tvgLottieModifier.cpp
+		tvgLottieParser.cpp
+		tvgLottieParserHandler.cpp
+	;
+}
+
+# TTF Loader
+local ttfLoaderSources = ;
+if $(THORVG_TTF_LOADER) = 1 {
+	ttfLoaderSources =
+		tvgTtfLoader.cpp
+		tvgTtfReader.cpp
+	;
+}
+
+# PNG Loader
+local pngLoaderSources = ;
+if $(THORVG_PNG_LOADER) = 1 {
+	pngLoaderSources =
+		tvgLodePng.cpp
+		tvgPngLoader.cpp
+	;
+}
+
+# JPG Loader
+local jpgLoaderSources = ;
+if $(THORVG_JPG_LOADER) = 1 {
+	jpgLoaderSources =
+		tvgJpgd.cpp
+		tvgJpgLoader.cpp
+	;
+}
+
+# WebP Loader
+local webpLoaderSources = ;
+if $(THORVG_WEBP_LOADER) = 1 {
+	# Decoder files built as separate static libs via SubInclude
+	webpLoaderSources =
+		tvgWebpLoader.cpp
+	;
+}
+
+# GIF Saver
+local gifSaverSources = ;
+if $(THORVG_GIF_SAVER) = 1 {
+	gifSaverSources =
+		tvgGifEncoder.cpp
+		tvgGifSaver.cpp
+	;
+}
+
+# C API
+local capiSources = ;
+if $(THORVG_CAPI) = 1 {
+	capiSources =
+		tvgCapi.cpp
+	;
+}
+
+#------------------------------------------------------------------------------
+# Build Library
+#------------------------------------------------------------------------------
+
+local allSources =
+	$(commonSources)
+	$(rendererSources)
+	$(swEngineSources)
+	$(glEngineSources)
+	$(rawLoaderSources)
+	$(svgLoaderSources)
+	$(lottieLoaderSources)
+	$(ttfLoaderSources)
+	$(pngLoaderSources)
+	$(jpgLoaderSources)
+	$(webpLoaderSources)
+	$(gifSaverSources)
+	$(capiSources)
+;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		# Add source directories to search path (inside the arch loop like icon lib)
+		local sourceDir ;
+		for sourceDir in $(sourceDirs) {
+			SEARCH_SOURCE
+				+= [ FDirName $(HAIKU_TOP) src libs thorvg $(sourceDir) ] ;
+		}
+
+		local thorvgLibs = [ TargetLibstdc++ ] ;
+		if $(THORVG_GL_ENGINE) = 1 {
+			thorvgLibs += GL ;
+		}
+		if $(THORVG_LOTTIE_EXPRESSIONS) = 1 && $(THORVG_LOTTIE_LOADER) = 1 {
+			thorvgLibs += [ MultiArchDefaultGristFiles libjerryscript.a ] ;
+		}
+
+		if $(THORVG_WEBP_LOADER) = 1 {
+			thorvgLibs += [ MultiArchDefaultGristFiles libwebp_dec.a ] ;
+			thorvgLibs += [ MultiArchDefaultGristFiles libwebp_dsp.a ] ;
+			thorvgLibs += [ MultiArchDefaultGristFiles libwebp_utils.a ] ;
+		}
+
+		SharedLibrary [ MultiArchDefaultGristFiles libthorvg.so ] :
+			$(allSources)
+			:
+			$(thorvgLibs)
+			;
+	}
+}
+
+#------------------------------------------------------------------------------
+# Subdirectories
+#------------------------------------------------------------------------------
+
+if $(THORVG_LOTTIE_EXPRESSIONS) = 1 && $(THORVG_LOTTIE_LOADER) = 1 {
+	SubInclude HAIKU_TOP src libs thorvg loaders lottie jerryscript ;
+}
+if $(THORVG_WEBP_LOADER) = 1 {
+	SubInclude HAIKU_TOP src libs thorvg loaders webp ;
+}
