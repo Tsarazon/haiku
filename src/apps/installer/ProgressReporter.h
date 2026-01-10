@@ -17,7 +17,7 @@ public:
 
 			void				Reset();
 
-			void				AddItems(uint64 count, off_t bytes);
+			void				AddItems(int64 count, off_t bytes);
 
 			void				StartTimer();
 
@@ -37,7 +37,7 @@ private:
 			off_t				fBytesToWrite;
 			off_t				fBytesWritten;
 
-			uint64				fItemsToWrite;
+			int64				fItemsToWrite;
 			uint64				fItemsWritten;
 
 			BMessenger			fMessenger;

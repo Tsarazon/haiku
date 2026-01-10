@@ -21,7 +21,10 @@ class ProgressReporter;
 
 class CopyEngine {
 public:
-			class EntryFilter;
+	class EntryFilter;
+
+	static const int32 kBufferCount = 16;
+	static const size_t kBufferSize = 1024 * 1024;
 
 public:
 								CopyEngine(ProgressReporter* reporter,
@@ -40,6 +43,18 @@ public:
 	static	status_t			RemoveFolder(BEntry& entry);
 
 private:
+	struct Buffer {
+								Buffer(BFile* file);
+								~Buffer();
+
+		BFile*					file;
+		void*					buffer;
+		size_t					size;
+		size_t					validBytes;
+		bool					deleteFile;
+	};
+
+private:
 			status_t			_CollectCopyInfo(const char* source,
 									sem_id cancelSemaphore, off_t& bytesToCopy,
 									uint64& itemsToCopy);
@@ -50,6 +65,15 @@ private:
 									const BEntry& destination,
 									sem_id cancelSemaphore = -1);
 
+			status_t			_CopyAttributes(const BEntry& source,
+									BEntry& destination,
+									const struct stat& sourceInfo) const;
+
+			status_t			_RemoveExisting(BEntry& entry,
+									const char* entryPath) const;
+
+			bool				_IsCanceled(sem_id cancelSemaphore) const;
+
 			const char*			_RelativeEntryPath(
 									const char* absoluteSourcePath) const;
 
@@ -59,40 +83,16 @@ private:
 			void				_WriteThread();
 
 private:
-			enum {
-				BUFFER_COUNT	= 16,
-				BUFFER_SIZE		= 1024 * 1024
-			};
-			struct Buffer {
-				Buffer(BFile* file)
-					:
-					file(file),
-					buffer(malloc(BUFFER_SIZE)),
-					size(BUFFER_SIZE),
-					validBytes(0),
-					deleteFile(false)
-				{
-				}
-				~Buffer()
-				{
-					if (deleteFile)
-						delete file;
-					free(buffer);
-				}
-				BFile*			file;
-				void*			buffer;
-				size_t			size;
-				size_t			validBytes;
-				bool			deleteFile;
-			};
-
-private:
 	BlockingQueue<Buffer>		fBufferQueue;
 
 			thread_id			fWriterThread;
 	volatile bool				fQuitting;
+	volatile status_t			fWriteError;
 
 			BString				fAbsoluteSourcePath;
+
+			off_t				fAddedBytesToProgress;
+			int64				fAddedItemsToProgress;
 
 			off_t				fBytesRead;
 			off_t				fLastBytesRead;

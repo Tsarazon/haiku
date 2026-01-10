@@ -57,7 +57,7 @@ ProgressReporter::Reset()
 
 
 void
-ProgressReporter::AddItems(uint64 count, off_t bytes)
+ProgressReporter::AddItems(int64 count, off_t bytes)
 {
 	fBytesToWrite += bytes;
 	fItemsToWrite += count;

@@ -27,7 +27,23 @@
 using std::nothrow;
 
 
-// #pragma mark - EntryFilter
+CopyEngine::Buffer::Buffer(BFile* file)
+	:
+	file(file),
+	buffer(malloc(kBufferSize)),
+	size(kBufferSize),
+	validBytes(0),
+	deleteFile(false)
+{
+}
+
+
+CopyEngine::Buffer::~Buffer()
+{
+	if (deleteFile)
+		delete file;
+	free(buffer);
+}
 
 
 CopyEngine::EntryFilter::~EntryFilter()
@@ -35,16 +51,17 @@ CopyEngine::EntryFilter::~EntryFilter()
 }
 
 
-// #pragma mark - CopyEngine
-
-
 CopyEngine::CopyEngine(ProgressReporter* reporter, EntryFilter* entryFilter)
 	:
 	fBufferQueue(),
 	fWriterThread(-1),
 	fQuitting(false),
+	fWriteError(B_OK),
 
 	fAbsoluteSourcePath(),
+
+	fAddedBytesToProgress(0),
+	fAddedItemsToProgress(0),
 
 	fBytesRead(0),
 	fLastBytesRead(0),
@@ -67,7 +84,6 @@ CopyEngine::CopyEngine(ProgressReporter* reporter, EntryFilter* entryFilter)
 	if (fWriterThread >= B_OK)
 		resume_thread(fWriterThread);
 
-	// ask for a bunch more file descriptors so that nested copying works well
 	struct rlimit rl;
 	rl.rlim_cur = 512;
 	rl.rlim_max = RLIM_SAVED_MAX;
@@ -91,10 +107,16 @@ CopyEngine::~CopyEngine()
 void
 CopyEngine::ResetTargets(const char* source)
 {
-	// TODO: One could subtract the bytes/items which were added to the
-	// ProgressReporter before resetting them...
+	if (fProgressReporter != NULL
+		&& (fAddedBytesToProgress > 0 || fAddedItemsToProgress > 0)) {
+		fProgressReporter->AddItems(-fAddedItemsToProgress,
+			-fAddedBytesToProgress);
+	}
 
 	fAbsoluteSourcePath = source;
+
+	fAddedBytesToProgress = 0;
+	fAddedItemsToProgress = 0;
 
 	fBytesRead = 0;
 	fLastBytesRead = 0;
@@ -107,6 +129,8 @@ CopyEngine::ResetTargets(const char* source)
 
 	fCurrentTargetFolder = NULL;
 	fCurrentItem = NULL;
+
+	fWriteError = B_OK;
 }
 
 
@@ -115,10 +139,16 @@ CopyEngine::CollectTargets(const char* source, sem_id cancelSemaphore)
 {
 	off_t bytesToCopy = 0;
 	uint64 itemsToCopy = 0;
+
 	status_t ret = _CollectCopyInfo(source, cancelSemaphore, bytesToCopy,
-			itemsToCopy);
-	if (ret == B_OK && fProgressReporter != NULL)
+		itemsToCopy);
+
+	if (ret == B_OK && fProgressReporter != NULL) {
 		fProgressReporter->AddItems(itemsToCopy, bytesToCopy);
+		fAddedItemsToProgress += itemsToCopy;
+		fAddedBytesToProgress += bytesToCopy;
+	}
+
 	return ret;
 }
 
@@ -127,10 +157,8 @@ status_t
 CopyEngine::Copy(const char* _source, const char* _destination,
 	sem_id cancelSemaphore, bool copyAttributes)
 {
-	status_t ret;
-
 	BEntry source(_source);
-	ret = source.InitCheck();
+	status_t ret = source.InitCheck();
 	if (ret != B_OK)
 		return ret;
 
@@ -154,7 +182,7 @@ CopyEngine::RemoveFolder(BEntry& entry)
 	BEntry subEntry;
 	while (directory.GetNextEntry(&subEntry) == B_OK) {
 		if (subEntry.IsDirectory()) {
-			ret = CopyEngine::RemoveFolder(subEntry);
+			ret = RemoveFolder(subEntry);
 			if (ret != B_OK)
 				return ret;
 		} else {
@@ -163,7 +191,82 @@ CopyEngine::RemoveFolder(BEntry& entry)
 				return ret;
 		}
 	}
+
 	return entry.Remove();
+}
+
+
+bool
+CopyEngine::_IsCanceled(sem_id cancelSemaphore) const
+{
+	if (cancelSemaphore < 0)
+		return false;
+
+	SemaphoreLocker lock(cancelSemaphore);
+	return !lock.IsLocked();
+}
+
+
+status_t
+CopyEngine::_RemoveExisting(BEntry& entry, const char* entryPath) const
+{
+	if (!entry.Exists())
+		return B_OK;
+
+	status_t ret;
+	if (entry.IsDirectory())
+		ret = RemoveFolder(entry);
+	else
+		ret = entry.Remove();
+
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to make room for entry '%s': %s\n",
+			entryPath, strerror(ret));
+	}
+
+	return ret;
+}
+
+
+status_t
+CopyEngine::_CopyAttributes(const BEntry& source, BEntry& destination,
+	const struct stat& sourceInfo) const
+{
+	BNode sourceNode(&source);
+	BNode targetNode(&destination);
+
+	char attrName[B_ATTR_NAME_LENGTH];
+	while (sourceNode.GetNextAttrName(attrName) == B_OK) {
+		attr_info info;
+		if (sourceNode.GetAttrInfo(attrName, &info) != B_OK)
+			continue;
+
+		const size_t bufferSize = 4096;
+		uint8 buffer[bufferSize];
+		off_t offset = 0;
+
+		ssize_t read = sourceNode.ReadAttr(attrName, info.type,
+			offset, buffer, std::min((off_t)bufferSize, info.size));
+
+		while (read >= 0) {
+			targetNode.WriteAttr(attrName, info.type, offset, buffer, read);
+			offset += read;
+
+			read = sourceNode.ReadAttr(attrName, info.type,
+				offset, buffer, std::min((off_t)bufferSize, info.size - offset));
+
+			if (read == 0)
+				break;
+		}
+	}
+
+	destination.SetPermissions(sourceInfo.st_mode);
+	destination.SetOwner(sourceInfo.st_uid);
+	destination.SetGroup(sourceInfo.st_gid);
+	destination.SetModificationTime(sourceInfo.st_mtime);
+	destination.SetCreationTime(sourceInfo.st_crtime);
+
+	return B_OK;
 }
 
 
@@ -171,11 +274,8 @@ status_t
 CopyEngine::_CopyData(const BEntry& _source, const BEntry& _destination,
 	sem_id cancelSemaphore)
 {
-	SemaphoreLocker lock(cancelSemaphore);
-	if (cancelSemaphore >= 0 && !lock.IsLocked()) {
-		// We are supposed to quit
+	if (_IsCanceled(cancelSemaphore))
 		return B_CANCELED;
-	}
 
 	BFile source(&_source, B_READ_ONLY);
 	status_t ret = source.InitCheck();
@@ -193,23 +293,24 @@ CopyEngine::_CopyData(const BEntry& _source, const BEntry& _destination,
 	int32 loopIteration = 0;
 
 	while (true) {
-		if (fBufferQueue.Size() >= BUFFER_COUNT) {
-			// the queue is "full", just wait a bit, the
-			// write thread will empty it
+		if (fWriteError != B_OK) {
+			delete destination;
+			return fWriteError;
+		}
+
+		if (fBufferQueue.Size() >= kBufferCount) {
 			snooze(1000);
 			continue;
 		}
 
-		// allocate buffer
 		Buffer* buffer = new (nothrow) Buffer(destination);
-		if (!buffer || !buffer->buffer) {
+		if (buffer == NULL || buffer->buffer == NULL) {
 			delete destination;
 			delete buffer;
 			fprintf(stderr, "reading loop: out of memory\n");
 			return B_NO_MEMORY;
 		}
 
-		// fill buffer
 		ssize_t read = source.Read(buffer->buffer, buffer->size);
 		if (read < 0) {
 			ret = (status_t)read;
@@ -224,13 +325,9 @@ CopyEngine::_CopyData(const BEntry& _source, const BEntry& _destination,
 		if (loopIteration % 2 == 0)
 			_UpdateProgress();
 
-		buffer->deleteFile = read == 0;
-		if (read > 0)
-			buffer->validBytes = (size_t)read;
-		else
-			buffer->validBytes = 0;
+		buffer->deleteFile = (read == 0);
+		buffer->validBytes = (read > 0) ? (size_t)read : 0;
 
-		// enqueue the buffer
 		ret = fBufferQueue.Push(buffer);
 		if (ret < B_OK) {
 			buffer->deleteFile = false;
@@ -239,16 +336,12 @@ CopyEngine::_CopyData(const BEntry& _source, const BEntry& _destination,
 			return ret;
 		}
 
-		// quit if done
 		if (read == 0)
 			break;
 	}
 
 	return ret;
 }
-
-
-// #pragma mark -
 
 
 status_t
@@ -265,21 +358,14 @@ CopyEngine::_CollectCopyInfo(const char* _source, sem_id cancelSemaphore,
 	if (ret < B_OK)
 		return ret;
 
-	SemaphoreLocker lock(cancelSemaphore);
-	if (cancelSemaphore >= 0 && !lock.IsLocked()) {
-		// We are supposed to quit
+	if (_IsCanceled(cancelSemaphore))
 		return B_CANCELED;
-	}
 
 	if (fEntryFilter != NULL
 		&& !fEntryFilter->ShouldCopyEntry(source,
 			_RelativeEntryPath(_source), statInfo)) {
-		// Skip this entry
 		return B_OK;
 	}
-
-	if (cancelSemaphore >= 0)
-		lock.Unlock();
 
 	if (S_ISDIR(statInfo.st_mode)) {
 		BDirectory srcFolder(&source);
@@ -295,13 +381,11 @@ CopyEngine::_CollectCopyInfo(const char* _source, sem_id cancelSemaphore,
 				return ret;
 
 			ret = _CollectCopyInfo(entryPath.Path(), cancelSemaphore,
-					bytesToCopy, itemsToCopy);
+				bytesToCopy, itemsToCopy);
 			if (ret < B_OK)
 				return ret;
 		}
-	} else if (S_ISLNK(statInfo.st_mode)) {
-		// link, ignore size
-	} else {
+	} else if (!S_ISLNK(statInfo.st_mode)) {
 		bytesToCopy += statInfo.st_size;
 	}
 
@@ -311,7 +395,7 @@ CopyEngine::_CollectCopyInfo(const char* _source, sem_id cancelSemaphore,
 
 
 status_t
-CopyEngine::_Copy(BEntry &source, BEntry &destination,
+CopyEngine::_Copy(BEntry& source, BEntry& destination,
 	sem_id cancelSemaphore, bool copyAttributes)
 {
 	struct stat sourceInfo;
@@ -319,11 +403,8 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 	if (ret != B_OK)
 		return ret;
 
-	SemaphoreLocker lock(cancelSemaphore);
-	if (cancelSemaphore >= 0 && !lock.IsLocked()) {
-		// We are supposed to quit
+	if (_IsCanceled(cancelSemaphore))
 		return B_CANCELED;
-	}
 
 	BPath sourcePath(&source);
 	ret = sourcePath.InitCheck();
@@ -335,22 +416,14 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 	if (ret != B_OK)
 		return ret;
 
-	const char *relativeSourcePath = _RelativeEntryPath(sourcePath.Path());
+	const char* relativeSourcePath = _RelativeEntryPath(sourcePath.Path());
 	if (fEntryFilter != NULL
-		&& !fEntryFilter->ShouldCopyEntry(source, relativeSourcePath,
-			sourceInfo)) {
-		// Silently skip the filtered entry.
+		&& !fEntryFilter->ShouldCopyEntry(source, relativeSourcePath, sourceInfo)) {
 		return B_OK;
 	}
 
-	if (cancelSemaphore >= 0)
-		lock.Unlock();
-
 	bool copyAttributesToTarget = copyAttributes;
-		// attributes of the current source to the destination will be copied
-		// when copyAttributes is set to true, but there may be exceptions, so
-		// allow the recursively used copyAttribute parameter to be overridden
-		// for the current target.
+
 	if (S_ISDIR(sourceInfo.st_mode)) {
 		BDirectory sourceDirectory(&source);
 		ret = sourceDirectory.InitCheck();
@@ -359,27 +432,21 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 
 		if (destination.Exists()) {
 			if (destination.IsDirectory()) {
-				// Do not overwrite attributes on folders that exist.
-				// This should work better when the install target
-				// already contains a Haiku installation.
 				copyAttributesToTarget = false;
 			} else {
 				ret = destination.Remove();
-			}
-
-			if (ret != B_OK) {
-				fprintf(stderr, "Failed to make room for folder '%s': "
-					"%s\n", sourcePath.Path(), strerror(ret));
-				return ret;
+				if (ret != B_OK) {
+					fprintf(stderr, "Failed to make room for folder '%s': %s\n",
+						sourcePath.Path(), strerror(ret));
+					return ret;
+				}
 			}
 		}
 
 		ret = create_directory(destPath.Path(), 0777);
-			// Make sure the target path exists, it may have been deleted if
-			// the existing destination was a file instead of a directory.
 		if (ret != B_OK && ret != B_FILE_EXISTS) {
-			fprintf(stderr, "Could not create '%s': %s\n", destPath.Path(),
-				strerror(ret));
+			fprintf(stderr, "Could not create '%s': %s\n",
+				destPath.Path(), strerror(ret));
 			return ret;
 		}
 
@@ -394,34 +461,28 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 			ret = dest.InitCheck();
 			if (ret != B_OK)
 				return ret;
+
 			ret = _Copy(entry, dest, cancelSemaphore, copyAttributes);
 			if (ret != B_OK)
 				return ret;
 		}
 	} else {
-		if (destination.Exists()) {
-			if (destination.IsDirectory())
-				ret = CopyEngine::RemoveFolder(destination);
-			else
-				ret = destination.Remove();
-			if (ret != B_OK) {
-				fprintf(stderr, "Failed to make room for entry '%s': "
-					"%s\n", sourcePath.Path(), strerror(ret));
-				return ret;
-			}
-		}
+		ret = _RemoveExisting(destination, sourcePath.Path());
+		if (ret != B_OK)
+			return ret;
 
 		fItemsCopied++;
+
 		BPath destDirectory;
 		ret = destPath.GetParent(&destDirectory);
 		if (ret != B_OK)
 			return ret;
+
 		fCurrentTargetFolder = destDirectory.Path();
 		fCurrentItem = sourcePath.Leaf();
 		_UpdateProgress();
 
 		if (S_ISLNK(sourceInfo.st_mode)) {
-			// copy symbolic links
 			BSymLink srcLink(&source);
 			ret = srcLink.InitCheck();
 			if (ret != B_OK)
@@ -436,12 +497,11 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 			ret = destination.GetParent(&dstFolder);
 			if (ret != B_OK)
 				return ret;
+
 			ret = dstFolder.CreateSymLink(sourcePath.Leaf(), linkPath, NULL);
 			if (ret != B_OK)
 				return ret;
 		} else {
-			// copy file data
-			// NOTE: Do not pass the locker, we simply keep holding the lock!
 			ret = _CopyData(source, destination);
 			if (ret != B_OK)
 				return ret;
@@ -449,37 +509,7 @@ CopyEngine::_Copy(BEntry &source, BEntry &destination,
 	}
 
 	if (copyAttributesToTarget) {
-		// copy attributes to the current target
-		BNode sourceNode(&source);
-		BNode targetNode(&destination);
-		char attrName[B_ATTR_NAME_LENGTH];
-		while (sourceNode.GetNextAttrName(attrName) == B_OK) {
-			attr_info info;
-			if (sourceNode.GetAttrInfo(attrName, &info) != B_OK)
-				continue;
-			size_t size = 4096;
-			uint8 buffer[size];
-			off_t offset = 0;
-			ssize_t read = sourceNode.ReadAttr(attrName, info.type,
-				offset, buffer, std::min((off_t)size, info.size));
-			// NOTE: It's important to still write the attribute even if
-			// we have read 0 bytes!
-			while (read >= 0) {
-				targetNode.WriteAttr(attrName, info.type, offset, buffer, read);
-				offset += read;
-				read = sourceNode.ReadAttr(attrName, info.type,
-					offset, buffer, std::min((off_t)size, info.size - offset));
-				if (read == 0)
-					break;
-			}
-		}
-
-		// copy basic attributes
-		destination.SetPermissions(sourceInfo.st_mode);
-		destination.SetOwner(sourceInfo.st_uid);
-		destination.SetGroup(sourceInfo.st_gid);
-		destination.SetModificationTime(sourceInfo.st_mtime);
-		destination.SetCreationTime(sourceInfo.st_crtime);
+		_CopyAttributes(source, destination, sourceInfo);
 	}
 
 	return B_OK;
@@ -494,8 +524,7 @@ CopyEngine::_RelativeEntryPath(const char* absoluteSourcePath) const
 		return absoluteSourcePath;
 	}
 
-	const char* relativePath
-		= absoluteSourcePath + fAbsoluteSourcePath.Length();
+	const char* relativePath = absoluteSourcePath + fAbsoluteSourcePath.Length();
 	return relativePath[0] == '/' ? relativePath + 1 : relativePath;
 }
 
@@ -535,22 +564,21 @@ CopyEngine::_WriteThreadEntry(void* cookie)
 void
 CopyEngine::_WriteThread()
 {
-	bigtime_t bufferWaitTimeout = 100000;
+	const bigtime_t bufferWaitTimeout = 100000;
 
 	while (!fQuitting) {
-
 		bigtime_t now = system_time();
 
 		Buffer* buffer = NULL;
 		status_t ret = fBufferQueue.Pop(&buffer, bufferWaitTimeout);
-		if (ret == B_TIMED_OUT) {
-			// no buffer, timeout
+
+		if (ret == B_TIMED_OUT)
 			continue;
-		} else if (ret == B_NO_INIT) {
-			// real error
+
+		if (ret == B_NO_INIT)
 			return;
-		} else if (ret != B_OK) {
-			// no buffer, queue error
+
+		if (ret != B_OK) {
 			snooze(10000);
 			continue;
 		}
@@ -558,25 +586,24 @@ CopyEngine::_WriteThread()
 		if (!buffer->deleteFile) {
 			ssize_t written = buffer->file->Write(buffer->buffer,
 				buffer->validBytes);
+
 			if (written != (ssize_t)buffer->validBytes) {
-				// TODO: this should somehow be propagated back
-				// to the main thread!
-				fprintf(stderr, "Failed to write data: %s\n",
-					strerror((status_t)written));
+				status_t error = (written < 0) ? (status_t)written : B_IO_ERROR;
+				fprintf(stderr, "Failed to write data: %s\n", strerror(error));
+				fWriteError = error;
 			}
-			fBytesWritten += written;
+
+			fBytesWritten += (written > 0) ? written : 0;
 		}
 
 		delete buffer;
-
-		// measure performance
 		fTimeWritten += system_time() - now;
 	}
 
 	double megaBytes = (double)fBytesWritten / (1024 * 1024);
 	double seconds = (double)fTimeWritten / 1000000;
+
 	if (seconds > 0) {
-		printf("%.2f MB written (%.2f MB/s)\n", megaBytes,
-			megaBytes / seconds);
+		printf("%.2f MB written (%.2f MB/s)\n", megaBytes, megaBytes / seconds);
 	}
 }
