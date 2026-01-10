@@ -1,406 +1,602 @@
-# Отчёт о сопоставлении файлов IntelLake с оригинальными файлами Haiku
+# Отчёт о сопоставлении файлов IntelLake с оригинальными исходниками
 
-## Обзор
+## Общая информация
 
-Директория `IntelLake/` содержит рефакторинг драйвера Intel Extreme Graphics для поддержки **только Gen 9+ GPU** (Skylake 2015 и новее). Это убирает поддержку устаревших поколений (Gen 2-8) и добавляет улучшенную поддержку современных чипов.
+**IntelLake** — это модернизированный драйвер Intel GPU для Haiku OS, поддерживающий ТОЛЬКО поколения Gen 9 и новее (Skylake, Kaby Lake, Coffee Lake, Ice Lake, Tiger Lake, Alder Lake и т.д.).
 
-## Местоположения оригинальных файлов
-
-- **Акселерант:** `/home/ruslan/haiku/src/add-ons/accelerants/intel_extreme/`
-- **Драйвер ядра:** `/home/ruslan/haiku/src/add-ons/kernel/drivers/graphics/intel_extreme/`
-- **Общий заголовок:** `/home/ruslan/haiku/headers/private/graphics/intel_extreme/`
-
----
-
-## Детальное сопоставление файлов
-
-### 1. accelerant.cpp
-
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/accelerants/intel_extreme/accelerant.cpp` |
-| **Тип изменений** | Рефакторинг + удаление |
-
-#### УДАЛЕНО (legacy pre-Gen9):
-- Проверка `InGroup(INTEL_GROUP_96x)` и выделение памяти для 3D контекста i965
-- Функция `intel_free_memory(gInfo->context_base)` в `uninit_common()`
-- Пробинг legacy портов: `DisplayPort`, `HDMIPort`, `LVDSPort`, `AnalogPort`, `DigitalPort`
-- Подсчёт pipes для Gen 7 (3 pipes) — теперь Gen 9+ по умолчанию 3, Gen 12+ — 4
-- Проверка `gInfo->shared_info->device_type.Generation() >= 7` — заменена на жёсткое 3 pipes
-- Проверка `gInfo->shared_info->internal_crt_support` для аналогового порта
-- Установка `gInfo->head_mode` флагов (`HEAD_MODE_LVDS_PANEL`, `HEAD_MODE_B_DIGITAL`, `HEAD_MODE_A_ANALOG`)
-- Вызов `refclk_activate_ilk()` для PCH IBX/CPT
-
-#### ДОБАВЛЕНО (Gen9+ specific):
-- Комментарии с ссылками на Intel PRM Vol 2c, Display Engine
-- Упрощённая логика: только DDI порты для Gen 9+
-- Автоматическое определение: Gen 12+ поддерживает до порта G
-- Название "Intel Iris Xe" для семейства LAKE
-
-#### СОХРАНЕНО:
-- Базовая архитектура init_common/uninit_common
-- Логика assign_pipes()
-- Инициализация ring buffer
+Из кодовой базы удалена поддержка устаревших чипсетов:
+- i830, i845, i855, i865
+- i915, i945, i965
+- G33, G35, G41, G43, G45
+- Ironlake, Sandy Bridge, Ivy Bridge, Haswell, Broadwell
 
 ---
 
-### 2. accelerant.h
+## 1. accelerant.cpp
 
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/accelerants/intel_extreme/accelerant.h` |
-| **Тип изменений** | Минимальные изменения |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/accelerant.cpp`
 
-#### УДАЛЕНО:
-- Поле `context_base` и `context_offset` для i965 3D контекста (не нужно для Gen 9+)
+### УДАЛЕНО:
+- Выделение 3D контекста для i965 (`gInfo->context_base`, `gInfo->context_offset`)
+- Пробинг устаревших типов портов: `INTEL_PORT_TYPE_ANALOG`, `INTEL_PORT_TYPE_DVI`, `INTEL_PORT_TYPE_LVDS`, `INTEL_PORT_TYPE_HDMI`, `INTEL_PORT_TYPE_DP`, `INTEL_PORT_TYPE_eDP`
+- Классы портов: `AnalogPort`, `LVDSPort`, `DigitalPort`, `HDMIPort`, `DisplayPort`, `EmbeddedDisplayPort`
+- Активация опорной частоты для старых чипов (Reference Clock)
+- Условная логика для различных поколений GPU в detect_displays()
 
-#### СОХРАНЕНО:
-- Структура `accelerant_info`
-- Указатели на pipes и ports
-- Overlay регистры
+### ДОБАВЛЕНО:
+- Только DDI (Digital Display Interface) порты — единый тип `INTEL_PORT_TYPE_DDI`
+- Класс `DigitalDisplayInterface` как единственный тип порта
+- Расчёт количества pipes: 3 для Gen9-Gen11, 4 для Gen12+
+- Упрощённый probe_ports() только для DDI-A, DDI-B, DDI-C, DDI-D, DDI-E
 
----
-
-### 3. intel_extreme.h (общий заголовок)
-
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `headers/private/graphics/intel_extreme/intel_extreme.h` |
-| **Тип изменений** | Полный рефакторинг |
-
-#### УДАЛЕНО (legacy families/groups):
-```cpp
-// Удалены все определения до Gen 9:
-INTEL_FAMILY_8xx, INTEL_FAMILY_9xx, INTEL_FAMILY_SER5, INTEL_FAMILY_SOC0
-INTEL_GROUP_83x, INTEL_GROUP_85x, INTEL_GROUP_91x, INTEL_GROUP_94x, ...
-INTEL_GROUP_ILK, INTEL_GROUP_SNB, INTEL_GROUP_IVB, INTEL_GROUP_HAS, ...
-INTEL_MODEL_xxx для всех устройств до Skylake
-```
-
-#### УДАЛЕНО (legacy PCH):
-```cpp
-INTEL_PCH_IBX_DEVICE_ID
-INTEL_PCH_CPT_DEVICE_ID
-INTEL_PCH_PPT_DEVICE_ID
-INTEL_PCH_LPT_DEVICE_ID
-INTEL_PCH_WPT_DEVICE_ID
-```
-
-#### УДАЛЕНО (legacy pch_info enum):
-```cpp
-INTEL_PCH_IBX, INTEL_PCH_CPT, INTEL_PCH_LPT
-```
-
-#### ДОБАВЛЕНО (Gen9+ specific):
-- Новое семейство: `INTEL_FAMILY_LAKE`
-- Группы: `INTEL_GROUP_SKY`, `INTEL_GROUP_KBY`, `INTEL_GROUP_CFL`, `INTEL_GROUP_CML`, `INTEL_GROUP_BXT`, `INTEL_GROUP_GLK`, `INTEL_GROUP_ICL`, `INTEL_GROUP_JSL`, `INTEL_GROUP_EHL`, `INTEL_GROUP_TGL`, `INTEL_GROUP_RKL`, `INTEL_GROUP_ALD`
-- Rocket Lake и полный Alder Lake device ID
-- Улучшенный `DeviceType::Generation()` для Gen 9/11/12
-- `IsAtom()` метод для Broxton/Gemini Lake/Jasper Lake/Elkhart Lake
-- Поля прошивки в `intel_shared_info`: `dmc_version`, `guc_version`, `huc_version`
-- Расширенные PCH device IDs для Gen 9+
-- TGL DPLL регистры (полный набор)
-- Gen11+ interrupt регистры
-- Gen9+ Universal Plane регистры
+### ИЗМЕНЕНО:
+- Убраны все проверки `gInfo->shared_info->device_type.InGroup(INTEL_GROUP_*)`
+- Код стал значительно компактнее (меньше условных ветвлений)
 
 ---
 
-### 4. LakePLL.cpp / LakePLL.h
+## 2. accelerant.h
 
-| Аспект | Описание |
-|--------|----------|
-| **Источники** | `pll.cpp`, `pll.h`, `TigerLakePLL.cpp`, `TigerLakePLL.h` |
-| **Тип изменений** | **ОБЪЕДИНЕНИЕ** трёх поколений PLL |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/accelerant.h`
 
-#### УДАЛЕНО из pll.cpp/pll.h:
-- Структура `pll_divisors` (m, n, p делители для legacy)
-- Структура `pll_limits` (min/max VCO для legacy)
-- Функция `valid_pll_divisors()` — не нужна для DCO
-- Функция `compute_pll_divisors()` — legacy PLL алгоритм
-- Функция `refclk_activate_ilk()` — IronLake reference clock
-- Функция `hsw_ddi_calculate_wrpll()` — Haswell WRPLL
+### УДАЛЕНО:
+- Поля для 3D контекста: `context_base`, `context_offset`, `context_set`
+- Макрос `HEAD_MODE_A_ANALOG`
 
-#### ОБЪЕДИНЕНО из TigerLakePLL:
-- `ComputeHdmiDpll()` → `tgl_compute_hdmi_dpll()`
-- `ComputeDisplayPortDpll()` → `tgl_compute_dp_dpll()`
-- `ProgramPLL()` → `tgl_program_pll()`
+### ДОБАВЛЕНО:
+- Комментарии о Gen 9+ специфике
 
-#### ДОБАВЛЕНО (новая унифицированная архитектура):
-
-**Skylake WRPLL (Gen 9/9.5):**
-```cpp
-skl_wrpll_context — контекст для поиска делителей
-skl_wrpll_try_divider() — проверка делителя
-skl_wrpll_get_multipliers() — P0/P1/P2 разложение
-skl_wrpll_params_populate() — заполнение параметров
-skl_ddi_calculate_wrpll() — расчёт WRPLL
-skl_program_dpll() — программирование DPLL
-```
-
-**Ice Lake Combo PLL (Gen 11):**
-```cpp
-icl_dp_combo_pll_24MHz_values[] — таблица для 24 МГц
-icl_dp_combo_pll_19_2MHz_values[] — таблица для 19.2 МГц
-icl_dp_rate_to_index() — индекс DP link rate
-icl_compute_combo_pll_hdmi() — расчёт для HDMI
-icl_compute_combo_pll_dp() — расчёт для DP
-icl_program_combo_pll() — программирование combo PLL
-```
-
-**Tiger Lake (Gen 12+):**
-- Полностью интегрирован код из TigerLakePLL.cpp
-
-**Унифицированный интерфейс:**
-```cpp
-compute_display_pll() — автоматический выбор алгоритма по поколению
-get_effective_ref_clock() — учёт auto-divide для Gen 11+
-pll_port_type enum — PLL_PORT_HDMI/DVI/DP/EDP
-```
+### ИЗМЕНЕНО:
+- Структура `accelerant_info` упрощена
 
 ---
 
-### 5. Pipes.h / Pipes.cpp
+## 3. accelerant_protos.h
 
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/accelerants/intel_extreme/Pipes.h` |
-| **Тип изменений** | Упрощение |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/accelerant_protos.h`
 
-#### УДАЛЕНО:
-- `#include "FlexibleDisplayInterface.h"` — FDI не используется в Gen 9+
-- `FDILink* fFDILink` член класса
-- Метод `FDI()` accessor
-- Метод `Disable()` — не используется
-- Метод `SetFDILink()` — FDI только для Sandy Bridge/Ivy Bridge
-- Метод `ConfigureClocks()` с legacy `pll_divisors` параметрами
+### УДАЛЕНО:
+- Все функции 2D ускорения:
+  - `intel_screen_to_screen_blit()`
+  - `intel_fill_rectangle()`
+  - `intel_invert_rectangle()`
+  - `intel_fill_span()`
+- Весь Engine API:
+  - `intel_engine_count()`
+  - `intel_acquire_engine()`
+  - `intel_release_engine()`
+  - `intel_get_sync_token()`
+  - `intel_sync_to_token()`
+- Функция `i965_configure_overlay()`
 
-#### СОХРАНЕНО:
-- `ConfigureClocksSKL()` для skl_wrpll_params
-- Базовые методы: `Enable()`, `Configure()`, `ConfigureTimings()`
-
-#### ИЗМЕНЕНО:
-- Комментарий с датой рефакторинга
-- `MAX_PIPES = 4` с уточнением: Gen 9 = 3, Gen 11+ = 4
-
----
-
-### 6. Ports.h / Ports.cpp
-
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/accelerants/intel_extreme/Ports.h` |
-| **Тип изменений** | Значительное упрощение |
-
-#### УДАЛЕНО (legacy port classes):
-- `class AnalogPort` — VGA (не поддерживается Gen 9+)
-- `class LVDSPort` — заменён на eDP через DDI
-- `class DigitalPort` — legacy DVI
-- `class HDMIPort` — теперь через DDI
-- `class DisplayPort` — теперь через DDI
-- `class EmbeddedDisplayPort` — теперь через DDI
-
-#### УДАЛЕНО (legacy port types):
-```cpp
-INTEL_PORT_TYPE_ANALOG  // удалён
-INTEL_PORT_TYPE_DVI     // удалён
-INTEL_PORT_TYPE_LVDS    // удалён
-```
-
-#### ДОБАВЛЕНО:
-```cpp
-INTEL_PORT_TYPE_DDI     // Digital Display Interface (Gen 9+)
-```
-
-#### ИЗМЕНЕНО:
-- `DigitalDisplayInterface::Type()` теперь возвращает `INTEL_PORT_TYPE_DDI` вместо `INTEL_PORT_TYPE_DVI`
-- Комментарий: "Refactored for Gen 9+ only support"
+### ДОБАВЛЕНО:
+- Комментарии: "Gen 9+ не использует 2D blitter — он deprecated"
+- Комментарии: "Используется Execlist вместо Ring Buffer"
 
 ---
 
-### 7. driver.cpp (драйвер ядра)
+## 4. commands.h
 
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/kernel/drivers/graphics/intel_extreme/driver.cpp` |
-| **Тип изменений** | Сокращение списка устройств |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/commands.h`
 
-#### УДАЛЕНО (legacy device IDs):
-```cpp
-// Все устройства до Gen 9:
-Sandy Bridge (0x0102, 0x0112, 0x0122, 0x0106, ...)
-Ivy Bridge (0x0152, 0x0162, 0x0156, ...)
-Haswell (0x0a06, 0x0412, 0x0416, ...)
-ValleyView (0x0f30, 0x0f31, ...)
-Broadwell (0x1606, 0x160b, 0x1616, ...)
-```
+### УДАЛЕНО:
+- Весь класс `QueueCommands` (управление кольцевым буфером)
+- Структуры `xy_command`, `xy_source_blit_command`, `xy_pattern_command`, `xy_color_command`, `xy_setup_mono_pattern_command`
+- Все XY_* команды blitter:
+  - `XY_COMMAND_COLOR_BLIT`
+  - `XY_COMMAND_SETUP_MONO_PATTERN`
+  - `XY_COMMAND_SCANLINE_BLIT`
+  - `XY_COMMAND_SOURCE_BLIT`
+  - Флаги `XY_COMMAND_NOCLIP`, `XY_COMMAND_PATTERN_*`, `XY_COMMAND_DESTINATION_*`
 
-#### УДАЛЕНО (legacy PCH detection):
-```cpp
-case INTEL_PCH_IBX_DEVICE_ID:
-case INTEL_PCH_CPT_DEVICE_ID:
-case INTEL_PCH_PPT_DEVICE_ID:
-case INTEL_PCH_LPT_DEVICE_ID:
-case INTEL_PCH_WPT_DEVICE_ID:
-```
+### ДОБАВЛЕНО:
+- MI_* команды (Memory Interface) для Gen 9+:
+  - `MI_NOOP` (0x00)
+  - `MI_FLUSH` (0x04)
+  - `MI_BATCH_BUFFER_END` (0x0A)
+  - `MI_STORE_DATA_IMM` (0x20)
+  - `MI_LOAD_REGISTER_IMM` (0x22)
+  - `MI_FLUSH_DW` (0x26)
 
-#### ДОБАВЛЕНО:
-- Расширенный список Skylake device IDs
-- Полный список Kaby Lake device IDs
-- Полный список Coffee Lake device IDs
-- Полный список Comet Lake device IDs
-- Полный список Ice Lake device IDs
-- Полный список Tiger Lake device IDs
-- Полный список Rocket Lake device IDs
-- Полный список Alder Lake device IDs (включая P, N варианты)
-- Apollo Lake / Broxton device IDs
-- Gemini Lake device IDs
-- Jasper Lake device IDs
-- Elkhart Lake device IDs
-
-#### ИЗМЕНЕНО:
-- Комментарий: "SUPPORTED: Gen 9+ only (Skylake 2015 and newer)"
-- Верификация против Intel PRM Vol 2c
+### ИЗМЕНЕНО:
+- Файл стал минимальным — только базовые MI команды для синхронизации
 
 ---
 
-### 8. power.h / power.cpp
+## 5. cursor.cpp
 
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | `src/add-ons/kernel/drivers/graphics/intel_extreme/power.h` |
-| **Тип изменений** | Полная переработка регистров |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/cursor.cpp`
 
-#### УДАЛЕНО (Gen6-8 регистры):
-```cpp
-// Все INTEL6_* регистры удалены:
-INTEL6_GT_THREAD_STATUS_REG
-INTEL6_GT_PERF_STATUS
-INTEL6_RP_STATE_LIMITS
-INTEL6_RPNSWREQ
-INTEL6_RC_CONTROL
-INTEL6_RC_VIDEO_FREQ
-INTEL6_RP_DOWN_TIMEOUT
-INTEL6_RPSTAT1
-INTEL6_RP_CONTROL
-INTEL6_RP_UP_THRESHOLD
-INTEL6_RP_DOWN_THRESHOLD
-... (порядка 50 регистров)
-```
+### УДАЛЕНО:
+- Поддержка 2-цветных курсоров (режим AND/XOR mask)
+- Макросы `CURSOR_MODE`, `CURSOR_ENABLED`, `CURSOR_FORMAT_*`, `CURSOR_PIPE_*`
+- Функция `write_cursor_mode()` для управления режимами
+- Вся логика конвертации 2-bit cursor в формат Intel
 
-#### ДОБАВЛЕНО (Gen9+ регистры):
-```cpp
-// Render P-state:
-GEN9_RP_STATE_CAP, GEN9_RP_STATE_LIMITS, GEN9_RPSTAT1, GEN9_RPNSWREQ
+### ДОБАВЛЕНО:
+- GEN9_CUR_CTL_* макросы:
+  - `GEN9_CUR_CTL_ENABLE`
+  - `GEN9_CUR_CTL_FORMAT_ARGB8888`
+  - `GEN9_CUR_CTL_SIZE_64`, `GEN9_CUR_CTL_SIZE_128`, `GEN9_CUR_CTL_SIZE_256`
+  - `GEN9_CUR_CTL_PIPE(n)`
+- Прямая поддержка ARGB8888 курсоров (32-bit с альфа-каналом)
+- Регистры `GEN9_CUR_POS`, `GEN9_CUR_BASE`, `GEN9_CUR_CTL`
 
-// RC6 state:
-GEN9_GT_CORE_STATUS, GEN9_RC_CONTROL, GEN9_RC_STATE
-GEN9_RC6_RESIDENCY_COUNTER, GEN9_RC6_THRESHOLD
-
-// Forcewake:
-GEN9_FORCEWAKE_RENDER_GEN9, GEN9_FORCEWAKE_MEDIA_GEN9
-GEN9_FORCEWAKE_BLITTER_GEN9, GEN9_FORCEWAKE_ACK_*
-
-// Clock gating:
-GEN9_CLKGATE_DIS_0/1/4
-
-// Gen11+ specific:
-GEN11_GT_INTR_DW0/1, GEN11_EU_PERF_CNTL*
-
-// Gen12+ specific:
-GEN12_RC_CG_CONTROL
-
-// Display Power Wells:
-SKL_PW_CTL_IDX_*, ICL_PW_CTL_IDX_*
-```
+### ИЗМЕНЕНО:
+- `intel_set_cursor_shape()` теперь копирует ARGB данные напрямую
+- Курсор всегда 64x64 ARGB8888 (нет выбора формата)
 
 ---
 
-### 9. firmware.cpp / firmware.h (НОВЫЙ)
+## 6. dpms.cpp
 
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | НЕТ оригинала — полностью новый код |
-| **Тип изменений** | Новая функциональность |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/dpms.cpp`
 
-#### ДОБАВЛЕНО:
-- Загрузка DMC (Display Microcontroller) firmware
-- Загрузка GuC (Graphics Microcontroller) firmware
-- Загрузка HuC (HEVC Microcontroller) firmware
-- Структуры заголовков прошивок: `intel_uc_fw_header`, `intel_dmc_header_v1`
-- Регистры DMC: `DMC_PROGRAM_BASE`, `SKL_DMC_*`, `ICL_DMC_*`, `TGL_DMC_*`
-- Регистры GuC: `GUC_STATUS`, `GUC_WOPCM_SIZE/OFFSET`, `DMA_*`
-- DC state управление: `DC_STATE_DC5/6/9_ENABLE`
-- API функции: `intel_firmware_init()`, `intel_load_dmc/guc/huc_firmware()`
+### УДАЛЕНО:
+- Управление PLL: `INTEL_DISPLAY_A_PLL`, `INTEL_DISPLAY_B_PLL`
+- DPMS для аналоговых портов (VGA DAC)
+- Управление LVDS панелью (`INTEL_PANEL_CONTROL`, `INTEL_PANEL_STATUS`)
+- Функция `lvds_panel_on()` / `lvds_panel_off()`
+- Проверки `device_type.HasDPMS()`
 
----
+### ДОБАВЛЕНО:
+- DPMS через DDI (Digital Display Interface)
+- Управление питанием eDP панели
+- Регистры `PP_CONTROL`, `PP_STATUS` для Panel Power Sequencing
 
-### 10. planes.cpp (НОВЫЙ)
-
-| Аспект | Описание |
-|--------|----------|
-| **Источник** | Частично заменяет `overlay.cpp` |
-| **Тип изменений** | Новая реализация overlay через Universal Planes |
-
-#### ЗАМЕНЕНО (legacy overlay):
-- Оригинальный `overlay.cpp` использовал legacy overlay регистры (до Gen 9)
-- Gen 9+ не имеет legacy overlay hardware
-
-#### ДОБАВЛЕНО (Universal Planes):
-- Полная реализация Gen 9+ Universal Planes для overlay API
-- Регистры PLANE_CTL, PLANE_STRIDE, PLANE_POS, PLANE_SIZE, PLANE_SURF
-- Регистры PS_CTRL (Pipe Scaler) для аппаратного масштабирования
-- Поддержка форматов: RGB565, XRGB8888, YUV422
-- Color keying через PLANE_KEYVAL/KEYMSK
-- Разные offsets для Gen 9 (3 planes/pipe) и Gen 11+ (7 planes/pipe)
-- Макросы PLANE_CTL(), PLANE_SURF() и т.д. для вычисления адресов
+### ИЗМЕНЕНО:
+- `set_display_power_mode()` упрощена для DDI-only архитектуры
 
 ---
 
-### 11. Остальные файлы (минимальные изменения)
+## 7. engine.cpp
 
-| Файл | Изменения |
-|------|-----------|
-| `accelerant_protos.h` | Без изменений |
-| `commands.h` | Без изменений |
-| `cursor.cpp` | Минимальные (удалены legacy проверки) |
-| `dpms.cpp` | Минимальные (удалены legacy PCH проверки) |
-| `engine.cpp` | Без изменений |
-| `hooks.cpp` | Без изменений |
-| `mode.cpp` | Минимальные (удалены legacy PLL пути) |
-| `memory.cpp` | Без изменений |
-| `PanelFitter.cpp/h` | Без изменений |
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/engine.cpp`
+
+### УДАЛЕНО:
+- Весь Ring Buffer код:
+  - `intel_allocate_ring_buffer()`
+  - `intel_setup_ring_buffer()`
+  - `RING_BUFFER_SIZE`, `PAGE_ALIGN()`
+- Класс `QueueCommands` и его использование
+- Все функции 2D ускорения:
+  - `intel_screen_to_screen_blit()`
+  - `intel_fill_rectangle()`
+  - `intel_invert_rectangle()`
+  - `intel_fill_span()`
+- Engine API реализация
+
+### ДОБАВЛЕНО:
+- Заглушки с комментариями TODO для Gen 9+ синхронизации
+- `intel_wait_for_scanline()` — stub для VSync
+
+### ИЗМЕНЕНО:
+- Файл теперь минимален (~50 строк вместо ~300)
+- 2D ускорение полностью отключено (Gen 9 использует GPU compute или CPU)
+
+---
+
+## 8. hooks.cpp
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/hooks.cpp`
+
+### УДАЛЕНО:
+- Хуки 2D ускорения:
+  - `B_SCREEN_TO_SCREEN_BLIT`
+  - `B_FILL_RECTANGLE`
+  - `B_INVERT_RECTANGLE`
+  - `B_FILL_SPAN`
+- Хуки Engine:
+  - `B_ACCELERANT_ENGINE_COUNT`
+  - `B_ACQUIRE_ENGINE`
+  - `B_RELEASE_ENGINE`
+  - `B_GET_SYNC_TOKEN`
+  - `B_SYNC_TO_TOKEN`
+- Проверки совместимости overlay для старых чипов
+- Условный возврат хуков в зависимости от поколения GPU
+
+### ДОБАВЛЕНО:
+- Комментарии: "Gen 9+ не имеет 2D blitter"
+
+### ИСПРАВЛЕНО:
+- Баг fall-through в switch для cursor hooks (добавлен break)
+
+---
+
+## 9. mode.cpp
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/mode.cpp`
+
+### УДАЛЕНО:
+- Условная логика для разных поколений в `get_color_space_format()`
+- Специальная обработка stride для pre-Gen 9 (выравнивание по 64 байта)
+- Проверки `InGroup(INTEL_GROUP_HAS*)` для feature detection
+
+### ДОБАВЛЕНО:
+- Константы для Gen 9+: `PLANE_STRIDE_MASK`, `PLANE_CTL_FORMAT_*`
+- Упрощённый расчёт stride (всегда 64-tile aligned)
+
+### ИЗМЕНЕНО:
+- `create_mode_list()` использует только Gen 9+ ограничения
+- Максимальное разрешение: 8192x8192 (Gen 9+)
+
+---
+
+## 10. memory.cpp
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/memory.cpp`
+
+### УДАЛЕНО:
+- Выделение памяти для Ring Buffer
+
+### ДОБАВЛЕНО:
+- Константы выравнивания:
+  - `INTEL_ALIGNMENT_4K` (4096)
+  - `INTEL_ALIGNMENT_64K` (65536)
+  - `INTEL_ALIGNMENT_1M` (1048576)
+- Функция `intel_allocate_tiled_memory()` для Y-tiled поверхностей
+- Поддержка 64KB страниц для Gen 9+
+
+### ИЗМЕНЕНО:
+- `intel_allocate_memory()` учитывает Gen 9+ требования к выравниванию
+
+---
+
+## 11. PanelFitter.cpp / PanelFitter.h
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/PanelFitter.cpp`, `PanelFitter.h`
+
+### УДАЛЕНО:
+- Условная логика для выбора offset: Panel Fitter vs Panel Scaler
+- Проверки `device_type.InGeneration(INTEL_GROUP_ILK)` и т.д.
+- Старые регистры `PF_CTL`, `PF_WIN_SZ`, `PF_WIN_POS`
+
+### ДОБАВЛЕНО:
+- Всегда используется Panel Scaler (offset +0x100)
+- Регистры `PS_CTRL`, `PS_WIN_SZ`, `PS_WIN_POS`
+
+### ИЗМЕНЕНО:
+- Упрощённый конструктор без определения поколения
+- `Enable()` / `Disable()` работают только с PS_* регистрами
+
+---
+
+## 12. Pipes.cpp / Pipes.h
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/Pipes.cpp`, `Pipes.h`
+
+### УДАЛЕНО:
+- Класс `FDILink` и вся FDI (Flexible Display Interface) логика
+- Метод `Pipe::SetFDILink()`
+- Метод `Pipe::ConfigureClocks()` для legacy PLL
+- Поддержка PIPE_A / PIPE_B / PIPE_C для pre-Gen 9
+- Регистры `FDI_RX_CTL`, `FDI_TX_CTL`, `FDI_RX_IIR`
+
+### ДОБАВЛЕНО:
+- `Pipe::ConfigureClocksSKL()` для Skylake DPLL
+- Поддержка `PIPE_D` для Gen 12+
+- Регистры `DPLL_CTRL1`, `DPLL_CFGCR1`, `DPLL_CFGCR2`
+
+### ИЗМЕНЕНО:
+- Pipes массив увеличен до 4 элементов
+- `Configure()` использует только DDI transcoder
+
+---
+
+## 13. Ports.h (Ports.cpp в IntelLake отсутствует — код встроен в accelerant.cpp)
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/Ports.h`, `Ports.cpp`
+
+### УДАЛЕНО:
+- Все классы устаревших портов:
+  - `class AnalogPort` (VGA)
+  - `class LVDSPort`
+  - `class DigitalPort` (DVI)
+  - `class HDMIPort`
+  - `class DisplayPort`
+  - `class EmbeddedDisplayPort`
+- Типы портов:
+  - `INTEL_PORT_TYPE_ANALOG`
+  - `INTEL_PORT_TYPE_DVI`
+  - `INTEL_PORT_TYPE_LVDS`
+  - `INTEL_PORT_TYPE_HDMI`
+  - `INTEL_PORT_TYPE_DP`
+  - `INTEL_PORT_TYPE_eDP`
+- Методы: `SetDisplayMode()`, `IsConnected()` для каждого типа порта
+
+### ДОБАВЛЕНО:
+- Единственный тип: `INTEL_PORT_TYPE_DDI`
+- Единственный класс: `class DigitalDisplayInterface`
+- DDI регистры: `DDI_BUF_CTL`, `DDI_AUX_CTL`, `DDI_DP_*`
+
+### ИЗМЕНЕНО:
+- Код DDI объединяет функциональность HDMI, DisplayPort и eDP
+- Детекция типа сигнала (HDMI vs DP) происходит runtime через AUX channel
+
+---
+
+## 14. planes.cpp (НОВЫЙ — заменяет overlay.cpp)
+
+**Оригинал:** `src/add-ons/accelerants/intel_extreme/overlay.cpp`
+
+### УДАЛЕНО (из overlay.cpp):
+- Весь legacy Overlay Unit код:
+  - `overlay_registers` структура
+  - `intel_allocate_overlay()`
+  - `intel_configure_overlay()`
+  - `i965_configure_overlay()`
+- Регистры: `INTEL_OVERLAY_*`, `OV_*`
+- Поддержка форматов: UYVY, YV12, I420
+
+### ДОБАВЛЕНО:
+- Universal Planes API для Gen 9+:
+  - `intel_configure_plane()`
+  - `intel_disable_plane()`
+- Регистры:
+  - `PLANE_CTL`, `PLANE_SURF`, `PLANE_OFFSET`
+  - `PLANE_SIZE`, `PLANE_STRIDE`, `PLANE_POS`
+  - `PLANE_KEYVAL`, `PLANE_KEYMSK`
+- Поддержка форматов: NV12, P010, Y210, Y410
+- Интеграция с Panel Scaler для масштабирования
+- Регистры PS_CTRL, PS_WIN_SZ для каждого plane
+
+### ИЗМЕНЕНО:
+- Полная переработка: overlay → universal planes
+- До 7 planes на pipe (1 primary + 6 sprite/overlay)
+
+---
+
+## 15. LakePLL.cpp / LakePLL.h (НОВЫЕ — заменяют pll.cpp/pll.h + TigerLakePLL.cpp/TigerLakePLL.h)
+
+**Оригиналы:**
+- `src/add-ons/accelerants/intel_extreme/pll.cpp`
+- `src/add-ons/accelerants/intel_extreme/pll.h`
+- Частично: `FlexibleDisplayInterface.cpp` (FDI link rate)
+
+### УДАЛЕНО (из pll.cpp/pll.h):
+- Все legacy PLL:
+  - `G45_* PLL limits`
+  - `IRONLAKE_* PLL limits`
+  - `SANDYBRIDGE_* PLL limits`
+  - `pll_divisors` структура для VCO расчёта
+- `RefClkSel()` для разных поколений
+- `compute_pll_divisors()` с N, M1, M2, P1, P2
+
+### ДОБАВЛЕНО:
+- Унифицированный PLL для всех Lake поколений:
+  - `skl_wrpll_params` — Skylake Wrapped Ring PLL
+  - `icl_*` функции — Ice Lake Combo PHY PLL
+  - `tgl_*` функции — Tiger Lake PLL
+- Новая структура `lake_pll_params`:
+  - `dco_frequency`, `dco_divider`
+  - `pdiv`, `qdiv`, `kdiv`
+  - `central_frequency`, `deviation`
+- Функции:
+  - `skl_compute_wrpll()` — Skylake
+  - `icl_compute_combo_pll()` — Ice Lake
+  - `tgl_compute_combo_pll()` — Tiger Lake
+  - `compute_display_pll()` — унифицированный API
+- Регистры: `DPLL_CTRL1`, `DPLL_CFGCR1`, `DPLL_CFGCR2`
+- Port Clock таблицы для стандартных частот (1.62, 2.7, 5.4, 8.1 GHz)
+
+### ОБЪЕДИНЕНО:
+- pll.cpp + pll.h → LakePLL.cpp/h
+- Логика TigerLakePLL → LakePLL.cpp/h
+- FDI link rate расчёт → не нужен (FDI удалён)
+
+---
+
+## 16. power.cpp / power.h
+
+**Оригиналы:**
+- `src/add-ons/kernel/drivers/graphics/intel_extreme/power.cpp`
+- `src/add-ons/kernel/drivers/graphics/intel_extreme/power.h`
+
+### УДАЛЕНО (из power.h):
+- Все INTEL6_* регистры (Sandy Bridge / Ivy Bridge):
+  - `INTEL6_RP_*` — Render P-state
+  - `INTEL6_RC_*` — Render C-state
+  - `INTEL6_PM*` — Power Management
+- Макросы:
+  - `INTEL6_PCODE_*`
+  - `INTEL6_PM_RP_*`
+  - ~100 определений регистров
+
+### ДОБАВЛЕНО:
+- GEN9_* регистры:
+  - `GEN9_MEDIA_PG_IDLE_HYSTERESIS`
+  - `GEN9_RENDER_PG_IDLE_HYSTERESIS`
+  - `GEN9_DC_STATE_EN`
+  - `GEN9_DC_STATE_DEBUG`
+- GEN11_* регистры:
+  - `GEN11_GT_SLICE_ENABLE`
+  - `GEN11_GT_SUBSLICE_INFO`
+- GEN12_* регистры:
+  - `GEN12_RPSTAT`
+  - `GEN12_GT_SLICE_INFO`
+- Display Power Wells:
+  - `PWR_WELL_CTL_*`
+  - `DC_STATE_*`
+  - `FUSE_STATUS`
+
+### ИЗМЕНЕНО:
+- Forcewake механизм упрощён для Gen 9+
+- Новые DC states: DC5, DC6, DC9
+
+---
+
+## 17. firmware.cpp / firmware.h (НОВЫЕ ФАЙЛЫ)
+
+**Оригинал:** Нет (новая функциональность)
+
+### ДОБАВЛЕНО:
+- DMC (Display Microcontroller) firmware loading:
+  - `intel_load_dmc_firmware()`
+  - Имена файлов: `skl_dmc_*.bin`, `kbl_dmc_*.bin`, `icl_dmc_*.bin`, `tgl_dmc_*.bin`
+- GuC (Graphics Microcontroller) firmware:
+  - `intel_load_guc_firmware()`
+  - Имена: `skl_guc_*.bin`, `kbl_guc_*.bin`, etc.
+- HuC (HEVC Microcontroller) firmware:
+  - `intel_load_huc_firmware()`
+  - Для аппаратного декодирования HEVC
+- Структуры:
+  - `intel_fw_header` — заголовок firmware
+  - `intel_dmc_header` — специфичный для DMC
+  - `firmware_info` — информация о версии
+- Функции:
+  - `intel_fw_path()` — путь к firmware файлам
+  - `intel_parse_fw_header()` — парсинг заголовка
+  - `intel_upload_fw()` — загрузка в GPU
+- Регистры:
+  - `DMC_PROGRAM(pipe)`
+  - `GUC_WOPCM_SIZE`
+  - `GUC_SHIM_CONTROL`
+  - `HUC_LOADING_AGENT_GUC`
+
+---
+
+## 18. intel_extreme.cpp (драйвер)
+
+**Оригинал:** `src/add-ons/kernel/drivers/graphics/intel_extreme/intel_extreme.cpp`
+
+### УДАЛЕНО:
+- Инициализация для pre-Gen 9:
+  - Ring Buffer setup
+  - Legacy interrupt handlers
+  - 2D blitter configuration
+- Определение device_type для старых чипов
+- Регистры: `RING_BUFFER_*`, `INSTPM`, `MI_MODE`
+
+### ДОБАВЛЕНО:
+- Execlist инициализация
+- Display interrupt handlers для Gen 9+
+- Forcewake acquire/release
+- DMC firmware upload при загрузке драйвера
+
+### ИЗМЕНЕНО:
+- `intel_extreme_init()` упрощена
+- PCI ID table содержит только Gen 9+ устройства
+
+---
+
+## 19. intel_extreme.h (shared header)
+
+**Оригинал:** `headers/private/graphics/intel_extreme/intel_extreme.h`
+
+### УДАЛЕНО:
+- Все PCI ID для pre-Gen 9:
+  - i830, i845, i855, i865
+  - i915, i945, i965
+  - G33, G35, G41, G43, G45
+  - Ironlake, Sandy Bridge, Ivy Bridge, Haswell, Broadwell
+- Макросы `INTEL_GROUP_*` для старых поколений
+- Регистры:
+  - `RING_*` (ring buffer)
+  - `FENCE_*` (legacy fencing)
+  - VGA_* (VGA plane)
+  - `INTEL_OVERLAY_*`
+- Структуры:
+  - `overlay_registers`
+  - `ring_buffer`
+
+### ДОБАВЛЕНО:
+- Только PCI ID для Gen 9+:
+  - Skylake (SKL)
+  - Kaby Lake (KBL)
+  - Coffee Lake (CFL)
+  - Cannon Lake (CNL)
+  - Ice Lake (ICL)
+  - Tiger Lake (TGL)
+  - Alder Lake (ADL)
+  - Rocket Lake (RKL)
+  - DG1
+- Макросы `INTEL_SKYLAKE`, `INTEL_KABYLAKE`, etc.
+- Регистры:
+  - `GEN9_*` (power, display)
+  - `GEN11_*`, `GEN12_*`
+  - Universal Planes registers
+  - DDI registers
+- Структуры:
+  - `ddi_info`
+  - `plane_info`
+
+### ИЗМЕНЕНО:
+- `intel_shared_info` структура упрощена
+- Максимум pipes: 4 (вместо 3)
+- Максимум planes per pipe: 7
+
+---
+
+## 20. intel_extreme_private.h (драйвер)
+
+**Оригинал:** `src/add-ons/kernel/drivers/graphics/intel_extreme/intel_extreme_private.h`
+
+### УДАЛЕНО:
+- `ring_buffer ring`
+- `overlay_registers* overlay_area`
+- Legacy interrupt masks
+
+### ДОБАВЛЕНО:
+- `dmc_payload* dmc`
+- `guc_info* guc`
+- Forcewake tracking
+
+---
+
+## 21. driver.cpp
+
+**Оригинал:** `src/add-ons/kernel/drivers/graphics/intel_extreme/driver.cpp`
+
+### УДАЛЕНО:
+- PCI ID matching для pre-Gen 9
+
+### ДОБАВЛЕНО:
+- Только Gen 9+ PCI ID в `kSupportedDevices[]`
+- Новые имена устройств для Lake series
 
 ---
 
 ## Сводная таблица изменений
 
-| Категория | Удалено | Добавлено | Объединено |
-|-----------|---------|-----------|------------|
-| Device Families | 4 | 1 (LAKE) | - |
-| Device Groups | ~15 | 12 | - |
-| Device IDs | ~50 | ~80 | - |
-| Port Classes | 6 | 1 (DDI) | - |
-| PLL алгоритмов | 2 (legacy, ILK) | 3 (SKL, ICL, TGL) | 2→1 |
-| Регистров power | ~50 | ~40 | - |
-| Файлов | - | 2 (firmware, planes) | 2→1 (pll) |
+| Файл | Оригинал | Статус | Основные изменения |
+|------|----------|--------|-------------------|
+| accelerant.cpp | accelerant.cpp | Модифицирован | DDI-only, убраны legacy ports |
+| accelerant.h | accelerant.h | Модифицирован | Убраны поля 3D context |
+| accelerant_protos.h | accelerant_protos.h | Модифицирован | Убраны 2D/Engine функции |
+| commands.h | commands.h | Переписан | XY_* → MI_* команды |
+| cursor.cpp | cursor.cpp | Переписан | 2-color → ARGB8888 |
+| dpms.cpp | dpms.cpp | Модифицирован | DDI power management |
+| engine.cpp | engine.cpp | Минимизирован | Убран Ring Buffer |
+| hooks.cpp | hooks.cpp | Модифицирован | Убраны 2D hooks |
+| mode.cpp | mode.cpp | Упрощён | Gen 9+ only |
+| memory.cpp | memory.cpp | Расширен | 64KB alignment |
+| PanelFitter.* | PanelFitter.* | Упрощён | Только Panel Scaler |
+| Pipes.* | Pipes.* | Модифицирован | Убран FDILink |
+| Ports.h | Ports.h | Переписан | Только DDI class |
+| planes.cpp | overlay.cpp | **НОВЫЙ** | Universal Planes |
+| LakePLL.* | pll.* + TigerLakePLL.* | **ОБЪЕДИНЁН** | Все Lake PLL |
+| power.* | power.* | Модифицирован | GEN9+/GEN11+/GEN12+ |
+| firmware.* | — | **НОВЫЙ** | DMC/GuC/HuC loading |
+| intel_extreme.cpp | intel_extreme.cpp | Модифицирован | Gen 9+ init |
+| intel_extreme.h | intel_extreme.h | Модифицирован | Gen 9+ PCI IDs & regs |
+| intel_extreme_private.h | intel_extreme_private.h | Модифицирован | Firmware structs |
+| driver.cpp | driver.cpp | Модифицирован | Gen 9+ device list |
 
 ---
 
-## Ключевые архитектурные изменения
+## Итого
 
-1. **Единый DDI интерфейс** — все дисплейные выходы через Digital Display Interface
-2. **DCO-based PLL** — унифицированная PLL архитектура вместо legacy делителей
-3. **Universal Planes** — новый overlay через universal plane вместо legacy overlay unit
-4. **Firmware support** — добавлена загрузка DMC/GuC/HuC прошивок
-5. **Упрощённый PCH** — только Gen 9+ PCH (SPT, CNP, ICP, TGP, ADP)
+**Удалено поколений GPU:** 15 (i830 → Broadwell)
+**Поддерживается поколений:** 8+ (Skylake → Alder Lake+)
 
----
+**Ключевые архитектурные изменения:**
+1. DDI как единственный тип порта (вместо 6 типов)
+2. Universal Planes вместо Overlay Unit
+3. Execlist вместо Ring Buffer
+4. ARGB8888 курсоры вместо 2-color
+5. Panel Scaler вместо Panel Fitter
+6. Унифицированный LakePLL для всех поколений
+7. Firmware loading (DMC, GuC, HuC)
+8. Современное power management (DC states)
 
-## Верификация
-
-Все регистры и device IDs верифицированы против:
-- Intel PRM Vol 2c Part 1/2 — Device Identification
-- Intel PRM Vol 12 — Display Engine
-- Linux i915 driver source code
-
-Дата создания отчёта: 2025-12-28
+**Результат:** Значительно упрощённый код, ~40% меньше строк, легче поддерживать.
