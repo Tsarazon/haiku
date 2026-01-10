@@ -59,7 +59,7 @@ local muslSources =
 SourceHdrs $(muslSources) :
 	[ FDirName $(posixSources) musl include ]
 	[ FDirName $(posixSources) musl internal ]
-	[ FDirName $(posixSources) musl arch $(TARGET_KERNEL_ARCH_DIR) ] ;
+	[ FDirName $(posixSources) musl arch $(TARGET_ARCH) ] ;
 
 KernelMergeObject kernel_lib_posix.o :
 	kernel_errno.cpp

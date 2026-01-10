@@ -35,7 +35,6 @@ UsePrivateSystemHeaders ;
 LINKFLAGS += -Wl,--exclude-libs,ALL ;
 
 SEARCH_SOURCE += [ FDirName $(SUBDIR) arch ] ;
-SEARCH_SOURCE += [ FDirName $(SUBDIR) arch x86 ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) arch x86_64 ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) controllers ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) debug_info ] ;
@@ -91,10 +90,6 @@ local sources =
 	InstructionInfo.cpp
 	Register.cpp
 	RegisterMap.cpp
-
-	# arch/x86
-	ArchitectureX86.cpp
-	CpuStateX86.cpp
 
 	# arch/x86_64
 	ArchitectureX8664.cpp
@@ -342,7 +337,6 @@ SharedLibrary libdebugger.so :
 	$(sources)
 	:
 	<nogrist>Debugger_demangler.o
-	<nogrist>Debugger_disasm_x86.o
 	<nogrist>Debugger_disasm_x86_64.o
 	<nogrist>Debugger_dwarf.o
 
@@ -354,7 +348,6 @@ SharedLibrary libdebugger.so :
 	be package libbsd.so libdebug.so
 ;
 
-HaikuSubInclude arch x86 disasm ;
 HaikuSubInclude arch x86_64 disasm ;
 HaikuSubInclude demangler ;
 HaikuSubInclude dwarf ;

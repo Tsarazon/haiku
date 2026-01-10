@@ -12,25 +12,20 @@
 #include <OS.h>
 
 // include architecture specific definitions
-#include <arch/x86/arch_debugger.h>
-#include <arch/x86_64/arch_debugger.h>
-#include <arch/arm/arch_debugger.h>
-#include <arch/arm64/arch_debugger.h>
-#include <arch/riscv64/arch_debugger.h>
-
-
 #if defined(__x86_64__)
+#	include <arch/x86_64/arch_debugger.h>
 	typedef struct x86_64_debug_cpu_state debug_cpu_state;
-#elif defined(__i386__)
-	typedef struct x86_debug_cpu_state debug_cpu_state;
 #elif defined(__arm__)
+#	include <arch/arm/arch_debugger.h>
 	typedef struct arm_debug_cpu_state debug_cpu_state;
 #elif (defined(__riscv) && __riscv_xlen == 64)
+#	include <arch/riscv64/arch_debugger.h>
 	typedef struct riscv64_debug_cpu_state debug_cpu_state;
 #elif defined(__aarch64__) || defined(__arm64__)
+#	include <arch/arm64/arch_debugger.h>
 	typedef struct arm64_debug_cpu_state debug_cpu_state;
 #else
-	#error unsupported architecture
+#	error unsupported architecture
 #endif
 
 

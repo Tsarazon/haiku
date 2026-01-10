@@ -21,7 +21,6 @@
 
 #include "debug_utils.h"
 
-#include "ArchitectureX86.h"
 #include "ArchitectureX8664.h"
 #include "AreaInfo.h"
 #include "AutoDeleter.h"
@@ -262,9 +261,7 @@ status_t
 LocalDebuggerInterface::Init()
 {
 	// create the architecture
-#if defined(ARCH_x86)
-	fArchitecture = new(std::nothrow) ArchitectureX86(this);
-#elif defined(ARCH_x86_64)
+#if defined(ARCH_x86_64)
 	fArchitecture = new(std::nothrow) ArchitectureX8664(this);
 #else
 	return B_UNSUPPORTED;

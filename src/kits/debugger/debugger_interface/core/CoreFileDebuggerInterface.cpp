@@ -13,7 +13,6 @@
 
 #include <AutoDeleter.h>
 
-#include "ArchitectureX86.h"
 #include "ArchitectureX8664.h"
 #include "CoreFile.h"
 #include "ElfSymbolLookup.h"
@@ -46,9 +45,6 @@ CoreFileDebuggerInterface::Init()
 	// create the Architecture object
 	uint16 machine = fCoreFile->GetElfFile().Machine();
 	switch (machine) {
-		case EM_386:
-			fArchitecture = new(std::nothrow) ArchitectureX86(this);
-			break;
 		case EM_X86_64:
 			fArchitecture = new(std::nothrow) ArchitectureX8664(this);
 			break;
