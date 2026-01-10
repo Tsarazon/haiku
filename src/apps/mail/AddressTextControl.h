@@ -21,7 +21,6 @@ public:
 	virtual						~AddressTextControl();
 
 	virtual	void				AttachedToWindow();
-	virtual	void				WindowActivated(bool active);
 	virtual	void				Draw(BRect updateRect);
 	virtual	void				MakeFocus(bool focus = true);
 	virtual void				SetEnabled(bool enabled);
@@ -29,9 +28,6 @@ public:
 
 			const BMessage*		ModificationMessage() const;
 			void				SetModificationMessage(BMessage* message);
-
-			bool				IsEditable() const;
-			void				SetEditable(bool editable);
 
 			void				SetText(const char* text);
 			const char*			Text() const;
@@ -44,7 +40,7 @@ public:
 
 private:
 			void				_AddAddress(const char* text);
-			void				_UpdateTextViewColors();
+			void				_UpdateTextViewColors(bool enabled);
 
 private:
 			class TextView;
@@ -53,8 +49,6 @@ private:
 			TextView*			fTextView;
 			PopUpButton*		fPopUpButton;
 			BPopUpMenu*			fRefDropMenu;
-			bool				fWindowActive;
-			bool				fEditable;
 };
 
 

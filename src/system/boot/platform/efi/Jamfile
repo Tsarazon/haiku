@@ -1,6 +1,7 @@
 SubDir HAIKU_TOP src system boot platform efi ;
 
 UsePrivateHeaders [ FDirName graphics common ] ;
+UsePrivateHeaders [ FDirName interface ] ;
 UsePrivateHeaders [ FDirName kernel boot ] ;
 UsePrivateHeaders [ FDirName kernel platform ] ;
 UsePrivateHeaders [ FDirName kernel boot platform efi ] ;
@@ -31,6 +32,7 @@ local platform_src =
 	video.cpp
 	debug.cpp
 	mmu.cpp
+	network.cpp
 	heap.cpp
 	acpi.cpp
 	timer.cpp

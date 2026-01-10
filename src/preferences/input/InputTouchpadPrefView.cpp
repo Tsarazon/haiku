@@ -298,10 +298,31 @@ TouchpadPrefView::MessageReceived(BMessage* message)
 			settings.scroll_twofinger = fTwoFingerBox->Value() == B_CONTROL_ON;
 			settings.scroll_twofinger_horizontal
 				= fTwoFingerHorizontalBox->Value() == B_CONTROL_ON;
+			settings.scroll_twofinger_natural_scrolling
+				= fTwoFingerNaturalScrollingBox->Value() == B_CONTROL_ON;
 			settings.scroll_acceleration = fScrollAccelSlider->Value();
 			settings.scroll_xstepsize = (20 - fScrollStepXSlider->Value()) * 3;
 			settings.scroll_ystepsize = (20 - fScrollStepYSlider->Value()) * 3;
 			fTwoFingerHorizontalBox->SetEnabled(settings.scroll_twofinger);
+			fTwoFingerNaturalScrollingBox->SetEnabled(settings.scroll_twofinger);
+			fRevertButton->SetEnabled(true);
+			fTouchpadPref.UpdateRunningSettings();
+			break;
+
+		case EDGE_MOTION_CHANGED:
+			settings.edge_motion = fEdgeMotionOptionPopUp->Value();
+			fRevertButton->SetEnabled(true);
+			fTouchpadPref.UpdateRunningSettings();
+			break;
+
+		case FINGER_CLICK_CHANGED:
+			settings.finger_click = fFingerClickBox->Value() == B_CONTROL_ON;
+			fRevertButton->SetEnabled(true);
+			fTouchpadPref.UpdateRunningSettings();
+			break;
+
+		case SOFTWARE_BUTTON_AREAS_CHANGED:
+			settings.software_button_areas = fSoftwareButtonAreasBox->Value() == B_CONTROL_ON;
 			fRevertButton->SetEnabled(true);
 			fTouchpadPref.UpdateRunningSettings();
 			break;
@@ -361,15 +382,23 @@ TouchpadPrefView::AttachedToWindow()
 	fScrollReverseBox->SetTarget(this);
 	fTwoFingerBox->SetTarget(this);
 	fTwoFingerHorizontalBox->SetTarget(this);
+	fTwoFingerNaturalScrollingBox->SetTarget(this);
 	fScrollStepXSlider->SetTarget(this);
 	fScrollStepYSlider->SetTarget(this);
 	fScrollAccelSlider->SetTarget(this);
+
+	fEdgeMotionOptionPopUp->SetTarget(this);
+	fFingerClickBox->SetTarget(this);
+	fSoftwareButtonAreasBox->SetTarget(this);
+
 	fPadBlockerSlider->SetTarget(this);
 	fTapSlider->SetTarget(this);
 	fSpeedSlider->SetTarget(this);
 	fAccelSlider->SetTarget(this);
+
 	fDefaultButton->SetTarget(this);
 	fRevertButton->SetTarget(this);
+
 	BSize size = PreferredSize();
 	Window()->ResizeTo(size.width, size.height);
 
@@ -438,6 +467,30 @@ TouchpadPrefView::SetupView()
 		new BMessage(SCROLL_CONTROL_CHANGED));
 	fTwoFingerHorizontalBox = new BCheckBox(B_TRANSLATE("Horizontal scrolling"),
 		new BMessage(SCROLL_CONTROL_CHANGED));
+	fTwoFingerNaturalScrollingBox = new BCheckBox(B_TRANSLATE("Natural scrolling"),
+		new BMessage(SCROLL_CONTROL_CHANGED));
+
+	fEdgeMotionOptionPopUp = new BOptionPopUp("edge_motion",
+		B_TRANSLATE("Edge motion:"), new BMessage(EDGE_MOTION_CHANGED));
+	fEdgeMotionOptionPopUp->AddOption(B_TRANSLATE("Disabled"), B_EDGE_MOTION_DISABLED);
+#if 0
+	// Not exposed in the UI because it makes little sense to have this enabled on move but not
+	// on drag
+	fEdgeMotionOptionPopUp->AddOption(B_TRANSLATE("On move"), B_EDGE_MOTION_ON_MOVE);
+#endif
+	fEdgeMotionOptionPopUp->AddOption(B_TRANSLATE("On tap-drag only"), B_EDGE_MOTION_ON_TAP_DRAG);
+	fEdgeMotionOptionPopUp->AddOption(B_TRANSLATE("When dragging"),
+		B_EDGE_MOTION_ON_TAP_DRAG
+		| B_EDGE_MOTION_ON_BUTTON_CLICK_MOVE | B_EDGE_MOTION_ON_BUTTON_CLICK_DRAG);
+	fEdgeMotionOptionPopUp->AddOption(B_TRANSLATE("Always"),
+		B_EDGE_MOTION_ON_MOVE | B_EDGE_MOTION_ON_TAP_DRAG
+		| B_EDGE_MOTION_ON_BUTTON_CLICK_MOVE | B_EDGE_MOTION_ON_BUTTON_CLICK_DRAG);
+
+	fFingerClickBox = new BCheckBox(B_TRANSLATE("Finger click"),
+		new BMessage(FINGER_CLICK_CHANGED));
+	fSoftwareButtonAreasBox = new BCheckBox(B_TRANSLATE("Software button areas"),
+		new BMessage(SOFTWARE_BUTTON_AREAS_CHANGED));
+
 
 	float spacing = be_control_look->DefaultItemSpacing();
 
@@ -447,10 +500,11 @@ TouchpadPrefView::SetupView()
 		.AddStrut(spacing)
 		.Add(fScrollReverseBox)
 		.Add(fTwoFingerBox)
-		.AddGroup(B_HORIZONTAL, 0)
-			.AddStrut(spacing * 2)
+		.AddGroup(B_VERTICAL, 0)
+			.SetInsets(spacing * 2, 0, 0, 0)
 			.Add(fTwoFingerHorizontalBox)
-			.End()
+			.Add(fTwoFingerNaturalScrollingBox)
+		.End()
 		.AddGlue()
 		.View();
 
@@ -499,6 +553,13 @@ TouchpadPrefView::SetupView()
 	BLayoutBuilder::Group<>(this, B_VERTICAL)
 		.SetInsets(B_USE_WINDOW_SPACING)
 		.Add(scrollBox)
+		.Add(fEdgeMotionOptionPopUp)
+		.AddGroup(B_HORIZONTAL, B_USE_DEFAULT_SPACING)
+			.Add(fFingerClickBox)
+			.Add(new BSeparatorView(B_VERTICAL))
+			.Add(fSoftwareButtonAreasBox)
+			.End()
+		.Add(new BSeparatorView(B_HORIZONTAL))
 		.AddGroup(B_HORIZONTAL, B_USE_DEFAULT_SPACING)
 			.AddGroup(B_VERTICAL, B_USE_DEFAULT_SPACING)
 				.Add(fTapSlider)
@@ -529,6 +590,12 @@ TouchpadPrefView::SetValues(touchpad_settings* settings)
 	fTwoFingerHorizontalBox->SetValue(
 		settings->scroll_twofinger_horizontal ? B_CONTROL_ON : B_CONTROL_OFF);
 	fTwoFingerHorizontalBox->SetEnabled(settings->scroll_twofinger);
+	fTwoFingerNaturalScrollingBox->SetValue(
+		settings->scroll_twofinger_natural_scrolling ? B_CONTROL_ON : B_CONTROL_OFF);
+	fTwoFingerNaturalScrollingBox->SetEnabled(settings->scroll_twofinger);
+	fFingerClickBox->SetValue(settings->finger_click);
+	fSoftwareButtonAreasBox->SetValue(settings->software_button_areas);
+	fEdgeMotionOptionPopUp->SetValue(settings->edge_motion);
 	fScrollStepXSlider->SetValue(20 - settings->scroll_xstepsize / 2);
 	fScrollStepYSlider->SetValue(20 - settings->scroll_ystepsize / 2);
 	fScrollAccelSlider->SetValue(settings->scroll_acceleration);

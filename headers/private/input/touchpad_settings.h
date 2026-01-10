@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2009, Haiku, Inc. All Rights Reserved.
+ * Copyright 2001-2025, Haiku, Inc. All Rights Reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef TOUCHPAD_SETTINGS_H
@@ -25,6 +25,20 @@ typedef struct {
 	int32  trackpad_acceleration;
 
 	bool	scroll_reverse;
+	bool	scroll_twofinger_natural_scrolling;
+
+	uint8	edge_motion;			// 0: disabled
+									// or combined flags of:
+									// 0x01: edge motion on move
+									// 0x02: edge motion on tap drag
+									// 0x04: edge motion on button click move
+									// 0x08: edge motion on button click drag
+
+	bool	finger_click;			// 1 finger click -> click button id 1
+									// 2 fingers' click -> click button id 2
+									// 3 fingers' click -> click button id 3
+
+	bool	software_button_areas;
 } touchpad_settings;
 
 
@@ -40,6 +54,10 @@ const static touchpad_settings kDefaultTouchpadSettings = {
 	30,
 	65536,
 	65536,
+	false,
+	true,
+	0x02,
+	true,
 	false
 };
 

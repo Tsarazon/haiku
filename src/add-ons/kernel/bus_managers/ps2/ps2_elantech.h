@@ -1,13 +1,20 @@
 /*
- * Copyright 2013, Haiku, Inc.
+ * Copyright 2013-2025, Haiku, Inc.
  * Distributed under the terms of the MIT License.
  *
- * The elantech_model_info struct and all the hardware specs are taken from the
- * linux driver, thanks a lot!
+ * Hardware specs taken from the linux and BSDs drivers, thanks a lot!
+ *
+ * References:
+ *	- https://cgit.freebsd.org/src/tree/sys/dev/atkbdc/psm.c?h=releng/14.3
+ *	- https://cvsweb.openbsd.org/cgi-bin/cvsweb/src/sys/dev/pckbc/?only_with_tag=OPENBSD_7_8_BASE
+ *	- https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/drivers/input/mouse/elantech.c?h=v6.17
+ *	- https://www.kernel.org/doc/html/v4.16/input/devices/elantech.html
  *
  * Authors:
  *		Jérôme Duval <korli@users.berlios.de>
+ *		Samuel Rodríguez Pérez <samuelrp84@gmail.com>
  */
+
 #ifndef _PS2_ELANTECH_H
 #define _PS2_ELANTECH_H
 
@@ -17,6 +24,17 @@
 #include "packet_buffer.h"
 #include "ps2_dev.h"
 
+// Palm detection will be more accurate to do by software.
+// Options are:
+// - Improvements on padblocker input filter.
+// - Improvements in user mode input_server device.
+// - General input_server modifications.
+// - Other inprovements on this driver.
+//#define ELANTECH_ENABLE_HARDWARE_PALM_DETECTION
+
+// Special quirks and options handling
+//#define ELANTECH_EF113_MORE_THAN_TWO_BUTTONS
+//#define ELANTECH_EF113_MIDDLE_BUTTON_IS_LEFT_AND_RIGTH
 
 typedef struct {
 			ps2_dev*			dev;
@@ -25,8 +43,10 @@ typedef struct {
 	struct	packet_buffer*		ring_buffer;
 			size_t				packet_index;
 
-			uint32				version;
+			uint8				version;
 			uint32				fwVersion;
+
+			uint32				icVersion;
 
 			uint32				x;
 			uint32				y;
@@ -35,11 +55,17 @@ typedef struct {
 
 			uint8				buffer[PS2_PACKET_ELANTECH];
 			uint8				capabilities[3];
+			uint8				samples[3];
 
 			uint8				previousZ;
 
 			uint8				mode;
 			bool				crcEnabled;
+
+			uint8				quirkInitialPacketForV1;
+#ifdef ELANTECH_ENABLE_HARDWARE_PALM_DETECTION
+			bool				palm;
+#endif
 
 	status_t (*send_command)(ps2_dev* dev, uint8 cmd, uint8 *in, int in_count);
 } elantech_cookie;

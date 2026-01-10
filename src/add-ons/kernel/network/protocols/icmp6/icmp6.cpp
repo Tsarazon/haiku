@@ -39,6 +39,24 @@ static net_stack_module_info *sStackModule;
 static net_ndp_module_info *sIPv6NDPModule;
 
 
+static net_error
+icmp6_to_net_error(uint8 type, uint8 code)
+{
+	switch (type) {
+		case ICMP6_PARAM_PROB:
+			return B_NET_ERROR_PARAMETER_PROBLEM;
+
+		case ICMP6_PACKET_TOO_BIG:
+			return B_NET_ERROR_MESSAGE_SIZE;
+
+		default:
+			break;
+	}
+
+	return (net_error)0;
+}
+
+
 net_protocol *
 icmp6_init_protocol(net_socket *socket)
 {
@@ -280,6 +298,38 @@ icmp6_receive_data(net_buffer *buffer)
 			}
 		}
 
+		case ICMP6_DST_UNREACH:
+		case ICMP6_PACKET_TOO_BIG:
+		case ICMP6_TIME_EXCEEDED:
+		case ICMP6_PARAM_PROB:
+		{
+			net_domain* domain = get_domain(buffer);
+			if (domain == NULL)
+				break;
+
+			net_error error = icmp6_to_net_error(header.icmp6_type,
+				header.icmp6_code);
+			if (error == 0)
+				break;
+
+			net_error_data dataStorage = {};
+			net_error_data* data = NULL;
+			if (error == B_NET_ERROR_MESSAGE_SIZE) {
+				data = &dataStorage;
+				data->mtu = ntohl(header.icmp6_mtu);
+
+				// IPv6 minimum fragment size is 1280 bytes, so if the "next MTU"
+				// is smaller than that, we can be sure it's invalid.
+				if (data->mtu < 1280)
+					data = NULL;
+			}
+
+			// Deliver the error to the domain protocol which will
+			// propagate the error to the upper protocols
+			bufferHeader.Remove();
+			return domain->module->error_received(error, data, buffer);
+		}
+
 		default:
 			// unrecognized messages go to neighbor discovery protocol handler
 			return sIPv6NDPModule->receive_data(buffer);
@@ -287,14 +337,6 @@ icmp6_receive_data(net_buffer *buffer)
 
 	gBufferModule->free(buffer);
 	return B_OK;
-}
-
-
-status_t
-icmp6_deliver_data(net_protocol *protocol, net_buffer *buffer)
-{
-	// TODO: does this look OK?
-	return icmp6_receive_data(buffer);
 }
 
 
@@ -377,7 +419,7 @@ net_protocol_module_info sICMP6Module = {
 	icmp6_get_domain,
 	icmp6_get_mtu,
 	icmp6_receive_data,
-	icmp6_deliver_data,
+	NULL,		// deliver_data
 	icmp6_error_received,
 	icmp6_error_reply,
 	NULL,		// add_ancillary_data()

@@ -158,12 +158,12 @@ MovementMaker::GetMovement(uint32 posX, uint32 posY)
 
 
 void
-MovementMaker::GetScrolling(uint32 posX, uint32 posY)
+MovementMaker::GetScrolling(uint32 posX, uint32 posY, bool reverse)
 {
 	CALLED();
 
 	int32 stepsX = 0, stepsY = 0;
-	int32 directionMultiplier = fSettings.scroll_reverse ? -1 : 1;
+	int32 directionMultiplier = reverse ? -1 : 1;
 
 	_GetRawMovement(posX, posY);
 	_ComputeAcceleration(fSettings.scroll_acceleration);
@@ -307,7 +307,7 @@ TouchpadMovement::~TouchpadMovement() {
 
 
 status_t
-TouchpadMovement::EventToMovement(const touchpad_movement* event, mouse_movement* movement,
+TouchpadMovement::EventToMovement(const touchpad_movement* _event, mouse_movement* movement,
 	bigtime_t& repeatTimeout)
 {
 	CALLED();
@@ -317,13 +317,13 @@ TouchpadMovement::EventToMovement(const touchpad_movement* event, mouse_movement
 
 	TRACE("TM_EVENT: b:0x%" B_PRIx8 " nf:%" B_PRId8 " f:0x%" B_PRIx8
 		" x:%" B_PRIu32 " y:%" B_PRIu32 " p:%" B_PRIu8 " w:%" B_PRIu8 "\n",
-		event->buttons,
-		count_set_bits(event->fingers),
-		event->fingers,
-		event->xPosition,
-		event->yPosition,
-		event->zPressure,
-		event->fingerWidth
+		_event->buttons,
+		count_set_bits(_event->fingers),
+		_event->fingers,
+		_event->xPosition,
+		_event->yPosition,
+		_event->zPressure,
+		_event->fingerWidth
 	);
 	TRACE("TM_STATUS: b:0x%" B_PRIx8 " %c%c%c%c%c%c"
 		" dx:%" B_PRId32 " dy:%" B_PRId32
@@ -352,6 +352,11 @@ TouchpadMovement::EventToMovement(const touchpad_movement* event, mouse_movement
 	movement->clicks = 0;
 	movement->timestamp = system_time();
 
+	touchpad_movement event2 = *_event;
+	if (!_ClickFingerButtonEmulator(&event2))
+		_SoftwareButtonAreas(&event2);
+	const touchpad_movement* event = &event2;
+
 	if ((movement->timestamp - fTapTime) > fTapTimeOUT) {
 		if (fTapStarted)
 			TRACE("TouchpadMovement: tap gesture timed out\n");
@@ -366,7 +371,9 @@ TouchpadMovement::EventToMovement(const touchpad_movement* event, mouse_movement
 		fTapClicks = 0;
 		fTapdragStarted = false;
 		fTapStarted = false;
-		fValidEdgeMotion = false;
+		if ((fSettings.edge_motion
+			& (B_EDGE_MOTION_ON_BUTTON_CLICK_MOVE | B_EDGE_MOTION_ON_BUTTON_CLICK_DRAG)) != 0)
+			fValidEdgeMotion = false;
 	}
 
 	if (event->zPressure >= fSpecs.minPressure
@@ -391,6 +398,76 @@ TouchpadMovement::EventToMovement(const touchpad_movement* event, mouse_movement
 	return B_OK;
 }
 
+
+bool
+TouchpadMovement::_ClickFingerButtonEmulator(touchpad_movement *event) {
+	CALLED();
+
+	if (event->buttons != 0) {
+		// ClickFinger behaviour.
+		// Simulate with 2 fingers click => right button click
+		// Simulate with 3 fingers click => middle button click
+		if (fSettings.finger_click && two_fingers(event)) {
+			event->buttons = 2;
+			return true;
+		} else if (fSettings.finger_click && three_fingers(event)) {
+			event->buttons = 4;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+
+void
+TouchpadMovement::_SoftwareButtonAreas(touchpad_movement *event) {
+	CALLED();
+
+	// Software button areas.
+	// - Emulation of button areas as clickpads do not have separated physical buttons from the one
+	//   overlapping the touch area.
+	// - Pretend the the same button is still pressed if the finger hasn't been released regardless
+	//   of its current possition.
+	// TODO:
+	// - Implement top button area.
+	// - Implement trackpoint emulator in an area.
+	//   i.e.: small centered square on the top of the clickpad.
+	// - Make the areas configurable from settings and Input preference app.
+	//   i.e.: to allow switch left and right buttons, etc.
+	if (event->buttons != 0) {
+		if (fSettings.software_button_areas) {
+			if (fButtonsState == 0) {
+				uint32 evaluatePositionX = (event->xPosition == 0) ? fPreviousX : event->xPosition;
+				uint32 evaluatePositionY = (event->yPosition == 0) ? fPreviousY : event->yPosition;
+				if (evaluatePositionY > 0 && evaluatePositionY < (uint32) fSpecs.areaEndY / 5) {
+					#if 0
+					// 2 software buttons:
+					// - Emulates right buttom hardcoded to half left side of the touchpad,
+					//   otherwise left button.
+					if (evaluatePositionX > (uint32) fSpecs.areaEndX / 2) {
+						event->buttons = 2;
+					} else {
+						event->buttons = 1;
+					}
+					#else
+					// 3 software buttons where the the middle button uses 1/6 of the area.
+					if (evaluatePositionX > (uint32) fSpecs.areaEndX / 12 * 7) {
+						event->buttons = 2;
+					} else if (evaluatePositionX > (uint32) fSpecs.areaEndX / 12 * 5) {
+						// Middle button area smaller than left and right buttons' area.
+						event->buttons = 4;
+					} else {
+						event->buttons = 1;
+					}
+					#endif
+				}
+			} else {
+				event->buttons = fButtonsState;
+			}
+		}
+	}
+}
 
 // in pixel per second
 const int32 kEdgeMotionSpeed = 200;
@@ -563,9 +640,14 @@ TouchpadMovement::_MoveToMovement(const touchpad_movement *event, mouse_movement
 		movement->buttons = kLeftButton;
 		movement->clicks = 0;
 
-		fValidEdgeMotion = _EdgeMotion(event, movement, fValidEdgeMotion);
+		if (fSettings.edge_motion & B_EDGE_MOTION_ON_TAP_DRAG
+			|| (event->buttons && (fSettings.edge_motion & B_EDGE_MOTION_ON_BUTTON_CLICK_DRAG)))
+			fValidEdgeMotion = _EdgeMotion(event, movement, fValidEdgeMotion);
 		TRACE("TouchpadMovement: tap drag\n");
 	} else {
+		if (fSettings.edge_motion & B_EDGE_MOTION_ON_MOVE
+			|| (event->buttons && (fSettings.edge_motion & B_EDGE_MOTION_ON_BUTTON_CLICK_MOVE)))
+			fValidEdgeMotion = _EdgeMotion(event, movement, fValidEdgeMotion);
 		TRACE("TouchpadMovement: movement set buttons\n");
 		movement->buttons = event->buttons;
 	}
@@ -619,8 +701,9 @@ TouchpadMovement::_CheckScrollingToMovement(const touchpad_movement *event,
 				|| fSettings.scroll_bottomrange > 0.999999) {
 		isSideScrollingH = true;
 	}
-	if (two_fingers(event)
-		&& fSettings.scroll_twofinger) {
+	bool isTwoFingerScrolling = two_fingers(event)
+		&& fSettings.scroll_twofinger;
+	if (isTwoFingerScrolling) {
 		// two finger scrolling is enabled
 		isSideScrollingV = true;
 		isSideScrollingH = fSettings.scroll_twofinger_horizontal;
@@ -641,7 +724,9 @@ TouchpadMovement::_CheckScrollingToMovement(const touchpad_movement *event,
 		fScrollingStarted = true;
 		StartNewMovment();
 	}
-	GetScrolling(event->xPosition, event->yPosition);
+	GetScrolling(event->xPosition, event->yPosition, isTwoFingerScrolling
+			? fSettings.scroll_twofinger_natural_scrolling
+			: fSettings.scroll_reverse);
 	movement->wheel_ydelta = make_small(yDelta);
 	movement->wheel_xdelta = make_small(xDelta);
 

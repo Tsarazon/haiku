@@ -82,7 +82,7 @@ const uint32 kMsgAddressChosen = 'acsn';
 
 struct CompareBStrings {
 	bool
-	operator()(const BString *s1, const BString *s2) const
+	operator()(const BString* s1, const BString* s2) const
 	{
 		return (s1->Compare(*s2) < 0);
 	}
@@ -115,7 +115,7 @@ public:
 	virtual	void				MessageReceived(BMessage* message);
 
 private:
-			void				_UpdateTextViewColors();
+			void				_UpdateTextViewColors(bool enabled);
 };
 
 
@@ -134,41 +134,44 @@ LabelView::LabelView(const char* label)
 void
 LabelView::SetEnabled(bool enabled)
 {
-	if (enabled != fEnabled) {
-		fEnabled = enabled;
-		Invalidate();
-	}
+	if (enabled == fEnabled)
+		return;
+
+	fEnabled = enabled;
+	Invalidate();
 }
 
 
 void
 LabelView::Draw(BRect updateRect)
 {
-	if (Text() != NULL) {
-		BRect rect = Bounds();
-		// TODO: solve this better (alignment of label and text)
-		rect.top++;
+	if (Text() == NULL)
+		return;
 
-		rgb_color base = ui_color(B_PANEL_BACKGROUND_COLOR);
-		uint32 flags = 0;
-		if (!IsEnabled())
-			flags |= BControlLook::B_DISABLED;
+	BRect rect = Bounds();
+	// TODO: solve this better (alignment of label and text)
+	rect.top++;
 
-		rgb_color text = ui_color(B_PANEL_TEXT_COLOR);
-		be_control_look->DrawLabel(this, Text(), rect, updateRect,
-			base, flags, BAlignment(Alignment(), B_ALIGN_MIDDLE), &text);
-	}
+	rgb_color base = ui_color(B_PANEL_BACKGROUND_COLOR);
+
+	uint32 flags = 0;
+	if (!IsEnabled())
+		flags |= BControlLook::B_DISABLED;
+
+	rgb_color text = ui_color(B_PANEL_TEXT_COLOR);
+	be_control_look->DrawLabel(this, Text(), rect, updateRect,
+		base, flags, BAlignment(Alignment(), B_ALIGN_MIDDLE), &text);
 }
 
 
 // #pragma mark - HeaderTextControl
 
 
-HeaderTextControl::HeaderTextControl(const char* label, const char* name,
-	BMessage* message)
+HeaderTextControl::HeaderTextControl(const char* label, const char* name, BMessage* message)
 	:
 	BTextControl(label, name, message)
 {
+	TextView()->SetFlags(B_WILL_DRAW | B_NAVIGABLE);
 }
 
 
@@ -176,53 +179,57 @@ void
 HeaderTextControl::AttachedToWindow()
 {
 	BTextControl::AttachedToWindow();
-	_UpdateTextViewColors();
+
+	TextView()->MakeSelectable(true);
+	_UpdateTextViewColors(IsEnabled());
 }
 
 
 void
 HeaderTextControl::SetEnabled(bool enabled)
 {
+	if (enabled == IsEnabled())
+		return;
+
+	TextView()->MakeEditable(enabled);
+	_UpdateTextViewColors(enabled);
+
 	BTextControl::SetEnabled(enabled);
-	_UpdateTextViewColors();
 }
 
 
 void
 HeaderTextControl::Draw(BRect updateRect)
 {
-	bool enabled = IsEnabled();
-	bool active = TextView()->IsFocus() && Window()->IsActive();
-
 	BRect rect = TextView()->Frame();
 	rect.InsetBy(-2, -2);
 
+	uint32 flags = 0;
+	if (!IsEnabled())
+		flags |= BControlLook::B_DISABLED;
+	else if (TextView()->IsFocus() && Window()->IsActive())
+		flags |= BControlLook::B_FOCUSED;
+
+	if (IsEnabled()) {
+		rgb_color base = ViewColor();
+		be_control_look->DrawTextControlBorder(this, rect, updateRect, base, flags);
+	}
+
+	if (Label() == NULL)
+		return;
+
 	rgb_color base = ui_color(B_PANEL_BACKGROUND_COLOR);
 	rgb_color text = ui_color(B_PANEL_TEXT_COLOR);
-	uint32 flags = 0;
-	if (!enabled)
-		flags = BControlLook::B_DISABLED;
 
-	if (enabled) {
-		if (active)
-			flags |= BControlLook::B_FOCUSED;
+	rect = CreateLabelLayoutItem()->Frame().OffsetByCopy(-Frame().left, -Frame().top);
+	// TODO: solve this better (alignment of label and text)
+	rect.InsetBy(1, 1);
 
-		be_control_look->DrawTextControlBorder(this, rect, updateRect, base,
-			flags);
-	}
+	alignment labelAlignment;
+	GetAlignment(&labelAlignment, NULL);
 
-	if (Label() != NULL) {
-		rect = CreateLabelLayoutItem()->Frame().OffsetByCopy(-Frame().left,
-			-Frame().top);
-		// TODO: solve this better (alignment of label and text)
-		rect.top++;
-
-		alignment labelAlignment;
-		GetAlignment(&labelAlignment, NULL);
-
-		be_control_look->DrawLabel(this, Label(), rect, updateRect,
-			base, flags, BAlignment(labelAlignment, B_ALIGN_MIDDLE), &text);
-	}
+	be_control_look->DrawLabel(this, Label(), rect, updateRect,
+		base, flags, BAlignment(labelAlignment, B_ALIGN_MIDDLE), &text);
 }
 
 
@@ -230,6 +237,16 @@ void
 HeaderTextControl::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
+		case B_COLORS_UPDATED:
+			if ((IsEnabled()
+				&& (message->HasColor(ui_color_name(B_DOCUMENT_BACKGROUND_COLOR))
+					|| message->HasColor(ui_color_name(B_DOCUMENT_TEXT_COLOR))))
+				|| message->HasColor(ui_color_name(B_PANEL_BACKGROUND_COLOR))
+				|| message->HasColor(ui_color_name(B_PANEL_TEXT_COLOR))) {
+				_UpdateTextViewColors(IsEnabled());
+			}
+			break;
+
 		case M_SELECT:
 		{
 			BTextView* textView = TextView();
@@ -246,35 +263,18 @@ HeaderTextControl::MessageReceived(BMessage* message)
 
 
 void
-HeaderTextControl::_UpdateTextViewColors()
+HeaderTextControl::_UpdateTextViewColors(bool enabled)
 {
-	BTextView* textView = TextView();
-
 	BFont font;
-	textView->GetFontAndColor(0, &font);
+	TextView()->GetFontAndColor(0, &font);
 
-	rgb_color textColor;
-	if (!textView->IsEditable() || IsEnabled())
-		textColor = ui_color(B_DOCUMENT_TEXT_COLOR);
-	else {
-		textColor = tint_color(ui_color(B_PANEL_BACKGROUND_COLOR),
-			B_DISABLED_LABEL_TINT);
-	}
+	// set text color only, do not set high color
+	rgb_color textColor = ui_color(enabled ? B_DOCUMENT_TEXT_COLOR : B_PANEL_TEXT_COLOR);
+	TextView()->SetFontAndColor(&font, B_FONT_ALL, &textColor);
 
-	textView->SetFontAndColor(&font, B_FONT_ALL, &textColor);
-
-	rgb_color color;
-	if (!textView->IsEditable())
-		color = ui_color(B_PANEL_BACKGROUND_COLOR);
-	else if (IsEnabled())
-		color = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
-	else {
-		color = tint_color(ui_color(B_PANEL_BACKGROUND_COLOR),
-			B_LIGHTEN_2_TINT);
-	}
-
-	textView->SetViewColor(color);
-	textView->SetLowColor(color);
+	// set low color and set view color to low
+	TextView()->SetLowUIColor(enabled ? B_DOCUMENT_BACKGROUND_COLOR : B_PANEL_BACKGROUND_COLOR);
+	TextView()->SetViewUIColor(TextView()->LowUIColor());
 }
 
 
@@ -316,7 +316,7 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 				<< account->ReturnAddress() << ">";
 
 			BMessage* msg = new BMessage(kMsgFrom);
-			BMenuItem *item = new BMenuItem(name, msg);
+			BMenuItem* item = new BMenuItem(name, msg);
 
 			msg->AddInt32("id", account->AccountID());
 
@@ -328,7 +328,7 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 		}
 
 		if (!marked) {
-			BMenuItem *item = fAccountMenu->ItemAt(0);
+			BMenuItem* item = fAccountMenu->ItemAt(0);
 			if (item != NULL) {
 				item->SetMarked(true);
 				fAccountID = item->Message()->FindInt32("id");
@@ -352,13 +352,9 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 
 	// To
 	fToLabel = new LabelView(B_TRANSLATE("To:"));
-	fToControl = new AddressTextControl(B_TRANSLATE("To:"),
-		new BMessage(TO_FIELD));
-	if (fIncoming || fResending) {
-		fToLabel->SetEnabled(false);
-		fToControl->SetEditable(false);
-		fToControl->SetEnabled(false);
-	}
+	fToControl = new AddressTextControl("to", new BMessage(TO_FIELD));
+	fToLabel->SetEnabled(!(fIncoming || fResending));
+	fToControl->SetEnabled(!(fIncoming || fResending));
 
 	BMessage* msg = new BMessage(FIELD_CHANGED);
 	msg->AddInt32("bitmask", FIELD_TO);
@@ -367,13 +363,13 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 	// Carbon copy
 	fCcLabel = new LabelView(B_TRANSLATE("Cc:"));
 	fCcControl = new AddressTextControl("cc", new BMessage(CC_FIELD));
+	fCcLabel->SetEnabled(!fIncoming);
+	fCcControl->SetEnabled(!fIncoming);
 	if (fIncoming) {
-		fCcLabel->SetEnabled(false);
-		fCcControl->SetEditable(false);
-		fCcControl->SetEnabled(false);
 		fCcControl->Hide();
 		fCcLabel->Hide();
 	}
+
 	msg = new BMessage(FIELD_CHANGED);
 	msg->AddInt32("bitmask", FIELD_CC);
 	fCcControl->SetModificationMessage(msg);
@@ -384,6 +380,7 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 		msg = new BMessage(FIELD_CHANGED);
 		msg->AddInt32("bitmask", FIELD_BCC);
 		fBccControl->SetModificationMessage(msg);
+		fBccControl->SetEnabled(true);
 	}
 
 	// Subject
@@ -393,8 +390,7 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 	msg->AddInt32("bitmask", FIELD_SUBJECT);
 	fSubjectControl->SetModificationMessage(msg);
 	fSubjectControl->SetAlignment(B_ALIGN_RIGHT, B_ALIGN_LEFT);
-	if (fIncoming || fResending)
-		fSubjectControl->SetEnabled(false);
+	fSubjectControl->SetEnabled(!fIncoming);
 
 	// Date
 	if (fIncoming) {
@@ -434,7 +430,7 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 		layout->AddItem(fDateControl->CreateTextViewLayoutItem(), 1, row);
 	}
 
-	if (fIncoming && (fCcControl != NULL)) {
+	if (fIncoming) {
 		layout->AddView(fCcLabel, 2, row);
 		layout->AddView(fCcControl, 3, row++);
 	} else {
@@ -448,9 +444,9 @@ THeaderView::THeaderView(bool incoming, bool resending, int32 defaultAccount)
 		layout->AddView(fBccControl, 3, row++);
 	} else
 		row++;
+
 	layout->AddItem(fSubjectControl->CreateLabelLayoutItem(), 0, row);
-	layout->AddItem(fSubjectControl->CreateTextViewLayoutItem(), 1, row++,
-		3, 1);
+	layout->AddItem(fSubjectControl->CreateTextViewLayoutItem(), 1, row++, 3, 1);
 }
 
 
@@ -500,7 +496,7 @@ THeaderView::IsCcEmpty() const
 const char*
 THeaderView::Cc() const
 {
-	return fCcControl != NULL ? fCcControl->Text() : NULL;
+	return fCcControl->Text();
 }
 
 
@@ -510,12 +506,10 @@ THeaderView::SetCc(const char* cc)
 	fCcControl->SetText(cc);
 
 	if (fIncoming) {
-		if (cc != NULL && cc[0] != '\0') {
-			if (fCcControl->IsHidden(this)) {
-				fCcControl->Show();
-				fCcLabel->Show();
-			}
-		} else if (!fCcControl->IsHidden(this)) {
+		if (fCcControl->IsHidden(this)) {
+			fCcControl->Show();
+			fCcLabel->Show();
+		} else {
 			fCcControl->Hide();
 			fCcLabel->Hide();
 		}
@@ -684,15 +678,14 @@ THeaderView::SetFromMessage(BEmailMessage* mail)
 
 
 void
-THeaderView::MessageReceived(BMessage *msg)
+THeaderView::MessageReceived(BMessage* msg)
 {
 	switch (msg->what) {
 		case B_SIMPLE_DATA:
 		{
 			BTextView* textView = dynamic_cast<BTextView*>(Window()->CurrentFocus());
-			if (dynamic_cast<AddressTextControl *>(textView->Parent()) != NULL)
-			BMessage message(*msg);
-			textView->Parent()->MessageReceived(msg);
+			if (dynamic_cast<AddressTextControl*>(textView->Parent()) != NULL)
+				Window()->PostMessage(msg, textView->Parent());
 			break;
 		}
 		case B_REFS_RECEIVED:
@@ -705,12 +698,12 @@ THeaderView::MessageReceived(BMessage *msg)
 
 		case kMsgFrom:
 		{
-			BMenuItem *item;
-			if (msg->FindPointer("source", (void **)&item) >= B_OK)
+			BMenuItem* item;
+			if (msg->FindPointer("source", (void**)&item) >= B_OK)
 				item->SetMarked(true);
 
 			int32 account;
-			if (msg->FindInt32("id",(int32 *)&account) >= B_OK)
+			if (msg->FindInt32("id", (int32*)&account) >= B_OK)
 				fAccountID = account;
 
 			BMessage message(FIELD_CHANGED);

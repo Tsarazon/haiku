@@ -14,6 +14,7 @@
 
 #include <algorithm>
 
+#include <Beep.h>
 #include <ControlLook.h>
 #include <GroupLayout.h>
 #include <GroupView.h>
@@ -77,7 +78,7 @@ AppGroupView::Draw(BRect updateRect)
 	// Draw the arrow button
 	uint32 direction = fCollapsed ? BControlLook::B_DOWN_ARROW : BControlLook::B_UP_ARROW;
 	be_control_look->DrawArrowShape(this, fCollapseRect, fCollapseRect, LowColor(), direction, 0,
-		B_DARKEN_3_TINT);
+		LowColor().IsLight() ? B_DARKEN_3_TINT : B_LIGHTEN_2_TINT);
 
 	// Draw the dismiss widget
 	DrawCloseButton(updateRect);
@@ -106,7 +107,7 @@ AppGroupView::DrawCloseButton(const BRect& updateRect)
 	BRect closeRect = fCloseRect;
 
 	rgb_color base = ui_color(B_PANEL_BACKGROUND_COLOR);
-	float tint = B_DARKEN_2_TINT;
+	float tint = ui_color(B_PANEL_BACKGROUND_COLOR).IsLight() ? B_DARKEN_2_TINT : B_LIGHTEN_2_TINT;
 
 	if (fCloseClicked) {
 		BRect buttonRect(closeRect.InsetByCopy(-4, -4));
@@ -223,6 +224,10 @@ AppGroupView::AddInfo(NotificationView* view)
 		for (int32 i = 0; i < children; i++) {
 			if (id == fInfo[i]->MessageID()) {
 				NotificationView* oldView = fInfo[i];
+				if(view->ProgressPercent() != oldView->ProgressPercent()
+					&& view->ProgressPercent() >= 0) {
+					system_beep("Notification progress");
+				}
 				oldView->RemoveSelf();
 				delete oldView;
 				fInfo[i] = view;
@@ -240,6 +245,8 @@ AppGroupView::AddInfo(NotificationView* view)
 	}
 
 	if (!found) {
+		if(view->ProgressPercent() >= 0)
+			system_beep("Notification progress");
 		fInfo.push_back(view);
 	}
 	GetLayout()->AddView(view);

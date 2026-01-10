@@ -103,12 +103,15 @@ public:
 									{ return fTextRenderer.Font(); }
 
 			void				StrokeLine(BPoint a, BPoint b);
+			void				StrokeLine(BPoint a, BPoint b, const BGradient& gradient);
 
 			bool				StraightLine(BPoint a, BPoint b,
 									const rgb_color& c) const;
 
 			BRect				StrokeTriangle(BPoint pt1, BPoint pt2,
 									BPoint pt3) const;
+			BRect				StrokeTriangle(BPoint pt1, BPoint pt2,
+									BPoint pt3, const BGradient& gradient);
 
 			BRect				FillTriangle(BPoint pt1, BPoint pt2,
 									BPoint pt3) const;
@@ -118,28 +121,29 @@ public:
 
 			BRect				DrawPolygon(BPoint* ptArray, int32 numPts,
 									bool filled, bool closed) const;
-			BRect				FillPolygon(BPoint* ptArray, int32 numPts,
-									const BGradient& gradient,
-									bool closed);
+			BRect				DrawPolygon(BPoint* ptArray, int32 numPts,
+									bool filled, bool closed, const BGradient& gradient);
 
 			BRect				DrawBezier(BPoint* controlPoints,
 									bool filled) const;
-			BRect				FillBezier(BPoint* controlPoints,
-									const BGradient& gradient);
+			BRect				DrawBezier(BPoint* controlPoints,
+									bool filled, const BGradient& gradient);
 
 			BRect				DrawShape(const int32& opCount,
 									const uint32* opList, const int32& ptCount,
 									const BPoint* ptList, bool filled,
 									const BPoint& viewToScreenOffset,
 									float viewScale) const;
-			BRect				FillShape(const int32& opCount,
+			BRect				DrawShape(const int32& opCount,
 									const uint32* opList, const int32& ptCount,
-									const BPoint* ptList,
+									const BPoint* ptList, bool filled,
 									const BGradient& gradient,
 									const BPoint& viewToScreenOffset,
 									float viewScale);
 
 			BRect				StrokeRect(const BRect& r) const;
+			BRect				StrokeRect(const BRect& r,
+									const BGradient& gradient);
 
 			void				StrokeRect(const BRect& r,
 									const rgb_color& c) const;
@@ -159,6 +163,9 @@ public:
 
 			BRect				StrokeRoundRect(const BRect& r, float xRadius,
 									float yRadius) const;
+			BRect				StrokeRoundRect(const BRect& r, float xRadius,
+									float yRadius,
+									const BGradient& gradient);
 
 			BRect				FillRoundRect(const BRect& r, float xRadius,
 									float yRadius) const;
@@ -170,12 +177,15 @@ public:
 									bool filled) const;
 
 			BRect				DrawEllipse(BRect r, bool filled) const;
-			BRect				FillEllipse(BRect r,
+			BRect				DrawEllipse(BRect r, bool filled,
 									const BGradient& gradient);
 
 			BRect				StrokeArc(BPoint center, float xRadius,
 									float yRadius, float angle,
 									float span) const;
+			BRect				StrokeArc(BPoint center, float xRadius,
+									float yRadius, float angle,
+									float span, const BGradient& gradient);
 
 			BRect				FillArc(BPoint center, float xRadius,
 									float yRadius, float angle,
@@ -272,6 +282,8 @@ private:
 
 			BRect				_DrawTriangle(BPoint pt1, BPoint pt2,
 									BPoint pt3, bool fill) const;
+			BRect				_DrawTriangle(BPoint pt1, BPoint pt2,
+									BPoint pt3, bool fill, const BGradient& gradient);
 
 			void				_IterateShapeData(const int32& opCount,
 									const uint32* opList, const int32& ptCount,
@@ -291,6 +303,11 @@ private:
 			template<class VertexSource>
 			BRect				_StrokePath(VertexSource& path,
 									cap_mode capMode) const;
+			template<class VertexSource>
+			BRect				_StrokePath(VertexSource& path, const BGradient& gradient);
+			template<class VertexSource>
+			BRect				_StrokePath(VertexSource& path,
+									cap_mode capMode, const BGradient& gradient);
 			template<class VertexSource>
 			BRect				_FillPath(VertexSource& path) const;
 			template<class VertexSource>

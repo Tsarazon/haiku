@@ -113,6 +113,21 @@ if [ IsPackageAvailable icu_devel ] {
 		;
 
 	EnableBuildFeatures icu ;
+} else if [ IsPackageAvailable icu70_devel ] {
+	ExtractBuildFeatureArchives icu :
+		file: base icu70
+			runtime: lib
+		file: devel icu70_devel
+			depends: base
+			libraries:
+				$(developLibDir)/libicudata.so
+				$(developLibDir)/libicui18n.so
+				$(developLibDir)/libicuio.so
+				$(developLibDir)/libicuuc.so
+			headers: $(developHeadersDir)
+		;
+
+	EnableBuildFeatures icu ;
 } else {
 	unavailableBuildFeatures += icu ;
 }
@@ -268,7 +283,6 @@ if [ IsPackageAvailable gutenprint9_devel ] {
 } else {
 	unavailableBuildFeatures += gutenprint ;
 }
-
 
 
 # WebKit

@@ -191,7 +191,6 @@ AddressTextControl::TextView::TextView(AddressTextControl* parent)
 	fUpdateAutoCompleterChoices(true)
 {
 	MakeResizable(true);
-	SetStylable(true);
 	fAutoCompleter->SetModificationsReported(true);
 }
 
@@ -438,8 +437,7 @@ AddressTextControl::PopUpButton::Draw(BRect updateRect)
 
 	rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
 	BRect rect = Bounds();
-	be_control_look->DrawMenuFieldBackground(this, rect,
-		updateRect, base, true, flags);
+	be_control_look->DrawMenuFieldBackground(this, rect, updateRect, base, true, flags);
 }
 
 
@@ -611,12 +609,12 @@ AddressTextControl::PopUpMenu::_AddPersonItem(const entry_ref *ref, ino_t node, 
 AddressTextControl::AddressTextControl(const char* name, BMessage* message)
 	:
 	BControl(name, NULL, message, B_WILL_DRAW),
-	fRefDropMenu(NULL),
-	fWindowActive(false),
-	fEditable(true)
+	fRefDropMenu(NULL)
 {
 	fTextView = new TextView(this);
 	fTextView->SetExplicitMinSize(BSize(100, B_SIZE_UNSET));
+	fTextView->SetFlags(B_WILL_DRAW | B_NAVIGABLE);
+
 	fPopUpButton = new PopUpButton();
 
 	BLayoutBuilder::Group<>(this, B_HORIZONTAL, 0)
@@ -630,9 +628,6 @@ AddressTextControl::AddressTextControl(const char* name, BMessage* message)
 
 	SetExplicitAlignment(BAlignment(B_ALIGN_USE_FULL_WIDTH,
 		B_ALIGN_VERTICAL_CENTER));
-
-	SetEnabled(fEditable);
-		// Sets the B_NAVIGABLE flag on the TextView
 }
 
 
@@ -645,36 +640,26 @@ void
 AddressTextControl::AttachedToWindow()
 {
 	BControl::AttachedToWindow();
-	fWindowActive = Window()->IsActive();
-}
 
-
-void
-AddressTextControl::WindowActivated(bool active)
-{
-	BControl::WindowActivated(active);
-	if (fWindowActive != active) {
-		fWindowActive = active;
-		Invalidate();
-	}
+	fTextView->MakeSelectable(true);
+	_UpdateTextViewColors(IsEnabled());
 }
 
 
 void
 AddressTextControl::Draw(BRect updateRect)
 {
-	if (!IsEditable())
+	if (!IsEnabled())
 		return;
 
-	BRect bounds(Bounds());
-	rgb_color base(LowColor());
+	BRect rect = Bounds();
+	rgb_color base = LowColor();
+
 	uint32 flags = 0;
-	if (!IsEnabled())
-		flags |= BControlLook::B_DISABLED;
-	if (fWindowActive && fTextView->IsFocus())
+	if (Window()->IsActive() && fTextView->IsFocus())
 		flags |= BControlLook::B_FOCUSED;
-	be_control_look->DrawTextControlBorder(this, bounds, updateRect, base,
-		flags);
+
+	be_control_look->DrawTextControlBorder(this, rect, updateRect, base, flags);
 }
 
 
@@ -689,16 +674,23 @@ AddressTextControl::MakeFocus(bool focus)
 void
 AddressTextControl::SetEnabled(bool enabled)
 {
-	BControl::SetEnabled(enabled);
-	fTextView->MakeEditable(enabled && fEditable);
-	if (enabled)
-		fTextView->SetFlags(fTextView->Flags() | B_NAVIGABLE);
-	else
-		fTextView->SetFlags(fTextView->Flags() & ~B_NAVIGABLE);
+	if (enabled == IsEnabled())
+		return;
+
+	fTextView->MakeEditable(enabled);
+	_UpdateTextViewColors(enabled);
+
+	if (enabled && fPopUpButton->IsHidden(this))
+		fPopUpButton->Show();
+	else if (!enabled && !fPopUpButton->IsHidden(this))
+		fPopUpButton->Hide();
 
 	fPopUpButton->SetEnabled(enabled);
 
-	_UpdateTextViewColors();
+	BControl::SetEnabled(enabled);
+
+	// override BControl and always set B_NAVIGABLE
+	SetFlags(Flags() | B_NAVIGABLE);
 }
 
 
@@ -706,6 +698,16 @@ void
 AddressTextControl::MessageReceived(BMessage* message)
 {
 	switch (message->what) {
+		case B_COLORS_UPDATED:
+			if ((IsEnabled()
+				&& (message->HasColor(ui_color_name(B_DOCUMENT_BACKGROUND_COLOR))
+					|| message->HasColor(ui_color_name(B_DOCUMENT_TEXT_COLOR))))
+				|| message->HasColor(ui_color_name(B_PANEL_BACKGROUND_COLOR))
+				|| message->HasColor(ui_color_name(B_PANEL_TEXT_COLOR))) {
+				_UpdateTextViewColors(IsEnabled());
+			}
+			break;
+
 		case B_SIMPLE_DATA:
 		{
 			int32 buttons = -1;
@@ -810,7 +812,7 @@ AddressTextControl::MessageReceived(BMessage* message)
 
 		case M_SELECT:
 		{
-			BTextView *textView = (BTextView *)ChildAt(0);
+			BTextView* textView = (BTextView*)ChildAt(0);
 			if (textView != NULL)
 				textView->Select(0, textView->TextLength());
 			break;
@@ -843,27 +845,6 @@ void
 AddressTextControl::SetModificationMessage(BMessage* message)
 {
 	fTextView->SetModificationMessage(message);
-}
-
-
-bool
-AddressTextControl::IsEditable() const
-{
-	return fEditable;
-}
-
-
-void
-AddressTextControl::SetEditable(bool editable)
-{
-	fTextView->MakeEditable(IsEnabled() && editable);
-	fTextView->MakeSelectable(IsEnabled() && editable);
-	fEditable = editable;
-
-	if (editable && fPopUpButton->IsHidden(this))
-		fPopUpButton->Show();
-	else if (!editable && !fPopUpButton->IsHidden(this))
-		fPopUpButton->Hide();
 }
 
 
@@ -934,31 +915,16 @@ AddressTextControl::_AddAddress(const char* text)
 
 
 void
-AddressTextControl::_UpdateTextViewColors()
+AddressTextControl::_UpdateTextViewColors(bool enabled)
 {
 	BFont font;
 	fTextView->GetFontAndColor(0, &font);
 
-	rgb_color textColor;
-	if (!IsEditable() || IsEnabled())
-		textColor = ui_color(B_DOCUMENT_TEXT_COLOR);
-	else {
-		textColor = tint_color(ui_color(B_PANEL_BACKGROUND_COLOR),
-			B_DISABLED_LABEL_TINT);
-	}
-
+	// set text color only, do not set high color
+	rgb_color textColor = ui_color(enabled ? B_DOCUMENT_TEXT_COLOR : B_PANEL_TEXT_COLOR);
 	fTextView->SetFontAndColor(&font, B_FONT_ALL, &textColor);
 
-	rgb_color color;
-	if (!IsEditable())
-		color = ui_color(B_PANEL_BACKGROUND_COLOR);
-	else if (IsEnabled())
-		color = ui_color(B_DOCUMENT_BACKGROUND_COLOR);
-	else {
-		color = tint_color(ui_color(B_PANEL_BACKGROUND_COLOR),
-			B_LIGHTEN_2_TINT);
-	}
-
-	fTextView->SetViewColor(color);
-	fTextView->SetLowColor(color);
+	// set low color and set view color to low
+	fTextView->SetLowUIColor(enabled ? B_DOCUMENT_BACKGROUND_COLOR : B_PANEL_BACKGROUND_COLOR);
+	fTextView->SetViewUIColor(fTextView->LowUIColor());
 }

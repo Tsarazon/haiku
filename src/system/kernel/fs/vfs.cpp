@@ -2849,11 +2849,6 @@ get_new_fd(struct fd_ops* ops, struct fs_mount* mount, struct vnode* vnode,
 			&& (ops == &sFileOps || ops == &sDirectoryOps))
 		return B_BUSY;
 
-	if ((openMode & O_RDWR) != 0 && (openMode & O_WRONLY) != 0)
-		return B_BAD_VALUE;
-	if ((openMode & O_RWMASK) == O_RDONLY && (openMode & O_TRUNC) != 0)
-		return B_NOT_ALLOWED;
-
 	descriptor = alloc_fd();
 	if (!descriptor)
 		return B_NO_MEMORY;
@@ -5409,6 +5404,23 @@ vfs_init(kernel_args* args)
 //	#pragma mark - fd_ops implementations
 
 
+static status_t
+check_open_mode(struct vnode* vnode, int openMode)
+{
+	if ((openMode & O_RDWR) != 0 && (openMode & O_WRONLY) != 0)
+		return B_BAD_VALUE;
+	if ((openMode & O_RWMASK) == O_RDONLY && (openMode & O_TRUNC) != 0)
+		return B_NOT_ALLOWED;
+
+	if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
+		return B_LINK_LIMIT;
+	if ((openMode & O_DIRECTORY) != 0 && !S_ISDIR(vnode->Type()))
+		return B_NOT_A_DIRECTORY;
+
+	return B_OK;
+}
+
+
 /*!
 	Calls fs_open() on the given vnode and returns a new
 	file descriptor for it
@@ -5416,8 +5428,12 @@ vfs_init(kernel_args* args)
 static int
 open_vnode(struct vnode* vnode, int openMode, bool kernel)
 {
+	status_t status = check_open_mode(vnode, openMode);
+	if (status != B_OK)
+		return status;
+
 	void* cookie;
-	status_t status = FS_CALL(vnode, open, openMode, &cookie);
+	status = FS_CALL(vnode, open, openMode, &cookie);
 	if (status != B_OK)
 		return status;
 
@@ -5431,8 +5447,10 @@ open_vnode(struct vnode* vnode, int openMode, bool kernel)
 
 
 /*!
-	Calls fs_open() on the given vnode and returns a new
-	file descriptor for it
+	Creates a new regular file and returns a new file descriptor for it.
+
+	If O_EXCL is not specified and an entry already exists at the path,
+	then that entry will be opened and returned instead.
 */
 static int
 create_vnode(struct vnode* directory, const char* name, int openMode,
@@ -5496,8 +5514,8 @@ create_vnode(struct vnode* directory, const char* name, int openMode,
 			}
 
 			if (!create) {
-				if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
-					return B_LINK_LIMIT;
+				if (S_ISDIR(vnode->Type()))
+					return B_IS_A_DIRECTORY;
 
 				int fd = open_vnode(vnode.Get(), openMode & ~O_CREAT, kernel);
 				// on success keep the vnode reference for the FD
@@ -5664,9 +5682,6 @@ file_open_entry_ref(dev_t mountID, ino_t directoryID, const char* name,
 	if (status != B_OK)
 		return status;
 
-	if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
-		return B_LINK_LIMIT;
-
 	int newFD = open_vnode(vnode.Get(), openMode, kernel);
 	if (newFD >= 0) {
 		cache_node_opened(vnode.Get(), vnode->cache, mountID,
@@ -5695,9 +5710,6 @@ file_open(int fd, char* path, int openMode, bool kernel)
 		&parentID, kernel);
 	if (status != B_OK)
 		return status;
-
-	if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
-		return B_LINK_LIMIT;
 
 	// open the vnode
 	int newFD = open_vnode(vnode.Get(), openMode, kernel);
@@ -6900,8 +6912,9 @@ attr_create(int fd, char* path, const char* name, uint32 type,
 	if (status != B_OK)
 		return status;
 
-	if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
-		return B_LINK_LIMIT;
+	status = check_open_mode(vnode.Get(), openMode);
+	if (status != B_OK)
+		return status;
 
 	if (!HAS_FS_CALL(vnode, create_attr))
 		return B_READ_ONLY_DEVICE;
@@ -6941,8 +6954,9 @@ attr_open(int fd, char* path, const char* name, int openMode, bool kernel)
 	if (status != B_OK)
 		return status;
 
-	if ((openMode & O_NOFOLLOW) != 0 && S_ISLNK(vnode->Type()))
-		return B_LINK_LIMIT;
+	status = check_open_mode(vnode.Get(), openMode);
+	if (status != B_OK)
+		return status;
 
 	if (!HAS_FS_CALL(vnode, open_attr))
 		return B_UNSUPPORTED;
@@ -7522,7 +7536,7 @@ fs_mount(char* path, const char* device, const char* fsName, uint32 flags,
 			}
 		}
 
-		if (!partition) {
+		if (partition == NULL) {
 			TRACE(("fs_mount(): Partition `%s' not found.\n",
 				normalizedDevice.Path()));
 			return B_ENTRY_NOT_FOUND;
@@ -7538,16 +7552,14 @@ fs_mount(char* path, const char* device, const char* fsName, uint32 flags,
 	// interfering.
 	// TODO: Just mark the partition busy while mounting!
 	KDiskDevice* diskDevice = NULL;
-	if (partition) {
+	if (partition != NULL) {
 		diskDevice = ddm->WriteLockDevice(partition->Device()->ID());
-		if (!diskDevice) {
+		if (diskDevice == NULL) {
 			TRACE(("fs_mount(): Failed to lock disk device!\n"));
 			return B_ERROR;
 		}
 	}
-
 	DeviceWriteLocker writeLocker(diskDevice, true);
-		// this takes over the write lock acquired before
 
 	if (partition != NULL) {
 		// make sure, that the partition is not busy
@@ -7556,10 +7568,15 @@ fs_mount(char* path, const char* device, const char* fsName, uint32 flags,
 			return B_BUSY;
 		}
 
+		if (partition->IsMounted()) {
+			TRACE(("fs_mount(): Partition is already mounted.\n"));
+			return B_BUSY;
+		}
+
 		// if no FS name had been supplied, we get it from the partition
 		if (fsName == NULL) {
 			KDiskSystem* diskSystem = partition->DiskSystem();
-			if (!diskSystem) {
+			if (diskSystem == NULL) {
 				TRACE(("fs_mount(): No FS name was given, and the DDM didn't "
 					"recognize it.\n"));
 				return B_BAD_VALUE;

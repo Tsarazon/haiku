@@ -28,6 +28,10 @@
 #define BOOT_EFI_SMBIOS_V2_ROOT		"_boot_efi smbiosv2root"
 #define BOOT_EFI_SMBIOS_V3_ROOT		"_boot_efi smbiosv3root"
 
+// names of efi boot_volume fields
+#define BOOT_EFI_SMBIOS_V2_ROOT		"_boot_efi smbiosv2root"
+#define BOOT_EFI_SMBIOS_V3_ROOT		"_boot_efi smbiosv3root"
+
 // names of common boot_volume fields
 #define BOOT_METHOD						"boot method"
 #define BOOT_VOLUME_USER_SELECTED		"user selected"

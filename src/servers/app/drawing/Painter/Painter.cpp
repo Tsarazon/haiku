@@ -578,76 +578,15 @@ Painter::StrokeLine(BPoint a, BPoint b)
 }
 
 
-bool
-Painter::StraightLine(BPoint a, BPoint b, const rgb_color& c) const
-{
-	if (!fValidClipping)
-		return false;
-
-	if (a.x == b.x) {
-		uint8* dst = fBuffer.row_ptr(0);
-		uint32 bpr = fBuffer.stride();
-		int32 x = (int32)a.x;
-		dst += x * 4;
-		int32 y1 = (int32)min_c(a.y, b.y);
-		int32 y2 = (int32)max_c(a.y, b.y);
-		pixel32 color;
-		color.data8[0] = c.blue;
-		color.data8[1] = c.green;
-		color.data8[2] = c.red;
-		color.data8[3] = kMaxAlpha;
-
-		_IterateClipBoxes([&](int32 xmin, int32 ymin, int32 xmax, int32 ymax) {
-			if (xmin <= x && xmax >= x) {
-				int32 i = max_c(ymin, y1);
-				int32 end = min_c(ymax, y2);
-				uint8* handle = dst + i * bpr;
-				for (; i <= end; i++) {
-					*(uint32*)handle = color.data32;
-					handle += bpr;
-				}
-			}
-		});
-		return true;
-	}
-
-	if (a.y == b.y) {
-		int32 y = (int32)a.y;
-		if (y < 0 || y >= (int32)fBuffer.height())
-			return true;
-
-		uint8* dst = fBuffer.row_ptr(y);
-		int32 x1 = (int32)min_c(a.x, b.x);
-		int32 x2 = (int32)max_c(a.x, b.x);
-		pixel32 color;
-		color.data8[0] = c.blue;
-		color.data8[1] = c.green;
-		color.data8[2] = c.red;
-		color.data8[3] = kMaxAlpha;
-
-		_IterateClipBoxes([&](int32 xmin, int32 ymin, int32 xmax, int32 ymax) {
-			if (ymin <= y && ymax >= y) {
-				int32 i = max_c(xmin, x1);
-				int32 end = min_c(xmax, x2);
-				uint32* handle = (uint32*)(dst + i * 4);
-				for (; i <= end; i++) {
-					*handle++ = color.data32;
-				}
-			}
-		});
-		return true;
-	}
-	return false;
-}
-
-
+// StrokeTriangle
 BRect
-Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
+Painter::StrokeTriangle(BPoint pt1, BPoint pt2, BPoint pt3, const BGradient& gradient)
 {
-	return _DrawTriangle(pt1, pt2, pt3, false);
+	return _DrawTriangle(pt1, pt2, pt3, false, gradient);
 }
 
 
+// FillTriangle
 BRect
 Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3) const
 {
@@ -659,21 +598,7 @@ BRect
 Painter::FillTriangle(BPoint pt1, BPoint pt2, BPoint pt3,
 	const BGradient& gradient)
 {
-	CHECK_CLIPPING
-
-	_Align(&pt1);
-	_Align(&pt2);
-	_Align(&pt3);
-
-	fPath.remove_all();
-
-	fPath.move_to(pt1.x, pt1.y);
-	fPath.line_to(pt2.x, pt2.y);
-	fPath.line_to(pt3.x, pt3.y);
-
-	fPath.close_polygon();
-
-	return _FillPath(fPath, gradient);
+	return _DrawTriangle(pt1, pt2, pt3, true, gradient);
 }
 
 
@@ -710,29 +635,34 @@ Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed) const
 
 
 BRect
-Painter::FillPolygon(BPoint* p, int32 numPts, const BGradient& gradient,
-	bool closed)
+Painter::DrawPolygon(BPoint* p, int32 numPts, bool filled, bool closed, const BGradient& gradient)
 {
 	CHECK_CLIPPING
 
-	if (numPts > 0) {
-		fPath.remove_all();
+	if (numPts == 0)
+		return BRect(0.0, 0.0, -1.0, -1.0);
 
-		_Align(p);
-		fPath.move_to(p->x, p->y);
+	bool centerOffset = !filled && fIdentityTransform
+		&& fmodf(fPenSize, 2.0) != 0.0;
 
-		for (int32 i = 1; i < numPts; i++) {
-			p++;
-			_Align(p);
-			fPath.line_to(p->x, p->y);
-		}
+	fPath.remove_all();
 
-		if (closed)
-			fPath.close_polygon();
+	_Align(p, centerOffset);
+	fPath.move_to(p->x, p->y);
 
-		return _FillPath(fPath, gradient);
+	for (int32 i = 1; i < numPts; i++) {
+		p++;
+		_Align(p, centerOffset);
+		fPath.line_to(p->x, p->y);
 	}
-	return BRect(0.0, 0.0, -1.0, -1.0);
+
+	if (closed)
+		fPath.close_polygon();
+
+	if (filled)
+		return _FillPath(fPath, gradient);
+
+	return _StrokePath(fPath, gradient);
 }
 
 
@@ -761,7 +691,7 @@ Painter::DrawBezier(BPoint* p, bool filled) const
 
 
 BRect
-Painter::FillBezier(BPoint* p, const BGradient& gradient)
+Painter::DrawBezier(BPoint* p, bool filled, const BGradient& gradient)
 {
 	CHECK_CLIPPING
 
@@ -775,8 +705,12 @@ Painter::FillBezier(BPoint* p, const BGradient& gradient)
 	fPath.move_to(p[0].x, p[0].y);
 	fPath.curve4(p[1].x, p[1].y, p[2].x, p[2].y, p[3].x, p[3].y);
 
-	fPath.close_polygon();
-	return _FillPath(fCurve, gradient);
+	if (filled) {
+		fPath.close_polygon();
+		return _FillPath(fCurve, gradient);
+	}
+
+	return _StrokePath(fCurve, gradient);
 }
 
 
@@ -798,8 +732,8 @@ Painter::DrawShape(const int32& opCount, const uint32* opList,
 
 
 BRect
-Painter::FillShape(const int32& opCount, const uint32* opList,
-	const int32& ptCount, const BPoint* points, const BGradient& gradient,
+Painter::DrawShape(const int32& opCount, const uint32* opList,
+	const int32& ptCount, const BPoint* points, bool filled, const BGradient& gradient,
 	const BPoint& viewToScreenOffset, float viewScale)
 {
 	CHECK_CLIPPING
@@ -807,7 +741,10 @@ Painter::FillShape(const int32& opCount, const uint32* opList,
 	_IterateShapeData(opCount, opList, ptCount, points, viewToScreenOffset,
 		viewScale);
 
-	return _FillPath(fCurve, gradient);
+	if (filled)
+		return _FillPath(fCurve, gradient);
+
+	return _StrokePath(fCurve, gradient);
 }
 
 
@@ -852,193 +789,10 @@ Painter::StrokeRect(const BRect& r) const
 }
 
 
-void
-Painter::StrokeRect(const BRect& r, const rgb_color& c) const
-{
-	StraightLine(BPoint(r.left, r.top), BPoint(r.right - 1, r.top), c);
-	StraightLine(BPoint(r.right, r.top), BPoint(r.right, r.bottom - 1), c);
-	StraightLine(BPoint(r.right, r.bottom), BPoint(r.left + 1, r.bottom), c);
-	StraightLine(BPoint(r.left, r.bottom), BPoint(r.left, r.top + 1), c);
-}
-
-
+// StrokeRoundRect
 BRect
-Painter::FillRect(const BRect& r) const
-{
-	CHECK_CLIPPING
-
-	BPoint a(min_c(r.left, r.right), min_c(r.top, r.bottom));
-	BPoint b(max_c(r.left, r.right), max_c(r.top, r.bottom));
-	_Align(&a, true, false);
-	_Align(&b, true, false);
-
-	if (_TryOptimizedRectFill(a, b))
-		return _Clipped(BRect(a, b));
-
-	b.x += 1.0;
-	b.y += 1.0;
-
-	fPath.remove_all();
-	fPath.move_to(a.x, a.y);
-	fPath.line_to(b.x, a.y);
-	fPath.line_to(b.x, b.y);
-	fPath.line_to(a.x, b.y);
-	fPath.close_polygon();
-
-	return _FillPath(fPath);
-}
-
-
-BRect
-Painter::FillRect(const BRect& r, const BGradient& gradient)
-{
-	CHECK_CLIPPING
-
-	BPoint a(min_c(r.left, r.right), min_c(r.top, r.bottom));
-	BPoint b(max_c(r.left, r.right), max_c(r.top, r.bottom));
-	_Align(&a, true, false);
-	_Align(&b, true, false);
-
-	if (gradient.GetType() == BGradient::TYPE_LINEAR
-		&& (fDrawingMode == B_OP_COPY || fDrawingMode == B_OP_OVER)
-		&& fMaskedUnpackedScanline == nullptr && fIdentityTransform) {
-		const BGradientLinear* linearGradient
-			= dynamic_cast<const BGradientLinear*>(&gradient);
-		if (linearGradient->Start().x == linearGradient->End().x) {
-			BRect rect(a, b);
-			FillRectVerticalGradient(rect, *linearGradient);
-			return _Clipped(rect);
-		}
-	}
-
-	b.x += 1.0;
-	b.y += 1.0;
-
-	fPath.remove_all();
-	fPath.move_to(a.x, a.y);
-	fPath.line_to(b.x, a.y);
-	fPath.line_to(b.x, b.y);
-	fPath.line_to(a.x, b.y);
-	fPath.close_polygon();
-
-	return _FillPath(fPath, gradient);
-}
-
-
-void
-Painter::FillRect(const BRect& r, const rgb_color& c) const
-{
-	if (!fValidClipping)
-		return;
-
-	uint8* dst = fBuffer.row_ptr(0);
-	uint32 bpr = fBuffer.stride();
-	int32 left = (int32)r.left;
-	int32 top = (int32)r.top;
-	int32 right = (int32)r.right;
-	int32 bottom = (int32)r.bottom;
-
-	pixel32 color;
-	color.data8[0] = c.blue;
-	color.data8[1] = c.green;
-	color.data8[2] = c.red;
-	color.data8[3] = c.alpha;
-
-	_IterateClipBoxes([&](int32 xmin, int32 ymin, int32 xmax, int32 ymax) {
-		int32 x1 = max_c(xmin, left);
-		int32 x2 = min_c(xmax, right);
-		if (x1 <= x2) {
-			int32 y1 = max_c(ymin, top);
-			int32 y2 = min_c(ymax, bottom);
-			uint8* offset = dst + x1 * 4;
-			for (; y1 <= y2; y1++) {
-				gfxset32(offset + y1 * bpr, color.data32, (x2 - x1 + 1) * 4);
-			}
-		}
-	});
-}
-
-
-void
-Painter::FillRectVerticalGradient(BRect r,
-	const BGradientLinear& gradient) const
-{
-	if (!fValidClipping)
-		return;
-
-	r = r & fClippingRegion->Frame();
-
-	int32 gradientArraySize = r.IntegerHeight() + 1;
-	uint32 gradientArray[gradientArraySize];
-	int32 gradientTop = (int32)gradient.Start().y;
-	int32 gradientBottom = (int32)gradient.End().y;
-	
-	bool upsideDown = gradientTop > gradientBottom;
-	if (upsideDown) {
-		int32 temp = gradientTop;
-		gradientTop = gradientBottom;
-		gradientBottom = temp;
-	}
-	
-	int32 colorCount = gradientBottom - gradientTop + 1;
-	if (colorCount < 0)
-		return;
-
-	_MakeGradient(gradient, colorCount, gradientArray,
-		gradientTop - (int32)r.top, gradientArraySize);
-
-	uint8* dst = fBuffer.row_ptr(0);
-	uint32 bpr = fBuffer.stride();
-	int32 left = (int32)r.left;
-	int32 top = (int32)r.top;
-	int32 right = (int32)r.right;
-	int32 bottom = (int32)r.bottom;
-	
-	_IterateClipBoxes([&](int32 xmin, int32 ymin, int32 xmax, int32 ymax) {
-		int32 x1 = max_c(xmin, left);
-		int32 x2 = min_c(xmax, right);
-		if (x1 <= x2) {
-			int32 y1 = max_c(ymin, top);
-			int32 y2 = min_c(ymax, bottom);
-			uint8* offset = dst + x1 * 4;
-			for (; y1 <= y2; y1++) {
-				int32 gradientIndex = upsideDown 
-					? (gradientArraySize - 1 - (y1 - top))
-					: (y1 - top);
-				if (gradientIndex >= 0 && gradientIndex < gradientArraySize) {
-					gfxset32(offset + y1 * bpr, gradientArray[gradientIndex],
-						(x2 - x1 + 1) * 4);
-				}
-			}
-		}
-	});
-}
-
-
-void
-Painter::FillRectNoClipping(const clipping_rect& r, const rgb_color& c) const
-{
-	int32 y = (int32)r.top;
-
-	uint8* dst = fBuffer.row_ptr(y) + r.left * 4;
-	uint32 bpr = fBuffer.stride();
-	int32 bytes = (r.right - r.left + 1) * 4;
-
-	pixel32 color;
-	color.data8[0] = c.blue;
-	color.data8[1] = c.green;
-	color.data8[2] = c.red;
-	color.data8[3] = c.alpha;
-
-	for (; y <= r.bottom; y++) {
-		gfxset32(dst, color.data32, bytes);
-		dst += bpr;
-	}
-}
-
-
-BRect
-Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius) const
+Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius,
+	const BGradient& gradient)
 {
 	CHECK_CLIPPING
 
@@ -1052,10 +806,11 @@ Painter::StrokeRoundRect(const BRect& r, float xRadius, float yRadius) const
 	rect.rect(lt.x, lt.y, rb.x, rb.y);
 	rect.radius(xRadius, yRadius);
 
-	return _StrokePath(rect);
+	return _StrokePath(rect, gradient);
 }
 
 
+// FillRoundRect
 BRect
 Painter::FillRoundRect(const BRect& r, float xRadius, float yRadius) const
 {
@@ -1140,11 +895,11 @@ Painter::DrawEllipse(BRect r, bool fill) const
 
 
 BRect
-Painter::FillEllipse(BRect r, const BGradient& gradient)
+Painter::DrawEllipse(BRect r, bool fill, const BGradient& gradient)
 {
 	CHECK_CLIPPING
 
-	AlignEllipseRect(&r, true);
+	AlignEllipseRect(&r, fill);
 
 	float xRadius = r.Width() / 2.0;
 	float yRadius = r.Height() / 2.0;
@@ -1158,7 +913,10 @@ Painter::FillEllipse(BRect r, const BGradient& gradient)
 
 	agg::ellipse path(center.x, center.y, xRadius, yRadius, divisions);
 
-	return _FillPath(path, gradient);
+	if (fill)
+		return _FillPath(path, gradient);
+	else
+		return _StrokePath(path, gradient);
 }
 
 
@@ -1182,484 +940,17 @@ Painter::StrokeArc(BPoint center, float xRadius, float yRadius, float angle,
 }
 
 
+template<class VertexSource>
 BRect
-Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
-	float span) const
+Painter::_StrokePath(VertexSource& path, const BGradient& gradient)
 {
-	CHECK_CLIPPING
-
-	_Align(&center);
-
-	double angleRad = (angle * M_PI) / 180.0;
-	double spanRad = (span * M_PI) / 180.0;
-	agg::bezier_arc arc(center.x, center.y, xRadius, yRadius, -angleRad,
-		-spanRad);
-
-	agg::conv_curve<agg::bezier_arc> segmentedArc(arc);
-
-	fPath.remove_all();
-
-	fPath.move_to(center.x, center.y);
-
-	segmentedArc.rewind(0);
-	double x;
-	double y;
-	unsigned cmd = segmentedArc.vertex(&x, &y);
-	while (!agg::is_stop(cmd)) {
-		fPath.line_to(x, y);
-		cmd = segmentedArc.vertex(&x, &y);
-	}
-
-	fPath.close_polygon();
-
-	return _FillPath(fPath);
-}
-
-
-BRect
-Painter::FillArc(BPoint center, float xRadius, float yRadius, float angle,
-	float span, const BGradient& gradient)
-{
-	CHECK_CLIPPING
-
-	_Align(&center);
-
-	double angleRad = (angle * M_PI) / 180.0;
-	double spanRad = (span * M_PI) / 180.0;
-	agg::bezier_arc arc(center.x, center.y, xRadius, yRadius, -angleRad,
-		-spanRad);
-
-	agg::conv_curve<agg::bezier_arc> segmentedArc(arc);
-
-	fPath.remove_all();
-
-	fPath.move_to(center.x, center.y);
-
-	segmentedArc.rewind(0);
-	double x;
-	double y;
-	unsigned cmd = segmentedArc.vertex(&x, &y);
-	while (!agg::is_stop(cmd)) {
-		fPath.line_to(x, y);
-		cmd = segmentedArc.vertex(&x, &y);
-	}
-
-	fPath.close_polygon();
-
-	return _FillPath(fPath, gradient);
-}
-
-
-BRect
-Painter::DrawString(const char* utf8String, uint32 length, BPoint baseLine,
-	const escapement_delta* delta, FontCacheReference* cacheReference)
-{
-	CHECK_CLIPPING
-
-	if (!fSubpixelPrecise) {
-		baseLine.x = roundf(baseLine.x);
-		baseLine.y = roundf(baseLine.y);
-	}
-
-	BRect bounds;
-
-	SolidPatternGuard _(this);
-
-	bounds = fTextRenderer.RenderString(utf8String, length,
-		baseLine, fClippingRegion->Frame(), false, nullptr, delta,
-		cacheReference);
-
-	return _Clipped(bounds);
-}
-
-
-BRect
-Painter::DrawString(const char* utf8String, uint32 length,
-	const BPoint* offsets, FontCacheReference* cacheReference)
-{
-	CHECK_CLIPPING
-
-	SolidPatternGuard _(this);
-
-	auto rounded = _CreateRoundedOffsets(offsets, length);
-	const BPoint* effectiveOffsets = rounded ? rounded.get() : offsets;
-
-	BRect bounds = fTextRenderer.RenderString(utf8String, length,
-		effectiveOffsets, fClippingRegion->Frame(), false, nullptr,
-		cacheReference);
-
-	return _Clipped(bounds);
-}
-
-
-BRect
-Painter::BoundingBox(const char* utf8String, uint32 length, BPoint baseLine,
-	BPoint* penLocation, const escapement_delta* delta,
-	FontCacheReference* cacheReference) const
-{
-	if (!fSubpixelPrecise) {
-		baseLine.x = roundf(baseLine.x);
-		baseLine.y = roundf(baseLine.y);
-	}
-
-	static BRect dummy;
-	return fTextRenderer.RenderString(utf8String, length,
-		baseLine, dummy, true, penLocation, delta, cacheReference);
-}
-
-
-BRect
-Painter::BoundingBox(const char* utf8String, uint32 length,
-	const BPoint* offsets, BPoint* penLocation,
-	FontCacheReference* cacheReference) const
-{
-	static BRect dummy;
-
-	auto rounded = _CreateRoundedOffsets(offsets, length);
-	const BPoint* effectiveOffsets = rounded ? rounded.get() : offsets;
-
-	return fTextRenderer.RenderString(utf8String, length,
-		effectiveOffsets, dummy, true, penLocation, cacheReference);
-}
-
-
-float
-Painter::StringWidth(const char* utf8String, uint32 length,
-	const escapement_delta* delta)
-{
-	return Font().StringWidth(utf8String, length, delta);
-}
-
-
-BRect
-Painter::DrawBitmap(const ServerBitmap* bitmap, BRect bitmapRect,
-	BRect viewRect, uint32 options) const
-{
-	CHECK_CLIPPING
-
-	BRect touched = TransformAlignAndClipRect(viewRect);
-
-	if (touched.IsValid()) {
-		BitmapPainter bitmapPainter(this, bitmap, options);
-		bitmapPainter.Draw(bitmapRect, viewRect);
-	}
-
-	return touched;
-}
-
-
-BRect
-Painter::FillRegion(const BRegion* region) const
-{
-	CHECK_CLIPPING
-
-	BRegion copy(*region);
-	int32 count = copy.CountRects();
-	BRect touched = FillRect(copy.RectAt(0));
-	for (int32 i = 1; i < count; i++) {
-		touched = touched | FillRect(copy.RectAt(i));
-	}
-	return touched;
-}
-
-
-BRect
-Painter::FillRegion(const BRegion* region, const BGradient& gradient)
-{
-	CHECK_CLIPPING
-
-	BRegion copy(*region);
-	int32 count = copy.CountRects();
-	BRect touched = FillRect(copy.RectAt(0), gradient);
-	for (int32 i = 1; i < count; i++) {
-		touched = touched | FillRect(copy.RectAt(i), gradient);
-	}
-	return touched;
-}
-
-
-BRect
-Painter::InvertRect(const BRect& r) const
-{
-	CHECK_CLIPPING
-
-	BRegion region(r);
-	region.IntersectWith(fClippingRegion);
-
-	int32 count = region.CountRects();
-	for (int32 i = 0; i < count; i++)
-		_InvertRect32(region.RectAt(i));
-
-	return _Clipped(r);
-}
-
-
-void
-Painter::SetRendererOffset(int32 offsetX, int32 offsetY)
-{
-	fBaseRenderer.set_offset(offsetX, offsetY);
-}
-
-
-inline float
-Painter::_Align(float coord, bool round, bool centerOffset) const
-{
-	if (round)
-		coord = (int32)coord;
-
-	if (centerOffset)
-		coord += kPixelCenterOffset;
-
-	return coord;
-}
-
-
-inline void
-Painter::_Align(BPoint* point, bool centerOffset) const
-{
-	_Align(point, !fSubpixelPrecise, centerOffset);
-}
-
-
-inline void
-Painter::_Align(BPoint* point, bool round, bool centerOffset) const
-{
-	point->x = _Align(point->x, round, centerOffset);
-	point->y = _Align(point->y, round, centerOffset);
-}
-
-
-inline BPoint
-Painter::_Align(const BPoint& point, bool centerOffset) const
-{
-	BPoint ret(point);
-	_Align(&ret, centerOffset);
-	return ret;
-}
-
-
-BRect
-Painter::_Clipped(const BRect& rect) const
-{
-	if (rect.IsValid())
-		return BRect(rect & fClippingRegion->Frame());
-
-	return BRect(rect);
-}
-
-
-void
-Painter::_UpdateDrawingMode()
-{
-	fPixelFormat.SetDrawingMode(fDrawingMode, fAlphaSrcMode, fAlphaFncMode);
-}
-
-
-void
-Painter::_SetRendererColor(const rgb_color& color) const
-{
-	fRenderer.color(agg::rgba(color.red / 255.0, color.green / 255.0,
-		color.blue / 255.0, color.alpha / 255.0));
-	fSubpixRenderer.color(agg::rgba(color.red / 255.0, color.green / 255.0,
-		color.blue / 255.0, color.alpha / 255.0));
-}
-
-
-inline BRect
-Painter::_DrawTriangle(BPoint pt1, BPoint pt2, BPoint pt3, bool fill) const
-{
-	CHECK_CLIPPING
-
-	_Align(&pt1);
-	_Align(&pt2);
-	_Align(&pt3);
-
-	fPath.remove_all();
-
-	fPath.move_to(pt1.x, pt1.y);
-	fPath.line_to(pt2.x, pt2.y);
-	fPath.line_to(pt3.x, pt3.y);
-
-	fPath.close_polygon();
-
-	if (fill)
-		return _FillPath(fPath);
-
-	return _StrokePath(fPath);
-}
-
-
-void
-Painter::_IterateShapeData(const int32& opCount, const uint32* opList,
-	const int32& ptCount, const BPoint* points,
-	const BPoint& viewToScreenOffset, float viewScale) const
-{
-	fPath.remove_all();
-	for (int32 i = 0; i < opCount; i++) {
-		uint32 op = opList[i] & 0xFF000000;
-		if ((op & OP_MOVETO) != 0) {
-			fPath.move_to(
-				points->x * viewScale + viewToScreenOffset.x,
-				points->y * viewScale + viewToScreenOffset.y);
-			points++;
-		}
-
-		if ((op & OP_LINETO) != 0) {
-			int32 count = opList[i] & 0x00FFFFFF;
-			while (count--) {
-				fPath.line_to(
-					points->x * viewScale + viewToScreenOffset.x,
-					points->y * viewScale + viewToScreenOffset.y);
-				points++;
-			}
-		}
-
-		if ((op & OP_BEZIERTO) != 0) {
-			int32 count = opList[i] & 0x00FFFFFF;
-			while (count) {
-				fPath.curve4(
-					points[0].x * viewScale + viewToScreenOffset.x,
-					points[0].y * viewScale + viewToScreenOffset.y,
-					points[1].x * viewScale + viewToScreenOffset.x,
-					points[1].y * viewScale + viewToScreenOffset.y,
-					points[2].x * viewScale + viewToScreenOffset.x,
-					points[2].y * viewScale + viewToScreenOffset.y);
-				points += 3;
-				count -= 3;
-			}
-		}
-
-		if ((op & OP_LARGE_ARC_TO_CW) != 0 || (op & OP_LARGE_ARC_TO_CCW) != 0
-			|| (op & OP_SMALL_ARC_TO_CW) != 0
-			|| (op & OP_SMALL_ARC_TO_CCW) != 0) {
-			int32 count = opList[i] & 0x00FFFFFF;
-			while (count > 0) {
-				fPath.arc_to(
-					points[0].x * viewScale,
-					points[0].y * viewScale,
-					points[1].x,
-					op & (OP_LARGE_ARC_TO_CW | OP_LARGE_ARC_TO_CCW),
-					op & (OP_SMALL_ARC_TO_CW | OP_LARGE_ARC_TO_CW),
-					points[2].x * viewScale + viewToScreenOffset.x,
-					points[2].y * viewScale + viewToScreenOffset.y);
-				points += 3;
-				count -= 3;
-			}
-		}
-
-		if ((op & OP_CLOSE) != 0)
-			fPath.close_polygon();
-	}
-}
-
-
-void
-Painter::_InvertRect32(BRect r) const
-{
-	int32 width = r.IntegerWidth() + 1;
-	for (int32 y = (int32)r.top; y <= (int32)r.bottom; y++) {
-		uint8* dst = fBuffer.row_ptr(y);
-		dst += (int32)r.left * 4;
-		for (int32 i = 0; i < width; i++) {
-			dst[0] = kMaxAlpha - dst[0];
-			dst[1] = kMaxAlpha - dst[1];
-			dst[2] = kMaxAlpha - dst[2];
-			dst += 4;
-		}
-	}
-}
-
-
-void
-Painter::_BlendRect32(const BRect& r, const rgb_color& c) const
-{
-	if (!fValidClipping)
-		return;
-
-	uint8* dst = fBuffer.row_ptr(0);
-	uint32 bpr = fBuffer.stride();
-
-	int32 left = (int32)r.left;
-	int32 top = (int32)r.top;
-	int32 right = (int32)r.right;
-	int32 bottom = (int32)r.bottom;
-
-	_IterateClipBoxes([&](int32 xmin, int32 ymin, int32 xmax, int32 ymax) {
-		int32 x1 = max_c(xmin, left);
-		int32 x2 = min_c(xmax, right);
-		if (x1 <= x2) {
-			int32 y1 = max_c(ymin, top);
-			int32 y2 = min_c(ymax, bottom);
-
-			uint8* offset = dst + x1 * 4 + y1 * bpr;
-			for (; y1 <= y2; y1++) {
-				blend_line32(offset, x2 - x1 + 1, c.red, c.green, c.blue,
-					c.alpha);
-				offset += bpr;
-			}
-		}
-	});
+	return _StrokePath(path, fLineCapMode, gradient);
 }
 
 
 template<class VertexSource>
 BRect
-Painter::_BoundingBox(VertexSource& path) const
-{
-	double left = 0.0;
-	double top = 0.0;
-	double right = -1.0;
-	double bottom = -1.0;
-	uint32 pathID[1];
-	pathID[0] = 0;
-	agg::bounding_rect(path, pathID, 0, 1, &left, &top, &right, &bottom);
-	return BRect(left, top, right, bottom);
-}
-
-
-inline agg::line_cap_e
-agg_line_cap_mode_for(cap_mode mode)
-{
-	switch (mode) {
-		case B_BUTT_CAP:
-			return agg::butt_cap;
-		case B_SQUARE_CAP:
-			return agg::square_cap;
-		case B_ROUND_CAP:
-			return agg::round_cap;
-	}
-	return agg::butt_cap;
-}
-
-
-inline agg::line_join_e
-agg_line_join_mode_for(join_mode mode)
-{
-	switch (mode) {
-		case B_MITER_JOIN:
-			return agg::miter_join;
-		case B_ROUND_JOIN:
-			return agg::round_join;
-		case B_BEVEL_JOIN:
-		case B_BUTT_JOIN:
-		case B_SQUARE_JOIN:
-			return agg::bevel_join;
-	}
-	return agg::miter_join;
-}
-
-
-template<class VertexSource>
-BRect
-Painter::_StrokePath(VertexSource& path) const
-{
-	return _StrokePath(path, fLineCapMode);
-}
-
-
-template<class VertexSource>
-BRect
-Painter::_StrokePath(VertexSource& path, cap_mode capMode) const
+Painter::_StrokePath(VertexSource& path, cap_mode capMode, const BGradient& gradient)
 {
 	agg::conv_stroke<VertexSource> stroke(path);
 	stroke.width(fPenSize);
@@ -1669,16 +960,17 @@ Painter::_StrokePath(VertexSource& path, cap_mode capMode) const
 	stroke.miter_limit(fMiterLimit);
 
 	if (fIdentityTransform)
-		return _RasterizePath(stroke);
+		return _RasterizePath(stroke, gradient);
 
 	stroke.approximation_scale(fTransform.scale());
 
 	agg::conv_transform<agg::conv_stroke<VertexSource> > transformedStroke(
 		stroke, fTransform);
-	return _RasterizePath(transformedStroke);
+	return _RasterizePath(transformedStroke, gradient);
 }
 
 
+// _FillPath
 template<class VertexSource>
 BRect
 Painter::_FillPath(VertexSource& path) const

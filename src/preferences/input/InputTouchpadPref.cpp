@@ -70,6 +70,10 @@ TouchpadPref::BuildSettingsMessage()
 	msg.AddInt16("padblocker_threshold", fSettings.padblocker_threshold);
 	msg.AddInt32("trackpad_speed", fSettings.trackpad_speed);
 	msg.AddInt32("trackpad_acceleration", fSettings.trackpad_acceleration);
+	msg.AddBool("scroll_twofinger_natural_scrolling", fSettings.scroll_twofinger_natural_scrolling);
+	msg.AddInt8("edge_motion", fSettings.edge_motion);
+	msg.AddBool("finger_click", fSettings.finger_click);
+	msg.AddBool("software_button_areas", fSettings.software_button_areas);
 
 	return msg;
 }
@@ -151,6 +155,19 @@ TouchpadPref::LoadSettings()
 	settingsMsg.FindInt32("trackpad_speed", &fSettings.trackpad_speed);
 	settingsMsg.FindInt32("trackpad_acceleration", &fSettings.trackpad_acceleration);
 	settingsMsg.FindPoint("window_position", &fWindowPosition);
+
+	fSettings.scroll_twofinger_natural_scrolling = settingsMsg.GetBool(
+		"scroll_twofinger_natural_scrolling",
+		kDefaultTouchpadSettings.scroll_twofinger_natural_scrolling);
+	fSettings.edge_motion = settingsMsg.GetInt8(
+		"edge_motion",
+		kDefaultTouchpadSettings.edge_motion);
+	fSettings.finger_click = settingsMsg.GetBool(
+		"finger_click",
+		kDefaultTouchpadSettings.finger_click);
+	fSettings.software_button_areas = settingsMsg.GetBool(
+		"software_button_areas",
+		kDefaultTouchpadSettings.software_button_areas);
 
 	return B_OK;
 }

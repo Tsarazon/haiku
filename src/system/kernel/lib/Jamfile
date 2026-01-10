@@ -54,6 +54,7 @@ local muslSources =
 	ffsll.c
 	rand.c
 	rand_r.c
+	strtok_r.c
 	;
 
 SourceHdrs $(muslSources) :

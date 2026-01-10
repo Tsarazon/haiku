@@ -1376,15 +1376,15 @@ dosfs_rename(fs_volume* volume, fs_vnode* fromDir, const char* fromName, fs_vnod
 	ComponentName fromBsdName(ISLASTCN, NOCRED, RENAME, 0, fromName);
 	ComponentName toBsdName(ISLASTCN, NOCRED, RENAME, 0, toName);
 
-	// Don't do 2 renames at the same time on the same volume. If moving to a new directory,
-	// and the destination directory of one thread is the origin directory of the other,
-	// and vice versa, a deadlock can occur.
+	// Eliminate the possibility that two move operations could deadlock, if they are
+	// locking the same two directories in the reverse order.
 	MutexLocker volumeLocker(bsdVolume->mnt_mtx.haikuMutex);
 
 	WriteLocker fromDirLocker(fromDirBsdNode->v_vnlock->haikuRW);
 	WriteLocker toDirLocker;
 	if (fromDirBsdNode != toDirBsdNode)
 		toDirLocker.SetTo(toDirBsdNode->v_vnlock->haikuRW, false);
+	volumeLocker.Unlock();
 
 	status_t status = _dosfs_access(bsdVolume, fromDirBsdNode, W_OK);
 	if (status == B_OK && fromDirBsdNode != toDirBsdNode)
@@ -2177,8 +2177,6 @@ dosfs_open(fs_volume* volume, fs_vnode* vnode, int openMode, void** _cookie)
 	// any data from it.
 	if (bsdNode->v_type == VDIR && (openMode & O_RWMASK) != O_RDONLY)
 		return B_IS_A_DIRECTORY;
-	if ((openMode & O_DIRECTORY) != 0 && bsdNode->v_type != VDIR)
-		return B_NOT_A_DIRECTORY;
 
 	if ((bsdVolume->mnt_flag & MNT_RDONLY) != 0 || (fatNode->de_Attributes & ATTR_READONLY) != 0)
 		openMode = (openMode & ~O_RWMASK) | O_RDONLY;
@@ -3244,7 +3242,7 @@ bsd_device_init(mount* bsdVolume, const dev_t devID, const char* deviceFile, cde
 	device->si_refcount = 0;
 	device->si_mountpt = bsdVolume;
 	device->si_name[0] = '\0';
-	strncpy(device->si_device, deviceFile, B_PATH_NAME_LENGTH - 1);
+	strlcpy(device->si_device, deviceFile, B_DEV_NAME_LENGTH);
 	device->si_mediasize = 0;
 	device->si_id = devID;
 

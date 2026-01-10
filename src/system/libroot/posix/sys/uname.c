@@ -27,6 +27,7 @@ uname(struct utsname *info)
 	const char *haikuRevision;
 	uint32 count = 1;
 	status_t error;
+	const char* release = NULL;
 
 	if (!info) {
 		__set_errno(B_BAD_VALUE);
@@ -45,8 +46,19 @@ uname(struct utsname *info)
 	strlcat(info->version, systemInfo.kernel_build_date, sizeof(info->version));
 	strlcat(info->version, " ", sizeof(info->version));
 	strlcat(info->version, systemInfo.kernel_build_time, sizeof(info->version));
-	snprintf(info->release, sizeof(info->release), "%" B_PRId64,
-		systemInfo.kernel_version);
+
+	switch (systemInfo.kernel_version) {
+		case B_HAIKU_VERSION_1_PRE_BETA_5:	release = "R1~beta4+development"; break;
+		case B_HAIKU_VERSION_1_BETA_5:		release = "R1~beta5"; break;
+		case B_HAIKU_VERSION_1_PRE_BETA_6:	release = "R1~beta5+development"; break;
+		case B_HAIKU_VERSION_1:				release = "R1"; break;
+		default:
+			snprintf(info->release, sizeof(info->release), "%" B_PRId64,
+				systemInfo.kernel_version);
+			break;
+	}
+	if (release != NULL)
+		strlcpy(info->release, release, sizeof(info->release));
 
 	error = get_cpu_topology_info(&root, &count);
 	if (error != B_OK || count < 1)

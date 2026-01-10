@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001-2008 pinc Software. All Rights Reserved.
+ * Copyright (c) 2001-2025 pinc Software. All Rights Reserved.
  * Released under the terms of the MIT license.
  */
 
@@ -8,7 +8,6 @@
 #include "Disk.h"
 #include "dump.h"
 
-#include <Drivers.h>
 #include <File.h>
 #include <Entry.h>
 #include <List.h>
@@ -20,6 +19,12 @@
 #include <unistd.h>
 #include <ctype.h>
 
+#ifdef __HAIKU__
+#	include <Drivers.h>
+#else
+#	include <sys/ioctl.h>
+#	include <linux/fs.h>
+#endif
 
 #define MIN_BLOCK_SIZE_INODES 50
 #define MAX_BLOCK_SIZE_INODES 500
@@ -106,6 +111,7 @@ Disk::Disk(const char *deviceName, bool rawMode, off_t start, off_t stop)
 	fPath.SetTo(deviceName);
 
 	if (entry.IsDirectory()) {
+#ifdef __HAIKU__
 		dev_t on = dev_for_path(deviceName);
 		fs_info info;
 		if (fs_stat_dev(on, &info) != B_OK)
@@ -113,6 +119,7 @@ Disk::Disk(const char *deviceName, bool rawMode, off_t start, off_t stop)
 
 		fPath.SetTo(info.device_name);
 		deviceName = fPath.Path();
+#endif
 	}
 
 	if (deviceName == NULL) {
@@ -136,6 +143,7 @@ Disk::Disk(const char *deviceName, bool rawMode, off_t start, off_t stop)
 		return;
 	}
 
+#ifdef __HAIKU__
 	partition_info partitionInfo;
 	device_geometry geometry;
 	if (ioctl(device, B_GET_PARTITION_INFO, &partitionInfo,
@@ -151,6 +159,13 @@ Disk::Disk(const char *deviceName, bool rawMode, off_t start, off_t stop)
 		fprintf(stderr,"Disk: Could not get partition info.\n  Use file size as partition size\n");
 		fFile.GetSize(&fSize);
 	}
+#else
+	if (ioctl(device, BLKGETSIZE64, &fSize) == -1) {
+		struct stat st;
+		if (fstat(device, &st) != -1)
+			fSize = st.st_size;
+	}
+#endif
 	close(device);
 
 	if (fSize == 0LL) {
@@ -606,7 +621,7 @@ void
 Disk::SaveInode(bfs_inode *inode, bool *indices, bfs_inode *indexDir,
 	bool *root, bfs_inode *rootDir)
 {
-	if ((inode->mode & S_INDEX_DIR) == 0) {
+	if ((inode->mode & BFS_S_INDEX_DIR) == 0) {
 		*root = true;
 		printf("\troot node found!\n");
 		if (inode->inode_num.allocation_group != 8
@@ -619,7 +634,7 @@ Disk::SaveInode(bfs_inode *inode, bool *indices, bfs_inode *indexDir,
 		}
 		if (rootDir)
 			memcpy(rootDir, inode, sizeof(bfs_inode));
-	} else if (inode->mode & S_INDEX_DIR) {
+	} else if (inode->mode & BFS_S_INDEX_DIR) {
 		*indices = true;
 		printf("\tindices node found!\n");
 		if (indexDir)

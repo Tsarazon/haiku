@@ -45,9 +45,11 @@
 	#define TRACE_SK(protocol, format, args...) \
 		dprintf("IPv6 [%" B_PRIdBIGTIME "] %p " format "\n", system_time(), \
 			protocol, ##args)
+	#define TRACE_ONLY(x) x
 #else
 	#define TRACE(args...)
 	#define TRACE_SK(args...)
+	#define TRACE_ONLY(x)
 #endif
 
 
@@ -721,64 +723,58 @@ send_fragments(ipv6_protocol* protocol, struct net_route* route,
 }
 
 
-static status_t
-deliver_multicast(net_protocol_module_info* module, net_buffer* buffer,
-	bool deliverToRaw, net_interface *interface)
-{
-	sockaddr_in6* multicastAddr = (sockaddr_in6*)buffer->destination;
-
-	MulticastState::ValueIterator it = sMulticastState->Lookup(std::make_pair(
-		&multicastAddr->sin6_addr, interface->index));
-
-	while (it.HasNext()) {
-		IPv6GroupInterface* state = it.Next();
-		ipv6_protocol* ipproto = state->Parent()->Socket();
-
-		if (deliverToRaw && ipproto->raw == NULL)
-			continue;
-
-		if (state->FilterAccepts(buffer)) {
-			// TODO: do as in IPv4 code
-			module->deliver_data(ipproto, buffer);
-		}
-	}
-
-	return B_OK;
-}
-
-
-static status_t
+static bool
 deliver_multicast(net_protocol_module_info* module, net_buffer* buffer,
 	bool deliverToRaw)
 {
+	TRACE("deliver_multicast(%p [%" B_PRIu32 " bytes])", buffer, buffer->size);
 	if (module->deliver_data == NULL)
-		return B_OK;
+		return false;
 
 	MutexLocker _(sMulticastGroupsLock);
 
-	status_t status = B_OK;
-	if (buffer->interface_address != NULL) {
-		status = deliver_multicast(module, buffer, deliverToRaw,
-			buffer->interface_address->interface);
-	} else {
-#if 0 //  FIXME: multicast
-		net_domain_private* domain = (net_domain_private*)sDomain;
-		RecursiveLocker locker(domain->lock);
+	sockaddr_in6* multicastAddr = (sockaddr_in6*)buffer->destination;
 
-		net_interface* interface = NULL;
-		while (true) {
-			interface = (net_interface*)list_get_next_item(
-				&domain->interfaces, interface);
-			if (interface == NULL)
-				break;
+	uint32 index = buffer->index;
+	if (buffer->interface_address != NULL)
+		index = buffer->interface_address->interface->index;
 
-			status = deliver_multicast(module, buffer, deliverToRaw, interface);
-			if (status < B_OK)
-				break;
+	MulticastState::ValueIterator it = sMulticastState->Lookup(std::make_pair(
+		&multicastAddr->sin6_addr, index));
+
+	size_t count = 0;
+
+	while (it.HasNext()) {
+		IPv6GroupInterface* state = it.Next();
+
+		ipv6_protocol* ipProtocol = state->Parent()->Socket();
+		// There is no socket for Neighbor Discovery Protocol
+		if (ipProtocol->socket == NULL)
+			continue;
+		if (deliverToRaw && (ipProtocol->raw == NULL
+				|| ipProtocol->socket->protocol != buffer->protocol))
+			continue;
+
+		if (state->FilterAccepts(buffer)) {
+			net_protocol* protocol = ipProtocol;
+			if (protocol->module != module) {
+				// as multicast filters are installed with an IPv6 protocol
+				// reference, we need to go and find the appropriate instance
+				// related to the 'receiving protocol' with module 'module'.
+				protocol = ipProtocol->socket->first_protocol;
+
+				while (protocol != NULL && protocol->module != module)
+					protocol = protocol->next;
+			}
+
+			if (protocol != NULL) {
+				module->deliver_data(protocol, buffer);
+				count++;
+			}
 		}
-#endif
 	}
-	return status;
+
+	return count > 0;
 }
 
 
@@ -1559,7 +1555,14 @@ ipv6_receive_data(net_buffer* buffer)
 		// model be a little different from the unicast one. We deliver
 		// this frame directly to all sockets registered with interest
 		// for this multicast group.
-		return deliver_multicast(module, buffer, false);
+		deliver_multicast(module, buffer, false);
+		if (protocol != IPPROTO_ICMPV6) {
+			// ICMPv6 will still be passed to receive_data below,
+			// as it might be a neighbor solicitation; otherwise,
+			// we are done.
+			gBufferModule->free(buffer);
+			return B_OK;
+		}
 	}
 
 	return module->receive_data(buffer);
@@ -1579,9 +1582,56 @@ ipv6_deliver_data(net_protocol* _protocol, net_buffer* buffer)
 
 
 status_t
-ipv6_error_received(net_error error, net_error_data* errorData, net_buffer* data)
+ipv6_error_received(net_error error, net_error_data* errorData, net_buffer* buffer)
 {
-	return B_ERROR;
+	TRACE("  ipv6_error_received(error %d, buffer %p [%" B_PRIu32 " bytes])",
+		(int)error, buffer, buffer->size);
+
+	NetBufferHeaderReader<IPv6Header> bufferHeader(buffer);
+	if (bufferHeader.Status() != B_OK)
+		return bufferHeader.Status();
+
+	IPv6Header& header = bufferHeader.Data();
+	TRACE_ONLY(dump_ipv6_header(header));
+
+	// We do not check the packet length, as we usually only get a part of it
+	if (header.ProtocolVersion() != IPV6_VERSION)
+		return B_BAD_DATA;
+
+	// Restore addresses of the original buffer
+
+	// lower layers notion of broadcast or multicast have no relevance to us
+	// TODO: they actually have when deciding whether to send an ICMP error
+	buffer->msg_flags &= ~(MSG_BCAST | MSG_MCAST);
+
+	fill_sockaddr_in6((struct sockaddr_in6*)buffer->source, header.Src());
+	fill_sockaddr_in6((struct sockaddr_in6*)buffer->destination,
+		header.Dst());
+
+	// test if the packet is really from us
+	if (!sDatalinkModule->is_local_address(sDomain, buffer->source, NULL,
+			NULL)) {
+		TRACE("  ipv6_error_received(): packet was not for us");
+		return B_ERROR;
+	}
+
+	if (error == B_NET_ERROR_MESSAGE_SIZE) {
+		if (errorData != NULL)
+			errorData->mtu -= sizeof(IPv6Header);
+	} else if (error == B_NET_ERROR_REDIRECT_HOST) {
+		// TODO: Update the routing table!
+	}
+
+	buffer->protocol = header.NextHeader();
+
+	bufferHeader.Remove(sizeof(IPv6Header));
+
+	net_protocol_module_info* protocol = receiving_protocol(buffer->protocol);
+	if (protocol == NULL)
+		return B_ERROR;
+
+	// propagate error
+	return protocol->error_received(error, errorData, buffer);
 }
 
 
