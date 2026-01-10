@@ -35,8 +35,8 @@ THORVG_LOG ?= 0 ;               # Debug logging
 THORVG_CAPI ?= 1 ;              # C API bindings
 THORVG_LOTTIE_EXPRESSIONS ?= 1 ; # Lottie Expressions (JavaScript)
 
-# SIMD Vectorization
-THORVG_SIMD ?= avx ;
+# SIMD Vectorization (none, avx, neon)
+THORVG_SIMD ?= none ;
 
 #------------------------------------------------------------------------------
 # Architecture Detection and SIMD Configuration
