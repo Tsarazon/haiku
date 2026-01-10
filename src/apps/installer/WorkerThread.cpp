@@ -10,6 +10,7 @@
 #include <new>
 #include <stdio.h>
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <strings.h>
@@ -20,6 +21,7 @@
 #include <Directory.h>
 #include <DiskDeviceVisitor.h>
 #include <DiskDeviceTypes.h>
+#include <Entry.h>
 #include <PartitioningInfo.h>
 #include <FindDirectory.h>
 #include <fs_index.h>
@@ -42,6 +44,7 @@
 #include "UnzipEngine.h"
 
 
+#undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "InstallProgress"
 
 
@@ -56,35 +59,45 @@
 #define ERR2(x, y...)
 #endif
 
-const char BOOT_PATH[] = "/boot";
-const char* const kESPTypeName = "EFI system data";
+
+static const char kBootPath[] = "/boot";
+static const char* const kESPTypeName = "EFI system data";
+static const char* const kGPTPartitionMapName = EFI_PARTITION_NAME;
+static const char* const kSystemPackagesPath = "system/packages";
+
+static const size_t kFileCopyBufferSize = 65536;	// 64 KB
 
 const uint32 MSG_START_INSTALLING = 'eSRT';
 
 
 class SourceVisitor : public BDiskDeviceVisitor {
 public:
-	SourceVisitor(BMenu* menu);
+	SourceVisitor(BMenu* menu, off_t* maxSourceSize);
 	virtual bool Visit(BDiskDevice* device);
 	virtual bool Visit(BPartition* partition, int32 level);
 
 private:
-	BMenu* fMenu;
+	static	bool				_ContainsHaikuSystem(BPartition* partition);
+
+private:
+	BMenu*	fMenu;
+	off_t*	fMaxSourceSize;
 };
 
 
 class TargetVisitor : public BDiskDeviceVisitor {
 public:
-	TargetVisitor(BMenu* menu);
+	TargetVisitor(BMenu* menu, off_t minTargetSize);
 	virtual bool Visit(BDiskDevice* device);
 	virtual bool Visit(BPartition* partition, int32 level);
 
 private:
-	BMenu* fMenu;
+	BMenu*	fMenu;
+	off_t	fMinTargetSize;
 };
 
 
-// #pragma mark - WorkerThread
+// #pragma mark - WorkerThread::EntryFilter
 
 
 class WorkerThread::EntryFilter : public CopyEngine::EntryFilter {
@@ -190,37 +203,12 @@ WorkerThread::MessageReceived(BMessage* message)
 				break;
 			}
 
-			// TODO: Refactor with _PerformInstall()
 			BPath targetDirectory;
-			BDiskDevice device;
-			BPartition* partition;
-
-			if (fDDRoster.GetPartitionWithID(id, &device, &partition) == B_OK) {
-				if (!partition->IsMounted()) {
-					if (partition->Mount() < B_OK) {
-						_SetStatusMessage(B_TRANSLATE("The partition can't be "
-							"mounted. Please choose a different partition."));
-						break;
-					}
-				}
-				if (partition->GetMountPoint(&targetDirectory) != B_OK) {
-					_SetStatusMessage(B_TRANSLATE("The mount point could not "
-						"be retrieved."));
-					break;
-				}
-			} else if (fDDRoster.GetDeviceWithID(id, &device) == B_OK) {
-				if (!device.IsMounted()) {
-					if (device.Mount() < B_OK) {
-						_SetStatusMessage(B_TRANSLATE("The disk can't be "
-							"mounted. Please choose a different disk."));
-						break;
-					}
-				}
-				if (device.GetMountPoint(&targetDirectory) != B_OK) {
-					_SetStatusMessage(B_TRANSLATE("The mount point could not "
-						"be retrieved."));
-					break;
-				}
+			status_t err = _GetMountPoint(id, targetDirectory);
+			if (err != B_OK) {
+				_SetStatusMessage(B_TRANSLATE("The partition can't be "
+					"mounted. Please choose a different partition."));
+				break;
 			}
 
 			if (_WriteBootSector(targetDirectory) != B_OK) {
@@ -232,12 +220,11 @@ WorkerThread::MessageReceived(BMessage* message)
 				B_TRANSLATE("Boot sector successfully written."));
 			break;
 		}
+
 		default:
 			BLooper::MessageReceived(message);
 	}
 }
-
-
 
 
 void
@@ -247,10 +234,14 @@ WorkerThread::ScanDisksPartitions(BMenu *srcMenu, BMenu *targetMenu)
 	BDiskDevice device;
 	BPartition *partition = NULL;
 
-	SourceVisitor srcVisitor(srcMenu);
+	off_t maxSourceSize = 0;
+	SourceVisitor srcVisitor(srcMenu, &maxSourceSize);
 	fDDRoster.VisitEachMountedPartition(&srcVisitor, &device, &partition);
 
-	TargetVisitor targetVisitor(targetMenu);
+	// Use the largest source size as minimum for targets,
+	// but not less than kMinTargetPartitionSize
+	off_t minTargetSize = std::max(maxSourceSize, kMinTargetPartitionSize);
+	TargetVisitor targetVisitor(targetMenu, minTargetSize);
 	fDDRoster.VisitEachPartition(&targetVisitor, &device, &partition);
 }
 
@@ -297,7 +288,46 @@ WorkerThread::WriteBootSector(BMenu* targetMenu)
 }
 
 
-// #pragma mark -
+// #pragma mark - Private methods
+
+
+status_t
+WorkerThread::_GetMountPoint(partition_id partitionID, BPath& mountPoint,
+	BVolume* volume)
+{
+	BDiskDevice device;
+	BPartition* partition;
+
+	if (fDDRoster.GetPartitionWithID(partitionID, &device, &partition) == B_OK) {
+		if (!partition->IsMounted()) {
+			status_t err = partition->Mount();
+			if (err < B_OK)
+				return err;
+		}
+		if (volume != NULL) {
+			status_t err = partition->GetVolume(volume);
+			if (err != B_OK)
+				return err;
+		}
+		return partition->GetMountPoint(&mountPoint);
+	}
+
+	if (fDDRoster.GetDeviceWithID(partitionID, &device) == B_OK) {
+		if (!device.IsMounted()) {
+			status_t err = device.Mount();
+			if (err < B_OK)
+				return err;
+		}
+		if (volume != NULL) {
+			status_t err = device.GetVolume(volume);
+			if (err != B_OK)
+				return err;
+		}
+		return device.GetMountPoint(&mountPoint);
+	}
+
+	return B_ENTRY_NOT_FOUND;
+}
 
 
 status_t
@@ -315,10 +345,6 @@ WorkerThread::_WriteBootSector(BPath &path)
 status_t
 WorkerThread::_CreateESPIfNeeded(BDiskDevice* targetDevice)
 {
-	// ESP creation constants (FreeBSD-style, fixed 360 MB)
-	static const char* kGPTPartitionMapName = EFI_PARTITION_NAME;
-	static const off_t kESPSize = 360 * 1024 * 1024;  // 360 MB fixed
-
 	if (targetDevice == NULL)
 		return B_BAD_VALUE;
 
@@ -344,29 +370,24 @@ WorkerThread::_CreateESPIfNeeded(BDiskDevice* targetDevice)
 
 	// 2. Check that target disk uses GPT partitioning
 	const char* partitioningSystem = targetDevice->ContentType();
-	if (partitioningSystem == NULL ||
-		strcmp(partitioningSystem, kGPTPartitionMapName) != 0) {
+	if (partitioningSystem == NULL
+			|| strcmp(partitioningSystem, kGPTPartitionMapName) != 0) {
 		printf("Target disk is not GPT (%s) - skipping ESP creation\n",
 			partitioningSystem ? partitioningSystem : "unknown");
 		return B_OK;
 	}
 
 	// 3. Check if ESP already exists on this disk
-	bool espExists = false;
 	for (int32 i = 0; i < targetDevice->CountChildren(); i++) {
 		BPartition* child = targetDevice->ChildAt(i);
 		if (child != NULL) {
 			const char* type = child->Type();
 			if (type != NULL && strcmp(type, kESPTypeName) == 0) {
 				printf("ESP already exists on target disk at index %d\n", i);
-				espExists = true;
-				break;
+				return B_OK;
 			}
 		}
 	}
-
-	if (espExists)
-		return B_OK;
 
 	// 4. Find free space for ESP
 	_SetStatusMessage(B_TRANSLATE("Creating EFI System Partition (360 MB)..."));
@@ -569,7 +590,7 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 	ESPVisitor visitor(kESPTypeName, &espPath, &espFound);
 	BDiskDevice device;
 	fDDRoster.VisitEachPartition(&visitor, &device);
-	
+
 	// Second pass: Fallback to FAT partition with existing EFI directory
 	// (for MBR or non-standard setups)
 	if (!espFound) {
@@ -597,10 +618,10 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 			if (result == B_OK && partition != NULL) {
 				const char* contentType = partition->ContentType();
 				// Only accept FAT partitions as potential ESP
-				if (contentType == NULL ||
-					(strcmp(contentType, kPartitionTypeFAT32) != 0 &&
-					 strcmp(contentType, kPartitionTypeFAT16) != 0 &&
-					 strcmp(contentType, kPartitionTypeFAT12) != 0)) {
+				if (contentType == NULL
+						|| (strcmp(contentType, kPartitionTypeFAT32) != 0
+						&& strcmp(contentType, kPartitionTypeFAT16) != 0
+						&& strcmp(contentType, kPartitionTypeFAT12) != 0)) {
 					continue;
 				}
 			} else {
@@ -615,9 +636,8 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 			if (!efiEntry.Exists()) {
 				// No existing EFI directory - create it only on FAT partitions
 				result = create_directory(efiCheckPath.Path(), 0755);
-				if (result != B_OK && result != B_FILE_EXISTS) {
+				if (result != B_OK && result != B_FILE_EXISTS)
 					continue;
-				}
 			}
 
 			espPath = path;
@@ -627,24 +647,24 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 			break;
 		}
 	}
-	
+
 	if (!espFound) {
 		fprintf(stderr, "Warning: ESP partition not found or not mounted\n");
 		fprintf(stderr, "Please ensure you have a FAT32 partition with GPT type "
 			"'EFI System' or manually mount an ESP.\n");
 		return B_ERROR;
 	}
-	
+
 	// Source bootloader path
-	BPath loaderSource(targetDirectory.Path(), 
+	BPath loaderSource(targetDirectory.Path(),
 		"system/boot/efi/haiku_loader.efi");
 	BEntry sourceEntry(loaderSource.Path());
 	if (!sourceEntry.Exists()) {
-		fprintf(stderr, "Error: haiku_loader.efi not found at %s\n", 
+		fprintf(stderr, "Error: haiku_loader.efi not found at %s\n",
 			loaderSource.Path());
 		return B_ENTRY_NOT_FOUND;
 	}
-	
+
 	// Create target directories: EFI/HAIKU and EFI/BOOT
 	BPath haikuEfiDir(espPath.Path(), "EFI/HAIKU");
 	status_t result = create_directory(haikuEfiDir.Path(), 0755);
@@ -653,7 +673,7 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 			haikuEfiDir.Path(), strerror(result));
 		return result;
 	}
-	
+
 	BPath bootEfiDir(espPath.Path(), "EFI/BOOT");
 	result = create_directory(bootEfiDir.Path(), 0755);
 	if (result != B_OK && result != B_FILE_EXISTS) {
@@ -661,37 +681,37 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 			bootEfiDir.Path(), strerror(result));
 		return result;
 	}
-	
+
 	// Determine correct EFI binary name based on architecture
 	const char* efiBootName;
-	#if defined(__x86_64__)
-		efiBootName = "BOOTX64.EFI";
-	#elif defined(__i386__)
-		efiBootName = "BOOTIA32.EFI";
-	#elif defined(__aarch64__) || defined(__ARM_ARCH_8__)
-		efiBootName = "BOOTAA64.EFI";
-	#elif defined(__arm__)
-		efiBootName = "BOOTARM.EFI";
-	#elif defined(__riscv) && (__riscv_xlen == 64)
-		efiBootName = "BOOTRISCV64.EFI";
-	#else
-		efiBootName = "BOOTX64.EFI"; // default to x86_64
-		fprintf(stderr, "Warning: Unknown architecture, defaulting to BOOTX64.EFI\n");
-	#endif
-	
+#if defined(__x86_64__)
+	efiBootName = "BOOTX64.EFI";
+#elif defined(__i386__)
+	efiBootName = "BOOTIA32.EFI";
+#elif defined(__aarch64__) || defined(__ARM_ARCH_8__)
+	efiBootName = "BOOTAA64.EFI";
+#elif defined(__arm__)
+	efiBootName = "BOOTARM.EFI";
+#elif defined(__riscv) && (__riscv_xlen == 64)
+	efiBootName = "BOOTRISCV64.EFI";
+#else
+	efiBootName = "BOOTX64.EFI"; // default to x86_64
+	fprintf(stderr, "Warning: Unknown architecture, defaulting to BOOTX64.EFI\n");
+#endif
+
 	// Copy to EFI/HAIKU/haiku_loader.efi
 	BPath haikuLoaderPath(haikuEfiDir.Path(), "haiku_loader.efi");
 	BEntry haikuLoaderEntry(haikuLoaderPath.Path());
 	if (haikuLoaderEntry.Exists())
 		haikuLoaderEntry.Remove();
-	
+
 	result = _CopyFile(loaderSource.Path(), haikuLoaderPath.Path());
 	if (result != B_OK) {
 		fprintf(stderr, "Error: Failed to copy bootloader to %s: %s\n",
 			haikuLoaderPath.Path(), strerror(result));
 		return result;
 	}
-	
+
 	// CRITICAL: Copy to fallback location EFI/BOOT/BOOT{ARCH}.EFI
 	// This is essential for stubborn UEFI implementations (e.g., Lenovo M720Q)
 	// that ignore boot entries and only look for the fallback bootloader
@@ -699,20 +719,20 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 	BEntry fallbackEntry(fallbackPath.Path());
 	if (fallbackEntry.Exists())
 		fallbackEntry.Remove();
-	
+
 	result = _CopyFile(loaderSource.Path(), fallbackPath.Path());
 	if (result != B_OK) {
 		fprintf(stderr, "Error: Failed to copy bootloader to %s: %s\n",
 			fallbackPath.Path(), strerror(result));
 		return result;
 	}
-	
+
 	printf("EFI bootloader installed successfully:\n");
 	printf("  - %s\n", haikuLoaderPath.Path());
 	printf("  - %s (fallback for UEFI)\n", fallbackPath.Path());
-	
+
 	_SetStatusMessage(B_TRANSLATE("EFI bootloader installed."));
-	
+
 	return B_OK;
 }
 
@@ -728,7 +748,7 @@ WorkerThread::_CopyFile(const char* source, const char* destination)
 			source, strerror(result));
 		return result;
 	}
-	
+
 	BFile destFile(destination, B_WRITE_ONLY | B_CREATE_FILE | B_ERASE_FILE);
 	result = destFile.InitCheck();
 	if (result != B_OK) {
@@ -736,15 +756,13 @@ WorkerThread::_CopyFile(const char* source, const char* destination)
 			destination, strerror(result));
 		return result;
 	}
-	
-	// Copy in 64KB chunks for better performance
-	const size_t kBufferSize = 65536;
-	char* buffer = new(std::nothrow) char[kBufferSize];
+
+	char* buffer = new(std::nothrow) char[kFileCopyBufferSize];
 	if (buffer == NULL)
 		return B_NO_MEMORY;
-	
+
 	ssize_t bytesRead;
-	while ((bytesRead = sourceFile.Read(buffer, kBufferSize)) > 0) {
+	while ((bytesRead = sourceFile.Read(buffer, kFileCopyBufferSize)) > 0) {
 		ssize_t bytesWritten = destFile.Write(buffer, bytesRead);
 		if (bytesWritten != bytesRead) {
 			delete[] buffer;
@@ -752,15 +770,15 @@ WorkerThread::_CopyFile(const char* source, const char* destination)
 			return B_IO_ERROR;
 		}
 	}
-	
+
 	delete[] buffer;
-	
+
 	if (bytesRead < 0) {
 		fprintf(stderr, "Error: Read failed during file copy: %s\n",
 			strerror(bytesRead));
 		return (status_t)bytesRead;
 	}
-	
+
 	return B_OK;
 }
 
@@ -810,51 +828,20 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 	status_t err = B_OK;
 	int32 entries = 0;
 	entry_ref testRef;
-	const char* mountError = B_TRANSLATE("The disk can't be mounted. Please "
-		"choose a different disk.");
 
 	if (sourcePartitionID < 0 || targetPartitionID < 0) {
 		ERR("bad source or target partition ID\n");
 		return _InstallationError(err);
 	}
 
-	// check if target is initialized
-	// ask if init or mount as is
-	if (fDDRoster.GetPartitionWithID(targetPartitionID, &device,
-			&partition) == B_OK) {
-		if (!partition->IsMounted()) {
-			if ((err = partition->Mount()) < B_OK) {
-				_SetStatusMessage(mountError);
-				ERR("BPartition::Mount");
-				return _InstallationError(err);
-			}
-		}
-		if ((err = partition->GetVolume(&targetVolume)) != B_OK) {
-			ERR("BPartition::GetVolume");
-			return _InstallationError(err);
-		}
-		if ((err = partition->GetMountPoint(&targetDirectory)) != B_OK) {
-			ERR("BPartition::GetMountPoint");
-			return _InstallationError(err);
-		}
-	} else if (fDDRoster.GetDeviceWithID(targetPartitionID, &device) == B_OK) {
-		if (!device.IsMounted()) {
-			if ((err = device.Mount()) < B_OK) {
-				_SetStatusMessage(mountError);
-				ERR("BDiskDevice::Mount");
-				return _InstallationError(err);
-			}
-		}
-		if ((err = device.GetVolume(&targetVolume)) != B_OK) {
-			ERR("BDiskDevice::GetVolume");
-			return _InstallationError(err);
-		}
-		if ((err = device.GetMountPoint(&targetDirectory)) != B_OK) {
-			ERR("BDiskDevice::GetMountPoint");
-			return _InstallationError(err);
-		}
-	} else
-		return _InstallationError(err);  // shouldn't happen
+	// Get target mount point and volume
+	err = _GetMountPoint(targetPartitionID, targetDirectory, &targetVolume);
+	if (err != B_OK) {
+		_SetStatusMessage(B_TRANSLATE("The disk can't be mounted. Please "
+			"choose a different disk."));
+		ERR("_GetMountPoint (target)");
+		return _InstallationError(err);
+	}
 
 	// check if target has enough space
 	if (fSpaceRequired > 0 && targetVolume.FreeBytes() < fSpaceRequired) {
@@ -868,19 +855,14 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 			return _InstallationError(err);
 	}
 
-	if (fDDRoster.GetPartitionWithID(sourcePartitionID, &device, &partition)
-			== B_OK) {
-		if ((err = partition->GetMountPoint(&srcDirectory)) != B_OK) {
-			ERR("BPartition::GetMountPoint");
-			return _InstallationError(err);
-		}
-	} else if (fDDRoster.GetDeviceWithID(sourcePartitionID, &device) == B_OK) {
-		if ((err = device.GetMountPoint(&srcDirectory)) != B_OK) {
-			ERR("BDiskDevice::GetMountPoint");
-			return _InstallationError(err);
-		}
-	} else
-		return _InstallationError(err); // shouldn't happen
+	// Get source mount point
+	err = _GetMountPoint(sourcePartitionID, srcDirectory);
+	if (err != B_OK) {
+		_SetStatusMessage(B_TRANSLATE("The disk can't be mounted. Please "
+			"choose a different disk."));
+		ERR("_GetMountPoint (source)");
+		return _InstallationError(err);
+	}
 
 	// check not installing on itself
 	if (strcmp(srcDirectory.Path(), targetDirectory.Path()) == 0) {
@@ -890,7 +872,7 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 	}
 
 	// check not installing on boot volume
-	if (strncmp(BOOT_PATH, targetDirectory.Path(), strlen(BOOT_PATH)) == 0) {
+	if (strncmp(kBootPath, targetDirectory.Path(), strlen(kBootPath)) == 0) {
 		BAlert* alert = new BAlert("", B_TRANSLATE("Are you sure you want to "
 			"install onto the current boot disk? The Installer will have to "
 			"reboot your machine if you proceed."), B_TRANSLATE("OK"),
@@ -934,8 +916,8 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 			B_WIDTH_AS_USUAL, B_STOP_ALERT);
 		alert->SetShortcut(1, B_ESCAPE);
 		if (alert->Go() != 0) {
-		// TODO: Would be cool to offer the option here to clean additional
-		// folders at the user's choice.
+			// TODO: Would be cool to offer the option here to clean additional
+			// folders at the user's choice.
 			return _InstallationError(B_CANCELED);
 		}
 		err = _PrepareCleanInstall(targetDirectory);
@@ -1003,7 +985,7 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 		int32 count = fPackages->CountItems();
 		// FIXME: find_directory doesn't return the folder in the target volume,
 		// so we are hard coding this for now.
-		BPath targetPkgDir(targetDirectory.Path(), "system/packages");
+		BPath targetPkgDir(targetDirectory.Path(), kSystemPackagesPath);
 		err = targetPkgDir.InitCheck();
 		if (err != B_OK)
 			return _InstallationError(err);
@@ -1061,7 +1043,7 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 	if (err != B_OK) {
 		// Log warning but don't fail installation
 		// System might be BIOS-only or ESP not properly set up
-		fprintf(stderr, "Warning: Failed to install EFI bootloader: %s\n", 
+		fprintf(stderr, "Warning: Failed to install EFI bootloader: %s\n",
 			strerror(err));
 		fprintf(stderr, "This is expected on BIOS-only systems.\n");
 		fprintf(stderr, "If you're installing to a UEFI system, please ensure:\n");
@@ -1312,10 +1294,13 @@ make_partition_label(BPartition* partition, char* label, char* menuLabel,
 // #pragma mark - SourceVisitor
 
 
-SourceVisitor::SourceVisitor(BMenu *menu)
-	: fMenu(menu)
+SourceVisitor::SourceVisitor(BMenu *menu, off_t* maxSourceSize)
+	:
+	fMenu(menu),
+	fMaxSourceSize(maxSourceSize)
 {
 }
+
 
 bool
 SourceVisitor::Visit(BDiskDevice *device)
@@ -1327,8 +1312,6 @@ SourceVisitor::Visit(BDiskDevice *device)
 bool
 SourceVisitor::Visit(BPartition *partition, int32 level)
 {
-	BPath path;
-
 	if (partition->ContentType() == NULL)
 		return false;
 
@@ -1337,20 +1320,27 @@ SourceVisitor::Visit(BPartition *partition, int32 level)
 		BPath mountPoint;
 		if (partition->GetMountPoint(&mountPoint) != B_OK)
 			return false;
-		isBootPartition = strcmp(BOOT_PATH, mountPoint.Path()) == 0;
+		isBootPartition = strcmp(kBootPath, mountPoint.Path()) == 0;
 	}
 
 	if (!isBootPartition
 		&& strcmp(partition->ContentType(), kPartitionTypeBFS) != 0) {
-		// Except only BFS partitions, except this is the boot partition
+		// Accept only BFS partitions, except this is the boot partition
 		// (ISO9660 with write overlay for example).
 		return false;
 	}
 
-	// TODO: We could probably check if this volume contains
-	// the Haiku kernel or something. Does it make sense to "install"
-	// from your BFS volume containing the music collection?
-	// TODO: Then the check for BFS could also be removed above.
+	// Check if this partition actually contains a Haiku installation
+	// Skip BFS volumes that are just data drives (music collection, etc.)
+	if (!isBootPartition && !_ContainsHaikuSystem(partition)) {
+		printf("Skipping %s - no Haiku system found\n",
+			partition->ContentName().String());
+		return false;
+	}
+
+	// Track the largest source partition size for target filtering
+	if (fMaxSourceSize != NULL && partition->ContentSize() > *fMaxSourceSize)
+		*fMaxSourceSize = partition->ContentSize();
 
 	char label[255];
 	char menuLabel[255];
@@ -1363,11 +1353,33 @@ SourceVisitor::Visit(BPartition *partition, int32 level)
 }
 
 
+/*static*/ bool
+SourceVisitor::_ContainsHaikuSystem(BPartition* partition)
+{
+	// Can only check mounted partitions
+	if (!partition->IsMounted())
+		return true; // Assume valid if we can't check
+
+	BPath mountPoint;
+	if (partition->GetMountPoint(&mountPoint) != B_OK)
+		return true;
+
+	// Check for essential Haiku system directory structure
+	// The system/packages directory is required for any functional Haiku installation
+	BPath systemPath(mountPoint.Path(), "system/packages");
+	BEntry systemEntry(systemPath.Path());
+
+	return systemEntry.Exists();
+}
+
+
 // #pragma mark - TargetVisitor
 
 
-TargetVisitor::TargetVisitor(BMenu *menu)
-	: fMenu(menu)
+TargetVisitor::TargetVisitor(BMenu *menu, off_t minTargetSize)
+	:
+	fMenu(menu),
+	fMinTargetSize(minTargetSize)
 {
 }
 
@@ -1384,9 +1396,8 @@ TargetVisitor::Visit(BDiskDevice *device)
 bool
 TargetVisitor::Visit(BPartition *partition, int32 level)
 {
-	if (partition->ContentSize() < 20 * 1024 * 1024) {
-		// reject partitions which are too small anyway
-		// TODO: Could depend on the source size
+	if (partition->ContentSize() < fMinTargetSize) {
+		// Reject partitions which are too small for the source
 		return false;
 	}
 
@@ -1403,7 +1414,7 @@ TargetVisitor::Visit(BPartition *partition, int32 level)
 	if (partition->IsMounted()) {
 		BPath mountPoint;
 		partition->GetMountPoint(&mountPoint);
-		isBootPartition = strcmp(BOOT_PATH, mountPoint.Path()) == 0;
+		isBootPartition = strcmp(kBootPath, mountPoint.Path()) == 0;
 	}
 
 	// Only writable non-boot BFS partitions are valid targets, but we want to
@@ -1426,4 +1437,3 @@ TargetVisitor::Visit(BPartition *partition, int32 level)
 	fMenu->AddItem(item);
 	return false;
 }
-

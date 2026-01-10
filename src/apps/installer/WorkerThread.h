@@ -17,6 +17,12 @@ class BList;
 class BMenu;
 class ProgressReporter;
 
+
+// Partition size constants
+static const off_t kMinTargetPartitionSize = 20 * 1024 * 1024;		// 20 MB
+static const off_t kESPSize = 360 * 1024 * 1024;					// 360 MB
+
+
 class WorkerThread : public BLooper {
 public:
 								WorkerThread(const BMessenger& owner);
@@ -39,12 +45,15 @@ public:
 			void				WriteBootSector(BMenu* dstMenu);
 
 private:
+			status_t			_GetMountPoint(partition_id partitionID,
+									BPath& mountPoint, BVolume* volume = NULL);
+
 			status_t			_WriteBootSector(BPath& path);
 			status_t			_CreateESPIfNeeded(BDiskDevice* targetDevice);
 			status_t			_InstallEFIBootloader(
-								const BPath& targetDirectory);
+									const BPath& targetDirectory);
 			status_t			_CopyFile(const char* source,
-								const char* destination);
+									const char* destination);
 			status_t			_LaunchFinishScript(BPath& path);
 
 			status_t			_PerformInstall(partition_id sourcePartitionID,
