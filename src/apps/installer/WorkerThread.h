@@ -40,6 +40,7 @@ public:
 
 private:
 			status_t			_WriteBootSector(BPath& path);
+			status_t			_CreateESPIfNeeded(BDiskDevice* targetDevice);
 			status_t			_InstallEFIBootloader(
 								const BPath& targetDirectory);
 			status_t			_CopyFile(const char* source,

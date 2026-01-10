@@ -20,6 +20,7 @@
 #include <Directory.h>
 #include <DiskDeviceVisitor.h>
 #include <DiskDeviceTypes.h>
+#include <PartitioningInfo.h>
 #include <FindDirectory.h>
 #include <fs_index.h>
 #include <Locale.h>
@@ -56,6 +57,7 @@
 #endif
 
 const char BOOT_PATH[] = "/boot";
+const char* const kESPTypeName = "EFI system data";
 
 const uint32 MSG_START_INSTALLING = 'eSRT';
 
@@ -228,6 +230,7 @@ WorkerThread::MessageReceived(BMessage* message)
 			}
 			_SetStatusMessage(
 				B_TRANSLATE("Boot sector successfully written."));
+			break;
 		}
 		default:
 			BLooper::MessageReceived(message);
@@ -310,12 +313,197 @@ WorkerThread::_WriteBootSector(BPath &path)
 
 
 status_t
+WorkerThread::_CreateESPIfNeeded(BDiskDevice* targetDevice)
+{
+	// ESP creation constants (FreeBSD-style, fixed 360 MB)
+	static const char* kGPTPartitionMapName = EFI_PARTITION_NAME;
+	static const off_t kESPSize = 360 * 1024 * 1024;  // 360 MB fixed
+
+	if (targetDevice == NULL)
+		return B_BAD_VALUE;
+
+	_SetStatusMessage(B_TRANSLATE("Checking EFI System Partition..."));
+
+	// 1. Check if haiku_loader.efi exists in source image
+	//    If not, this is a BIOS-only image and ESP is not needed
+	BVolumeRoster roster;
+	BVolume bootVolume;
+	roster.GetBootVolume(&bootVolume);
+
+	BPath efiLoaderPath;
+	if (find_directory(B_SYSTEM_DIRECTORY, &efiLoaderPath, false,
+			&bootVolume) == B_OK) {
+		efiLoaderPath.Append("boot/efi/haiku_loader.efi");
+		BEntry efiEntry(efiLoaderPath.Path());
+		if (!efiEntry.Exists()) {
+			printf("No EFI loader found in source - BIOS-only image, "
+				"skipping ESP creation\n");
+			return B_OK;
+		}
+	}
+
+	// 2. Check that target disk uses GPT partitioning
+	const char* partitioningSystem = targetDevice->ContentType();
+	if (partitioningSystem == NULL ||
+		strcmp(partitioningSystem, kGPTPartitionMapName) != 0) {
+		printf("Target disk is not GPT (%s) - skipping ESP creation\n",
+			partitioningSystem ? partitioningSystem : "unknown");
+		return B_OK;
+	}
+
+	// 3. Check if ESP already exists on this disk
+	bool espExists = false;
+	for (int32 i = 0; i < targetDevice->CountChildren(); i++) {
+		BPartition* child = targetDevice->ChildAt(i);
+		if (child != NULL) {
+			const char* type = child->Type();
+			if (type != NULL && strcmp(type, kESPTypeName) == 0) {
+				printf("ESP already exists on target disk at index %d\n", i);
+				espExists = true;
+				break;
+			}
+		}
+	}
+
+	if (espExists)
+		return B_OK;
+
+	// 4. Find free space for ESP
+	_SetStatusMessage(B_TRANSLATE("Creating EFI System Partition (360 MB)..."));
+
+	BPartitioningInfo partitioningInfo;
+	status_t result = targetDevice->GetPartitioningInfo(&partitioningInfo);
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to get partitioning info: %s\n",
+			strerror(result));
+		return result;
+	}
+
+	off_t espOffset = -1;
+
+	// Find suitable free space (prefer beginning of disk)
+	int32 spacesCount = partitioningInfo.CountPartitionableSpaces();
+	for (int32 i = 0; i < spacesCount; i++) {
+		off_t offset, size;
+		if (partitioningInfo.GetPartitionableSpaceAt(i, &offset, &size) == B_OK) {
+			if (size >= kESPSize) {
+				espOffset = offset;
+				printf("Found free space at offset %lld, size %lld MB\n",
+					offset, size / (1024 * 1024));
+				break;
+			}
+		}
+	}
+
+	if (espOffset < 0) {
+		fprintf(stderr, "No space available for ESP partition "
+			"(need 360 MB, found none)\n");
+		return B_DEVICE_FULL;
+	}
+
+	// 5. Prepare disk for modifications
+	result = targetDevice->PrepareModifications();
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to prepare disk for modifications: %s\n",
+			strerror(result));
+		return result;
+	}
+
+	// 6. Validate creation parameters
+	off_t validatedOffset = espOffset;
+	off_t validatedSize = kESPSize;
+	BString espName("ESP");
+
+	result = targetDevice->ValidateCreateChild(&validatedOffset, &validatedSize,
+		kESPTypeName, &espName, NULL);
+	if (result != B_OK) {
+		fprintf(stderr, "ESP creation validation failed: %s\n",
+			strerror(result));
+		targetDevice->CancelModifications();
+		return result;
+	}
+
+	// 7. Create ESP partition
+	BPartition* espPartition = NULL;
+	result = targetDevice->CreateChild(validatedOffset, validatedSize,
+		kESPTypeName, espName.String(), NULL, &espPartition);
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to create ESP partition: %s\n",
+			strerror(result));
+		targetDevice->CancelModifications();
+		return result;
+	}
+
+	// 8. Commit partition creation
+	result = targetDevice->CommitModifications();
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to commit ESP partition creation: %s\n",
+			strerror(result));
+		return result;
+	}
+
+	printf("ESP partition created: offset=%lld, size=%lld MB\n",
+		validatedOffset, validatedSize / (1024 * 1024));
+
+	// 9. Update disk information
+	bool updated = false;
+	targetDevice->Update(&updated);
+
+	// 10. Find created partition and format as FAT32
+	espPartition = NULL;
+	for (int32 i = 0; i < targetDevice->CountChildren(); i++) {
+		BPartition* child = targetDevice->ChildAt(i);
+		if (child != NULL) {
+			const char* type = child->Type();
+			if (type != NULL && strcmp(type, kESPTypeName) == 0) {
+				espPartition = child;
+				break;
+			}
+		}
+	}
+
+	if (espPartition == NULL) {
+		fprintf(stderr, "ESP partition created but not found after update\n");
+		return B_ERROR;
+	}
+
+	// 11. Format ESP as FAT32
+	result = targetDevice->PrepareModifications();
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to prepare disk for FAT32 formatting: %s\n",
+			strerror(result));
+		return result;
+	}
+
+	result = espPartition->Initialize(kPartitionTypeFAT32, "ESP", NULL);
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to format ESP as FAT32: %s\n",
+			strerror(result));
+		targetDevice->CancelModifications();
+		return result;
+	}
+
+	// 12. Commit formatting
+	result = targetDevice->CommitModifications();
+	if (result != B_OK) {
+		fprintf(stderr, "Failed to commit FAT32 formatting: %s\n",
+			strerror(result));
+		return result;
+	}
+
+	printf("ESP partition created and formatted as FAT32 successfully:\n");
+	printf("  Offset: %lld bytes\n", validatedOffset);
+	printf("  Size: %lld MB\n", validatedSize / (1024 * 1024));
+
+	_SetStatusMessage(B_TRANSLATE("EFI System Partition created."));
+	return B_OK;
+}
+
+
+status_t
 WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 {
 	_SetStatusMessage(B_TRANSLATE("Installing EFI bootloader."));
-
-	// ESP GUID: C12A7328-F81F-11D2-BA4B-00A0C93EC93B
-	const char* kESPTypeString = "EFI system data";
 
 	BPath espPath;
 	bool espFound = false;
@@ -378,7 +566,7 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 		}
 	};
 
-	ESPVisitor visitor(kESPTypeString, &espPath, &espFound);
+	ESPVisitor visitor(kESPTypeName, &espPath, &espFound);
 	BDiskDevice device;
 	fDDRoster.VisitEachPartition(&visitor, &device);
 	
@@ -851,6 +1039,19 @@ WorkerThread::_PerformInstall(partition_id sourcePartitionID,
 	err = _WriteBootSector(targetDirectory);
 	if (err != B_OK)
 		return _InstallationError(err);
+
+	// Create ESP partition if needed (before EFI bootloader installation)
+	// This ensures UEFI systems have a proper ESP even if user didn't create one
+	BDiskDevice targetDiskDevice;
+	if (fDDRoster.GetPartitionWithID(targetPartitionID, &targetDiskDevice,
+			&partition) == B_OK) {
+		status_t espResult = _CreateESPIfNeeded(&targetDiskDevice);
+		if (espResult != B_OK && espResult != B_DEVICE_FULL) {
+			fprintf(stderr, "Warning: ESP creation failed: %s\n",
+				strerror(espResult));
+			// Continue anyway - might be BIOS system or ESP exists elsewhere
+		}
+	}
 
 	// Install UEFI bootloader to ESP partition
 	// This is critical for modern UEFI systems and fixes boot issues on
