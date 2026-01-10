@@ -27,6 +27,8 @@
 #include <Font.h>
 #include <Rect.h>
 
+#include <memory>
+
 
 class BBitmap;
 class BRegion;
@@ -43,7 +45,6 @@ class ServerBitmap;
 class ServerFont;
 
 
-// Defines for SIMD support.
 constexpr uint32 APPSERVER_SIMD_MMX = (1 << 0);
 constexpr uint32 APPSERVER_SIMD_SSE = (1 << 1);
 
@@ -53,7 +54,6 @@ public:
 								Painter();
 	virtual						~Painter();
 
-								// frame buffer stuff
 			void				AttachToBuffer(RenderingBuffer* buffer);
 			void				DetachFromBuffer();
 			BRect				Bounds() const;
@@ -66,7 +66,6 @@ public:
 			const BRegion*		ClippingRegion() const
 									{ return fClippingRegion; }
 
-								// object settings
 			void				SetTransform(BAffineTransform transform,
 									int32 xOffset, int32 yOffset);
 
@@ -103,17 +102,11 @@ public:
 	inline	const ServerFont&	Font() const
 									{ return fTextRenderer.Font(); }
 
-								// painting functions
-
-								// lines
 			void				StrokeLine(BPoint a, BPoint b);
 
-			// returns true if the line was either vertical or horizontal
-			// draws a solid one pixel wide line of color c, no blending
 			bool				StraightLine(BPoint a, BPoint b,
 									const rgb_color& c) const;
 
-								// triangles
 			BRect				StrokeTriangle(BPoint pt1, BPoint pt2,
 									BPoint pt3) const;
 
@@ -123,20 +116,17 @@ public:
 									BPoint pt3,
 									const BGradient& gradient);
 
-								// polygons
 			BRect				DrawPolygon(BPoint* ptArray, int32 numPts,
 									bool filled, bool closed) const;
 			BRect				FillPolygon(BPoint* ptArray, int32 numPts,
 									const BGradient& gradient,
 									bool closed);
 
-								// bezier curves
 			BRect				DrawBezier(BPoint* controlPoints,
 									bool filled) const;
 			BRect				FillBezier(BPoint* controlPoints,
 									const BGradient& gradient);
 
-								// shapes
 			BRect				DrawShape(const int32& opCount,
 									const uint32* opList, const int32& ptCount,
 									const BPoint* ptList, bool filled,
@@ -149,10 +139,8 @@ public:
 									const BPoint& viewToScreenOffset,
 									float viewScale);
 
-								// rects
 			BRect				StrokeRect(const BRect& r) const;
 
-			// strokes a one pixel wide solid rect, no blending
 			void				StrokeRect(const BRect& r,
 									const rgb_color& c) const;
 
@@ -160,22 +148,15 @@ public:
 			BRect				FillRect(const BRect& r,
 									const BGradient& gradient);
 
-			// fills a solid rect with color c, no blending
 			void				FillRect(const BRect& r,
 									const rgb_color& c) const;
 
-			// fills a rect with a linear gradient, the caller should be
-			// sure that the gradient is indeed vertical. The start point of
-			// the gradient should be above the end point, or this function
-			// will not draw anything.
 			void				FillRectVerticalGradient(BRect r,
 									const BGradientLinear& gradient) const;
 
-			// fills a solid rect with color c, no blending, no clipping
 			void				FillRectNoClipping(const clipping_rect& r,
 									const rgb_color& c) const;
 
-								// round rects
 			BRect				StrokeRoundRect(const BRect& r, float xRadius,
 									float yRadius) const;
 
@@ -185,7 +166,6 @@ public:
 									float yRadius,
 									const BGradient& gradient);
 
-								// ellipses
 			void				AlignEllipseRect(BRect* rect,
 									bool filled) const;
 
@@ -193,7 +173,6 @@ public:
 			BRect				FillEllipse(BRect r,
 									const BGradient& gradient);
 
-								// arcs
 			BRect				StrokeArc(BPoint center, float xRadius,
 									float yRadius, float angle,
 									float span) const;
@@ -205,7 +184,6 @@ public:
 									float yRadius, float angle, float span,
 									const BGradient& gradient);
 
-								// strings
 			BRect				DrawString(const char* utf8String,
 									uint32 length, BPoint baseLine,
 									const escapement_delta* delta,
@@ -230,13 +208,10 @@ public:
 									uint32 length,
 									const escapement_delta* delta = NULL);
 
-
-								// bitmaps
 			BRect				DrawBitmap(const ServerBitmap* bitmap,
 									BRect bitmapRect, BRect viewRect,
 									uint32 options) const;
 
-								// some convenience stuff
 			BRect				FillRegion(const BRegion* region) const;
 			BRect				FillRegion(const BRegion* region,
 									const BGradient& gradient);
@@ -258,14 +233,15 @@ private:
 
 	friend class BitmapPainter;
 
-	// Constants
 	static constexpr float kPixelCenterOffset = 0.5f;
 	static constexpr int kDefaultEllipseDivisions = 12;
 	static constexpr int kMaxEllipseDivisions = 4096;
 	static constexpr float kDefaultGradientDistance = 100.0f;
 	static constexpr float kGradientOffsetScale = 255.0f;
+	static constexpr uint8 kMaxAlpha = 255;
+	static constexpr float kGammaThreshold = 0.5f;
+	static constexpr float kDefaultApproximationScale = 2.0f;
 
-	// Coordinate alignment
 			float				_Align(float coord, bool round,
 									bool centerOffset) const;
 			void				_Align(BPoint* point, bool round,
@@ -279,7 +255,21 @@ private:
 			void				_UpdateDrawingMode();
 			void				_SetRendererColor(const rgb_color& color) const;
 
-								// drawing functions stroke/fill
+			bool				_CanOptimizeSolidDraw() const;
+			bool				_TryOptimizedRectFill(const BPoint& a,
+									const BPoint& b) const;
+			bool				_GetPatternColor(rgb_color& color) const;
+
+			std::unique_ptr<BPoint[]>
+								_CreateRoundedOffsets(const BPoint* offsets,
+									uint32 count) const;
+
+			void				_FinalizeGradientTransform(
+									agg::trans_affine& matrix) const;
+
+	template<typename DrawFunc>
+			void				_IterateClipBoxes(DrawFunc func) const;
+
 			BRect				_DrawTriangle(BPoint pt1, BPoint pt2,
 									BPoint pt3, bool fill) const;
 
@@ -292,7 +282,6 @@ private:
 			void				_InvertRect32(BRect r) const;
 			void				_BlendRect32(const BRect& r,
 									const rgb_color& c) const;
-
 
 			template<class VertexSource>
 			BRect				_BoundingBox(VertexSource& path) const;
@@ -337,7 +326,6 @@ private:
 									int gradientStop = 100);
 
 private:
-	// for internal coordinate rounding/transformation
 			bool				fSubpixelPrecise : 1;
 			bool				fValidClipping : 1;
 			bool				fAttached : 1;
@@ -355,9 +343,6 @@ private:
 
 			PatternHandler		fPatternHandler;
 
-	// a class handling rendering and caching of glyphs
-	// it is setup to load from a specific Freetype supported
-	// font file which it gets from ServerFont
 	mutable	AGGTextRenderer		fTextRenderer;
 
 	mutable	PainterAggInterface	fInternal;

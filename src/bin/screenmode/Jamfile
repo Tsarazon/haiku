@@ -1,7 +1,6 @@
 SubDir HAIKU_TOP src bin screenmode ;
 
 UsePrivateHeaders [ FDirName graphics common ] ;
-	# for multimon.h
 
 SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src preferences screen ] ;
 
@@ -9,7 +8,6 @@ Application screenmode :
 	screenmode.cpp
 
 	# from Screen preferences
-	multimon.cpp
 	ScreenMode.cpp
 
 	: be [ TargetLibsupc++ ] libaccelerantscommon.a

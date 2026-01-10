@@ -21,17 +21,7 @@
 #include <compute_display_timing.h>
 
 
-/* Note, this headers defines a *private* interface to the Radeon accelerant.
- * It's a solution that works with the current BeOS interface that Haiku
- * adopted.
- * However, it's not a nice and clean solution. Don't use this header in any
- * application if you can avoid it. No other driver is using this, or should
- * be using this.
- * It will be replaced as soon as we introduce an updated accelerant interface
- * which may even happen before R1 hits the streets.
- */
 
-#include "multimon.h"	// the usual: DANGER WILL, ROBINSON!
 
 
 
@@ -216,11 +206,6 @@ ScreenMode::Set(const screen_mode& mode, int32 workspace)
 	if (workspace == ~0)
 		workspace = current_workspace();
 
-	// TODO: our app_server doesn't fully support workspaces, yet
-	SetSwapDisplays(&screen, mode.swap_displays);
-	SetUseLaptopPanel(&screen, mode.use_laptop_panel);
-	SetTVStandard(&screen, mode.tv_standard);
-
 	display_mode displayMode;
 	if (!_GetDisplayMode(mode, displayMode))
 		return B_ENTRY_NOT_FOUND;
@@ -242,14 +227,6 @@ ScreenMode::Get(screen_mode& mode, int32 workspace) const
 		return B_ERROR;
 
 	mode.SetTo(displayMode);
-
-	// TODO: our app_server doesn't fully support workspaces, yet
-	if (GetSwapDisplays(&screen, &mode.swap_displays) != B_OK)
-		mode.swap_displays = false;
-	if (GetUseLaptopPanel(&screen, &mode.use_laptop_panel) != B_OK)
-		mode.use_laptop_panel = false;
-	if (GetTVStandard(&screen, &mode.tv_standard) != B_OK)
-		mode.tv_standard = 0;
 
 	return B_OK;
 }
@@ -316,13 +293,6 @@ ScreenMode::Revert()
 			continue;
 
 		BScreen screen(fWindow);
-
-		// TODO: our app_server doesn't fully support workspaces, yet
-		if (workspace == current_workspace()) {
-			SetSwapDisplays(&screen, fOriginal[workspace].swap_displays);
-			SetUseLaptopPanel(&screen, fOriginal[workspace].use_laptop_panel);
-			SetTVStandard(&screen, fOriginal[workspace].tv_standard);
-		}
 
 		result = screen.SetMode(workspace, &fOriginalDisplayMode[workspace],
 			true);

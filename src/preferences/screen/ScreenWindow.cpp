@@ -55,16 +55,7 @@
 #include "ScreenSettings.h"
 #include "Utility.h"
 
-/* Note, this headers defines a *private* interface to the Radeon accelerant.
- * It's a solution that works with the current BeOS interface that Haiku
- * adopted.
- * However, it's not a nice and clean solution. Don't use this header in any
- * application if you can avoid it. No other driver is using this, or should
- * be using this.
- * It will be replaced as soon as we introduce an updated accelerant interface
- * which may even happen before R1 hits the streets.
- */
-#include "multimon.h"	// the usual: DANGER WILL, ROBINSON!
+
 
 
 #undef B_TRANSLATION_CONTEXT
@@ -101,31 +92,6 @@ static const struct {
 	{ kCombineVertically, B_TRANSLATE("vertically") }
 };
 static const int32 kCombineModeCount = B_COUNT_OF(kCombineModes);
-
-
-static BString
-tv_standard_to_string(uint32 mode)
-{
-	switch (mode) {
-		case 0:		return "disabled";
-		case 1:		return "NTSC";
-		case 2:		return "NTSC Japan";
-		case 3:		return "PAL BDGHI";
-		case 4:		return "PAL M";
-		case 5:		return "PAL N";
-		case 6:		return "SECAM";
-		case 101:	return "NTSC 443";
-		case 102:	return "PAL 60";
-		case 103:	return "PAL NC";
-		default:
-		{
-			BString name;
-			name << "??? (" << mode << ")";
-
-			return name;
-		}
-	}
-}
 
 
 static void
@@ -465,15 +431,9 @@ ScreenWindow::ScreenWindow(ScreenSettings* settings)
 
 	// enlarged area for multi-monitor settings
 	{
-		bool dummy;
-		uint32 dummy32;
-		bool multiMonSupport;
-		bool useLaptopPanelSupport;
-		bool tvStandardSupport;
-
-		multiMonSupport = TestMultiMonSupport(&screen) == B_OK;
-		useLaptopPanelSupport = GetUseLaptopPanel(&screen, &dummy) == B_OK;
-		tvStandardSupport = GetTVStandard(&screen, &dummy32) == B_OK;
+		// Multi-monitor support was removed along with the old Radeon driver
+		bool multiMonSupport = false;
+		bool useLaptopPanelSupport = false;
 
 		// even if there is no support, we still create all controls
 		// to make sure we don't access NULL pointers later on
@@ -538,27 +498,12 @@ ScreenWindow::ScreenWindow(ScreenSettings* settings)
 
 		fTVStandardMenu = new BPopUpMenu("TVStandard", true, true);
 
-		// arbitrary limit
-		uint32 i;
-		for (i = 0; i < 100; ++i) {
-			uint32 mode;
-			if (GetNthSupportedTVStandard(&screen, i, &mode) != B_OK)
-				break;
-
-			BString name = tv_standard_to_string(mode);
-
-			message = new BMessage(POP_TV_STANDARD_MSG);
-			message->AddInt32("tv_standard", mode);
-
-			fTVStandardMenu->AddItem(new BMenuItem(name.String(), message));
-		}
-
 		fTVStandardField = new BMenuField("tv standard",
 			B_TRANSLATE("Video format:"), fTVStandardMenu);
 		fTVStandardField->SetAlignment(B_ALIGN_RIGHT);
 
-		if (!tvStandardSupport || i == 0)
-			fTVStandardField->Hide();
+		// TV standard support was removed along with the old Radeon driver
+		fTVStandardField->Hide();
 	}
 
 	BLayoutBuilder::Group<>(outerControlsView)
