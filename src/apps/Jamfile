@@ -57,6 +57,6 @@ HaikuSubInclude switcher ;
 HaikuSubInclude terminal ;
 HaikuSubInclude text_search ;
 HaikuSubInclude tracker ;
-HaikuSubInclude tv ;
+HaikuSubInclude thorvgdemo ;
 HaikuSubInclude webpositive ;
 HaikuSubInclude workspaces ;
