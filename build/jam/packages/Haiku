@@ -478,6 +478,11 @@ CopyDirectoryToPackage data
 	: [ FDirName $(HAIKU_TOP) data system data network ]
 	: network ;
 
+# GPU firmware (Intel Gen9+ GuC/HuC/DMC)
+CopyDirectoryToPackage data
+	: [ FDirName $(HAIKU_TOP) data system data firmware ]
+	: firmware ;
+
 # Copy documentation as per DiskUsage's license requirement.
 CopyDirectoryToPackage documentation
 	: [ FDirName $(HAIKU_TOP) docs apps diskusage ]

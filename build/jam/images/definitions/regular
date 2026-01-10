@@ -102,6 +102,7 @@ SYSTEM_DEMOS += [ FFilterByBuildFeatures
 	Playground
 	Pulse
 	Sudoku
+	ThorVGDemo
 ] ;
 
 
