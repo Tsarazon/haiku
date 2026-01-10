@@ -1,0 +1,21 @@
+SubDir HAIKU_TOP src apps thorvgdemo ;
+
+UseLibraryHeaders thorvg ;
+UsePrivateHeaders shared ;
+
+Application ThorVGDemo :
+	ThorVGDemo.cpp
+	:
+	be
+	libthorvg.so
+	localestub
+	[ TargetLibstdc++ ]
+	:
+	ThorVGDemo.rdef
+;
+
+DoCatalogs ThorVGDemo :
+	x-vnd.Haiku-ThorVGDemo
+	:
+	ThorVGDemo.cpp
+;
