@@ -323,67 +323,64 @@ WorkerThread::_InstallEFIBootloader(const BPath& targetDirectory)
 	// First: Search ALL partitions (including unmounted) for ESP by GPT type
 	printf("Searching for ESP partition (mounted or unmounted)...\n");
 
-	BDiskDevice device;
-	int32 cookie = 0;
-	while (fDDRoster.GetNextDevice(&device, &cookie) == B_OK) {
-		// Visit all partitions on this device
-		struct ESPVisitor : public BDiskDeviceVisitor {
-			const char* fESPType;
-			BDiskDeviceRoster* fRoster;
-			BPath* fEspPath;
-			bool* fFound;
+	struct ESPVisitor : public BDiskDeviceVisitor {
+		const char* fESPType;
+		BPath* fEspPath;
+		bool* fFound;
 
-			ESPVisitor(const char* espType, BDiskDeviceRoster* roster,
-				BPath* path, bool* found)
-				: fESPType(espType), fRoster(roster),
-				  fEspPath(path), fFound(found) {}
+		ESPVisitor(const char* espType, BPath* path, bool* found)
+			: fESPType(espType), fEspPath(path), fFound(found) {}
 
-			virtual bool Visit(BPartition* partition, int32 level)
-			{
-				if (*fFound)
-					return true; // Already found, stop
+		virtual bool Visit(BDiskDevice* device)
+		{
+			return false; // Continue to partitions
+		}
 
-				const char* type = partition->Type();
-				if (type == NULL || strcmp(type, fESPType) != 0)
-					return false; // Not ESP, continue
+		virtual bool Visit(BPartition* partition, int32 level)
+		{
+			if (*fFound)
+				return true; // Already found, stop
 
-				printf("Found ESP partition: %s\n", partition->Name());
+			const char* type = partition->Type();
+			if (type == NULL || strcmp(type, fESPType) != 0)
+				return false; // Not ESP, continue
 
-				// Check if already mounted
-				if (partition->IsMounted()) {
-					BPath mountPoint;
-					if (partition->GetMountPoint(&mountPoint) == B_OK) {
-						*fEspPath = mountPoint;
-						*fFound = true;
-						printf("ESP already mounted at: %s\n", mountPoint.Path());
-						return true;
-					}
+			printf("Found ESP partition: %s\n", partition->Name());
+
+			// Check if already mounted
+			if (partition->IsMounted()) {
+				BPath mountPoint;
+				if (partition->GetMountPoint(&mountPoint) == B_OK) {
+					*fEspPath = mountPoint;
+					*fFound = true;
+					printf("ESP already mounted at: %s\n", mountPoint.Path());
+					return true;
 				}
-
-				// Not mounted - try to mount it
-				printf("ESP not mounted, attempting to mount...\n");
-				status_t result = partition->Mount();
-				if (result == B_OK) {
-					BPath mountPoint;
-					if (partition->GetMountPoint(&mountPoint) == B_OK) {
-						*fEspPath = mountPoint;
-						*fFound = true;
-						printf("Successfully mounted ESP at: %s\n", mountPoint.Path());
-						return true;
-					}
-				} else {
-					fprintf(stderr, "Warning: Failed to mount ESP: %s\n",
-						strerror(result));
-				}
-
-				return false; // Continue searching
 			}
-		} visitor(kESPTypeString, &fDDRoster, &espPath, &espFound);
 
-		device.VisitEachDescendant(&visitor);
-		if (espFound)
-			break;
-	}
+			// Not mounted - try to mount it
+			printf("ESP not mounted, attempting to mount...\n");
+			status_t result = partition->Mount();
+			if (result == B_OK) {
+				BPath mountPoint;
+				if (partition->GetMountPoint(&mountPoint) == B_OK) {
+					*fEspPath = mountPoint;
+					*fFound = true;
+					printf("Successfully mounted ESP at: %s\n", mountPoint.Path());
+					return true;
+				}
+			} else {
+				fprintf(stderr, "Warning: Failed to mount ESP: %s\n",
+					strerror(result));
+			}
+
+			return false; // Continue searching
+		}
+	};
+
+	ESPVisitor visitor(kESPTypeString, &espPath, &espFound);
+	BDiskDevice device;
+	fDDRoster.VisitEachPartition(&visitor, &device);
 	
 	// Second pass: Fallback to FAT partition with existing EFI directory
 	// (for MBR or non-standard setups)
