@@ -211,7 +211,6 @@ _start(int hartId, void* fdt)
 	// virtio_init();
 	cpu_init();
 	mmu_init();
-	//apm_init();
 	smp_init();
 
 	main(&args);

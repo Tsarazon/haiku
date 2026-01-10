@@ -9,7 +9,6 @@
 
 
 #include <arch/platform.h>
-#include <apm.h>
 #include <boot_item.h>
 #include <boot/kernel_args.h>
 #include <boot/stage2.h>
@@ -56,10 +55,6 @@ arch_platform_init_post_vm(struct kernel_args *args)
 status_t
 arch_platform_init_post_thread(struct kernel_args *args)
 {
-	// APM is not supported on x86_64.
-#ifndef __x86_64__
-	apm_init(args);
-#endif
 	return B_OK;
 }
 

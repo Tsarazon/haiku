@@ -17,7 +17,6 @@
 #include <boot/stage2.h>
 
 #include "acpi.h"
-#include "apm.h"
 #include "bios.h"
 #include "console.h"
 #include "cpu.h"
@@ -200,7 +199,6 @@ _start(void)
 //	if (sBootOptions & BOOT_OPTION_DEBUG_OUTPUT)
 //		serial_enable();
 
-	apm_init();
 	acpi_init();
 	smp_init();
 	hpet_init();

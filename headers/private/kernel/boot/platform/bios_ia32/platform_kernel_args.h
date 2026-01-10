@@ -10,7 +10,6 @@
 #endif
 
 
-#include <arch/x86/apm.h>
 #include <bios_drive.h>
 #include <util/FixedWidthPointer.h>
 
@@ -28,8 +27,6 @@ typedef struct {
 
 	FixedWidthPointer<bios_drive> drives;
 		// this does not contain the boot drive
-
-	apm_info	apm;
 } _PACKED platform_kernel_args;
 
 #endif	/* KERNEL_BOOT_PLATFORM_BIOS_IA32_KERNEL_ARGS_H */

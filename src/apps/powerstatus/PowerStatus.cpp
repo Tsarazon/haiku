@@ -20,7 +20,6 @@
 #include <string.h>
 
 #include "ACPIDriverInterface.h"
-#include "APMDriverInterface.h"
 #include "PowerStatusWindow.h"
 
 
@@ -105,16 +104,14 @@ PowerStatus::ReadyToRun()
 	bool isDeskbarRunning = true;
 
 	if (ACPIDriverInterface().Connect() != B_OK) {
-		if (APMDriverInterface().Connect() != B_OK) {
-			BAlert* alert = new BAlert("",
-				B_TRANSLATE("No supported battery detected. PowerStatus "
-				"cannot be used on your system."), B_TRANSLATE("Too bad!"),
-				NULL, NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
-			if (!fAutoInstallInDeskbar)
-				alert->Go();
-			Quit();
-			return;
-		}
+		BAlert* alert = new BAlert("",
+			B_TRANSLATE("No supported battery detected. PowerStatus "
+			"cannot be used on your system."), B_TRANSLATE("Too bad!"),
+			NULL, NULL, B_WIDTH_AS_USUAL, B_WARNING_ALERT);
+		if (!fAutoInstallInDeskbar)
+			alert->Go();
+		Quit();
+		return;
 	}
 
 	{

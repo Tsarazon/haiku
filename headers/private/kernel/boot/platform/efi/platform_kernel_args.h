@@ -13,7 +13,6 @@
 // currently the EFI loader pretends to be the bios_ia32 platform.
 // not quite right, as the kernel needs to be aware of efi runtime services
 
-#include <arch/x86/apm.h>
 #include <boot/disk_identifier.h>
 #include <util/FixedWidthPointer.h>
 
@@ -37,9 +36,6 @@ typedef struct {
 
 	FixedWidthPointer<bios_drive> drives;
 		// this does not contain the boot drive
-	// seems to be ignored entirely?
-
-	apm_info	apm;
 } _PACKED platform_kernel_args;
 
 

@@ -42,7 +42,6 @@
 #include <TranslationUtils.h>
 
 #include "ACPIDriverInterface.h"
-#include "APMDriverInterface.h"
 #include "ExtendedInfoWindow.h"
 #include "PowerStatus.h"
 
@@ -866,12 +865,9 @@ PowerStatusReplicant::_Init()
 {
 	fDriverInterface = new ACPIDriverInterface;
 	if (fDriverInterface->Connect() != B_OK) {
-		delete fDriverInterface;
-		fDriverInterface = new APMDriverInterface;
-		if (fDriverInterface->Connect() != B_OK) {
-			fprintf(stderr, "No power interface found.\n");
-			_Quit();
-		}
+		fprintf(stderr, "No power interface found.\n");
+		_Quit();
+		return;
 	}
 
 	fExtendedWindow = NULL;
