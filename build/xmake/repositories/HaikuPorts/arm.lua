@@ -1,0 +1,105 @@
+--[[
+    HaikuPorts/arm.lua - HaikuPorts repository for arm
+
+    xmake equivalent of build/jam/repositories/HaikuPorts/arm
+]]
+
+import("rules.RepositoryRules")
+
+-- ============================================================================
+-- Repository Configuration
+-- ============================================================================
+
+ARCHITECTURE = "arm"
+REPOSITORY_URL = "https://eu.hpkg.haiku-os.org/haikuports/master/build-packages"
+
+-- ============================================================================
+-- Architecture "any" Packages
+-- ============================================================================
+
+ANY_PACKAGES = {
+    "be_book-2008_10_26-7",
+    "ca_root_certificates-2022_10_11-1",
+    "gnu_efi_kernel-3.0.10-1",
+    "haikuporter-1.2.7-1",
+    "noto-20200106-1",
+    "timgmsoundfont-fixed-5",
+    "wqy_microhei-0.2.0~beta-4",
+}
+
+-- ============================================================================
+-- Architecture-specific Packages
+-- ============================================================================
+
+ARCH_PACKAGES = {
+    "bash-4.4.023-1",
+    "binutils-2.41_2023_08_05-1",
+    "bison-3.0.5-1",
+    "coreutils-8.22-1",
+    "curl-7.40.0-1",
+    "curl_devel-7.40.0-1",
+    "expat-2.5.0-1",
+    "expat_devel-2.5.0-1",
+    "findutils-4.6.0-1",
+    "flex-2.5.35-1",
+    "freetype-2.6.3-1",
+    "freetype_devel-2.6.3-1",
+    "gawk-3.1.8-2",
+    "gcc_syslibs_devel-13.2.0_2023_08_10-1",
+    "gcc_syslibs-13.2.0_2023_08_10-1",
+    "grep-2.14-1",
+    "icu-57.2-1",
+    "icu_devel-57.2-1",
+    "less-451-1",
+    "libsolv-0.3.0_haiku_2014_12_22-1",
+    "libsolv_devel-0.3.0_haiku_2014_12_22-1",
+    "m4-1.4.16-1",
+    "make-4.3-1",
+    "mawk-1.3.4-1",
+    "ncurses6-6.2-1",
+    "ncurses6_devel-6.2-1",
+    "python-3.9.1-1",
+    "sed-4.2.1-1",
+    "texinfo-4.13a-1",
+    "zlib-1.2.13-1",
+    "zlib_devel-1.2.13-1",
+    "zstd-1.5.5-1",
+    "zstd_devel-1.5.5-1",
+}
+
+-- ============================================================================
+-- Source Packages
+-- ============================================================================
+
+SOURCE_PACKAGES = {
+    "bash", "binutils", "bison", "coreutils", "curl", "expat", "flex",
+    "freetype", "gcc", "grep", "icu", "libsolv", "m4", "make", "ncurses6",
+    "python", "sed", "texinfo", "zlib", "zstd",
+}
+
+-- ============================================================================
+-- Debug Info Packages
+-- ============================================================================
+
+DEBUGINFO_PACKAGES = {}
+
+-- ============================================================================
+-- Repository Registration
+-- ============================================================================
+
+function main()
+    local source_lookup = {}
+    for _, pkg in ipairs(SOURCE_PACKAGES) do
+        source_lookup[pkg] = true
+    end
+
+    RepositoryRules.RemotePackageRepository(
+        "HaikuPorts",
+        ARCHITECTURE,
+        REPOSITORY_URL,
+        ANY_PACKAGES,
+        ARCH_PACKAGES,
+        source_lookup,
+        {}
+    )
+end
