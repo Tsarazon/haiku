@@ -1,0 +1,28 @@
+SubDir HAIKU_TOP src kits surface ;
+
+UsePrivateHeaders surface ;
+UsePublicHeaders surface ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+
+		SharedLibrary [ MultiArchDefaultGristFiles libsurface.so ] :
+			# Core
+			SurfaceBuffer.cpp
+			SurfaceRegistry.cpp
+			PlanarLayout.cpp
+
+			# Public API
+			KosmSurface.cpp
+			KosmSurfaceAllocator.cpp
+
+			# Backends
+			AreaBackend.cpp
+
+			:
+			be shared
+			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
+			;
+	}
+}

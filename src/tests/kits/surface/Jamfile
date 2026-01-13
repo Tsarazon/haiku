@@ -1,0 +1,20 @@
+SubDir HAIKU_TOP src tests kits surface ;
+
+UsePrivateHeaders surface ;
+UsePublicHeaders surface ;
+
+SimpleTest SurfaceTest :
+	SurfaceTest.cpp
+	: surface be ;
+
+SimpleTest PlanarSurfaceTest :
+	PlanarSurfaceTest.cpp
+	: surface be ;
+
+SimpleTest AllocatorTest :
+	AllocatorTest.cpp
+	: surface be ;
+
+SimpleTest IPCTest :
+	IPCTest.cpp
+	: surface be ;
