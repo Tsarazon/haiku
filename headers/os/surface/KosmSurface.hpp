@@ -2,11 +2,11 @@
  * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _KOSM_SURFACE_H
-#define _KOSM_SURFACE_H
+#ifndef _KOSM_SURFACE_HPP
+#define _KOSM_SURFACE_HPP
 
 #include <OS.h>
-#include <SurfaceTypes.h>
+#include <SurfaceTypes.hpp>
 
 class BMessage;
 
@@ -51,6 +51,11 @@ public:
 
 			area_id				Area() const;
 
+			// Purgeable support
+			status_t			SetPurgeable(surface_purgeable_state newState,
+									surface_purgeable_state* outOldState = NULL);
+			bool				IsVolatile() const;
+
 private:
 	friend class KosmSurfaceAllocator;
 
@@ -63,4 +68,4 @@ private:
 			Data*				fData;
 };
 
-#endif /* _KOSM_SURFACE_H */
+#endif /* _KOSM_SURFACE_HPP */

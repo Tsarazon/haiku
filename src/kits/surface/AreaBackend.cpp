@@ -3,9 +3,9 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include "AllocationBackend.h"
-#include "PlanarLayout.h"
-#include "SurfaceBuffer.h"
+#include "AllocationBackend.hpp"
+#include "PlanarLayout.hpp"
+#include "SurfaceBuffer.hpp"
 
 #include <OS.h>
 #include <new>

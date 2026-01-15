@@ -2,10 +2,10 @@
  * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _PLANAR_LAYOUT_H
-#define _PLANAR_LAYOUT_H
+#ifndef _PLANAR_LAYOUT_HPP
+#define _PLANAR_LAYOUT_HPP
 
-#include <SurfaceTypes.h>
+#include <SurfaceTypes.hpp>
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,4 +26,4 @@ size_t		planar_calculate_total_size(pixel_format format,
 }
 #endif
 
-#endif /* _PLANAR_LAYOUT_H */
+#endif /* _PLANAR_LAYOUT_HPP */

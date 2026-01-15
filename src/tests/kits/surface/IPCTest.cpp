@@ -5,15 +5,15 @@
  * Tests for inter-process surface sharing via area cloning.
  */
 
-#include <KosmSurface.h>
-#include <KosmSurfaceAllocator.h>
+#include <KosmSurface.hpp>
+#include <KosmSurfaceAllocator.hpp>
 #include <Message.h>
 #include <OS.h>
 
 #include <stdio.h>
 #include <string.h>
 
-#include "SurfaceRegistry.h"
+#include "SurfaceRegistry.hpp"
 
 
 static int sTestsPassed = 0;

@@ -2,8 +2,8 @@
  * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _SURFACE_TYPES_H
-#define _SURFACE_TYPES_H
+#ifndef _SURFACE_TYPES_HPP
+#define _SURFACE_TYPES_HPP
 
 #include <SupportDefs.h>
 
@@ -37,6 +37,21 @@ enum {
 	SURFACE_LOCK_AVOID_SYNC		= 0x0002
 };
 
+enum {
+	SURFACE_PURGEABLE_NON_VOLATILE	= 0,
+	SURFACE_PURGEABLE_VOLATILE		= 1,
+	SURFACE_PURGEABLE_EMPTY			= 2,
+	SURFACE_PURGEABLE_KEEP_CURRENT	= 3
+};
+typedef uint32 surface_purgeable_state;
+
+enum {
+	SURFACE_CACHE_DEFAULT			= 0,
+	SURFACE_CACHE_INHIBIT			= 1,
+	SURFACE_CACHE_WRITE_THROUGH		= 2,
+	SURFACE_CACHE_WRITE_COMBINE		= 3
+};
+
 typedef struct {
 	uint32			width;
 	uint32			height;
@@ -44,6 +59,7 @@ typedef struct {
 	uint32			usage;
 	uint32			bytesPerElement;
 	uint32			bytesPerRow;
+	uint32			cacheMode;
 } surface_desc;
 
 typedef struct {
@@ -72,8 +88,9 @@ surface_desc_init(surface_desc* desc)
 	desc->usage = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE;
 	desc->bytesPerElement = 0;
 	desc->bytesPerRow = 0;
+	desc->cacheMode = SURFACE_CACHE_DEFAULT;
 }
 
 #endif
 
-#endif /* _SURFACE_TYPES_H */
+#endif /* _SURFACE_TYPES_HPP */

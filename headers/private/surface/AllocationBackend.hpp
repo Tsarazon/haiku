@@ -2,10 +2,10 @@
  * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _ALLOCATION_BACKEND_H
-#define _ALLOCATION_BACKEND_H
+#ifndef _ALLOCATION_BACKEND_HPP
+#define _ALLOCATION_BACKEND_HPP
 
-#include <SurfaceTypes.h>
+#include <SurfaceTypes.hpp>
 
 struct SurfaceBuffer;
 
@@ -27,4 +27,4 @@ public:
 	virtual	bool				SupportsUsage(uint32 usage) = 0;
 };
 
-#endif /* _ALLOCATION_BACKEND_H */
+#endif /* _ALLOCATION_BACKEND_HPP */

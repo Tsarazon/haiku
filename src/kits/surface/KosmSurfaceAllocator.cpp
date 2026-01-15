@@ -3,8 +3,8 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include <KosmSurfaceAllocator.h>
-#include <KosmSurface.h>
+#include <KosmSurfaceAllocator.hpp>
+#include <KosmSurface.hpp>
 
 #include <Autolock.h>
 #include <Locker.h>
@@ -12,10 +12,11 @@
 #include <new>
 #include <string.h>
 
-#include "AllocationBackend.h"
-#include "KosmSurfacePrivate.h"
-#include "SurfaceBuffer.h"
-#include "SurfaceRegistry.h"
+#include "AllocationBackend.hpp"
+#include "KosmSurfacePrivate.hpp"
+#include "PlanarLayout.hpp"
+#include "SurfaceBuffer.hpp"
+#include "SurfaceRegistry.hpp"
 
 
 extern AllocationBackend* create_area_backend();
@@ -103,7 +104,8 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 
 	surface->fData->buffer = buffer;
 
-	status = SurfaceRegistry::Default()->Register(buffer->id, buffer->areaId);
+	status = SurfaceRegistry::Default()->Register(buffer->id, buffer->areaId,
+		buffer->desc, buffer->allocSize);
 	if (status != B_OK) {
 		fImpl->backend->Free(buffer);
 		delete surface;
@@ -184,4 +186,62 @@ bool
 KosmSurfaceAllocator::IsFormatSupported(pixel_format format) const
 {
 	return fImpl->backend->SupportsFormat(format);
+}
+
+
+status_t
+KosmSurfaceAllocator::CreateFromClone(surface_id id, area_id clonedArea,
+	KosmSurface** outSurface)
+{
+	if (outSurface == NULL || clonedArea < 0)
+		return B_BAD_VALUE;
+
+	// Get metadata from registry
+	surface_desc desc;
+	area_id sourceArea;
+	status_t status = SurfaceRegistry::Default()->LookupInfo(id, &desc,
+		&sourceArea);
+	if (status != B_OK)
+		return status;
+
+	// Verify cloned area is valid
+	area_info info;
+	if (get_area_info(clonedArea, &info) != B_OK)
+		return B_BAD_VALUE;
+
+	BAutolock locker(fImpl->lock);
+
+	// Create SurfaceBuffer
+	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
+	if (buffer == NULL)
+		return B_NO_MEMORY;
+
+	buffer->id = id;
+	buffer->desc = desc;
+	buffer->areaId = clonedArea;
+	buffer->baseAddress = info.address;
+	buffer->allocSize = info.size;
+	buffer->planeCount = planar_get_plane_count(desc.format);
+
+	// Calculate plane info
+	for (uint32 i = 0; i < buffer->planeCount; i++) {
+		planar_calculate_plane(desc.format, i, desc.width, desc.height,
+			fImpl->backend->GetStrideAlignment(desc.format),
+			&buffer->planes[i]);
+	}
+
+	KosmSurface* surface = new(std::nothrow) KosmSurface;
+	if (surface == NULL || surface->fData == NULL) {
+		delete buffer;
+		delete surface;
+		return B_NO_MEMORY;
+	}
+
+	surface->fData->buffer = buffer;
+
+	int32 index = fImpl->IndexFor(id);
+	fImpl->surfaces[index] = surface;
+
+	*outSurface = surface;
+	return B_OK;
 }

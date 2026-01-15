@@ -3,13 +3,13 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include <KosmSurface.h>
-#include <KosmSurfaceAllocator.h>
+#include <KosmSurface.hpp>
+#include <KosmSurfaceAllocator.hpp>
 
 #include <stdio.h>
 #include <string.h>
 
-#include "PlanarLayout.h"
+#include "PlanarLayout.hpp"
 
 
 static int sTestsPassed = 0;

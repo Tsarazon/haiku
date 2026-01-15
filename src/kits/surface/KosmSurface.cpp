@@ -3,14 +3,14 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include <KosmSurface.h>
+#include <KosmSurface.hpp>
 
 #include <Autolock.h>
 #include <Message.h>
 
-#include "KosmSurfacePrivate.h"
-#include "SurfaceBuffer.h"
-#include "SurfaceRegistry.h"
+#include "KosmSurfacePrivate.hpp"
+#include "SurfaceBuffer.hpp"
+#include "SurfaceRegistry.hpp"
 
 
 KosmSurface::KosmSurface()
@@ -197,6 +197,7 @@ KosmSurface::Seed() const
 void
 KosmSurface::IncrementUseCount()
 {
+	BAutolock locker(fData->buffer->lock);
 	int32 oldCount = atomic_add(&fData->buffer->localUseCount, 1);
 	if (oldCount == 0) {
 		SurfaceRegistry::Default()->IncrementGlobalUseCount(
@@ -208,6 +209,7 @@ KosmSurface::IncrementUseCount()
 void
 KosmSurface::DecrementUseCount()
 {
+	BAutolock locker(fData->buffer->lock);
 	int32 oldCount = atomic_add(&fData->buffer->localUseCount, -1);
 	if (oldCount == 1) {
 		SurfaceRegistry::Default()->DecrementGlobalUseCount(
@@ -295,4 +297,40 @@ area_id
 KosmSurface::Area() const
 {
 	return fData->buffer->areaId;
+}
+
+
+status_t
+KosmSurface::SetPurgeable(surface_purgeable_state newState,
+	surface_purgeable_state* outOldState)
+{
+	BAutolock locker(fData->buffer->lock);
+
+	if (outOldState != NULL)
+		*outOldState = fData->buffer->purgeableState;
+
+	if (newState == SURFACE_PURGEABLE_KEEP_CURRENT)
+		return B_OK;
+
+	surface_purgeable_state oldState = fData->buffer->purgeableState;
+	fData->buffer->purgeableState = newState;
+
+	if (newState == SURFACE_PURGEABLE_EMPTY) {
+		fData->buffer->contentsPurged = true;
+	}
+
+	if (oldState == SURFACE_PURGEABLE_EMPTY || fData->buffer->contentsPurged) {
+		if (newState == SURFACE_PURGEABLE_NON_VOLATILE) {
+			return B_SURFACE_PURGEABLE;
+		}
+	}
+
+	return B_OK;
+}
+
+
+bool
+KosmSurface::IsVolatile() const
+{
+	return fData->buffer->purgeableState == SURFACE_PURGEABLE_VOLATILE;
 }

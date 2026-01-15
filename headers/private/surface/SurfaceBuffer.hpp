@@ -2,12 +2,12 @@
  * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _SURFACE_BUFFER_H
-#define _SURFACE_BUFFER_H
+#ifndef _SURFACE_BUFFER_HPP
+#define _SURFACE_BUFFER_HPP
 
 #include <Locker.h>
 #include <Message.h>
-#include <SurfaceTypes.h>
+#include <SurfaceTypes.hpp>
 
 #define SURFACE_MAX_PLANES 4
 
@@ -31,6 +31,9 @@ struct SurfaceBuffer {
 
 			int32				localUseCount;
 
+			surface_purgeable_state	purgeableState;
+			bool				contentsPurged;
+
 			BMessage			attachments;
 			BLocker				lock;
 
@@ -39,4 +42,4 @@ private:
 			SurfaceBuffer&		operator=(const SurfaceBuffer&);
 };
 
-#endif /* _SURFACE_BUFFER_H */
+#endif /* _SURFACE_BUFFER_HPP */

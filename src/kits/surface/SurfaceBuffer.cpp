@@ -3,7 +3,7 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include "SurfaceBuffer.h"
+#include "SurfaceBuffer.hpp"
 
 #include <string.h>
 
@@ -19,6 +19,8 @@ SurfaceBuffer::SurfaceBuffer()
 	lockOwner(-1),
 	seed(0),
 	localUseCount(0),
+	purgeableState(SURFACE_PURGEABLE_NON_VOLATILE),
+	contentsPurged(false),
 	lock("surface_buffer")
 {
 	surface_desc_init(&desc);

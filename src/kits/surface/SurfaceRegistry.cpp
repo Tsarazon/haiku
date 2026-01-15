@@ -3,7 +3,7 @@
  * Distributed under the terms of the MIT License.
  */
 
-#include "SurfaceRegistry.h"
+#include "SurfaceRegistry.hpp"
 
 #include <new>
 #include <string.h>
@@ -72,7 +72,8 @@ SurfaceRegistry::_IndexFor(surface_id id) const
 
 
 status_t
-SurfaceRegistry::Register(surface_id id, area_id sourceArea)
+SurfaceRegistry::Register(surface_id id, area_id sourceArea,
+	const surface_desc& desc, size_t allocSize)
 {
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
@@ -86,13 +87,22 @@ SurfaceRegistry::Register(surface_id id, area_id sourceArea)
 
 		if (entry.id == 0 || entry.id == SURFACE_ID_TOMBSTONE || entry.id == id) {
 			entry.id = id;
-			entry.globalUseCount = 1;
+			entry.globalUseCount = 0;
 
 			thread_info info;
 			get_thread_info(find_thread(NULL), &info);
 			entry.ownerTeam = info.team;
 
 			entry.sourceArea = sourceArea;
+
+			// Store metadata for cross-process lookup
+			entry.width = desc.width;
+			entry.height = desc.height;
+			entry.format = desc.format;
+			entry.bytesPerRow = desc.bytesPerRow;
+			entry.bytesPerElement = desc.bytesPerElement;
+			entry.allocSize = allocSize;
+			entry.planeCount = 1;  // Updated by caller if planar
 
 			release_sem(fLock);
 			return B_OK;
@@ -206,14 +216,20 @@ SurfaceRegistry::DecrementGlobalUseCount(surface_id id)
 int32
 SurfaceRegistry::GlobalUseCount(surface_id id) const
 {
+	if (acquire_sem(fLock) != B_OK)
+		return 0;
+
+	int32 result = 0;
 	int32 startIndex = _IndexFor(id);
 	int32 index = startIndex;
 
 	do {
 		const SurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == id)
-			return atomic_get(const_cast<int32*>(&entry.globalUseCount));
+		if (entry.id == id) {
+			result = entry.globalUseCount;
+			break;
+		}
 
 		if (entry.id == 0)
 			break;
@@ -221,7 +237,8 @@ SurfaceRegistry::GlobalUseCount(surface_id id) const
 		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
 	} while (index != startIndex);
 
-	return 0;
+	release_sem(fLock);
+	return result;
 }
 
 
@@ -238,6 +255,9 @@ SurfaceRegistry::LookupArea(surface_id id, area_id* outArea) const
 	if (outArea == NULL)
 		return B_BAD_VALUE;
 
+	if (acquire_sem(fLock) != B_OK)
+		return B_ERROR;
+
 	int32 startIndex = _IndexFor(id);
 	int32 index = startIndex;
 
@@ -246,6 +266,7 @@ SurfaceRegistry::LookupArea(surface_id id, area_id* outArea) const
 
 		if (entry.id == id) {
 			*outArea = entry.sourceArea;
+			release_sem(fLock);
 			return B_OK;
 		}
 
@@ -255,5 +276,45 @@ SurfaceRegistry::LookupArea(surface_id id, area_id* outArea) const
 		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
 	} while (index != startIndex);
 
+	release_sem(fLock);
+	return B_NAME_NOT_FOUND;
+}
+
+
+status_t
+SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
+	area_id* outArea) const
+{
+	if (acquire_sem(fLock) != B_OK)
+		return B_ERROR;
+
+	int32 startIndex = _IndexFor(id);
+	int32 index = startIndex;
+
+	do {
+		const SurfaceRegistryEntry& entry = fEntries[index];
+
+		if (entry.id == id) {
+			if (outDesc != NULL) {
+				outDesc->width = entry.width;
+				outDesc->height = entry.height;
+				outDesc->format = entry.format;
+				outDesc->bytesPerRow = entry.bytesPerRow;
+				outDesc->bytesPerElement = entry.bytesPerElement;
+			}
+			if (outArea != NULL)
+				*outArea = entry.sourceArea;
+
+			release_sem(fLock);
+			return B_OK;
+		}
+
+		if (entry.id == 0)
+			break;
+
+		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	} while (index != startIndex);
+
+	release_sem(fLock);
 	return B_NAME_NOT_FOUND;
 }
