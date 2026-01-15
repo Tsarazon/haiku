@@ -164,17 +164,6 @@ VMTranslationMap::UnmapArea(VMArea* area, bool deletingAddressSpace,
 }
 
 
-/*!	Mark or unmark a range of pages as present.
-	This is used for debugging purposes. The default implementation is a no-op.
-*/
-status_t
-VMTranslationMap::DebugMarkRangePresent(addr_t start, addr_t end,
-	bool markPresent)
-{
-	return B_OK;
-}
-
-
 /*!	Print mapping information for a virtual address.
 	The method navigates the paging structures and prints all relevant
 	information on the way.
