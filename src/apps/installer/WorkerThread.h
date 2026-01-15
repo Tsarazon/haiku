@@ -18,7 +18,8 @@ class BMenu;
 class ProgressReporter;
 
 
-// Partition size constants
+static const char kBootPath[] = "/boot";
+
 static const off_t kMinTargetPartitionSize = 20 * 1024 * 1024;		// 20 MB
 static const off_t kESPSize = 360 * 1024 * 1024;					// 360 MB
 
@@ -29,14 +30,12 @@ public:
 
 	virtual	void				MessageReceived(BMessage* message);
 
-			void 				InstallEFILoader(partition_id id, bool rename);
-
 			void				ScanDisksPartitions(BMenu* srcMenu,
 									BMenu* dstMenu, BMenu* EFIMenu);
 
 			void				SetPackagesList(BList* list);
 			void				SetSpaceRequired(off_t bytes)
-									{ fSpaceRequired = bytes; };
+									{ fSpaceRequired = bytes; }
 
 			bool				Cancel();
 			void				SetLock(sem_id cancelSemaphore)
@@ -45,13 +44,20 @@ public:
 			void				StartInstall(partition_id sourcePartitionID,
 									partition_id targetPartitionID);
 			void				WriteBootSector(BMenu* dstMenu);
+			void				InstallEFILoader(partition_id id, bool rename);
 
 private:
+			class EntryFilter;
+			class ESPPartitionVisitor;
+
+	static	BPartition*			_FindESPChild(BDiskDevice* device);
+
 			status_t			_GetMountPoint(partition_id partitionID,
 									BPath& mountPoint, BVolume* volume = NULL);
 
 			status_t			_WriteBootSector(BPath& path);
 			status_t			_CreateESPIfNeeded(BDiskDevice* targetDevice);
+			status_t			_FindESPPartition(BPath& espMountPoint);
 			status_t			_InstallEFIBootloader(
 									const BPath& targetDirectory);
 			status_t			_CopyFile(const char* source,
@@ -73,9 +79,6 @@ private:
 									BList& unzipEngines);
 
 			void				_SetStatusMessage(const char* status);
-
-private:
-			class EntryFilter;
 
 private:
 			BMessenger			fOwner;
