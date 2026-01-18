@@ -10,7 +10,6 @@
     The CD image boots from a floppy image and contains the full Haiku system.
 ]]
 
--- import("core.project.config")
 
 -- ============================================================================
 -- CD Image Creation
@@ -49,7 +48,7 @@ function BuildHaikuCD(haiku_cd, boot_floppy, scripts)
     local main_script = path.join(haiku_top, "build", "scripts", "build_haiku_image")
 
     -- Output directory
-    local output_dir = config.get("buildir") or "$(buildir)"
+    local output_dir = get_config("buildir") or "$(buildir)"
 
     -- Prepare script arguments with absolute paths
     local script_args = {}

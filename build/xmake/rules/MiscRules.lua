@@ -19,8 +19,6 @@
     - DefineBuildProfile        - Define build profile (image, cd, vmware, etc.)
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration Storage
 -- ============================================================================
@@ -99,8 +97,8 @@ function SetupObjectsDir(subdir_tokens)
         rel_path = nil
     end
 
-    local buildir = config.get("buildir") or "$(buildir)"
-    local arch = config.get("arch") or "x86_64"
+    local buildir = get_config("buildir") or "$(buildir)"
+    local arch = get_config("arch") or "x86_64"
 
     -- Setup common platform locate target
     local common_platform_dir = path.join(buildir, "objects", "common")
@@ -557,8 +555,8 @@ function DefineBuildProfile(name, profile_type, path_value)
     end
 
     -- Get default directories
-    local buildir = config.get("buildir") or "$(buildir)"
-    local arch = config.get("arch") or "x86_64"
+    local buildir = get_config("buildir") or "$(buildir)"
+    local arch = get_config("arch") or "x86_64"
 
     -- Split path into directory and name
     local target_dir = path_value and path.directory(path_value)

@@ -3,8 +3,6 @@
 --
 -- This file builds the Haiku CD/ISO image that can be used for installation.
 
--- import("rules.ImageRules")
--- import("rules.CDRules")
 
 -- ============================================================================
 -- Configuration
@@ -103,7 +101,7 @@ end
 -- Main Build Function
 -- ============================================================================
 
-function BuildHaikuCDTarget()
+local function BuildHaikuCDTarget()
     -- Execute pre-image user config rules
     UserBuildConfigRulePreImage()
 
@@ -148,16 +146,10 @@ end
 
 target("haiku-cd")
     set_kind("phony")
-    -- Note: on_build callbacks run in a sandbox, so we use _G to access global functions
     on_build(function (target)
         print("Building Haiku CD image...")
-        -- Access global function via _G since callbacks run in sandbox
-        if _G.BuildHaikuCDTarget then
-            local cd_image = _G.BuildHaikuCDTarget()
-            print("Haiku CD image built: " .. (cd_image or "unknown"))
-        else
-            print("Warning: BuildHaikuCDTarget not available yet")
-        end
+        local cd_image = BuildHaikuCDTarget()
+        print("Haiku CD image built: " .. (cd_image or "unknown"))
     end)
 
 -- ============================================================================

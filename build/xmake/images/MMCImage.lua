@@ -4,9 +4,6 @@
 -- This file creates SD/MMC card images for ARM, RISC-V, and other
 -- embedded platforms that boot from SD cards.
 
--- import("rules.ImageRules")
--- import("rules.BootRules")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================

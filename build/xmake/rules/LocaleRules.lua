@@ -15,15 +15,13 @@
     3. Managing translations in data/catalogs/
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
 
 -- Catalogs object directory
 local function get_catalogs_object_dir()
-    local buildir = config.get("buildir") or "$(buildir)"
+    local buildir = get_config("buildir") or "$(buildir)"
     return path.join(buildir, "catalogs")
 end
 
@@ -69,7 +67,7 @@ function ExtractCatalogEntries(target, sources, signature, regexp)
     os.mkdir(output_dir)
 
     -- Get compiler and flags
-    local cc = config.get("cc") or "gcc"
+    local cc = get_config("cc") or "gcc"
     local defines = {"-DB_COLLECTING_CATKEYS"}
     local includes = {}
 

@@ -4,9 +4,6 @@
 -- This file defines what ends up in the CD boot image and it executes the
 -- rules building the image.
 
--- import("rules.ImageRules")
--- import("rules.BootRules")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================

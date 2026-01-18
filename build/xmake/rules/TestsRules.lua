@@ -22,8 +22,6 @@
     - libbe_test platform has special handling
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Module State
 -- ============================================================================
@@ -49,8 +47,8 @@ local _unit_test_lib_dir = nil
 ]]
 function GetUnitTestDir()
     if not _unit_test_dir then
-        _unit_test_dir = config.get("TARGET_UNIT_TEST_DIR")
-            or path.join(config.get("HAIKU_TEST_DIR") or "generated/tests", "unittests")
+        _unit_test_dir = get_config("TARGET_UNIT_TEST_DIR")
+            or path.join(get_config("HAIKU_TEST_DIR") or "generated/tests", "unittests")
     end
     return _unit_test_dir
 end
@@ -65,7 +63,7 @@ end
 ]]
 function GetUnitTestLibDir()
     if not _unit_test_lib_dir then
-        _unit_test_lib_dir = config.get("TARGET_UNIT_TEST_LIB_DIR")
+        _unit_test_lib_dir = get_config("TARGET_UNIT_TEST_LIB_DIR")
             or path.join(GetUnitTestDir(), "lib")
     end
     return _unit_test_lib_dir
@@ -108,7 +106,7 @@ end
         true if TARGET_PLATFORM is libbe_test
 ]]
 function IsLibbeTestPlatform()
-    return config.get("TARGET_PLATFORM") == "libbe_test"
+    return get_config("TARGET_PLATFORM") == "libbe_test"
 end
 
 --[[
@@ -120,7 +118,7 @@ end
         true if TEST_DEBUG is set
 ]]
 function IsTestDebug()
-    return config.get("TEST_DEBUG") and true or false
+    return get_config("TEST_DEBUG") and true or false
 end
 
 -- ============================================================================
@@ -418,7 +416,7 @@ function BuildPlatformTest(cfg)
         end
     end
 
-    local test_dir = config.get("HAIKU_TEST_DIR") or "generated/tests"
+    local test_dir = get_config("HAIKU_TEST_DIR") or "generated/tests"
     local output_dir = rel_path ~= "" and path.join(test_dir, rel_path) or test_dir
 
     return {
@@ -596,9 +594,18 @@ function unittest_target(name, cfg)
             end
         end
 
-        -- Resources would be handled by ResourceRules
-        if cfg.resources then
-            -- TODO: integrate with ResourceRules for resource handling
+        -- Handle resources via HaikuResources rule from BeOSRules
+        if cfg.resources and #cfg.resources > 0 then
+            add_rules("HaikuResources")
+            for _, res in ipairs(cfg.resources) do
+                if res:match("%.rdef$") then
+                    -- .rdef files are compiled via ResComp
+                    add_files(res)
+                elseif res:match("%.rsrc$") then
+                    -- .rsrc files are added directly
+                    add_values("resources", res)
+                end
+            end
         end
     target_end()
 end
@@ -627,9 +634,18 @@ function simple_test_target(name, cfg)
             end
         end
 
-        -- Resources would be handled by ResourceRules
-        if cfg.resources then
-            -- TODO: integrate with ResourceRules for resource handling
+        -- Handle resources via HaikuResources rule from BeOSRules
+        if cfg.resources and #cfg.resources > 0 then
+            add_rules("HaikuResources")
+            for _, res in ipairs(cfg.resources) do
+                if res:match("%.rdef$") then
+                    -- .rdef files are compiled via ResComp
+                    add_files(res)
+                elseif res:match("%.rsrc$") then
+                    -- .rsrc files are added directly
+                    add_values("resources", res)
+                end
+            end
         end
     target_end()
 end

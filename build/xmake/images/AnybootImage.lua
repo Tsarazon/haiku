@@ -8,9 +8,6 @@
 -- - MBR for legacy BIOS boot
 -- - EFI System Partition for UEFI boot
 
--- import("rules.ImageRules")
--- import("rules.BootRules")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================

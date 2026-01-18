@@ -319,7 +319,6 @@ SYSTEM_ADD_ONS_MEDIA = FFilterByBuildFeatures({
 -- ============================================================================
 
 SYSTEM_ADD_ONS_MEDIA_PLUGINS = FFilterByBuildFeatures({
-    "ape_reader@x86",
     "ffmpeg@ffmpeg",
     "http_streamer",
     "raw_decoder",

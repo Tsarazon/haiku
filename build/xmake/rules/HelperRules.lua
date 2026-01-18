@@ -272,7 +272,7 @@ function SetPlatformCompatibilityFlagVariables(platform, var_prefix, platform_ki
 
     -- Special case: libbe_test
     if platform == "libbe_test" then
-        platform = config.get("host_platform") or "host"
+        platform = get_config("host_platform") or "host"
     end
 
     if platform == "haiku_host" or platform == "haiku" then

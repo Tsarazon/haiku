@@ -29,8 +29,6 @@
     to locate libraries from the gcc_syslibs and gcc_syslibs_devel build features.
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
@@ -44,7 +42,7 @@
         Platform name string (e.g., "haiku", "libbe_test", "host")
 ]]
 function GetTargetPlatform()
-    return config.get("TARGET_PLATFORM") or "haiku"
+    return get_config("TARGET_PLATFORM") or "haiku"
 end
 
 --[[
@@ -56,7 +54,7 @@ end
         Architecture string (e.g., "x86_64", "arm", "arm64")
 ]]
 function GetTargetPackagingArch()
-    return config.get("TARGET_PACKAGING_ARCH") or config.get("arch") or "x86_64"
+    return get_config("TARGET_PACKAGING_ARCH") or get_config("arch") or "x86_64"
 end
 
 --[[
@@ -68,7 +66,7 @@ end
         Kernel architecture string
 ]]
 function GetTargetKernelArch()
-    return config.get("TARGET_KERNEL_ARCH") or GetTargetPackagingArch()
+    return get_config("TARGET_KERNEL_ARCH") or GetTargetPackagingArch()
 end
 
 --[[
@@ -80,7 +78,7 @@ end
         Boot platform string (e.g., "efi", "bios_ia32", "u-boot")
 ]]
 function GetTargetBootPlatform()
-    return config.get("TARGET_BOOT_PLATFORM") or "bios_ia32"
+    return get_config("TARGET_BOOT_PLATFORM") or "bios_ia32"
 end
 
 --[[
@@ -92,7 +90,7 @@ end
         Platform mode string (e.g., "haiku", "host", "bootstrap_stage0")
 ]]
 function GetPlatform()
-    return config.get("PLATFORM") or "haiku"
+    return get_config("PLATFORM") or "haiku"
 end
 
 --[[
@@ -107,7 +105,7 @@ end
         GCC machine string (e.g., "x86_64-unknown-haiku")
 ]]
 function GetGccMachine(architecture)
-    local machine = config.get("HAIKU_GCC_MACHINE_" .. architecture)
+    local machine = get_config("HAIKU_GCC_MACHINE_" .. architecture)
     if machine then
         return machine
     end
@@ -154,7 +152,7 @@ function BuildFeatureLibrary(feature, library, as_path)
     end
 
     -- Fallback: construct expected path
-    local feature_dir = config.get(feature:upper() .. "_DIR")
+    local feature_dir = get_config(feature:upper() .. "_DIR")
     if feature_dir and as_path then
         return path.join(feature_dir, "lib", library)
     end
@@ -190,7 +188,7 @@ function QualifiedBuildFeatureLibrary(qualified_feature, library, as_path)
     end
 
     -- Fallback: construct expected path
-    local feature_dir = config.get(feature:upper() .. "_DIR")
+    local feature_dir = get_config(feature:upper() .. "_DIR")
     if feature_dir and as_path then
         return path.join(feature_dir, arch, "lib", library)
     end
@@ -372,10 +370,10 @@ function TargetBootLibsupc__(as_path)
         if arch == "x86_64" then
             if boot_platform == "efi" then
                 -- Use 64-bit libsupc++.a built by cross-compiler
-                return config.get("TARGET_BOOT_LIBSUPC++")
+                return get_config("TARGET_BOOT_LIBSUPC++")
             else
                 -- Use 32-bit libsupc++.a built by cross-compiler
-                return config.get("TARGET_BOOT_32_LIBSUPC++")
+                return get_config("TARGET_BOOT_32_LIBSUPC++")
             end
             -- TODO: ideally, build as part of gcc_syslibs_devel
         end
@@ -517,10 +515,10 @@ function TargetBootLibgcc(architecture, as_path)
         if architecture == "x86_64" then
             if boot_platform == "efi" then
                 -- Use 64-bit libgcc.a built by cross-compiler
-                return config.get("TARGET_BOOT_LIBGCC")
+                return get_config("TARGET_BOOT_LIBGCC")
             else
                 -- Use 32-bit libgcc.a built by cross-compiler
-                return config.get("TARGET_BOOT_32_LIBGCC")
+                return get_config("TARGET_BOOT_32_LIBGCC")
             end
             -- TODO: ideally, build as part of gcc_syslibs_devel
         end
@@ -632,7 +630,7 @@ function CxxHeaderDirectories(architecture)
         base_dir = BuildFeatureAttribute("gcc_syslibs_devel", "c++-headers", {"path"})
     else
         -- Fallback
-        local feature_dir = config.get("GCC_SYSLIBS_DEVEL_DIR")
+        local feature_dir = get_config("GCC_SYSLIBS_DEVEL_DIR")
         if feature_dir then
             base_dir = path.join(feature_dir, "include", "c++")
         end
@@ -675,7 +673,7 @@ function GccHeaderDirectories(architecture)
 
     if platform == "bootstrap_stage0" then
         -- Use GCC lib dir for bootstrap stage0
-        local gcc_lib_dir = config.get("HAIKU_GCC_LIB_DIR_" .. architecture)
+        local gcc_lib_dir = get_config("HAIKU_GCC_LIB_DIR_" .. architecture)
         if gcc_lib_dir then
             table.insert(dirs, path.join(gcc_lib_dir, "include"))
             table.insert(dirs, path.join(gcc_lib_dir, "include-fixed"))
@@ -687,7 +685,7 @@ function GccHeaderDirectories(architecture)
             base_dir = BuildFeatureAttribute("gcc_syslibs_devel", "gcc-headers", {"path"})
         else
             -- Fallback
-            local feature_dir = config.get("GCC_SYSLIBS_DEVEL_DIR")
+            local feature_dir = get_config("GCC_SYSLIBS_DEVEL_DIR")
             if feature_dir then
                 base_dir = path.join(feature_dir, "lib", "gcc")
             end

@@ -132,6 +132,7 @@ rule HaikuImageGetSystemLibs
 			libnetwork.so
 			libpackage.so
 			libscreensaver.so
+			libsurface.so
 			libtextencoding.so
 			libthorvg.so
 			libtracker.so
@@ -221,7 +222,6 @@ SYSTEM_ADD_ONS_MEDIA += [ FFilterByBuildFeatures
 ] ;
 
 SYSTEM_ADD_ONS_MEDIA_PLUGINS += [ FFilterByBuildFeatures
-	ape_reader@x86
 	ffmpeg@ffmpeg
 	http_streamer
 	raw_decoder

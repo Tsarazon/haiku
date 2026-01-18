@@ -21,17 +21,13 @@
     - BuildPlatform* variants
 ]]
 
--- Note: import() must be called inside functions, not at top level
--- import("core.project.config")
--- import("core.project.project")
-
 -- ============================================================================
 -- Configuration and Platform Detection
 -- ============================================================================
 
 -- Get target platform (haiku, host, etc.)
 function get_platform()
-    local plat = config.get("plat")
+    local plat = get_config("plat")
     if plat == "haiku" then
         return "haiku"
     end
@@ -40,7 +36,7 @@ end
 
 -- Get target architecture
 function get_target_arch()
-    return config.get("arch") or "x86_64"
+    return get_config("arch") or "x86_64"
 end
 
 -- Check if platform is supported for target

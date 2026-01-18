@@ -26,15 +26,13 @@
     - addattr   - Attribute adder
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
 
 -- Get platform (host or target)
 local function get_platform()
-    local plat = config.get("plat")
+    local plat = get_config("plat")
     if plat == "haiku" then
         return "haiku"
     end
@@ -47,7 +45,7 @@ local function get_cc(target)
     if platform == "host" then
         return "cc"
     else
-        local arch = config.get("arch") or "x86_64"
+        local arch = get_config("arch") or "x86_64"
         return format("%s-unknown-haiku-gcc", arch)
     end
 end
@@ -364,8 +362,8 @@ function SetVersion(target)
     end
 
     -- Get version info from config or defaults
-    local build_version = config.get("haiku_build_version") or "1 0 0 a 1"
-    local build_description = config.get("haiku_build_description") or "Haiku"
+    local build_version = get_config("haiku_build_version") or "1 0 0 a 1"
+    local build_description = get_config("haiku_build_description") or "Haiku"
 
     local args = {targetfile, "-system", build_version, "-short", build_description}
     print("SetVersion: %s", targetfile)
@@ -423,7 +421,7 @@ function MimeSet(target)
     end
 
     -- Get MIME database path
-    local mimedb = config.get("haiku_mimedb") or "$(buildir)/mimedb"
+    local mimedb = get_config("haiku_mimedb") or "$(buildir)/mimedb"
 
     local args = {"-f", "--mimedb", mimedb, targetfile}
     print("MimeSet: %s", targetfile)
@@ -460,7 +458,7 @@ function CreateAppMimeDBEntries(target)
     app_mimedb = path.join(objectdir, app_mimedb)
 
     -- Get system MIME database path
-    local mimedb = config.get("haiku_mimedb") or "$(buildir)/mimedb"
+    local mimedb = get_config("haiku_mimedb") or "$(buildir)/mimedb"
 
     os.rm(app_mimedb)
     os.mkdir(app_mimedb)

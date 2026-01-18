@@ -20,9 +20,6 @@
     Features are qualified by architecture (e.g., "x86_64:openssl").
 ]]
 
--- Note: import() must be called inside functions, not at top level
--- import("core.project.config")
-
 -- ============================================================================
 -- Build Feature Storage
 -- ============================================================================
@@ -55,7 +52,7 @@ end
     Gets the current target packaging architecture.
 ]]
 function GetTargetPackagingArch()
-    return _target_packaging_arch or config.get("arch") or "x86_64"
+    return _target_packaging_arch or get_config("arch") or "x86_64"
 end
 
 -- ============================================================================
@@ -607,7 +604,7 @@ function ExtractBuildFeatureArchives(feature, list)
         local file_name = package_name .. ".hpkg"
 
         -- Determine extraction directory
-        local optional_packages_dir = config.get("haiku_optional_build_packages_dir")
+        local optional_packages_dir = get_config("haiku_optional_build_packages_dir")
             or path.join("$(buildir)", "optional_packages")
         local base_name = file_name:gsub("%.hpkg$", "")
         local directory = path.join(optional_packages_dir, base_name)
@@ -682,13 +679,13 @@ function InitArchitectureBuildFeatures(architecture)
     _target_packaging_arch = architecture
 
     -- Get target arch for this packaging arch
-    local target_arch = config.get("target_arch_" .. architecture) or architecture
+    local target_arch = get_config("target_arch_" .. architecture) or architecture
 
     -- Enable the architecture as a feature
     EnableBuildFeatures(target_arch)
 
     -- Check if this is the primary architecture
-    local packaging_archs = config.get("target_packaging_archs") or {architecture}
+    local packaging_archs = get_config("target_packaging_archs") or {architecture}
     if type(packaging_archs) ~= "table" then
         packaging_archs = {packaging_archs}
     end

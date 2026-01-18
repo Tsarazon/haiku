@@ -28,16 +28,6 @@
     - riscv64 - 64-bit RISC-V
 ]]
 
--- Lazy loading for config module (import() cannot be called at top-level in included files)
-local _config = nil
-local function get_config()
-    if not _config then
-        import("core.project.config")
-        _config = config
-    end
-    return _config
-end
-
 -- ============================================================================
 -- Architecture Configuration Storage
 -- ============================================================================
@@ -54,7 +44,7 @@ local DEBUG_LEVELS = {0, 1, 2}
 
 -- Get target architecture
 local function get_target_arch()
-    return config.get("arch") or "x86_64"
+    return get_config("arch") or "x86_64"
 end
 
 -- Get CPU name for architecture (maps packaging arch to CPU)
@@ -66,8 +56,8 @@ end
 
 -- Get packaging architectures (primary + secondary)
 local function get_packaging_archs()
-    local primary = config.get("arch") or "x86_64"
-    local secondary = config.get("secondary_arch")
+    local primary = get_config("arch") or "x86_64"
+    local secondary = get_config("secondary_arch")
 
     if secondary and secondary ~= "" then
         return {primary, secondary}
@@ -133,10 +123,10 @@ function ArchitectureSetup(architecture)
     local settings = {
         cpu = cpu,
         architecture = architecture,
-        cc = config.get("cc_" .. architecture) or (architecture .. "-unknown-haiku-gcc"),
-        cxx = config.get("cxx_" .. architecture) or (architecture .. "-unknown-haiku-g++"),
+        cc = get_config("cc_" .. architecture) or (architecture .. "-unknown-haiku-gcc"),
+        cxx = get_config("cxx_" .. architecture) or (architecture .. "-unknown-haiku-g++"),
         link = nil,  -- Set below
-        strip = config.get("strip_" .. architecture) or (architecture .. "-unknown-haiku-strip"),
+        strip = get_config("strip_" .. architecture) or (architecture .. "-unknown-haiku-strip"),
         ccflags = {},
         cxxflags = {},
         asflags = {},
@@ -153,10 +143,10 @@ function ArchitectureSetup(architecture)
         executable_begin_glue = {},
         executable_end_glue = {},
         library_name_map = {},
-        is_clang = config.get("cc_is_clang_" .. architecture) == "1",
-        use_gcc_pipe = config.get("use_gcc_pipe") == "1",
-        use_graphite = config.get("use_gcc_graphite_" .. architecture) == "1",
-        gcc_lib_dir = config.get("gcc_lib_dir_" .. architecture) or "",
+        is_clang = get_config("cc_is_clang_" .. architecture) == "1",
+        use_gcc_pipe = get_config("use_gcc_pipe") == "1",
+        use_graphite = get_config("use_gcc_graphite_" .. architecture) == "1",
+        gcc_lib_dir = get_config("gcc_lib_dir_" .. architecture) or "",
     }
 
     settings.link = settings.cc
@@ -288,7 +278,7 @@ function ArchitectureSetup(architecture)
     -- ========================================
 
     settings.werror_flags = {
-        -- TODO: Remove these when code is fixed
+        -- Suppress warnings from legacy code
         "-Wno-error=unused-but-set-variable",
         "-Wno-error=cpp",
         "-Wno-error=register",
@@ -306,7 +296,7 @@ function ArchitectureSetup(architecture)
     -- ========================================
 
     local debug_flags = "-ggdb"
-    local ndebug = config.get("ndebug") or 1
+    local ndebug = get_config("ndebug") or 1
 
     -- Debug level 0: suppress asserts
     settings.debug_ccflags[0] = FDefines({"NDEBUG=" .. ndebug})
@@ -333,7 +323,7 @@ function ArchitectureSetup(architecture)
     -- Private system headers
     -- ========================================
 
-    local haiku_top = config.get("haiku_top") or "$(projectdir)"
+    local haiku_top = get_config("haiku_top") or "$(projectdir)"
     settings.private_system_headers = {
         path.join(haiku_top, "headers", "private", "system"),
         path.join(haiku_top, "headers", "private", "system", "arch", cpu),
@@ -496,7 +486,7 @@ function KernelArchitectureSetup(architecture)
         kernel_settings.boot_archive_image_offset = 384  -- KiB
 
         -- Verify nasm is available
-        if not config.get("nasm") then
+        if not get_config("nasm") then
             print("Warning: HAIKU_NASM not set. x86 target may not build correctly.")
         end
 
@@ -515,7 +505,7 @@ function KernelArchitectureSetup(architecture)
         kernel_settings.kernel_arch_dir = "x86"  -- x86_64 kernel source is under arch/x86
 
         -- Verify nasm is available
-        if not config.get("nasm") then
+        if not get_config("nasm") then
             print("Warning: HAIKU_NASM not set. x86_64 target may not build correctly.")
         end
 
@@ -985,8 +975,6 @@ function ArchitectureSetupWarnings(architecture)
         EnableWerror({"src", "add-ons", "locale"})
         EnableWerror({"src", "add-ons", "mail_daemon"})
         EnableWerror({"src", "add-ons", "media", "media-add-ons"})
-        EnableWerror({"src", "add-ons", "media", "plugins", "ape_reader"})
-        EnableWerror({"src", "add-ons", "media", "plugins", "au_reader"})
         EnableWerror({"src", "add-ons", "media", "plugins", "ffmpeg"})
         EnableWerror({"src", "add-ons", "media", "plugins", "raw_decoder"})
         EnableWerror({"src", "add-ons", "print"})
@@ -1039,7 +1027,7 @@ function ArchitectureSetupWarnings(architecture)
     end
 
     -- Stack protector (enabled regardless of compiler)
-    if config.get("use_stack_protector") then
+    if get_config("use_stack_protector") then
         EnableStackProtector({"src", "add-ons", "input_server"})
         EnableStackProtector({"src", "add-ons", "media"})
         EnableStackProtector({"src", "add-ons", "print"})
@@ -1439,7 +1427,7 @@ end
 ]]
 rule("ArchitectureAware")
     on_load(function (target)
-        local architecture = config.get("arch") or "x86_64"
+        local architecture = get_config("arch") or "x86_64"
         local arch_settings = GetArchSettings(architecture)
 
         -- Apply base flags

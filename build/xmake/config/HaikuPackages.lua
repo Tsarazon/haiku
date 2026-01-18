@@ -675,7 +675,6 @@ HAIKU_PACKAGE_DRIVERS = {
         input = {
             "ps2_hid",
             "usb_hid",
-            "wacom",
         },
         misc = {
             {name = "poke", grist = "driver"},

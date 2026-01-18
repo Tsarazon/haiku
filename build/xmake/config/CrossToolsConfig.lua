@@ -32,7 +32,8 @@ local SUPPORTED_ARCHS = {
 
 -- Find cross-tools directory for an architecture
 -- Checks spawned/ first (xmake output), then generated/ (jam output)
-function detect_cross_tools(arch)
+-- NOTE: Must be local to be captured by closure in toolchain callbacks
+local function detect_cross_tools(arch)
     local arch_info = SUPPORTED_ARCHS[arch]
     if not arch_info then
         return nil, "Unsupported architecture: " .. tostring(arch)
@@ -60,7 +61,7 @@ function detect_cross_tools(arch)
 end
 
 -- Detect GCC version from cross-tools
-function detect_gcc_version(cross_tools)
+local function detect_gcc_version(cross_tools)
     if not cross_tools then return nil end
 
     local gcc = cross_tools.gcc
@@ -72,7 +73,7 @@ function detect_gcc_version(cross_tools)
 end
 
 -- Find libgcc and other GCC libraries
-function detect_gcc_libs(cross_tools, arch)
+local function detect_gcc_libs(cross_tools, arch)
     if not cross_tools then return nil end
 
     local arch_info = SUPPORTED_ARCHS[arch]

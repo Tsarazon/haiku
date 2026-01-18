@@ -34,15 +34,13 @@
     - Links against libgcc.a and optionally libsupc++
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
 
 -- Get kernel architecture (may differ from userland, e.g., 32-bit kernel on 64-bit)
 local function get_kernel_arch()
-    return config.get("kernel_arch") or config.get("arch") or "x86_64"
+    return get_config("kernel_arch") or get_config("arch") or "x86_64"
 end
 
 -- Get kernel-specific C flags
@@ -72,7 +70,7 @@ local function get_kernel_ccflags()
     end
 
     -- Add user-configured kernel flags
-    local extra = config.get("kernel_ccflags")
+    local extra = get_config("kernel_ccflags")
     if extra then
         if type(extra) == "table" then
             for _, f in ipairs(extra) do
@@ -95,7 +93,7 @@ local function get_kernel_cxxflags()
     table.insert(flags, "-fno-exceptions")
 
     -- Add user-configured kernel C++ flags
-    local extra = config.get("kernel_cxxflags")
+    local extra = get_config("kernel_cxxflags")
     if extra then
         if type(extra) == "table" then
             for _, f in ipairs(extra) do
@@ -128,7 +126,7 @@ local function get_kernel_defines()
     end
 
     -- Add user-configured kernel defines
-    local extra = config.get("kernel_defines")
+    local extra = get_config("kernel_defines")
     if extra then
         if type(extra) == "table" then
             for _, d in ipairs(extra) do
@@ -144,7 +142,7 @@ end
 
 -- Get kernel warning flags
 local function get_kernel_warning_ccflags()
-    return config.get("kernel_warning_ccflags") or {
+    return get_config("kernel_warning_ccflags") or {
         "-Wall",
         "-Wextra",
         "-Wno-unused-parameter",
@@ -153,7 +151,7 @@ local function get_kernel_warning_ccflags()
 end
 
 local function get_kernel_warning_cxxflags()
-    return config.get("kernel_warning_cxxflags") or get_kernel_warning_ccflags()
+    return get_config("kernel_warning_cxxflags") or get_kernel_warning_ccflags()
 end
 
 -- Get private kernel headers
@@ -191,33 +189,33 @@ end
 -- Get kernel libgcc path
 local function get_kernel_libgcc()
     local arch = get_kernel_arch()
-    return config.get("kernel_libgcc_" .. arch) or
+    return get_config("kernel_libgcc_" .. arch) or
         path.join("$(buildir)", "cross-tools", arch, "lib", "gcc", arch .. "-unknown-haiku", "libgcc.a")
 end
 
 -- Get kernel libsupc++ path
 local function get_kernel_libsupcxx()
     local arch = get_kernel_arch()
-    return config.get("kernel_libsupcxx_" .. arch) or
+    return get_config("kernel_libsupcxx_" .. arch) or
         path.join("$(buildir)", "cross-tools", arch, "lib", "gcc", arch .. "-unknown-haiku", "libsupc++.a")
 end
 
 -- Get kernel linker
 local function get_kernel_ld()
     local arch = get_kernel_arch()
-    return config.get("kernel_ld_" .. arch) or (arch .. "-unknown-haiku-ld")
+    return get_config("kernel_ld_" .. arch) or (arch .. "-unknown-haiku-ld")
 end
 
 -- Get kernel archiver
 local function get_kernel_ar()
     local arch = get_kernel_arch()
-    return config.get("kernel_ar_" .. arch) or (arch .. "-unknown-haiku-ar")
+    return get_config("kernel_ar_" .. arch) or (arch .. "-unknown-haiku-ar")
 end
 
 -- Get kernel elfedit
 local function get_kernel_elfedit()
     local arch = get_kernel_arch()
-    return config.get("kernel_elfedit_" .. arch) or "elfedit"
+    return get_config("kernel_elfedit_" .. arch) or "elfedit"
 end
 
 -- ============================================================================
@@ -577,7 +575,7 @@ rule("KernelAddon")
         }
 
         -- Add kernel addon link flags
-        local addon_ldflags = config.get("kernel_addon_linkflags") or {}
+        local addon_ldflags = get_config("kernel_addon_linkflags") or {}
         for _, flag in ipairs(addon_ldflags) do
             table.insert(ldflags, flag)
         end

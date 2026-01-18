@@ -34,8 +34,6 @@
     - set_haiku_revision - Set revision in ELF
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Directory Operations
 -- ============================================================================
@@ -296,7 +294,7 @@ function UnarchiveObjects(target_objects, static_lib)
     os.mkdir(output_dir)
 
     -- Extract specific objects
-    local ar = config.get("target_ar") or "ar"
+    local ar = get_config("target_ar") or "ar"
     local args = {"x", static_lib}
     for _, obj in ipairs(target_objects) do
         table.insert(args, path.filename(obj))
@@ -424,11 +422,11 @@ function DetermineHaikuRevision()
     end
 
     local haiku_top = os.projectdir()
-    local build_dir = config.get("buildir") or "build"
+    local build_dir = get_config("buildir") or "build"
     _revision_file = path.join(build_dir, "haiku-revision")
 
     -- Check for pre-set revision
-    local preset_revision = config.get("haiku_revision")
+    local preset_revision = get_config("haiku_revision")
     if preset_revision then
         io.writefile(_revision_file, preset_revision)
         return _revision_file
@@ -565,7 +563,7 @@ local _download_cache = {}
 ]]
 function DownloadLocatedFile(target, url, source)
     -- Check if downloads are disabled
-    if config.get("haiku_no_downloads") then
+    if get_config("haiku_no_downloads") then
         error("ERROR: Would need to download " .. url .. ", but HAIKU_NO_DOWNLOADS is set!")
     end
 
@@ -604,8 +602,8 @@ function DownloadFile(file, url, source)
         return _download_cache[file]
     end
 
-    local download_dir = config.get("haiku_download_dir")
-        or path.join(config.get("buildir") or "build", "download")
+    local download_dir = get_config("haiku_download_dir")
+        or path.join(get_config("buildir") or "build", "download")
 
     os.mkdir(download_dir)
 
@@ -639,7 +637,7 @@ end
 function ChecksumFileSHA256(output, input)
     print("ChecksumFileSHA256: %s", input)
 
-    local sha256_cmd = config.get("host_sha256") or "sha256sum"
+    local sha256_cmd = get_config("host_sha256") or "sha256sum"
     local result = os.iorun(sha256_cmd .. " " .. input)
 
     if result then
@@ -713,8 +711,8 @@ end
         source - Input file to strip
 ]]
 function StripFile(target, source)
-    local arch = config.get("arch") or "x86_64"
-    local strip = config.get("haiku_strip_" .. arch) or "strip"
+    local arch = get_config("arch") or "x86_64"
+    local strip = get_config("haiku_strip_" .. arch) or "strip"
 
     print("StripFile: %s -> %s", source, target)
 

@@ -172,7 +172,6 @@ AddDriversToPackage graphics
 AddDriversToPackage input :
 	ps2_hid
 	usb_hid
-	wacom
 	;
 AddDriversToPackage misc :
 	<driver>poke
@@ -381,7 +380,6 @@ AddFilesToPackage add-ons input_server devices :
 	<input>mouse
 	<input>tablet
 	<input>virtio
-	<input>wacom
 	;
 AddFilesToPackage add-ons input_server filters :
 	padblocker

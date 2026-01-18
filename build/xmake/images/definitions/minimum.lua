@@ -116,8 +116,6 @@ SYSTEM_BIN = FFilterByBuildFeatures({
     "sysinfo",
     "system_time",
     "tcptester",
-    "telnet",
-    "telnetd",
     "top",
     "traceroute",
     "trash",

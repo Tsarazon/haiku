@@ -34,8 +34,6 @@
     Haiku-specific extensions.
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Module State
 -- ============================================================================
@@ -93,7 +91,7 @@ function GetTargetArchitecture(target)
     if type(target) == "table" and target.get then
         arch = target:get("TARGET_PACKAGING_ARCH")
     end
-    return arch or config.get("arch") or "x86_64"
+    return arch or get_config("arch") or "x86_64"
 end
 
 -- ============================================================================
@@ -113,10 +111,10 @@ end
 ]]
 function GetLinker(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_LINK") or "$(CC)"
+        return get_config("HOST_LINK") or "$(CC)"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_LINK_" .. arch) or "$(CC)"
+        return get_config("TARGET_LINK_" .. arch) or "$(CC)"
     end
 end
 
@@ -134,7 +132,7 @@ end
 function GetLinkFlags(target)
     local flags = {}
     if IsHostPlatform(target) then
-        local host_flags = config.get("HOST_LINKFLAGS")
+        local host_flags = get_config("HOST_LINKFLAGS")
         if host_flags then
             if type(host_flags) == "table" then
                 for _, f in ipairs(host_flags) do
@@ -146,7 +144,7 @@ function GetLinkFlags(target)
         end
     else
         local arch = GetTargetArchitecture(target)
-        local target_flags = config.get("TARGET_LINKFLAGS_" .. arch)
+        local target_flags = get_config("TARGET_LINKFLAGS_" .. arch)
         if target_flags then
             if type(target_flags) == "table" then
                 for _, f in ipairs(target_flags) do
@@ -173,10 +171,10 @@ end
 ]]
 function GetCCompiler(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_CC") or "cc"
+        return get_config("HOST_CC") or "cc"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_CC_" .. arch) or "cc"
+        return get_config("TARGET_CC_" .. arch) or "cc"
     end
 end
 
@@ -193,10 +191,10 @@ end
 ]]
 function GetCxxCompiler(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_CXX") or "c++"
+        return get_config("HOST_CXX") or "c++"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_CXX_" .. arch) or "c++"
+        return get_config("TARGET_CXX_" .. arch) or "c++"
     end
 end
 
@@ -213,10 +211,10 @@ end
 ]]
 function GetArchiver(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_AR") or "ar"
+        return get_config("HOST_AR") or "ar"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_AR_" .. arch) or "ar"
+        return get_config("TARGET_AR_" .. arch) or "ar"
     end
 end
 
@@ -233,10 +231,10 @@ end
 ]]
 function GetRanlib(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_RANLIB") or "ranlib"
+        return get_config("HOST_RANLIB") or "ranlib"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_RANLIB_" .. arch) or "ranlib"
+        return get_config("TARGET_RANLIB_" .. arch) or "ranlib"
     end
 end
 
@@ -264,7 +262,7 @@ function GetCFlags(target, debug_level, warnings)
 
     -- Optimization flags
     if debug_level == 0 then
-        local optim = config.get("OPTIM") or "-O2"
+        local optim = get_config("OPTIM") or "-O2"
         table.insert(flags, optim)
     else
         table.insert(flags, "-O0")
@@ -273,7 +271,7 @@ function GetCFlags(target, debug_level, warnings)
     if IsHostPlatform(target) then
         -- Warning flags
         if warnings ~= 0 then
-            local warn_flags = config.get("HOST_WARNING_CCFLAGS")
+            local warn_flags = get_config("HOST_WARNING_CCFLAGS")
             if warn_flags then
                 if type(warn_flags) == "table" then
                     for _, f in ipairs(warn_flags) do table.insert(flags, f) end
@@ -283,7 +281,7 @@ function GetCFlags(target, debug_level, warnings)
             end
             if warnings == "treatAsErrors" then
                 table.insert(flags, "-Werror")
-                local werror_flags = config.get("HOST_WERROR_FLAGS")
+                local werror_flags = get_config("HOST_WERROR_FLAGS")
                 if werror_flags then
                     if type(werror_flags) == "table" then
                         for _, f in ipairs(werror_flags) do table.insert(flags, f) end
@@ -295,7 +293,7 @@ function GetCFlags(target, debug_level, warnings)
         end
 
         -- Debug and other flags
-        local host_ccflags = config.get("HOST_CCFLAGS")
+        local host_ccflags = get_config("HOST_CCFLAGS")
         if host_ccflags then
             if type(host_ccflags) == "table" then
                 for _, f in ipairs(host_ccflags) do table.insert(flags, f) end
@@ -304,7 +302,7 @@ function GetCFlags(target, debug_level, warnings)
             end
         end
 
-        local debug_flags = config.get("HOST_DEBUG_" .. debug_level .. "_CCFLAGS")
+        local debug_flags = get_config("HOST_DEBUG_" .. debug_level .. "_CCFLAGS")
         if debug_flags then
             if type(debug_flags) == "table" then
                 for _, f in ipairs(debug_flags) do table.insert(flags, f) end
@@ -317,7 +315,7 @@ function GetCFlags(target, debug_level, warnings)
 
         -- Warning flags
         if warnings ~= 0 then
-            local warn_flags = config.get("TARGET_WARNING_CCFLAGS_" .. arch)
+            local warn_flags = get_config("TARGET_WARNING_CCFLAGS_" .. arch)
             if warn_flags then
                 if type(warn_flags) == "table" then
                     for _, f in ipairs(warn_flags) do table.insert(flags, f) end
@@ -327,7 +325,7 @@ function GetCFlags(target, debug_level, warnings)
             end
             if warnings == "treatAsErrors" then
                 table.insert(flags, "-Werror")
-                local werror_flags = config.get("TARGET_WERROR_FLAGS_" .. arch)
+                local werror_flags = get_config("TARGET_WERROR_FLAGS_" .. arch)
                 if werror_flags then
                     if type(werror_flags) == "table" then
                         for _, f in ipairs(werror_flags) do table.insert(flags, f) end
@@ -339,7 +337,7 @@ function GetCFlags(target, debug_level, warnings)
         end
 
         -- Debug and other flags
-        local target_ccflags = config.get("TARGET_CCFLAGS_" .. arch)
+        local target_ccflags = get_config("TARGET_CCFLAGS_" .. arch)
         if target_ccflags then
             if type(target_ccflags) == "table" then
                 for _, f in ipairs(target_ccflags) do table.insert(flags, f) end
@@ -348,7 +346,7 @@ function GetCFlags(target, debug_level, warnings)
             end
         end
 
-        local debug_flags = config.get("TARGET_DEBUG_" .. debug_level .. "_CCFLAGS_" .. arch)
+        local debug_flags = get_config("TARGET_DEBUG_" .. debug_level .. "_CCFLAGS_" .. arch)
         if debug_flags then
             if type(debug_flags) == "table" then
                 for _, f in ipairs(debug_flags) do table.insert(flags, f) end
@@ -381,7 +379,7 @@ function GetCxxFlags(target, debug_level, warnings)
 
     -- Optimization flags
     if debug_level == 0 then
-        local optim = config.get("OPTIM") or "-O2"
+        local optim = get_config("OPTIM") or "-O2"
         table.insert(flags, optim)
     else
         table.insert(flags, "-O0")
@@ -390,7 +388,7 @@ function GetCxxFlags(target, debug_level, warnings)
     if IsHostPlatform(target) then
         -- Warning flags
         if warnings ~= 0 then
-            local warn_flags = config.get("HOST_WARNING_CXXFLAGS")
+            local warn_flags = get_config("HOST_WARNING_CXXFLAGS")
             if warn_flags then
                 if type(warn_flags) == "table" then
                     for _, f in ipairs(warn_flags) do table.insert(flags, f) end
@@ -400,7 +398,7 @@ function GetCxxFlags(target, debug_level, warnings)
             end
             if warnings == "treatAsErrors" then
                 table.insert(flags, "-Werror")
-                local werror_flags = config.get("HOST_WERROR_FLAGS")
+                local werror_flags = get_config("HOST_WERROR_FLAGS")
                 if werror_flags then
                     if type(werror_flags) == "table" then
                         for _, f in ipairs(werror_flags) do table.insert(flags, f) end
@@ -412,7 +410,7 @@ function GetCxxFlags(target, debug_level, warnings)
         end
 
         -- Debug and other flags
-        local host_cxxflags = config.get("HOST_CXXFLAGS")
+        local host_cxxflags = get_config("HOST_CXXFLAGS")
         if host_cxxflags then
             if type(host_cxxflags) == "table" then
                 for _, f in ipairs(host_cxxflags) do table.insert(flags, f) end
@@ -421,7 +419,7 @@ function GetCxxFlags(target, debug_level, warnings)
             end
         end
 
-        local debug_flags = config.get("HOST_DEBUG_" .. debug_level .. "_CXXFLAGS")
+        local debug_flags = get_config("HOST_DEBUG_" .. debug_level .. "_CXXFLAGS")
         if debug_flags then
             if type(debug_flags) == "table" then
                 for _, f in ipairs(debug_flags) do table.insert(flags, f) end
@@ -434,7 +432,7 @@ function GetCxxFlags(target, debug_level, warnings)
 
         -- Warning flags
         if warnings ~= 0 then
-            local warn_flags = config.get("TARGET_WARNING_CXXFLAGS_" .. arch)
+            local warn_flags = get_config("TARGET_WARNING_CXXFLAGS_" .. arch)
             if warn_flags then
                 if type(warn_flags) == "table" then
                     for _, f in ipairs(warn_flags) do table.insert(flags, f) end
@@ -444,7 +442,7 @@ function GetCxxFlags(target, debug_level, warnings)
             end
             if warnings == "treatAsErrors" then
                 table.insert(flags, "-Werror")
-                local werror_flags = config.get("TARGET_WERROR_FLAGS_" .. arch)
+                local werror_flags = get_config("TARGET_WERROR_FLAGS_" .. arch)
                 if werror_flags then
                     if type(werror_flags) == "table" then
                         for _, f in ipairs(werror_flags) do table.insert(flags, f) end
@@ -456,7 +454,7 @@ function GetCxxFlags(target, debug_level, warnings)
         end
 
         -- Debug and other flags
-        local target_cxxflags = config.get("TARGET_CXXFLAGS_" .. arch)
+        local target_cxxflags = get_config("TARGET_CXXFLAGS_" .. arch)
         if target_cxxflags then
             if type(target_cxxflags) == "table" then
                 for _, f in ipairs(target_cxxflags) do table.insert(flags, f) end
@@ -465,7 +463,7 @@ function GetCxxFlags(target, debug_level, warnings)
             end
         end
 
-        local debug_flags = config.get("TARGET_DEBUG_" .. debug_level .. "_CXXFLAGS_" .. arch)
+        local debug_flags = get_config("TARGET_DEBUG_" .. debug_level .. "_CXXFLAGS_" .. arch)
         if debug_flags then
             if type(debug_flags) == "table" then
                 for _, f in ipairs(debug_flags) do table.insert(flags, f) end
@@ -493,7 +491,7 @@ function GetAsFlags(target)
     local flags = {}
 
     if IsHostPlatform(target) then
-        local host_asflags = config.get("HOST_ASFLAGS")
+        local host_asflags = get_config("HOST_ASFLAGS")
         if host_asflags then
             if type(host_asflags) == "table" then
                 for _, f in ipairs(host_asflags) do table.insert(flags, f) end
@@ -503,7 +501,7 @@ function GetAsFlags(target)
         end
     else
         local arch = GetTargetArchitecture(target)
-        local target_asflags = config.get("TARGET_ASFLAGS_" .. arch)
+        local target_asflags = get_config("TARGET_ASFLAGS_" .. arch)
         if target_asflags then
             if type(target_asflags) == "table" then
                 for _, f in ipairs(target_asflags) do table.insert(flags, f) end
@@ -533,10 +531,10 @@ end
 ]]
 function GetIncludesSeparator(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_INCLUDES_SEPARATOR") or ""
+        return get_config("HOST_INCLUDES_SEPARATOR") or ""
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_INCLUDES_SEPARATOR_" .. arch) or ""
+        return get_config("TARGET_INCLUDES_SEPARATOR_" .. arch) or ""
     end
 end
 
@@ -553,10 +551,10 @@ end
 ]]
 function GetLocalIncludesOption(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_LOCAL_INCLUDES_OPTION") or "-I"
+        return get_config("HOST_LOCAL_INCLUDES_OPTION") or "-I"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_LOCAL_INCLUDES_OPTION_" .. arch) or "-I"
+        return get_config("TARGET_LOCAL_INCLUDES_OPTION_" .. arch) or "-I"
     end
 end
 
@@ -573,10 +571,10 @@ end
 ]]
 function GetSystemIncludesOption(target)
     if IsHostPlatform(target) then
-        return config.get("HOST_SYSTEM_INCLUDES_OPTION") or "-isystem"
+        return get_config("HOST_SYSTEM_INCLUDES_OPTION") or "-isystem"
     else
         local arch = GetTargetArchitecture(target)
-        return config.get("TARGET_SYSTEM_INCLUDES_OPTION_" .. arch) or "-isystem"
+        return get_config("TARGET_SYSTEM_INCLUDES_OPTION_" .. arch) or "-isystem"
     end
 end
 
@@ -976,8 +974,8 @@ function Lex(output, source, generate_cpp)
         output = output_file,
         generate_cpp = generate_cpp,
         command = function()
-            local lex = config.get("LEX") or "flex"
-            local lexflags = config.get("LEXFLAGS") or ""
+            local lex = get_config("LEX") or "flex"
+            local lexflags = get_config("LEXFLAGS") or ""
             return string.format('%s %s -o"%s" "%s"', lex, lexflags, output_file, source)
         end
     }
@@ -1014,8 +1012,8 @@ function Yacc(source_output, header_output, source, generate_cpp)
         output_header = output_hdr,
         generate_cpp = generate_cpp,
         command = function()
-            local yacc = config.get("YACC") or "bison"
-            local yaccflags = config.get("YACCFLAGS") or "-d"
+            local yacc = get_config("YACC") or "bison"
+            local yaccflags = get_config("YACCFLAGS") or "-d"
             -- Bison generates .tab.c/.tab.h by default, we may need to rename
             return string.format('%s %s -o "%s" "%s"', yacc, yaccflags, output_src, source)
         end
@@ -1228,14 +1226,15 @@ function Object(object, source)
             input = source,
             output = object,
             command = function()
-                local nasm = config.get("NASM") or "nasm"
+                local nasm = get_config("NASM") or "nasm"
                 return string.format('%s -f elf64 -o "%s" "%s"', nasm, object, source)
             end
         }
     elseif src_type == "lex" then
         -- Generate C/C++ from lex, then compile
-        local generate_cpp = false -- TODO: check GENERATE_C++ variable
-        local c_source = source:gsub("%.l$", generate_cpp and ".cpp" or ".c")
+        -- Use .ll extension for C++ output, .l for C output
+        local generate_cpp = source:match("%.ll$") ~= nil
+        local c_source = source:gsub("%.ll?$", generate_cpp and ".cpp" or ".c")
         return {
             type = "lex_compile",
             lex = Lex(c_source, source, generate_cpp),
@@ -1243,9 +1242,10 @@ function Object(object, source)
         }
     elseif src_type == "yacc" then
         -- Generate C/C++ from yacc, then compile
-        local generate_cpp = false -- TODO: check GENERATE_C++ variable
-        local c_source = source:gsub("%.y$", generate_cpp and ".cpp" or ".c")
-        local h_header = source:gsub("%.y$", generate_cpp and ".hpp" or ".h")
+        -- Use .yy extension for C++ output, .y for C output
+        local generate_cpp = source:match("%.yy$") ~= nil
+        local c_source = source:gsub("%.yy?$", generate_cpp and ".cpp" or ".c")
+        local h_header = source:gsub("%.yy?$", generate_cpp and ".hpp" or ".h")
         return {
             type = "yacc_compile",
             yacc = Yacc(c_source, h_header, source, generate_cpp),
@@ -1299,7 +1299,7 @@ function Archive(library, objects)
         inputs = objects,
         get_command = function(target)
             local ar = GetArchiver(target)
-            local arflags = config.get("ARFLAGS") or "rcs"
+            local arflags = get_config("ARFLAGS") or "rcs"
 
             -- Force recreation to avoid stale dependencies
             local cmds = {}
@@ -1679,22 +1679,31 @@ rule("haiku_executable")
     end)
 
     after_link(function (target)
-        -- Handle resources (XRes)
-        local resfiles = target:get("RESFILES")
-        if resfiles then
-            -- TODO: Integrate with ResourceRules for XRes
+        local targetfile = target:targetfile()
+        if not os.isfile(targetfile) then
+            return
         end
 
-        -- Set type, MIME, version (if not DONT_USE_BEOS_RULES)
+        -- Handle resources (XRes) - from BeOSRules
+        local resfiles = target:get("RESFILES")
+        if resfiles and #resfiles > 0 then
+            XRes(target, resfiles)
+        end
+
+        -- Set type, MIME, version (if not DONT_USE_BEOS_RULES) - from BeOSRules
         if not target:get("DONT_USE_BEOS_RULES") then
-            -- TODO: Integrate with SetType, MimeSet, SetVersion
-            -- TODO: CreateAppMimeDBEntries for target platform apps with resources
+            local mime_type = target:get("TARGET_MIME_TYPE")
+            SetType(target, mime_type)
+            SetVersion(target)
+            MimeSet(target)
+
+            -- Create app MIME entries if target has resources
+            if resfiles and #resfiles > 0 then
+                CreateAppMimeDBEntries(target)
+            end
         end
 
         -- Set executable permissions
-        local targetfile = target:targetfile()
-        if os.isfile(targetfile) then
-            os.exec('chmod +x "' .. targetfile .. '"')
-        end
+        os.exec('chmod +x "' .. targetfile .. '"')
     end)
 rule_end()

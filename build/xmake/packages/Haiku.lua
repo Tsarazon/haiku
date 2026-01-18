@@ -170,7 +170,7 @@ return function(context)
     AddDriversToPackage("bus", {"usb_raw"})
     AddDriversToPackage("disk/virtual", {"nbd"})
     AddDriversToPackage("graphics", SYSTEM_ADD_ONS_DRIVERS_GRAPHICS)
-    AddDriversToPackage("input", {"ps2_hid", "usb_hid", "wacom"})
+    AddDriversToPackage("input", {"ps2_hid", "usb_hid"})
     AddDriversToPackage("misc", {
         {name = "poke", grist = "driver"},
         {name = "mem", grist = "driver"},
@@ -379,7 +379,6 @@ return function(context)
         {name = "mouse", grist = "input"},
         {name = "tablet", grist = "input"},
         {name = "virtio", grist = "input"},
-        {name = "wacom", grist = "input"},
     })
     AddFilesToPackage("add-ons/input_server/filters", {
         "padblocker", "screen_saver", "shortcut_catcher", "switch_workspace",

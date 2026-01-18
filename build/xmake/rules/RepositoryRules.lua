@@ -26,8 +26,6 @@
     - Package metadata and checksums
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
@@ -143,9 +141,9 @@ function AddRepositoryPackage(repository, architecture, base_name, version)
     local family_name = family:gsub("^<package%-family>", "")
 
     -- Check if downloads are disabled (skip unavailable packages)
-    local no_downloads = config.get("no_downloads")
-    local is_bootstrap = config.get("is_bootstrap")
-    local download_dir = config.get("download_dir") or "$(buildir)/download"
+    local no_downloads = get_config("no_downloads")
+    local is_bootstrap = get_config("is_bootstrap")
+    local download_dir = get_config("download_dir") or "$(buildir)/download"
 
     if no_downloads and not is_bootstrap then
         local pkg_path = path.join(download_dir, package_data.file_name)
@@ -254,7 +252,7 @@ end
         List of package identifiers
 ]]
 function PackageRepository(repository, architecture, any_packages, packages, source_packages, debug_packages)
-    local primary_arch = config.get("arch") or "x86_64"
+    local primary_arch = get_config("arch") or "x86_64"
 
     -- Only process for primary architecture
     if architecture ~= primary_arch then
@@ -312,7 +310,7 @@ local function RemoteRepositoryFetchPackage(repository, package_data, file_name)
     local repo_data = _repositories[repository]
     local base_url = repo_data.config.url
     local checksum_file = repo_data.config.checksum_file
-    local download_dir = config.get("download_dir") or "$(buildir)/download"
+    local download_dir = get_config("download_dir") or "$(buildir)/download"
 
     -- Download using DownloadFile (from FileRules)
     local url = string.format("%s/packages/%s", base_url, file_name)
@@ -364,7 +362,7 @@ function RemotePackageRepository(repository, architecture, repository_url,
         source_packages, debug_packages)
 
     -- Build package list file
-    local buildir = config.get("buildir") or "$(buildir)"
+    local buildir = get_config("buildir") or "$(buildir)"
     local repos_dir = path.join(buildir, "repositories", architecture)
     os.mkdir(repos_dir)
 
@@ -420,8 +418,8 @@ local function BootstrapRepositoryFetchPackage(repository, package_data, file_na
     local port_spec = file_name:gsub("-.*", "")
 
     -- Build using haikuporter
-    local porter = config.get("haiku_porter") or "haikuporter"
-    local jobs = config.get("porter_jobs") or 4
+    local porter = get_config("haiku_porter") or "haikuporter"
+    local jobs = get_config("porter_jobs") or 4
 
     print(string.format("Building bootstrap package: %s", port_spec))
 
@@ -475,7 +473,7 @@ function BootstrapPackageRepository(repository, architecture, any_packages,
         packages_stage2, source_packages, debug_packages)
 
     -- Setup build directory
-    local buildir = config.get("buildir") or "$(buildir)"
+    local buildir = get_config("buildir") or "$(buildir)"
     local output_dir = path.join(buildir, "repositories", architecture,
         repository:gsub("[<>]", "") .. "-build")
     os.mkdir(output_dir)
@@ -497,7 +495,7 @@ end
 ]]
 function BuildBootstrapRepositoryConfig(config_file, architecture, output_dir)
     local haiku_top = os.projectdir()
-    local tree_path = config.get("haiku_ports_cross") or
+    local tree_path = get_config("haiku_ports_cross") or
         path.join(haiku_top, "3rdparty", "haikuports")
 
     local content = string.format([[
@@ -655,8 +653,8 @@ end
 function IsPackageAvailable(package_name, flags)
     flags = flags or {}
 
-    local target_arch = config.get("arch") or "x86_64"
-    local primary_arch = config.get("primary_arch") or target_arch
+    local target_arch = get_config("arch") or "x86_64"
+    local primary_arch = get_config("primary_arch") or target_arch
 
     -- For secondary architecture, try with arch suffix
     if target_arch ~= primary_arch and not flags.nameResolved then
@@ -710,7 +708,7 @@ function FetchPackage(package_name, flags)
     local package_data = versions[1]  -- Use first (latest) version
     local repository = package_data.repository
 
-    if config.get("dont_fetch_packages") then
+    if get_config("dont_fetch_packages") then
         error(string.format("FetchPackage: file %s not found and fetching disabled!",
             package_data.file_name))
     end
@@ -739,8 +737,8 @@ end
         version_file - Optional version file
 ]]
 function HaikuRepository(repository, repo_info_template, packages, url, version_file)
-    local architecture = config.get("arch") or "x86_64"
-    local buildir = config.get("buildir") or "$(buildir)"
+    local architecture = get_config("arch") or "x86_64"
+    local buildir = get_config("buildir") or "$(buildir)"
     local repos_dir = path.join(buildir, "repositories", architecture)
 
     os.mkdir(repos_dir)

@@ -7,9 +7,6 @@
 -- The network boot archive is a minimal bootable system that can be loaded
 -- over the network via PXE/TFTP for diskless booting.
 
--- import("rules.ImageRules")
--- import("rules.BuildFeatureRules")
-
 -- ============================================================================
 -- Network Configuration
 -- ============================================================================
@@ -246,7 +243,7 @@ end
 -- Archive Building
 -- ============================================================================
 
-function BuildNetBootArchiveTarget()
+local function BuildNetBootArchiveTarget()
     local haiku_top = os.projectdir()
     local output_dir = path.join(haiku_top, "generated")
 
@@ -299,16 +296,10 @@ end
 
 target("haiku-netboot-archive")
     set_kind("phony")
-
     on_build(function (target)
         print("Building network boot archive...")
-        -- Access global function via _G since callbacks run in sandbox
-        if _G.BuildNetBootArchiveTarget then
-            local archive = _G.BuildNetBootArchiveTarget()
-            print("Network boot archive built: " .. (archive or "unknown"))
-        else
-            print("Warning: BuildNetBootArchiveTarget not available yet")
-        end
+        local archive = BuildNetBootArchiveTarget()
+        print("Network boot archive built: " .. (archive or "unknown"))
     end)
 
 -- ============================================================================

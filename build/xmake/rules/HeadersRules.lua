@@ -50,8 +50,6 @@
     - FStandardHeaders      - Get all standard headers for architecture
 ]]
 
--- import("core.project.config")
-
 -- ============================================================================
 -- Configuration
 -- ============================================================================
@@ -63,19 +61,19 @@ end
 
 -- Get target architecture
 local function get_target_arch()
-    return config.get("arch") or "x86_64"
+    return get_config("arch") or "x86_64"
 end
 
 -- Check if using legacy GCC
 local function is_legacy_gcc(architecture)
     -- Legacy GCC is GCC 2.x, used for BeOS compatibility
     -- Modern Haiku uses GCC 4+ or Clang
-    return config.get("legacy_gcc_" .. (architecture or get_target_arch())) or false
+    return get_config("legacy_gcc_" .. (architecture or get_target_arch())) or false
 end
 
 -- Check if using Clang
 local function is_clang(architecture)
-    return config.get("clang_" .. (architecture or get_target_arch())) or false
+    return get_config("clang_" .. (architecture or get_target_arch())) or false
 end
 
 -- ============================================================================
@@ -681,7 +679,7 @@ function UseBuildFeatureHeaders(feature, attribute)
 
     -- Get headers path from build feature
     -- This would need integration with Haiku's build feature system
-    local headers = config.get("build_feature_" .. feature .. "_" .. attribute)
+    local headers = get_config("build_feature_" .. feature .. "_" .. attribute)
 
     if headers then
         if type(headers) ~= "table" then headers = {headers} end
@@ -751,7 +749,7 @@ function FStandardHeaders(architecture, language)
     if language == "C++" then
         -- C++ header directories would come from GCC/Clang installation
         -- This is architecture-specific
-        local cxx_headers = config.get("cxx_headers_" .. architecture)
+        local cxx_headers = get_config("cxx_headers_" .. architecture)
         if cxx_headers then
             if type(cxx_headers) == "table" then
                 for _, h in ipairs(cxx_headers) do
@@ -770,7 +768,7 @@ function FStandardHeaders(architecture, language)
     table.insert(headers, path.join(haiku_top, "headers", "posix"))
 
     -- GCC headers (from GCC installation)
-    local gcc_headers = config.get("gcc_headers_" .. architecture)
+    local gcc_headers = get_config("gcc_headers_" .. architecture)
     if gcc_headers then
         if type(gcc_headers) == "table" then
             for _, h in ipairs(gcc_headers) do

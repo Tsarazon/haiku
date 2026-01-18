@@ -5,9 +5,6 @@
 -- installation directory) and it executes the rules building the image
 -- (respectively installing the files in the installation directory).
 
--- import("rules.ImageRules")
--- import("rules.PackageRules")
-
 -- ============================================================================
 -- Image Type Selection
 -- ============================================================================
