@@ -275,20 +275,6 @@ UrlWrapper::ArgvReceived(int32 argc, char** argv)
 		return;
 	}
 
-	if (proto == "telnet") {
-		BString cmd("telnet ");
-		if (url.HasUserInfo())
-			cmd << "-l " << user << " ";
-		cmd << host;
-		if (url.HasPort())
-			cmd << " " << port;
-		PRINT(("CMD='%s'\n", cmd.String()));
-		cmd << failc;
-		args[2] = (char*)cmd.String();
-		be_roster->Launch(kTerminalSig, 3, args);
-		return;
-	}
-
 	// see draft:
 	// http://tools.ietf.org/wg/secsh/draft-ietf-secsh-scp-sftp-ssh-uri/
 	if (proto == "ssh") {

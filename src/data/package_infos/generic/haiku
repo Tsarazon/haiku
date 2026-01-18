@@ -39,8 +39,6 @@ provides {
 	cmd:renice
 	cmd:resattr
 	cmd:su
-	cmd:telnet
-	cmd:telnetd
 	cmd:top
 	cmd:traceroute
 	cmd:trash
