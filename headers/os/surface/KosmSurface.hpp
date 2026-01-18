@@ -56,6 +56,12 @@ public:
 									surface_purgeable_state* outOldState = NULL);
 			bool				IsVolatile() const;
 
+			// State accessors
+			uint32				Usage() const;
+			bool				IsLocked() const;
+			bool				IsValid() const;
+			thread_id			LockOwner() const;
+
 private:
 	friend class KosmSurfaceAllocator;
 

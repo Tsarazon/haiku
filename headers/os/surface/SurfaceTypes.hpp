@@ -10,13 +10,24 @@
 typedef uint32 surface_id;
 
 enum {
+	// 32-bit RGBA variants
 	PIXEL_FORMAT_RGBA8888 = 0,
 	PIXEL_FORMAT_BGRA8888,
 	PIXEL_FORMAT_RGB565,
 	PIXEL_FORMAT_RGBX8888,
+
+	// Planar YUV
 	PIXEL_FORMAT_NV12,
 	PIXEL_FORMAT_NV21,
-	PIXEL_FORMAT_YV12
+	PIXEL_FORMAT_YV12,
+
+	// ThorVG and compositor formats
+	PIXEL_FORMAT_ARGB8888,			// ThorVG native
+	PIXEL_FORMAT_XRGB8888,			// Compositor, X11/DRM
+
+	// Single-channel formats
+	PIXEL_FORMAT_A8,				// Font glyphs, masks
+	PIXEL_FORMAT_L8					// Grayscale
 };
 typedef uint32 pixel_format;
 

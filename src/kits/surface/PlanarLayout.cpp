@@ -13,13 +13,24 @@ typedef struct {
 
 
 static const format_info kFormats[] = {
+	// 32-bit RGBA variants
 	{ 1, 32 },	// PIXEL_FORMAT_RGBA8888
 	{ 1, 32 },	// PIXEL_FORMAT_BGRA8888
 	{ 1, 16 },	// PIXEL_FORMAT_RGB565
 	{ 1, 32 },	// PIXEL_FORMAT_RGBX8888
+
+	// Planar YUV
 	{ 2, 12 },	// PIXEL_FORMAT_NV12
 	{ 2, 12 },	// PIXEL_FORMAT_NV21
-	{ 3, 12 }	// PIXEL_FORMAT_YV12
+	{ 3, 12 },	// PIXEL_FORMAT_YV12
+
+	// ThorVG and compositor formats
+	{ 1, 32 },	// PIXEL_FORMAT_ARGB8888
+	{ 1, 32 },	// PIXEL_FORMAT_XRGB8888
+
+	// Single-channel formats
+	{ 1, 8 },	// PIXEL_FORMAT_A8
+	{ 1, 8 }	// PIXEL_FORMAT_L8
 };
 
 static const uint32 kFormatCount = sizeof(kFormats) / sizeof(kFormats[0]);
@@ -72,11 +83,15 @@ planar_calculate_plane(pixel_format format, uint32 planeIndex,
 			case PIXEL_FORMAT_RGBA8888:
 			case PIXEL_FORMAT_BGRA8888:
 			case PIXEL_FORMAT_RGBX8888:
+			case PIXEL_FORMAT_ARGB8888:
+			case PIXEL_FORMAT_XRGB8888:
 				outInfo->bytesPerElement = 4;
 				break;
 			case PIXEL_FORMAT_RGB565:
 				outInfo->bytesPerElement = 2;
 				break;
+			case PIXEL_FORMAT_A8:
+			case PIXEL_FORMAT_L8:
 			case PIXEL_FORMAT_NV12:
 			case PIXEL_FORMAT_NV21:
 			case PIXEL_FORMAT_YV12:

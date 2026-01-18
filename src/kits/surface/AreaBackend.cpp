@@ -162,6 +162,10 @@ AreaBackend::SupportsFormat(pixel_format format)
 		case PIXEL_FORMAT_BGRA8888:
 		case PIXEL_FORMAT_RGB565:
 		case PIXEL_FORMAT_RGBX8888:
+		case PIXEL_FORMAT_ARGB8888:
+		case PIXEL_FORMAT_XRGB8888:
+		case PIXEL_FORMAT_A8:
+		case PIXEL_FORMAT_L8:
 		case PIXEL_FORMAT_NV12:
 		case PIXEL_FORMAT_NV21:
 		case PIXEL_FORMAT_YV12:

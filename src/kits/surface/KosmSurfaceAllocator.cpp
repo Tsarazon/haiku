@@ -7,6 +7,7 @@
 #include <KosmSurface.hpp>
 
 #include <Autolock.h>
+#include <HashMap.h>
 #include <Locker.h>
 
 #include <new>
@@ -22,32 +23,26 @@
 extern AllocationBackend* create_area_backend();
 
 
-static const int32 kMaxSurfaces = 1024;
-
-
 struct KosmSurfaceAllocator::Impl {
+	typedef HashMap<HashKey32<surface_id>, KosmSurface*> SurfaceMap;
+
 	AllocationBackend*	backend;
-	KosmSurface*		surfaces[kMaxSurfaces];
+	SurfaceMap			surfaces;
 	surface_id			nextId;
 	BLocker				lock;
 
 	Impl()
 		:
 		backend(create_area_backend()),
+		surfaces(),
 		nextId(1),
 		lock("surface_allocator")
 	{
-		memset(surfaces, 0, sizeof(surfaces));
 	}
 
 	~Impl()
 	{
 		delete backend;
-	}
-
-	int32 IndexFor(surface_id id) const
-	{
-		return (id - 1) % kMaxSurfaces;
 	}
 };
 
@@ -112,8 +107,13 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 		return status;
 	}
 
-	int32 index = fImpl->IndexFor(buffer->id);
-	fImpl->surfaces[index] = surface;
+	status = fImpl->surfaces.Put(HashKey32<surface_id>(buffer->id), surface);
+	if (status != B_OK) {
+		SurfaceRegistry::Default()->Unregister(buffer->id);
+		fImpl->backend->Free(buffer);
+		delete surface;
+		return status;
+	}
 
 	*outSurface = surface;
 	return B_OK;
@@ -129,10 +129,7 @@ KosmSurfaceAllocator::Free(KosmSurface* surface)
 	BAutolock locker(fImpl->lock);
 
 	surface_id id = surface->ID();
-	int32 index = fImpl->IndexFor(id);
-
-	if (fImpl->surfaces[index] == surface)
-		fImpl->surfaces[index] = NULL;
+	fImpl->surfaces.Remove(HashKey32<surface_id>(id));
 
 	status_t status = SurfaceRegistry::Default()->Unregister(id);
 	if (status == B_SURFACE_IN_USE)
@@ -151,10 +148,8 @@ KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
 
 	BAutolock locker(fImpl->lock);
 
-	int32 index = fImpl->IndexFor(id);
-	KosmSurface* surface = fImpl->surfaces[index];
-
-	if (surface == NULL || surface->ID() != id)
+	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	if (surface == NULL)
 		return B_NAME_NOT_FOUND;
 
 	*outSurface = surface;
@@ -239,8 +234,12 @@ KosmSurfaceAllocator::CreateFromClone(surface_id id, area_id clonedArea,
 
 	surface->fData->buffer = buffer;
 
-	int32 index = fImpl->IndexFor(id);
-	fImpl->surfaces[index] = surface;
+	status = fImpl->surfaces.Put(HashKey32<surface_id>(id), surface);
+	if (status != B_OK) {
+		delete buffer;
+		delete surface;
+		return status;
+	}
 
 	*outSurface = surface;
 	return B_OK;
