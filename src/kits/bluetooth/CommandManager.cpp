@@ -10,7 +10,7 @@
 #include <bluetooth/bluetooth_error.h>
 #include <bluetooth/debug.h>
 
-#include "CompanyIdentifiers.h"
+#include <stdio.h>
 
 
 inline void*
@@ -712,12 +712,9 @@ const char*
 BluetoothManufacturer(uint16 manufacturer)
 {
 	CALLED();
-	if (manufacturer < sizeof(bluetoothManufacturers) / sizeof(const char*))
-		return bluetoothManufacturers[manufacturer];
-	else if (manufacturer == 0xFFFF)
-		return "internal use";
-	else
-		return "not assigned";
+	static char buf[32];
+	snprintf(buf, sizeof(buf), "%u", manufacturer);
+	return buf;
 }
 
 

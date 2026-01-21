@@ -130,8 +130,8 @@ BluetoothDeviceView::SetBluetoothDevice(BluetoothDevice* bDevice)
 
 		string = "";
 		if (bDevice->GetProperty("manufacturer", &value) == B_OK)
-			string << B_TRANSLATE("Manufacturer: ")
-			   	<< BluetoothManufacturer(value);
+			string << B_TRANSLATE("Manufacturer ID: ")
+				<< BluetoothManufacturer(value);
 		fManufacturerProperties->SetText(string.String());
 
 		string = "";
