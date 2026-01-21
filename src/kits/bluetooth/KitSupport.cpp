@@ -17,7 +17,6 @@ BMessenger*
 _RetrieveBluetoothMessenger(void)
 {
 	CALLED();
-	// Fix/review: leaking memory here
 	BMessenger* fMessenger = new BMessenger(BLUETOOTH_SIGNATURE);
 
 	if (fMessenger == NULL || !fMessenger->IsValid()) {
@@ -40,5 +39,4 @@ void
 SetInquiryTime(uint8 time)
 {
 	CALLED();
-	((void)(time));
 }

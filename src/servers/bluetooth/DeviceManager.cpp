@@ -95,11 +95,6 @@ DeviceManager::AddDirectory(node_ref *nref)
 		return status;
 	}
 
-//	BPath path(*nref);
-//	BString	str(path.Path());
-//
-//	TRACE_BT("DeviceManager: Exploring entries in %s\n", str.String());
-
 	entry_ref ref;
 	status_t error;
 	while ((error =	directory.GetNextRef(&ref))	== B_OK) {
@@ -182,13 +177,6 @@ DeviceManager::LoadState()
 }
 
 
-void
-DeviceManager::SaveState()
-{
-
-}
-
-
 status_t
 DeviceManager::StartMonitoringDevice(const char	*device)
 {
@@ -246,25 +234,6 @@ DeviceManager::StartMonitoringDevice(const char	*device)
 
     TRACE_BT("DeviceManager: Finished exploring entries(%s)\n", strerror(error));
 
-#if	0
-	HCIDelegate	*tmphd = NULL;
-	int32 i	= 0;
-
-	// TODO!! ask the server if	this needs to be monitored
-
-	while ((tmphd =	(HCIDelegate *)fDelegatesList.ItemAt(i++)) !=NULL) {
-
-		/* Find	out	the	reference*/
-		node_ref *dnref	= (node_ref	*)tmphd->fMonitoredRefs	;
-		if (*dnref == nref)	{
-			printf("StartMonitoringDevice already monitored\n");
-			alreadyMonitored = true;
-			break;
-		}
-
-	}
-#endif
-
 	return B_OK;
 }
 
@@ -281,43 +250,5 @@ DeviceManager::StopMonitoringDevice(const char *device)
 		|| ((err = directory.GetNodeRef(&nref))	!= B_OK))
 		return err;
 
-	// test	if still monitored
-/*
-	bool stillMonitored	= false;
-	int32 i	= 0;
-	while ((tmpaddon = (_BDeviceAddOn_ *)fDeviceAddons.ItemAt(i++))	!=NULL)	{
-		if (addon == tmpaddon)
-			continue;
-
-		int32 j=0;
-		node_ref *dnref	= NULL;
-		while ((dnref =	(node_ref *)tmpaddon->fMonitoredRefs.ItemAt(j++)) != NULL) {
-			if (*dnref == nref)	{
-				stillMonitored = true;
-				break;
-			}
-		}
-		if (stillMonitored)
-			break;
-	}
-
-	// remove from list
-	node_ref *dnref	= NULL;
-	int32 j=0;
-	while ((dnref =	(node_ref *)addon->fMonitoredRefs.ItemAt(j)) !=	NULL) {
-		if (*dnref == nref)	{
-			addon->fMonitoredRefs.RemoveItem(j);
-			delete dnref;
-			break;
-		}
-		j++;
-	}
-
-	// stop	monitoring if needed
-	if (!stillMonitored) {
-		if ((err = RemoveDirectory(&nref, addon)) != B_OK)
-			return err;
-	}
-*/
 	return B_OK;
 }

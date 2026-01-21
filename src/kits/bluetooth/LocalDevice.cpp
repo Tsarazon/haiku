@@ -549,19 +549,6 @@ LocalDevice::Reset()
 }
 
 
-/*
-ServiceRecord
-LocalDevice::getRecord(Connection notifier) {
-
-}
-
-void
-LocalDevice::updateRecord(ServiceRecord srvRecord) {
-
-}
-*/
-
-
 LocalDevice::LocalDevice(hci_id hid)
 	:
 	BluetoothDevice(),
@@ -574,51 +561,6 @@ LocalDevice::LocalDevice(hci_id hid)
 	_ReadLocalVersion();
 	_ReadTimeouts();
 	_ReadLinkKeys();
-
-	// Uncomment this if you want your device to have a nicer default name
-	// BString name("HaikuBluetooth");
-	// SetFriendlyName(name);
-
-
-	uint32 value;
-
-	// HARDCODE -> move this to addons
-	if (GetProperty("manufacturer", &value) == B_OK
-		&& value == 15) {
-
-		// Uncomment this out if your Broadcom dongle is not working properly
-		// Reset();	// Perform a reset to Broadcom buggyland
-
-// Uncomment this out if your Broadcom dongle has a null bdaddr
-//#define BT_WRITE_BDADDR_FOR_BCM2035
-#ifdef BT_WRITE_BDADDR_FOR_BCM2035
-#warning Writting broadcom bdaddr @ init.
-		// try write bdaddr to a bcm2035 -> will be moved to an addon
-		int8 bt_status = BT_ERROR;
-
-		BluetoothCommand<typed_command(hci_write_bcm2035_bdaddr)>
-			writeAddress(OGF_VENDOR_CMD, OCF_WRITE_BCM2035_BDADDR);
-
-		BMessage request(BT_MSG_HANDLE_SIMPLE_REQUEST);
-		BMessage reply;
-		writeAddress->bdaddr.b[0] = 0x3C;
-		writeAddress->bdaddr.b[1] = 0x19;
-		writeAddress->bdaddr.b[2] = 0x30;
-		writeAddress->bdaddr.b[3] = 0xC9;
-		writeAddress->bdaddr.b[4] = 0x03;
-		writeAddress->bdaddr.b[5] = 0x00;
-
-		request.AddInt32("hci_id", fHid);
-		request.AddData("raw command", B_ANY_TYPE,
-			writeAddress.Data(), writeAddress.Size());
-		request.AddInt16("eventExpected",  HCI_EVENT_CMD_COMPLETE);
-		request.AddInt16("opcodeExpected", PACK_OPCODE(OGF_VENDOR_CMD,
-			OCF_WRITE_BCM2035_BDADDR));
-
-		if (fMessenger->SendMessage(&request, &reply) == B_OK)
-			reply.FindInt8("status", &bt_status);
-#endif
-	}
 }
 
 

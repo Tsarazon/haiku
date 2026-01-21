@@ -108,19 +108,10 @@ BluetoothWindow::MessageReceived(BMessage* message)
 		break;
 
 		case kMsgSetDefaults:
-/*			fColorsView -> MessageReceived(new BMessage(DEFAULT_SETTINGS));
-			fAntialiasingSettings->SetDefaults();
-			fDefaultsButton->SetEnabled(false);
-			fRevertButton->SetEnabled(true);
-*/			break;
+			break;
 
 		case kMsgRevert:
-/*			fColorsView -> MessageReceived(new BMessage(REVERT_SETTINGS));
-			fAntialiasingSettings->Revert();
-			fDefaultsButton->SetEnabled(fColorsView->IsDefaultable()
-								|| fAntialiasingSettings->IsDefaultable());
-			fRevertButton->SetEnabled(false);
-*/			break;
+			break;
 
 		case kMsgStartServices:
 			if (!be_roster->IsRunning(BLUETOOTH_SIGNATURE)) {

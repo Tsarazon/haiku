@@ -38,8 +38,6 @@ static const uint32 kMsgAddDevices = 'ddDv';
 static const uint32 kMsgRemoveDevice = 'rmDv';
 static const uint32 kMsgPairDevice = 'trDv';
 static const uint32 kMsgDisconnectDevice = 'dsDv';
-//static const uint32 kMsgBlockDevice = 'blDv';
-//static const uint32 kMsgRefreshDevices = 'rfDv';
 
 using namespace Bluetooth;
 
@@ -57,13 +55,7 @@ RemoteDevicesView::RemoteDevicesView(const char* name, uint32 flags)
 
 	disconnectButton = new BButton("disconnect", B_TRANSLATE("Disconnect"),
 		new BMessage(kMsgDisconnectDevice));
-/*
-	blockButton = new BButton("block", B_TRANSLATE("As blocked"),
-		new BMessage(kMsgBlockDevice));
 
-	availButton = new BButton("check", B_TRANSLATE("Refresh" B_UTF8_ELLIPSIS),
-		new BMessage(kMsgRefreshDevices));
-*/
 	// Set up device list
 	fDeviceList = new BListView("DeviceList", B_SINGLE_SELECTION_LIST);
 
@@ -72,17 +64,13 @@ RemoteDevicesView::RemoteDevicesView(const char* name, uint32 flags)
 	BLayoutBuilder::Group<>(this, B_HORIZONTAL, 10)
 		.SetInsets(5)
 		.Add(fScrollView)
-		//.Add(BSpaceLayoutItem::CreateHorizontalStrut(5))
 		.AddGroup(B_VERTICAL)
 			.SetInsets(0, 15, 0, 15)
 			.Add(addButton)
 			.Add(removeButton)
 			.AddGlue()
-//			.Add(availButton)
-	//		.AddGlue()
 			.Add(pairButton)
 			.Add(disconnectButton)
-//			.Add(blockButton)
 			.AddGlue()
 		.End()
 	.End();
@@ -105,8 +93,6 @@ RemoteDevicesView::AttachedToWindow(void)
 	removeButton->SetTarget(this);
 	pairButton->SetTarget(this);
 	disconnectButton->SetTarget(this);
-//	blockButton->SetTarget(this);
-//	availButton->SetTarget(this);
 
 	LoadSettings();
 	fDeviceList->Select(0);

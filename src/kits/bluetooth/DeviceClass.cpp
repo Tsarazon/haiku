@@ -227,7 +227,7 @@ DeviceClass::GetMinorDeviceClass(BString& minorClass)
 			}
 			break;
 		case 5:	/* peripheral */
-		{		
+		{
 			switch(minor & 48) {
 				case 16:
 					minorClass << B_TRANSLATE("Keyboard");
