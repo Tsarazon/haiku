@@ -1,4 +1,4 @@
-SubDir HAIKU_TOP src add-ons kernel bluetooth btCoreData ;
+SubDir HAIKU_TOP src add-ons kernel drivers bluetooth core ;
 
 UsePrivateKernelHeaders ;
 UsePrivateHeaders net bluetooth ;

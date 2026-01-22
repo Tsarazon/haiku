@@ -448,7 +448,7 @@ submit_nbuffer(hci_id hid, net_buffer* nbuf)
 			break;
 
 			default:
-				panic("submit_nbuffer: no protocol");
+				ERROR("%s: unknown protocol %d\n", __func__, nbuf->protocol);
 			break;
 
 		}
@@ -550,8 +550,10 @@ device_close(void* cookie)
 	void* item;
 	bt_usb_dev* bdev = (bt_usb_dev*)cookie;
 
-	if (bdev == NULL)
-		panic("bad cookie");
+	if (bdev == NULL) {
+		ERROR("%s: bad cookie\n", __func__);
+		return B_BAD_VALUE;
+	}
 
 	// Clean queues
 

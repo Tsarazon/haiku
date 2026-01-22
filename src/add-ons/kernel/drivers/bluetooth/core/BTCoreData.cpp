@@ -52,8 +52,10 @@ PostEvent(bluetooth_device* ndev, void* event, size_t size)
 			HciConnection* conn = AddConnection(data->handle, BT_ACL,
 				data->bdaddr, ndev->index);
 
-			if (conn == NULL)
-				panic("no mem for conn desc");
+			if (conn == NULL) {
+				ERROR("%s: no memory for connection descriptor\n", __func__);
+				return B_NO_MEMORY;
+			}
 			conn->ndevice = ndev;
 			TRACE("%s: Registered connection handle=%#x\n", __func__,
 				data->handle);

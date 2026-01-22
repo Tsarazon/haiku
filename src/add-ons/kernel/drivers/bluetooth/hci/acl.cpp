@@ -165,13 +165,13 @@ AclAssembly(net_buffer* nbuf, hci_id hid)
 status_t
 PostToUpper(HciConnection* conn, net_buffer* buf)
 {
-	if (L2cap == NULL)
-
-	if (get_module(NET_BLUETOOTH_L2CAP_NAME, (module_info**)&L2cap) != B_OK) {
-		ERROR("%s: cannot get module \"%s\"\n", __func__,
-			NET_BLUETOOTH_L2CAP_NAME);
-		return B_ERROR;
-	} // TODO: someone put it
+	if (L2cap == NULL) {
+		if (get_module(NET_BLUETOOTH_L2CAP_NAME, (module_info**)&L2cap) != B_OK) {
+			ERROR("%s: cannot get module \"%s\"\n", __func__,
+				NET_BLUETOOTH_L2CAP_NAME);
+			return B_ERROR;
+		}
+	}
 
 	return L2cap->receive_data(buf);
 }

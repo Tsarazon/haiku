@@ -123,13 +123,16 @@ Assemble(bluetooth_device* bluetoothDevice, bt_packet_t type, void* data,
 						} else {
 							nbuf = gBufferModule->create(
 								bluetoothDevice->fExpectedPacketSize[type]);
+							if (nbuf == NULL) {
+								ERROR("%s: failed to allocate EVENT buffer\n", __func__);
+								return ENOMEM;
+							}
 							bluetoothDevice->fBuffersRx[type] = nbuf;
-
 							nbuf->protocol = type;
 						}
 
 					} else {
-						panic("EVENT frame corrupted\n");
+						ERROR("%s: EVENT frame corrupted\n", __func__);
 						return EILSEQ;
 					}
 					break;
@@ -141,14 +144,16 @@ Assemble(bluetooth_device* bluetoothDevice, bt_packet_t type, void* data,
 						bluetoothDevice->fExpectedPacketSize[type] = HCI_ACL_HDR_SIZE
 							+ B_LENDIAN_TO_HOST_INT16(headerPkt->alen);
 
-						// Create the buffer -> TODO: this allocation can fail
 						nbuf = gBufferModule->create(
 							bluetoothDevice->fExpectedPacketSize[type]);
+						if (nbuf == NULL) {
+							ERROR("%s: failed to allocate ACL buffer\n", __func__);
+							return ENOMEM;
+						}
 						bluetoothDevice->fBuffersRx[type] = nbuf;
-
 						nbuf->protocol = type;
 					} else {
-						panic("ACL frame corrupted\n");
+						ERROR("%s: ACL frame corrupted\n", __func__);
 						return EILSEQ;
 					}
 					break;
@@ -158,8 +163,8 @@ Assemble(bluetooth_device* bluetoothDevice, bt_packet_t type, void* data,
 					break;
 
 				default:
-					panic("unknown packet type in assembly");
-					break;
+					ERROR("%s: unknown packet type in assembly\n", __func__);
+					return EINVAL;
 			}
 
 			currentPacketLen = bluetoothDevice->fExpectedPacketSize[type];
@@ -177,10 +182,9 @@ Assemble(bluetooth_device* bluetoothDevice, bt_packet_t type, void* data,
 
 				switch (nbuf->protocol) {
 					case BT_EVENT:
-						panic("need to send full buffer to btdatacore!\n");
+						ERROR("%s: need to send full buffer to btdatacore\n", __func__);
 						btCoreData->PostEvent(bluetoothDevice, data,
 							bluetoothDevice->fExpectedPacketSize[type]);
-
 						break;
 					case BT_ACL:
 						// TODO: device descriptor has been fetched better not
@@ -303,8 +307,10 @@ PostACL(hci_id hciId, net_buffer* buffer)
 	net_buffer* next_frame = buffer;
 	uint8 flag = HCI_ACL_PACKET_START;
 
-	if (buffer == NULL)
-		panic("passing null buffer");
+	if (buffer == NULL) {
+		ERROR("%s: passing null buffer\n", __func__);
+		return B_BAD_VALUE;
+	}
 
 	uint16 handle = buffer->type; // TODO: CodeHandler
 
@@ -401,7 +407,7 @@ bluetooth_std_ops(int32 op, ...)
 				(module_info**)&gBufferModule);
 
 			if (status < B_OK) {
-				panic("no way Dude we need that!");
+				ERROR("%s: cannot get net_buffer module\n", __func__);
 				return status;
 			}
 
@@ -445,6 +451,9 @@ bluetooth_std_ops(int32 op, ...)
 
 		case B_MODULE_UNINIT:
 		{
+			delete BluetoothRXPort;
+			BluetoothRXPort = NULL;
+
 			delete_sem(sLinkChangeSemaphore);
 
 			mutex_destroy(&sListLock);

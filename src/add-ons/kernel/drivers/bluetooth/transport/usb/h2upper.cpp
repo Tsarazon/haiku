@@ -127,8 +127,11 @@ send_packet(hci_id hid, bt_packet_t type, net_buffer* nbuf)
 	// TODO: Lock Device
 
 	if (nbuf != NULL) {
-		if (type != nbuf->protocol) // a bit strict maybe
-			panic("Upper layer has not filled correctly a packet");
+		if (type != nbuf->protocol) {
+			ERROR("%s: Upper layer has not filled correctly a packet (type=%d, protocol=%d)\n",
+				__func__, type, nbuf->protocol);
+			return B_BAD_VALUE;
+		}
 
 		switch (type) {
 			case BT_COMMAND:
