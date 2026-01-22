@@ -409,6 +409,11 @@ L2capEndpoint::SendData(net_buffer* buffer)
 	if (fState != OPEN)
 		return ENOTCONN;
 
+	if (fConnection == NULL) {
+		ERROR("%s: connection is NULL in OPEN state!\n", __func__);
+		return ENOTCONN;
+	}
+
 	ssize_t sent = 0;
 	while (buffer != NULL) {
 		net_buffer* current = buffer;
@@ -469,7 +474,7 @@ L2capEndpoint::_SendQueued()
 	CALLED();
 	ASSERT_LOCKED_MUTEX(&fLock);
 
-	if (fState != OPEN)
+	if (fState != OPEN || fConnection == NULL)
 		return;
 
 	net_buffer* buffer;

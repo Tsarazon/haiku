@@ -149,10 +149,15 @@ AclAssembly(net_buffer* nbuf, hci_id hid)
 		memcpy(conn->currentRxPacket->source, &conn->address_dest, sizeof(sockaddr_storage));
 		conn->currentRxPacket->interface_address = &conn->interface_address;
 
-		error = PostToUpper(conn, conn->currentRxPacket);
-		// clean
+		net_buffer* packet = conn->currentRxPacket;
 		conn->currentRxPacket = NULL;
 		conn->currentRxExpectedLength = 0;
+
+		error = PostToUpper(conn, packet);
+		if (error != B_OK) {
+			ERROR("%s: PostToUpper failed: %s\n", __func__, strerror(error));
+			gBufferModule->free(packet);
+		}
 	} else {
 		TRACE("%s: Expected %ld current adds %d\n", __func__,
 			conn->currentRxExpectedLength, length);

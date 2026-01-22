@@ -299,6 +299,7 @@ submit_tx_acl(bt_usb_dev* bdev, net_buffer* nbuf)
 
 	if (error != B_OK) {
 		bdev->stat.rejectedTX++;
+		nb_destroy(nbuf);
 	} else {
 		bdev->stat.acceptedTX++;
 	}

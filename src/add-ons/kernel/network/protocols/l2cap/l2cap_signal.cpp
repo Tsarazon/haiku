@@ -162,6 +162,7 @@ l2cap_handle_configuration_req(HciConnection* conn, uint8 ident, net_buffer* buf
 		// Reject without doing anything else.
 		send_l2cap_configuration_rsp(conn, ident, dcid, 0,
 			l2cap_configuration_rsp::RESULT_UNKNOWN_OPTION, options.rejected);
+		gBufferModule->free(options.rejected);
 		return B_OK;
 	}
 
@@ -199,6 +200,7 @@ l2cap_handle_configuration_rsp(HciConnection* conn, L2capEndpoint* endpoint,
 		// Reject without doing anything else.
 		send_l2cap_command_reject(conn, ident,
 			l2cap_command_reject::REJECTED_NOT_UNDERSTOOD, 0, 0, 0);
+		gBufferModule->free(options.rejected);
 		return B_OK;
 	}
 

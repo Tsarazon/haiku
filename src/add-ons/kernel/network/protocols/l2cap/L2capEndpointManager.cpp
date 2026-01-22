@@ -130,8 +130,11 @@ L2capEndpointManager::Disconnected(HciConnection* connection)
 		if (endpoint->fConnection != connection)
 			continue;
 
+		MutexLocker endpointLocker(endpoint->fLock);
 		endpoint->fConnection = NULL;
 		endpoint->fState = L2capEndpoint::CLOSED;
+		endpoint->socket->error = ECONNRESET;
+		endpoint->fCommandWait.NotifyAll();
 	}
 }
 

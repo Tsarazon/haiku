@@ -13,7 +13,7 @@
 
 #define htole16(x) B_HOST_TO_LENDIAN_INT16(x)
 #define le16toh(x) B_LENDIAN_TO_HOST_INT16(x)
-#define htole32(x) B_HOST_TO_LENDIAN_INT16(x)
+#define htole32(x) B_HOST_TO_LENDIAN_INT32(x)
 #define le32toh(x) B_LENDIAN_TO_HOST_INT32(x)
 
 
