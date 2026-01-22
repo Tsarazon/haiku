@@ -43,9 +43,11 @@ public:
 
 	void SetRecord(uint8 major, uint8 minor, uint16 service)
 	{
-		fRecord = (minor & 0x3F) << 2;
-		fRecord |= (major & 0x1F) << 8;
-		fRecord |= (service & 0x7FF) << 13;
+		uint32 record = 0;
+		record |= (static_cast<uint32>(minor) & 0x3F) << 2;
+		record |= (static_cast<uint32>(major) & 0x1F) << 8;
+		record |= (static_cast<uint32>(service) & 0x7FF) << 13;
+		fRecord = record;
 	}
 
 

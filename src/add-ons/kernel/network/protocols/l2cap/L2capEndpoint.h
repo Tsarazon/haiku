@@ -9,6 +9,7 @@
 
 #include <lock.h>
 #include <condition_variable.h>
+#include <Referenceable.h>
 #include <util/AVLTree.h>
 
 #include <net_protocol.h>
@@ -93,7 +94,7 @@ private:
 		RECEIVED_DISCONNECTION_REQ,
 	} fState;
 
-	HciConnection*	fConnection;
+	BReference<HciConnection>	fConnection;
 
 	ConditionVariable fCommandWait;
 

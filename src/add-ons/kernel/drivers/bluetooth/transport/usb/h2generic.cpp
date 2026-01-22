@@ -512,28 +512,36 @@ device_open(const char* name, uint32 flags, void **cookie)
 	list_init(&bdev->snetBufferRecycleTrash);
 
 	// Allocate set and register the HCI device
-	if (btDevices != NULL) {
+	if (btDevices == NULL) {
+		ERROR("%s: HCI module not available\n", __func__);
+		err = B_NO_INIT;
+		goto err_cleanup;
+	}
+
+	{
 		bluetooth_device* ndev;
 		// TODO: Fill the transport descriptor
 		err = btDevices->RegisterDriver(&bluetooth_hooks, &ndev);
-
-		if (err == B_OK) {
-			bdev->hdev = hdev = ndev->index; // Get the index
-			bdev->ndev = ndev;  // Get the net_device
-
-		} else {
-			hdev = bdev->num; // XXX: Lets try to go on
+		if (err != B_OK) {
+			ERROR("%s: Failed to register HCI device: %s\n", __func__,
+				strerror(err));
+			goto err_cleanup;
 		}
-	} else {
-		hdev = bdev->num; // XXX: Lets try to go on
+		bdev->hdev = hdev = ndev->index;
+		bdev->ndev = ndev;
 	}
-
-	bdev->hdev = hdev;
 
 	*cookie = bdev;
 	release_sem(bdev->lock);
 
 	return B_OK;
+
+err_cleanup:
+	purge_room(&bdev->eventRoom);
+	purge_room(&bdev->aclRoom);
+	TEST_AND_CLEAR(&bdev->state, RUNNING);
+	release_sem(bdev->lock);
+	return err;
 
 }
 
@@ -793,9 +801,7 @@ init_driver(void)
 	// HCI MODULE INITS
 	if (get_module(hci_name, (module_info**)&hci) != B_OK) {
 		ERROR("%s: cannot get module '%s'\n", __func__, hci_name);
-#ifndef BT_SURVIVE_WITHOUT_HCI
 		goto err_release2;
-#endif
 	}
 
 	// USB MODULE INITS
@@ -807,9 +813,7 @@ init_driver(void)
 	if (get_module(NET_BUFFER_MODULE_NAME, (module_info**)&nb) != B_OK) {
 		ERROR("%s: cannot get module '%s'\n", __func__,
 			NET_BUFFER_MODULE_NAME);
-#ifndef BT_SURVIVE_WITHOUT_NET_BUFFERS
 		goto err_release;
-#endif
 	}
 
 	// GENERAL INITS
@@ -837,9 +841,7 @@ err_release:
 	put_module(usb_name);
 err_release1:
 	put_module(hci_name);
-#ifndef BT_SURVIVE_WITHOUT_HCI
 err_release2:
-#endif
 	put_module(btDevices_name);
 err_release3:
 	put_module(BT_CORE_DATA_MODULE_NAME);

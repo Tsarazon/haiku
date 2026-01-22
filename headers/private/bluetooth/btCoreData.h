@@ -8,6 +8,7 @@
 
 #include <module.h>
 #include <lock.h>
+#include <Referenceable.h>
 #include <util/DoublyLinkedList.h>
 #include <util/VectorMap.h>
 #include <net_datalink.h>
@@ -34,7 +35,8 @@ typedef enum _connection_status {
 
 #ifdef __cplusplus
 
-struct HciConnection : DoublyLinkedListLinkImpl<HciConnection> {
+struct HciConnection : DoublyLinkedListLinkImpl<HciConnection>,
+	public BReferenceable {
 	HciConnection(hci_id hid);
 	virtual ~HciConnection();
 

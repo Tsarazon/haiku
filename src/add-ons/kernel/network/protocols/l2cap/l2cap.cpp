@@ -261,6 +261,8 @@ l2cap_receive_data(net_buffer* buffer)
 			}
 
 			status = l2cap_handle_signaling_command(connection, buffer);
+			// Release reference acquired by connection_for()
+			connection->ReleaseReference();
 			break;
 		}
 
@@ -307,6 +309,9 @@ l2cap_error_received(net_error error, net_error_data* errorData, net_buffer* dat
 
 		// Disconnect all connections with this HciConnection.
 		gL2capEndpointManager.Disconnected(connection);
+
+		// Release reference acquired by connection_for()
+		connection->ReleaseReference();
 
 		gBufferModule->free(data);
 		return B_OK;

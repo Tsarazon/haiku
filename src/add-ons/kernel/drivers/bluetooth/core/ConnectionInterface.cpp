@@ -48,12 +48,14 @@ HciConnection::~HciConnection()
 	}
 
 	// Inform the L2CAP module this connection is about to be gone.
-	if (L2cap != NULL) {
+	if (L2cap != NULL && gBufferModule != NULL) {
 		net_buffer* error = gBufferModule->create(128);
-		error->interface_address = &interface_address;
-		if (L2cap->error_received(B_NET_ERROR_UNREACH_HOST, NULL, error) != B_OK) {
-			error->interface_address = NULL;
-			gBufferModule->free(error);
+		if (error != NULL) {
+			error->interface_address = &interface_address;
+			if (L2cap->error_received(B_NET_ERROR_UNREACH_HOST, NULL, error) != B_OK) {
+				error->interface_address = NULL;
+				gBufferModule->free(error);
+			}
 		}
 	}
 
@@ -67,37 +69,50 @@ AddConnection(uint16 handle, int type, const bdaddr_t& dst, hci_id hid)
 	// Create connection descriptor
 
 	HciConnection* conn = ConnectionByHandle(handle, hid);
-	if (conn != NULL)
-		goto update;
+	if (conn != NULL) {
+		// ConnectionByHandle already acquired reference, just update fields
+		bdaddrUtils::Copy(conn->destination, dst);
+		{
+			sockaddr_l2cap* destination = (sockaddr_l2cap*)&conn->address_dest;
+			destination->l2cap_len = sizeof(sockaddr_l2cap);
+			destination->l2cap_family = AF_BLUETOOTH;
+			destination->l2cap_bdaddr = dst;
+		}
+		conn->type = type;
+		conn->handle = handle;
+		conn->status = HCI_CONN_OPEN;
+		conn->mtu = L2CAP_MTU_MINIMUM;
+		return conn;
+	}
 
 	conn = new (std::nothrow) HciConnection(hid);
 	if (conn == NULL)
-		goto bail;
-
-	// memset(conn, 0, sizeof(HciConnection));
+		return NULL;
 
 	conn->currentRxPacket = NULL;
 	conn->currentRxExpectedLength = 0;
-update:
+
 	// fill values
 	bdaddrUtils::Copy(conn->destination, dst);
 	{
-	sockaddr_l2cap* destination = (sockaddr_l2cap*)&conn->address_dest;
-	destination->l2cap_len = sizeof(sockaddr_l2cap);
-	destination->l2cap_family = AF_BLUETOOTH;
-	destination->l2cap_bdaddr = dst;
+		sockaddr_l2cap* destination = (sockaddr_l2cap*)&conn->address_dest;
+		destination->l2cap_len = sizeof(sockaddr_l2cap);
+		destination->l2cap_family = AF_BLUETOOTH;
+		destination->l2cap_bdaddr = dst;
 	}
 	conn->type = type;
 	conn->handle = handle;
 	conn->status = HCI_CONN_OPEN;
-	conn->mtu = L2CAP_MTU_MINIMUM; // TODO: give the mtu to the connection
+	conn->mtu = L2CAP_MTU_MINIMUM;
+
+	// Acquire reference for the caller before adding to list
+	conn->AcquireReference();
 
 	{
-	MutexLocker _(&sConnectionListLock);
-	sConnectionList.Add(conn);
+		MutexLocker _(&sConnectionListLock);
+		sConnectionList.Add(conn);
 	}
 
-bail:
 	return conn;
 }
 
@@ -124,7 +139,8 @@ RemoveConnection(const bdaddr_t& destination, hci_id hid)
 				sConnectionList.Remove(conn);
 
 				locker.Unlock();
-				delete conn;
+				// Release reference - object will be deleted when refcount reaches 0
+				conn->ReleaseReference();
 				return B_OK;
 			}
 		}
@@ -153,7 +169,8 @@ RemoveConnection(uint16 handle, hci_id hid)
 				sConnectionList.Remove(conn);
 
 				locker.Unlock();
-				delete conn;
+				// Release reference - object will be deleted when refcount reaches 0
+				conn->ReleaseReference();
 				return B_OK;
 			}
 		}
@@ -194,6 +211,7 @@ ConnectionByHandle(uint16 handle, hci_id hid)
 
 		conn = iterator.Next();
 		if (conn->Hid == hid && conn->handle == handle) {
+			conn->AcquireReference();
 			return conn;
 		}
 	}
@@ -214,6 +232,7 @@ ConnectionByDestination(const bdaddr_t& destination, hci_id hid)
 		HciConnection* conn = iterator.Next();
 		if (conn->Hid == hid
 			&& bdaddrUtils::Compare(conn->destination, destination)) {
+			conn->AcquireReference();
 			return conn;
 		}
 	}

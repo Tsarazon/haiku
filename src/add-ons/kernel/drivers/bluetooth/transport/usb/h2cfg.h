@@ -23,9 +23,6 @@
 #error incomplete Bluetooth driver Commands and Events should be implemented
 #endif
 
-#define BT_SURVIVE_WITHOUT_HCI
-//#define BT_SURVIVE_WITHOUT_NET_BUFFERS
-
 #ifndef BLUETOOTH_DEVICE_TRANSPORT
 #error BLUETOOTH_DEVICE_TRANSPORT must be defined to build the publishing path
 #endif

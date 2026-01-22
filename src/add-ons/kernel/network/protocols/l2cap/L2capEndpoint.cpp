@@ -307,9 +307,9 @@ L2capEndpoint::Connect(const struct sockaddr* _address)
 	TRACE("l2cap: %" B_PRId32 " for route %s\n", hid,
 		bdaddrUtils::ToString(address->l2cap_bdaddr).String());
 
-	fConnection = btCoreData->ConnectionByDestination(
-		address->l2cap_bdaddr, hid);
-	if (fConnection == NULL)
+	fConnection.SetTo(btCoreData->ConnectionByDestination(
+		address->l2cap_bdaddr, hid), true);
+	if (!fConnection.IsSet())
 		return EHOSTUNREACH;
 
 	memcpy(&socket->peer, _address, sizeof(struct sockaddr_l2cap));

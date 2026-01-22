@@ -72,10 +72,19 @@ AclAssembly(net_buffer* nbuf, hci_id hid)
 		ERROR("%s: expected handle=%#x does not exist!\n", __func__,
 			con_handle);
 		conn = btCoreData->AddConnection(con_handle, BT_ACL, BDADDR_NULL, hid);
+		if (conn == NULL) {
+			ERROR("%s: failed to create connection for handle=%#x\n", __func__,
+				con_handle);
+			gBufferModule->free(nbuf);
+			return ENOMEM;
+		}
 	}
 
+	// Use BReference to automatically release when done
+	BReference<HciConnection> connRef(conn, true);
+
 	// Verify connection state
-	if (conn->status!= HCI_CONN_OPEN) {
+	if (conn->status != HCI_CONN_OPEN) {
 		ERROR("%s: unexpected ACL data packet. Connection not open\n",
 			__func__);
 		gBufferModule->free(nbuf);
