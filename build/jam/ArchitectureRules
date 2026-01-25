@@ -538,11 +538,9 @@ rule ArchitectureSetupWarnings architecture
 	# - All network drivers imported from FreeBSD or OpenBSD
 
 	EnableWerror src add-ons accelerants ;
-	EnableWerror src add-ons bluetooth ;
 	EnableWerror src add-ons decorators ;
 	EnableWerror src add-ons disk_systems ;
 	EnableWerror src add-ons input_server ;
-	EnableWerror src add-ons kernel bluetooth ;
 	EnableWerror src add-ons kernel bus_managers ;
 	EnableWerror src add-ons kernel busses ;
 	EnableWerror src add-ons kernel console ;

@@ -357,7 +357,6 @@ AddFilesToPackage add-ons Network\ Settings :
 	Hostname
 	FTPService
 	SSHService
-	TelnetService
 	;
 
 AddFilesToPackage add-ons Tracker :

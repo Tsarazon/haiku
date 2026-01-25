@@ -124,9 +124,9 @@ rule DefineDefaultBuildProfiles
 			AddGroupToHaikuImage party : 101 : user sshd ;
 			HAIKU_IMAGE_HOST_NAME ?= shredder ;
 			if $(DEBUG) != 0 {
-				HAIKU_IMAGE_SIZE ?= 850 ;
+				HAIKU_IMAGE_SIZE ?= 1100 ; # 1.1 GB for debug
 			}
-			HAIKU_IMAGE_SIZE ?= 650 ;
+			HAIKU_IMAGE_SIZE ?= 1000 ; # 1 GB
 			HAIKU_NIGHTLY_BUILD = 1 ;
 
 			AddHaikuImageSystemPackages
