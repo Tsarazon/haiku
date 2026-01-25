@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2020, Axel Dörfler, axeld@pinc-software.de.
+ * Copyright 2001-2025, Axel Dörfler, axeld@pinc-software.de.
  * This file may be used under the terms of the MIT License.
  */
 
@@ -529,9 +529,9 @@ AllocationGroup::Free(Transaction& transaction, uint16 start, int32 length)
 BlockAllocator::BlockAllocator(Volume* volume)
 	:
 	fVolume(volume),
-	fGroups(NULL)
-	//fCheckBitmap(NULL),
-	//fCheckCookie(NULL)
+	fGroups(NULL),
+	fAllowedBeginBlock(0),
+	fAllowedEndBlock(0)
 {
 	recursive_lock_init(&fLock, "bfs allocator");
 }
@@ -635,6 +635,28 @@ BlockAllocator::InitializeAndClearBitmap(Transaction& transaction)
 		= HOST_ENDIAN_TO_BFS_INT64(reservedBlocks);
 
 	return B_OK;
+}
+
+
+status_t
+BlockAllocator::Reinitialize()
+{
+	// need to write back any pending changes to the block bitmap
+	// TODO: shall we read through the cache in _Initialize instead?
+	status_t status = fVolume->GetJournal(0)->FlushLogAndLockJournal();
+	if (status != B_OK)
+		return status;
+
+	recursive_lock_lock(&fLock);
+		// the lock will be unlocked in the call to Initialize()
+
+	fVolume->GetJournal(0)->Unlock(NULL, true);
+		// unlock the journal here: we only need to make sure that no one
+		// starts a transaction before we get the allocator lock, as that
+		// would cause a deadlock
+
+	delete[] fGroups;
+	return Initialize();
 }
 
 
@@ -745,9 +767,45 @@ BlockAllocator::Uninitialize()
 }
 
 
-/*!	Tries to allocate between \a minimum, and \a maximum blocks starting
-	at group \a groupIndex with offset \a start. The resulting allocation
-	is put into \a run.
+/*! Specifies the range in which blocks will be allocated, starting from
+	\a beginBlock, up to but not including \a endBlock.
+	\a beginBlock and \a endBlock values of 0 means that no limits on the
+	allowed allocation range are imposed.
+*/
+void
+BlockAllocator::SetAllowedRange(off_t beginBlock, off_t endBlock)
+{
+	RecursiveLocker lock(fLock);
+	fAllowedBeginBlock = beginBlock;
+	fAllowedEndBlock = endBlock;
+}
+
+
+bool
+BlockAllocator::IsCompletelyInsideAllowedRange(block_run run) const
+{
+	if (fAllowedBeginBlock == 0 && fAllowedEndBlock == 0)
+		return true;
+	off_t runStart = fVolume->ToBlock(run);
+	return runStart >= fAllowedBeginBlock && runStart + run.Length() <= fAllowedEndBlock;
+}
+
+
+bool
+BlockAllocator::IsCompletelyOutsideAllowedRange(block_run run) const
+{
+	if (fAllowedBeginBlock == 0 && fAllowedEndBlock == 0)
+		return false;
+	// Note that this is not the opposite of _IsBlockRunInRange, as we only
+	// return true if the block run is completely outside the range.
+	off_t runStart = fVolume->ToBlock(run);
+	return runStart + run.Length() <= fAllowedBeginBlock || runStart >= fAllowedEndBlock;
+}
+
+
+/*!	Tries to allocate between \a minimum, and \a maximum blocks, starting at
+	group \a groupIndex with offset \a start. The resulting allocation is put
+	into \a run.
 
 	The number of allocated blocks is always a multiple of \a minimum which
 	has to be a power of two value.
@@ -758,6 +816,8 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 {
 	if (maximum == 0)
 		return B_BAD_VALUE;
+	if (fAllowedEndBlock > fVolume->NumBlocks())
+		return B_BAD_VALUE;
 
 	FUNCTION_START(("group = %" B_PRId32 ", start = %" B_PRIu16
 		", maximum = %" B_PRIu16 ", minimum = %" B_PRIu16 "\n",
@@ -767,6 +827,27 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 	RecursiveLocker lock(fLock);
 
 	uint32 bitsPerFullBlock = fVolume->BlockSize() << 3;
+
+	// Express the allowed allocation range in terms of allocation groups and
+	// offsets.
+	int32 firstAllowedGroup = fAllowedBeginBlock / bitsPerFullBlock;
+	uint16 firstGroupBegin = fAllowedBeginBlock % bitsPerFullBlock;
+
+	int32 lastAllowedGroup;
+	int32 lastGroupEnd;
+
+	if (fAllowedEndBlock == 0) {
+		lastAllowedGroup = fNumGroups - 1;
+		lastGroupEnd = fGroups[lastAllowedGroup].NumBits();
+	} else {
+		// If fEndBlock is the first block of an allocation group, the last
+		// allowed group is the previous, and the end block offset is
+		// bitsPerFullBlock.
+		lastAllowedGroup = (fAllowedEndBlock - 1) / bitsPerFullBlock;
+		lastGroupEnd = fAllowedEndBlock % bitsPerFullBlock;
+		if (lastGroupEnd == 0)
+			lastGroupEnd = bitsPerFullBlock;
+	}
 
 	// Find the block_run that can fulfill the request best
 	int32 bestGroup = -1;
@@ -779,7 +860,19 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 
 		CHECK_ALLOCATION_GROUP(groupIndex);
 
-		if (start >= group.NumBits() || group.IsFull())
+		if (groupIndex < firstAllowedGroup || groupIndex > lastAllowedGroup)
+			continue;
+
+		if (groupIndex == firstAllowedGroup && start < firstGroupBegin)
+			start = firstGroupBegin;
+
+		uint32 end;
+		if (groupIndex == lastAllowedGroup)
+			end = lastGroupEnd;
+		else
+			end = group.NumBits();
+
+		if (start >= end || group.IsFull())
 			continue;
 
 		// The wanted maximum is smaller than the largest free block in the
@@ -792,7 +885,8 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 			if (group.fLargestLength < bestLength)
 				continue;
 
-			if (group.fLargestStart >= start) {
+			if (group.fLargestStart >= start
+				&& group.fLargestStart + group.fLargestLength <= (int32)end) {
 				if (group.fLargestLength >= bestLength) {
 					bestGroup = groupIndex;
 					bestStart = group.fLargestStart;
@@ -812,23 +906,35 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 		// we iterate through it to find a place for the allocation.
 		// (one allocation can't exceed one allocation group)
 
-		uint32 block = start / (fVolume->BlockSize() << 3);
+		uint32 block = start / bitsPerFullBlock;
 		int32 currentStart = 0, currentLength = 0;
 		int32 groupLargestStart = -1;
 		int32 groupLargestLength = -1;
 		int32 currentBit = start;
-		bool canFindGroupLargest = start == 0;
+		bool canFindGroupLargest = start == 0 && end == group.NumBits();
 
-		for (; block < group.NumBitmapBlocks(); block++) {
+		// If end is the first bit in a block, the last block considered is the
+		// previous one, and the end bit is bitsPerFullBlock.
+		uint32 lastBlock = (end - 1) / bitsPerFullBlock;
+		uint32 lastBlockEndBit = end % bitsPerFullBlock;
+		if (lastBlockEndBit == 0)
+			lastBlockEndBit = bitsPerFullBlock;
+
+		for (; block <= lastBlock; block++) {
 			if (cached.SetTo(group, block) < B_OK)
 				RETURN_ERROR(B_ERROR);
 
 			T(Block("alloc-in", group.Start() + block, cached.Block(),
 				fVolume->BlockSize(), groupIndex, currentStart));
 
+			uint32 endBit;
+			if (block == lastBlock)
+				endBit = lastBlockEndBit;
+			else
+				endBit = cached.NumBlockBits();
+
 			// find a block large enough to hold the allocation
-			for (uint32 bit = start % bitsPerFullBlock;
-					bit < cached.NumBlockBits(); bit++) {
+			for (uint32 bit = start % bitsPerFullBlock; bit < endBit; bit++) {
 				if (!cached.IsUsed(bit)) {
 					if (currentLength == 0) {
 						// start new range
@@ -860,7 +966,7 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 							<= groupLargestLength) {
 						// We can't find a bigger block in this group anymore,
 						// let's skip the rest.
-						block = group.NumBitmapBlocks();
+						block = lastBlock + 1;
 						break;
 					}
 
@@ -885,7 +991,7 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 			start = 0;
 		}
 
-		if (currentBit == (int32)group.NumBits()) {
+		if (currentBit == (int32)end) {
 			if (currentLength > bestLength) {
 				bestGroup = groupIndex;
 				bestStart = currentStart;
@@ -928,6 +1034,9 @@ BlockAllocator::AllocateBlocks(Transaction& transaction, int32 groupIndex,
 	run.allocation_group = HOST_ENDIAN_TO_BFS_INT32(bestGroup);
 	run.start = HOST_ENDIAN_TO_BFS_INT16(bestStart);
 	run.length = HOST_ENDIAN_TO_BFS_INT16(bestLength);
+
+	ASSERT(fVolume->ToBlock(run) >= fAllowedBeginBlock);
+	ASSERT(fAllowedEndBlock == 0 || fVolume->ToBlock(run) + run.Length() <= fAllowedEndBlock);
 
 	fVolume->SuperBlock().used_blocks
 		= HOST_ENDIAN_TO_BFS_INT64(fVolume->UsedBlocks() + bestLength);
@@ -1022,6 +1131,46 @@ BlockAllocator::Allocate(Transaction& transaction, Inode* inode,
 	}
 
 	return AllocateBlocks(transaction, group, start, numBlocks, minimum, run);
+}
+
+
+/*!	Attempts to allocate a specific block run.
+*/
+status_t
+BlockAllocator::AllocateBlockRun(Transaction& transaction, block_run run)
+{
+	RecursiveLocker lock(fLock);
+
+	if (run.AllocationGroup() >= fNumGroups)
+		return B_BAD_VALUE;
+
+	if (!IsCompletelyInsideAllowedRange(run))
+		return B_DEVICE_FULL;
+
+	uint32 bitsPerBlock = fVolume->BlockSize() << 3;
+
+	AllocationGroup& group = fGroups[run.AllocationGroup()];
+	AllocationBlock cached(fVolume);
+
+	int32 end = run.Start() + run.Length();
+
+	// check that the requested blocks are free
+	for (int32 block = run.Start(); block < end; block++) {
+		if (cached.SetTo(group, block / bitsPerBlock) < B_OK)
+			RETURN_ERROR(B_ERROR);
+
+		if (cached.IsUsed(block % bitsPerBlock))
+			return B_DEVICE_FULL;
+	}
+
+	status_t status = group.Allocate(transaction, run.Start(), run.Length());
+	if (status != B_OK)
+		return status;
+
+	fVolume->SuperBlock().used_blocks
+		= HOST_ENDIAN_TO_BFS_INT64(fVolume->UsedBlocks() + run.Length());
+
+	return B_OK;
 }
 
 

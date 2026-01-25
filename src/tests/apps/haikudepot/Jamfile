@@ -2,19 +2,21 @@ SubDir HAIKU_TOP src tests apps haikudepot ;
 
 AddSubDirSupportedPlatforms libbe_test ;
 
+include [ FDirName $(HAIKU_TOP) src apps haikudepot build jam HdsSchemaGenRules ] ;
+
 SubDirHdrs [ FDirName $(HAIKU_TOP) src apps haikudepot ] ;
 SubDirHdrs [ FDirName $(HAIKU_TOP) src apps haikudepot model ] ;
 SubDirHdrs [ FDirName $(HAIKU_TOP) src apps haikudepot server ] ;
-SubDirHdrs [ FDirName $(HAIKU_TOP) src apps haikudepot server dumpexportrepository ] ;
 SubDirHdrs [ FDirName $(HAIKU_TOP) src apps haikudepot util ] ;
 
 UsePrivateHeaders interface netservices shared ;
+
+HAIKUDEPOT_GENERATED_SOURCES_DIRECTORY = $(TARGET_COMMON_DEBUG_LOCATE_TARGET) ;
 
 local sourceDirs =
 	model
 	packagemodel
 	server
-	server/dumpexportrepository
 	util
 	tar
 	textview
@@ -25,10 +27,52 @@ local sourceDir ;
 for sourceDir in $(sourceDirs) {
 	SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src apps haikudepot $(sourceDir) ] ;
 }
-SEARCH_SOURCE += [ FDirName $(HAIKUDEPOT_GENERATED_SOURCES_DIRECTORY)
-	dumpexportrepositorybulklistener ] ;
-SEARCH_SOURCE += [ FDirName $(HAIKUDEPOT_GENERATED_SOURCES_DIRECTORY)
-	dumpexportrepositorymodel ] ;
+local dumpExportRepositoryBulkListenerTargetDirectory =
+	[ FDirName $(HAIKUDEPOT_GENERATED_SOURCES_DIRECTORY)
+		dumpexportrepositorybulklistener ] ;
+local dumpExportRepositoryModelTargetDirectory =
+	[ FDirName $(HAIKUDEPOT_GENERATED_SOURCES_DIRECTORY)
+		dumpexportrepositorymodel ] ;
+SEARCH_SOURCE += $(dumpExportRepositoryBulkListenerTargetDirectory) ;
+SEARCH_SOURCE += $(dumpExportRepositoryModelTargetDirectory) ;
+	
+local generatedRepositoryModelSourceFiles = 
+	DumpExportRepository.cpp
+	DumpExportRepositorySource.cpp
+	DumpExportRepositorySourceMirror.cpp
+;
+local generatedRepositoryParserSourceFiles =
+	DumpExportRepositoryJsonListener.cpp
+;
+
+LOCATE on dumpexportrepository.json = [ FDirName $(HAIKU_TOP) src apps haikudepot server schema ] ;
+LOCATE on jsonschema2cppmodel.py = [ FDirName $(HAIKU_TOP) src apps haikudepot build scripts ] ;
+LOCATE on jsonschema2cppparser.py = [ FDirName $(HAIKU_TOP) src apps haikudepot build scripts ] ;
+
+local dummyFile = "dummy.dat" ;
+
+local dumpExportRepositoryBulkListenerTargetFile =
+	[ FDirName $(dumpExportRepositoryBulkListenerTargetDirectory) $(dummyFile) ] ;
+local dumpExportRepositoryModelTargetFile =
+	[ FDirName $(dumpExportRepositoryModelTargetDirectory) $(dummyFile) ] ;
+
+HdsSchemaGenModel $(dumpExportRepositoryModelTargetFile)
+	: dumpexportrepository.json : jsonschema2cppmodel.py ;
+
+HdsSchemaGenBulkParser $(dumpExportRepositoryBulkListenerTargetFile)
+	: dumpexportrepository.json : jsonschema2cppparser.py ;
+
+HdsSchemaGenAppSrcDependsOnGeneration
+	[ FGristFiles $(generatedRepositoryParserSourceFiles) ]
+	[ FGristFiles $(generatedRepositoryParserSourceFiles:S=.h) ]
+	: $(dumpExportRepositoryBulkListenerTargetDirectory)
+	: $(dumpExportRepositoryBulkListenerTargetFile) ;
+	
+HdsSchemaGenAppSrcDependsOnGeneration
+	[ FGristFiles $(generatedRepositoryModelSourceFiles) ]
+	[ FGristFiles $(generatedRepositoryModelSourceFiles:S=.h) ]
+	: $(dumpExportRepositoryModelTargetDirectory)
+	: $(dumpExportRepositoryModelTargetFile) ;
 
 UnitTestLib haikudepottest.so :
 	HaikuDepotTestAddon.cpp
@@ -36,10 +80,8 @@ UnitTestLib haikudepottest.so :
 	DataIOUtils.cpp
 	DataIOUtilsTest.cpp
 
-	DumpExportRepositorySource.cpp
-	DumpExportRepositorySourceMirror.cpp
-	DumpExportRepository.cpp
-	DumpExportRepositoryJsonListener.cpp
+	$(generatedRepositoryModelSourceFiles)
+	$(generatedRepositoryParserSourceFiles)
 	DumpExportRepositoryJsonListenerTest.cpp
 
 	JwtTokenHelper.cpp

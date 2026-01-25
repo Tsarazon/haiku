@@ -74,7 +74,14 @@ ICUCtypeData::SetTo(const Locale& locale, const char* posixLocaleName)
 
 	ucnv_reset(converter);
 
-	fDataBridge->setMbCurMax(ucnv_getMaxCharSize(converter));
+	short mbMax = ucnv_getMaxCharSize(converter);
+	if (mbMax > 1 && mbMax < 4) {
+		// ucnv_getMaxCharSize() returns the maximum size of an encoded UChar,
+		// which is 16-bit, and not a 32-bit Unicode codepoint. So, unless
+		// some exotic encoding is being used, 4 is the value we actually want.
+		mbMax = 4;
+	}
+	*fDataBridge->addrOfMbCurMax = mbMax;
 
 	char buffer[] = { 0, 0 };
 	for (int i = 0; i < 256; ++i) {
@@ -150,8 +157,7 @@ ICUCtypeData::SetToPosix()
 		memcpy(fClassInfo, fDataBridge->posixClassInfo, sizeof(fClassInfo));
 		memcpy(fToLowerMap, fDataBridge->posixToLowerMap, sizeof(fToLowerMap));
 		memcpy(fToUpperMap, fDataBridge->posixToUpperMap, sizeof(fToUpperMap));
-
-		fDataBridge->setMbCurMax(1);
+		*fDataBridge->addrOfMbCurMax = 1;
 	}
 
 	return result;
@@ -370,15 +376,11 @@ ICUCtypeData::WcharToMultibyte(char* mbOut, wchar_t wc, mbstate_t* mbState,
 
 	// convert input from UTF-32 to UTF-16
 	UChar ucharBuffer[2];
-	size_t ucharLength;
-	if (U_IS_BMP(wc)) {
-		ucharBuffer[0] = wc;
-		ucharLength = 1;
-	} else {
-		ucharBuffer[0] = U16_LEAD(wc);
-		ucharBuffer[1] = U16_TRAIL(wc);
-		ucharLength = 2;
-	}
+	UBool isError = false;
+	size_t ucharLength = 0;
+	U16_APPEND(ucharBuffer, ucharLength, sizeof(ucharBuffer), wc, isError);
+	if (isError)
+		return B_BAD_VALUE;
 
 	// do the actual conversion
 	UErrorCode icuStatus = U_ZERO_ERROR;

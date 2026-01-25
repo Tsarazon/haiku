@@ -33,12 +33,12 @@
 #define PLACEHOLDER_TEXT "..."
 
 #define INTRODUCTION_TEXT_LATEST \
-	"HaikuDepot communicates with a " \
+	"%Appname% communicates with a " \
 	"server component called HaikuDepotServer. These are the latest " \
 	"usage conditions for use of the HaikuDepotServer service."
 
 #define INTRODUCTION_TEXT_USER \
-	"HaikuDepot communicates with a " \
+	"%Appname% communicates with a " \
 	"server component called HaikuDepotServer. These are the usage " \
 	"conditions that the user '%Nickname%' agreed to at %AgreedToTimestamp% "\
 	"in relation to the use of the HaikuDepotServer service."
@@ -280,7 +280,7 @@ UserUsageConditionsWindow::_FetchDataPerform()
 			BString message = B_TRANSLATE("The user '%Nickname%' has not agreed to any usage "
 										  "conditions.");
 			message.ReplaceAll("%Nickname%", userDetail.Nickname());
-			AppUtils::NotifySimpleError(B_TRANSLATE("No usage conditions"), message);
+			AppUtils::NotifySimpleError(SimpleAlert(B_TRANSLATE("No usage conditions"), message));
 			BMessenger(this).SendMessage(B_QUIT_REQUESTED);
 			status = B_BAD_DATA;
 		}
@@ -378,10 +378,10 @@ UserUsageConditionsWindow::_FetchUserUsageConditionsCodeForUserPerform(UserDetai
 void
 UserUsageConditionsWindow::_NotifyFetchProblem()
 {
-	AppUtils::NotifySimpleError(B_TRANSLATE("Usage conditions download problem"),
+	AppUtils::NotifySimpleError(SimpleAlert(B_TRANSLATE("Usage conditions download problem"),
 		B_TRANSLATE(
 			"An error has arisen downloading the usage "
-			"conditions. Check the log for details and try again. " ALERT_MSG_LOGS_USER_GUIDE));
+			"conditions. Check the log for details and try again. " ALERT_MSG_LOGS_USER_GUIDE)));
 }
 
 
@@ -436,7 +436,11 @@ UserUsageConditionsWindow::_IntroductionTextForMode(UserUsageConditionsSelection
 {
 	switch (mode) {
 		case LATEST:
-			return B_TRANSLATE(INTRODUCTION_TEXT_LATEST);
+		{
+			BString text(B_TRANSLATE(INTRODUCTION_TEXT_LATEST));
+			text.ReplaceFirst("%Appname%", B_TRANSLATE_SYSTEM_NAME("HaikuDepot"));
+			return text;
+		}
 		case USER:
 		{
 			BString nicknamePresentation = PLACEHOLDER_TEXT;
@@ -453,6 +457,7 @@ UserUsageConditionsWindow::_IntroductionTextForMode(UserUsageConditionsSelection
 			}
 
 			BString text = B_TRANSLATE(INTRODUCTION_TEXT_USER);
+			text.ReplaceFirst("%Appname%", B_TRANSLATE_SYSTEM_NAME("HaikuDepot"));
 			text.ReplaceAll("%Nickname%", nicknamePresentation);
 			text.ReplaceAll("%AgreedToTimestamp%", agreedToTimestampPresentation);
 			return text;

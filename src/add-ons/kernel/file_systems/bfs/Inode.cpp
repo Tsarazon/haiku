@@ -11,7 +11,6 @@
 #include "Inode.h"
 #include "BPlusTree.h"
 #include "Index.h"
-#include "SafeOperations.h"
 
 
 #if BFS_TRACING && !defined(FS_SHELL) && !defined(_BOOT_MODE)
@@ -240,7 +239,7 @@ InodeAllocator::CreateTree()
 
 	BPlusTree* tree = new(std::nothrow) BPlusTree(*fTransaction, fInode);
 	if (tree == NULL)
-		RETURN_ERROR(B_ERROR);
+		return B_ERROR;
 
 	status_t status = tree->InitCheck();
 	if (status != B_OK) {
@@ -254,7 +253,7 @@ InodeAllocator::CreateTree()
 		if (tree->Insert(*fTransaction, ".", fInode->ID()) < B_OK
 			|| tree->Insert(*fTransaction, "..",
 					volume->ToVnode(fInode->Parent())) < B_OK)
-			RETURN_ERROR(B_ERROR);
+			return B_ERROR;
 	}
 	return B_OK;
 }
@@ -309,15 +308,7 @@ InodeAllocator::_TransactionListener(int32 id, int32 event, void* _inode)
 status_t
 bfs_inode::InitCheck(Volume* volume) const
 {
-#if defined(DEBUG) || defined(BFS_DEBUGGER_COMMANDS)
-	// Use centralized validation for better error reporting in debug builds
-	bool magicValid = validate_inode_magic(this);
-#else
-	// Inline validation for release builds (no error reporting overhead)
-	bool magicValid = (Magic1() == INODE_MAGIC1);
-#endif
-
-	if (!magicValid
+	if (Magic1() != INODE_MAGIC1
 		|| !(Flags() & INODE_IN_USE)
 		|| inode_num.Length() != 1
 		// matches inode size?
@@ -355,8 +346,6 @@ Inode::Inode(Volume* volume, ino_t id)
 	fCache(NULL),
 	fMap(NULL)
 {
-	ASSERT(volume != NULL);
-	
 	PRINT(("Inode::Inode(volume = %p, id = %" B_PRIdINO ") @ %p\n",
 		volume, id, this));
 
@@ -391,8 +380,6 @@ Inode::Inode(Volume* volume, Transaction& transaction, ino_t id, mode_t mode,
 	fCache(NULL),
 	fMap(NULL)
 {
-	ASSERT(volume != NULL);
-	
 	PRINT(("Inode::Inode(volume = %p, transaction = %p, id = %" B_PRIdINO
 		") @ %p\n", volume, &transaction, id, this));
 
@@ -471,7 +458,7 @@ Inode::InitCheck(bool checkNode) const
 	}
 
 	if (NeedsFileCache() && (fCache == NULL || fMap == NULL))
-		RETURN_ERROR(B_NO_MEMORY);
+		return B_NO_MEMORY;
 
 	return B_OK;
 }
@@ -539,7 +526,7 @@ Inode::CheckPermissions(int accessMode) const
 {
 	// you never have write access to a read-only volume
 	if ((accessMode & W_OK) != 0 && fVolume->IsReadOnly())
-		RETURN_ERROR(B_READ_ONLY_DEVICE);
+		return B_READ_ONLY_DEVICE;
 
 	return check_access_permissions(accessMode, Mode(), (gid_t)fNode.GroupID(),
 		(uid_t)fNode.UserID());
@@ -596,7 +583,7 @@ Inode::_MakeSpaceForSmallData(Transaction& transaction, bfs_inode* node,
 		}
 
 		if (item->IsLast(node) || (int32)item->Size() < bytes || max == NULL)
-			RETURN_ERROR(B_ERROR);
+			return B_ERROR;
 
 		bytes -= max->Size();
 
@@ -640,102 +627,26 @@ Inode::_RemoveSmallData(bfs_inode* node, small_data* item, int32 index)
 {
 	ASSERT_LOCKED_RECURSIVE(&fSmallDataLock);
 
-	// REFACTORED: Enhanced memory safety using SafeOperations utility
-	// Input validation
-	if (node == NULL || item == NULL || fVolume == NULL)
-		RETURN_ERROR(B_BAD_VALUE);
-
-	// Calculate memory boundaries for validation
-	const uint8* nodeStart = (const uint8*)node;
-	size_t nodeSize = fVolume->BlockSize();
-	const uint8* nodeEnd = nodeStart + nodeSize;
-	const uint8* itemPtr = (const uint8*)item;
-
-	// Validate item pointer using SafeOperations
-	if (!BFS::SafeOperations::IsValidPointer(item, nodeStart, nodeSize))
-		RETURN_ERROR(B_BAD_DATA);
-
-	// Validate item has minimum size for a small_data structure
-	if (!BFS::SafeOperations::IsValidRange(item, sizeof(small_data), nodeStart, nodeSize))
-		RETURN_ERROR(B_BAD_DATA);
-
 	small_data* next = item->Next();
-
-	// Validate next pointer using SafeOperations
-	if (!BFS::SafeOperations::IsValidPointer(next, nodeStart, nodeSize))
-		RETURN_ERROR(B_BAD_DATA);
-
-	// Validate next has minimum size
-	if (!BFS::SafeOperations::IsValidRange(next, sizeof(small_data), nodeStart, nodeSize))
-		RETURN_ERROR(B_BAD_DATA);
-
 	if (!next->IsLast(node)) {
-		// Find the last attribute using manual safe iteration
-		// (SafeSmallDataIterator starts from beginning, but we need to start from 'next')
+		// find the last attribute
 		small_data* last = next;
-		int32 maxIterations = nodeSize / sizeof(small_data);
-		int32 iterations = 0;
-		
-		while (!last->IsLast(node) && iterations < maxIterations) {
-			small_data* nextLast = last->Next();
-			
-			// Validate next pointer using SafeOperations
-			if (!BFS::SafeOperations::IsValidPointer(nextLast, nodeStart, nodeSize))
-				RETURN_ERROR(B_BAD_DATA);
-				
-			// Validate has minimum size
-			if (!BFS::SafeOperations::IsValidRange(nextLast, sizeof(small_data), nodeStart, nodeSize))
-				RETURN_ERROR(B_BAD_DATA);
-				
-			// Prevent backwards movement - safety check
-			if ((const uint8*)nextLast <= (const uint8*)last)
-				RETURN_ERROR(B_BAD_DATA);
-			
-			last = nextLast;
-			iterations++;
-		}
-		
-		// Check if we hit iteration limit (potential corruption)
-		if (iterations >= maxIterations)
-			RETURN_ERROR(B_BAD_DATA);
+		while (!last->IsLast(node))
+			last = last->Next();
 
-		// Calculate safe size using SafeOperations
-		const uint8* lastPtr = (const uint8*)last;
-		const uint8* nextPtr = (const uint8*)next;
-		
-		ptrdiff_t sizeDiff;
-		if (!BFS::SafeOperations::SafePointerDifference(lastPtr, nextPtr, nodeStart, nodeSize, sizeDiff))
-			RETURN_ERROR(B_BAD_DATA);
-			
-		if (sizeDiff < 0)
-			RETURN_ERROR(B_BAD_DATA);
-			
-		size_t size = (size_t)sizeDiff;
-		
-		// Move memory - use standard memmove for overlapping regions
+		int32 size = (uint8*)last - (uint8*)next;
+		if (size < 0
+			|| size > (uint8*)node + fVolume->BlockSize() - (uint8*)next)
+			return B_BAD_DATA;
+
 		memmove(item, next, size);
 
-		// Move the "last" one to its new location and correctly terminate
-		ptrdiff_t offset = nextPtr - itemPtr;
-		last = (small_data*)(lastPtr - offset);
-		
-		// Validate new last pointer using SafeOperations
-		if (!BFS::SafeOperations::IsValidPointer(last, nodeStart, nodeSize))
-			RETURN_ERROR(B_BAD_DATA);
-
-		// Safe memory clear with bounds checking
-		size_t clearSize = nodeEnd - lastPtr;
-		if (clearSize > 0 && lastPtr + clearSize <= nodeEnd) {
-			memset(last, 0, clearSize);
-		}
-	} else {
-		// Simple case - validate item size before clearing
-		uint32 itemSize = item->Size();
-		if (itemSize == 0 || itemPtr + itemSize > nodeEnd)
-			RETURN_ERROR(B_BAD_DATA);
-
-		memset(item, 0, itemSize);
-	}
+		// Move the "last" one to its new location and
+		// correctly terminate the small_data section
+		last = (small_data*)((uint8*)last - ((uint8*)next - (uint8*)item));
+		memset(last, 0, (uint8*)node + fVolume->BlockSize() - (uint8*)last);
+	} else
+		memset(item, 0, item->Size());
 
 	// update all current iterators
 	SinglyLinkedList<AttributeIterator>::ConstIterator iterator
@@ -754,7 +665,7 @@ Inode::_RemoveSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 	const char* name)
 {
 	if (name == NULL)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	bfs_inode* node = nodeGetter.WritableNode();
 	RecursiveLocker locker(fSmallDataLock);
@@ -806,7 +717,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 	bfs_inode* node = nodeGetter.WritableNode();
 
 	if (node == NULL || name == NULL || data == NULL)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	// reject any requests that can't fit into the small_data section
 	uint32 nameLength = strlen(name);
@@ -853,7 +764,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 
 				if (_MakeSpaceForSmallData(transaction, node, name, needed)
 						!= B_OK)
-					RETURN_ERROR(B_ERROR);
+					return B_ERROR;
 
 				// reset our pointers
 				item = node->SmallDataStart();
@@ -917,7 +828,7 @@ Inode::_AddSmallData(Transaction& transaction, NodeGetter& nodeGetter,
 
 		// make room for the new attribute
 		if (_MakeSpaceForSmallData(transaction, node, name, spaceNeeded) < B_OK)
-			RETURN_ERROR(B_ERROR);
+			return B_ERROR;
 
 		// get new last item!
 		item = node->SmallDataStart();
@@ -1059,7 +970,7 @@ status_t
 Inode::SetName(Transaction& transaction, const char* name)
 {
 	if (name == NULL || *name == '\0')
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	NodeGetter node(fVolume);
 	status_t status = node.SetToWritable(transaction, this);
@@ -1184,7 +1095,7 @@ Inode::WriteAttribute(Transaction& transaction, const char* name, int32 type,
 	off_t pos, const uint8* buffer, size_t* _length, bool* _created)
 {
 	if (pos < 0)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	// needed to maintain the index
 	uint8 oldBuffer[MAX_INDEX_KEY_LENGTH];
@@ -1406,12 +1317,12 @@ Inode::GetAttribute(const char* name, Inode** _attribute)
 	if (vnode.Get(&attributes) < B_OK) {
 		FATAL(("get_vnode() failed in Inode::GetAttribute(name = \"%s\")\n",
 			name));
-		RETURN_ERROR(B_ERROR);
+		return B_ERROR;
 	}
 
 	BPlusTree* tree = attributes->Tree();
 	if (tree == NULL)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	InodeReadLocker locker(attributes);
 
@@ -1422,7 +1333,7 @@ Inode::GetAttribute(const char* name, Inode** _attribute)
 		Inode* inode;
 		// Check if the attribute is really an attribute
 		if (vnode.Get(&inode) != B_OK || !inode->IsAttribute())
-			RETURN_ERROR(B_ERROR);
+			return B_ERROR;
 
 		*_attribute = inode;
 		vnode.Keep();
@@ -1457,7 +1368,7 @@ Inode::CreateAttribute(Transaction& transaction, const char* name, uint32 type,
 	Vnode vnode(fVolume, Attributes());
 	Inode* attributes;
 	if (vnode.Get(&attributes) < B_OK)
-		RETURN_ERROR(B_ERROR);
+		return B_ERROR;
 
 	// Inode::Create() locks the inode for us
 	return Inode::Create(transaction, attributes, name,
@@ -1671,9 +1582,6 @@ status_t
 Inode::WriteAt(Transaction& transaction, off_t pos, const uint8* buffer,
 	size_t* _length)
 {
-	if (buffer == NULL || _length == NULL)
-		RETURN_ERROR(B_BAD_VALUE);
-
 	InodeReadLocker locker(this);
 
 	// update the last modification time in memory, it will be written
@@ -1689,7 +1597,7 @@ Inode::WriteAt(Transaction& transaction, off_t pos, const uint8* buffer,
 
 	// set/check boundaries for pos/length
 	if (pos < 0)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	locker.Unlock();
 
@@ -1787,7 +1695,7 @@ Inode::_AllocateBlockArray(Transaction& transaction, block_run& run,
 	size_t length, bool variableSize)
 {
 	if (!run.IsZero())
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	status_t status = fVolume->Allocate(transaction, this, length, run,
 		variableSize ? 1 : length);
@@ -1804,6 +1712,254 @@ Inode::_AllocateBlockArray(Transaction& transaction, block_run& run,
 			return status;
 	}
 	return B_OK;
+}
+
+
+/*! Adds \a run to \a data, allocating indirection blocks if necessary.
+	If the block run cannot be added as is, due to constraints on block run
+	size in the double indirect range, \a rest is set to the number of blocks
+	that need to be shaved off the run and the function returns.
+
+	If the physical stream size ends up larger than \a targetSize, the stream
+	size is set to the target file size.
+*/
+status_t
+Inode::_AddBlockRun(Transaction& transaction, data_stream* data, block_run run,
+	off_t targetSize, int32* rest, off_t beginBlock, off_t endBlock)
+{
+	status_t status;
+
+	if (rest)
+		*rest = 0;
+
+	bool cutSize = targetSize < data->Size()
+		+ (run.Length() << fVolume->BlockShift());
+		// if adding this block_run means overshooting the target stream size,
+		// we need to set data->size to targetSize.
+
+	// Direct block range
+
+	if (data->Size() <= data->MaxDirectRange()) {
+		// let's try to put them into the direct block range
+		int32 free = 0;
+		for (; free < NUM_DIRECT_BLOCKS; free++) {
+			if (data->direct[free].IsZero())
+				break;
+		}
+
+		if (free < NUM_DIRECT_BLOCKS) {
+			// can we merge the last allocated run with the new one?
+			int32 last = free - 1;
+			if (free > 0 && data->direct[last].MergeableWith(run)) {
+				data->direct[last].length = HOST_ENDIAN_TO_BFS_INT16(
+					data->direct[last].Length() + run.Length());
+			} else
+				data->direct[free] = run;
+
+			data->max_direct_range = HOST_ENDIAN_TO_BFS_INT64(
+				data->MaxDirectRange()
+				+ run.Length() * fVolume->BlockSize());
+			data->size = cutSize ? HOST_ENDIAN_TO_BFS_INT64(targetSize)
+				: data->max_direct_range;
+			return B_OK;
+		}
+	}
+
+	// Indirect block range
+
+	if (data->Size() <= data->MaxIndirectRange()
+		|| !data->MaxIndirectRange()) {
+		CachedBlock cached(fVolume);
+		block_run* runs = NULL;
+		uint32 free = 0;
+		off_t block;
+
+		// if there is no indirect block yet, create one
+		if (data->indirect.IsZero()) {
+			status = _AllocateBlockArray(transaction, data->indirect,
+				NUM_ARRAY_BLOCKS, true);
+			if (status != B_OK)
+				return status;
+
+			data->max_indirect_range = data->max_direct_range;
+			// insert the block_run in the first block
+			status = cached.SetTo(data->indirect);
+			if (status != B_OK)
+				return status;
+
+			runs = (block_run*)cached.Block();
+		} else {
+			uint32 numberOfRuns = fVolume->BlockSize() / sizeof(block_run);
+			block = fVolume->ToBlock(data->indirect);
+
+			// search first empty entry
+			int32 i = 0;
+			for (; i < data->indirect.Length(); i++) {
+				status = cached.SetTo(block + i);
+				if (status != B_OK)
+					return status;
+
+				runs = (block_run*)cached.Block();
+				for (free = 0; free < numberOfRuns; free++)
+					if (runs[free].IsZero())
+						break;
+
+				if (free < numberOfRuns)
+					break;
+			}
+			if (i == data->indirect.Length())
+				runs = NULL;
+		}
+
+		if (runs != NULL) {
+			// try to insert the run to the last one - note that this
+			// doesn't take block borders into account, so it could be
+			// further optimized
+			cached.MakeWritable(transaction);
+
+			int32 last = free - 1;
+			if (free > 0 && runs[last].MergeableWith(run)) {
+				runs[last].length = HOST_ENDIAN_TO_BFS_INT16(
+					runs[last].Length() + run.Length());
+			} else
+				runs[free] = run;
+
+			data->max_indirect_range = HOST_ENDIAN_TO_BFS_INT64(
+				data->MaxIndirectRange()
+				+ (run.Length() << fVolume->BlockShift()));
+			data->size = cutSize ? HOST_ENDIAN_TO_BFS_INT64(targetSize)
+				: data->max_indirect_range;
+			return B_OK;
+		}
+	}
+
+	// Double indirect block range
+
+	if (data->Size() <= data->MaxDoubleIndirectRange()
+		|| !data->max_double_indirect_range) {
+		// We make sure here that we have this minimum allocated, so if
+		// the allocation succeeds, we don't run into an endless loop.
+		uint16 doubleIndirectBlockLength;
+		if (!data->max_double_indirect_range)
+			doubleIndirectBlockLength = _DoubleIndirectBlockLength();
+		else
+			doubleIndirectBlockLength = data->double_indirect.Length();
+
+		if ((run.Length() % doubleIndirectBlockLength) != 0) {
+			// The number of allocated blocks isn't a multiple of
+			// 'doubleIndirectBlockLength', so we return and let the caller
+			// change this. This can happen the first time the stream grows
+			// into the double indirect range.
+			if (rest) {
+				*rest = run.Length() % doubleIndirectBlockLength;
+				return B_OK;
+			}
+
+			// the caller didn't expect rest
+			return B_BAD_VALUE;
+		}
+
+		// if there is no double indirect block yet, create one
+		if (data->double_indirect.IsZero()) {
+			status = _AllocateBlockArray(transaction,
+				data->double_indirect, _DoubleIndirectBlockLength());
+			if (status != B_OK)
+				return status;
+
+			data->max_double_indirect_range = data->max_indirect_range;
+		}
+
+		// calculate the index where to insert the new blocks
+
+		int32 runsPerBlock;
+		int32 directSize;
+		int32 indirectSize;
+		get_double_indirect_sizes(data->double_indirect.Length(),
+			fVolume->BlockSize(), runsPerBlock, directSize, indirectSize);
+		if (directSize <= 0 || indirectSize <= 0)
+			return B_BAD_DATA;
+
+		off_t start = data->MaxDoubleIndirectRange()
+			- data->MaxIndirectRange();
+		int32 indirectIndex = start / indirectSize;
+		int32 index = (start % indirectSize) / directSize;
+		int32 runsPerArray = runsPerBlock * doubleIndirectBlockLength;
+
+		// distribute the blocks to the array and allocate
+		// new array blocks when needed
+
+		CachedBlock cached(fVolume);
+		CachedBlock cachedDirect(fVolume);
+		block_run* array = NULL;
+		uint32 runLength = run.Length();
+
+		while (run.length != 0) {
+			// get the indirect array block
+			if (array == NULL) {
+				uint32 block = indirectIndex / runsPerBlock;
+				if (block >= doubleIndirectBlockLength)
+					return EFBIG;
+
+				status = cached.SetTo(fVolume->ToBlock(
+					data->double_indirect) + block);
+				if (status != B_OK)
+					return status;
+
+				array = (block_run*)cached.Block();
+			}
+
+			do {
+				// do we need a new array block?
+				if (array[indirectIndex % runsPerBlock].IsZero()) {
+					cached.MakeWritable(transaction);
+
+					status = _AllocateBlockArray(transaction,
+						array[indirectIndex % runsPerBlock],
+						data->double_indirect.Length());
+						if (status != B_OK)
+							return status;
+				}
+
+				status = cachedDirect.SetToWritable(transaction,
+					fVolume->ToBlock(array[indirectIndex
+						% runsPerBlock]) + index / runsPerBlock);
+				if (status != B_OK)
+					return status;
+
+				block_run* runs = (block_run*)cachedDirect.Block();
+
+				do {
+					// insert the block_run into the array
+					runs[index % runsPerBlock] = run;
+					runs[index % runsPerBlock].length
+						= HOST_ENDIAN_TO_BFS_INT16(doubleIndirectBlockLength);
+
+					// alter the remaining block_run
+					run.start = HOST_ENDIAN_TO_BFS_INT16(run.Start()
+						+ doubleIndirectBlockLength);
+					run.length = HOST_ENDIAN_TO_BFS_INT16(run.Length()
+						- doubleIndirectBlockLength);
+				} while ((++index % runsPerBlock) != 0 && run.length);
+			} while ((index % runsPerArray) != 0 && run.length);
+
+			if (index == runsPerArray)
+				index = 0;
+			if (++indirectIndex % runsPerBlock == 0) {
+				array = NULL;
+				index = 0;
+			}
+		}
+
+		data->max_double_indirect_range = HOST_ENDIAN_TO_BFS_INT64(
+			data->MaxDoubleIndirectRange()
+			+ (runLength << fVolume->BlockShift()));
+		data->size = cutSize ? HOST_ENDIAN_TO_BFS_INT64(targetSize)
+			: data->max_double_indirect_range;
+
+		return B_OK;
+	}
+
+	RETURN_ERROR(EFBIG);
 }
 
 
@@ -1895,6 +2051,12 @@ Inode::_GrowStream(Transaction& transaction, off_t size)
 		// the requested blocks do not need to be returned with a
 		// single allocation, so we need to iterate until we have
 		// enough blocks allocated
+
+		// If data has a double_indirect block, we're adding block_run:s to
+		// the double indirect range.
+		if (!data->double_indirect.IsZero())
+			minimum = data->double_indirect.Length();
+
 		if (minimum > 1) {
 			// make sure that "blocks" is a multiple of minimum
 			blocksRequested = round_up(blocksRequested, minimum);
@@ -1913,239 +2075,34 @@ Inode::_GrowStream(Transaction& transaction, off_t size)
 		// don't preallocate if the first allocation was already too small
 		blocksRequested = blocksNeeded;
 
-		// Direct block range
+		int32 rest;
+		status = _AddBlockRun(transaction, data, run, size, &rest);
+		if (status != B_OK)
+			return status;
 
-		if (data->Size() <= data->MaxDirectRange()) {
-			// let's try to put them into the direct block range
-			int32 free = 0;
-			for (; free < NUM_DIRECT_BLOCKS; free++) {
-				if (data->direct[free].IsZero())
-					break;
-			}
+		if (rest != 0) {
+			// We've entered the double indirect range, and the number of
+			// allocated blocks isn't a multiple of 'doubleIndirectBlockLength'
 
-			if (free < NUM_DIRECT_BLOCKS) {
-				// can we merge the last allocated run with the new one?
-				int32 last = free - 1;
-				if (free > 0 && data->direct[last].MergeableWith(run)) {
-					data->direct[last].length = HOST_ENDIAN_TO_BFS_INT16(
-						data->direct[last].Length() + run.Length());
-				} else
-					data->direct[free] = run;
+			minimum = _DoubleIndirectBlockLength();
 
-				data->max_direct_range = HOST_ENDIAN_TO_BFS_INT64(
-					data->MaxDirectRange()
-					+ run.Length() * fVolume->BlockSize());
-				data->size = HOST_ENDIAN_TO_BFS_INT64(blocksNeeded > 0
-					? data->max_direct_range : size);
+			// Free the remaining blocks that don't fit into this multiple.
+			run.length = HOST_ENDIAN_TO_BFS_INT16(run.Length() - rest);
+
+			status = fVolume->Free(transaction,
+				block_run::Run(run.AllocationGroup(),
+				run.Start() + run.Length(), rest));
+			if (status != B_OK)
+				return status;
+
+			blocksNeeded += rest;
+			blocksRequested = round_up(blocksNeeded, minimum);
+
+			// Are there any blocks left in the run? If not, allocate
+			// a new one
+			if (run.length == 0)
 				continue;
-			}
 		}
-
-		// Indirect block range
-
-		if (data->Size() <= data->MaxIndirectRange()
-			|| !data->MaxIndirectRange()) {
-			CachedBlock cached(fVolume);
-			block_run* runs = NULL;
-			uint32 free = 0;
-			off_t block;
-
-			// if there is no indirect block yet, create one
-			if (data->indirect.IsZero()) {
-				status = _AllocateBlockArray(transaction, data->indirect,
-					NUM_ARRAY_BLOCKS, true);
-				if (status != B_OK)
-					return status;
-
-				data->max_indirect_range = HOST_ENDIAN_TO_BFS_INT64(
-					data->MaxDirectRange());
-				// insert the block_run in the first block
-				status = cached.SetTo(data->indirect);
-				if (status != B_OK)
-					return status;
-
-				runs = (block_run*)cached.Block();
-			} else {
-				uint32 numberOfRuns = fVolume->BlockSize() / sizeof(block_run);
-				block = fVolume->ToBlock(data->indirect);
-
-				// search first empty entry
-				int32 i = 0;
-				for (; i < data->indirect.Length(); i++) {
-					status = cached.SetTo(block + i);
-					if (status != B_OK)
-						return status;
-
-					runs = (block_run*)cached.Block();
-					for (free = 0; free < numberOfRuns; free++)
-						if (runs[free].IsZero())
-							break;
-
-					if (free < numberOfRuns)
-						break;
-				}
-				if (i == data->indirect.Length())
-					runs = NULL;
-			}
-
-			if (runs != NULL) {
-				// try to insert the run to the last one - note that this
-				// doesn't take block borders into account, so it could be
-				// further optimized
-				cached.MakeWritable(transaction);
-
-				int32 last = free - 1;
-				if (free > 0 && runs[last].MergeableWith(run)) {
-					runs[last].length = HOST_ENDIAN_TO_BFS_INT16(
-						runs[last].Length() + run.Length());
-				} else
-					runs[free] = run;
-
-				data->max_indirect_range = HOST_ENDIAN_TO_BFS_INT64(
-					data->MaxIndirectRange()
-					+ ((uint32)run.Length() << fVolume->BlockShift()));
-				data->size = HOST_ENDIAN_TO_BFS_INT64(blocksNeeded > 0
-					? data->MaxIndirectRange() : size);
-				continue;
-			}
-		}
-
-		// Double indirect block range
-
-		if (data->Size() <= data->MaxDoubleIndirectRange()
-			|| !data->max_double_indirect_range) {
-			// We make sure here that we have this minimum allocated, so if
-			// the allocation succeeds, we don't run into an endless loop.
-			if (!data->max_double_indirect_range)
-				minimum = _DoubleIndirectBlockLength();
-			else
-				minimum = data->double_indirect.Length();
-
-			if ((run.Length() % minimum) != 0) {
-				// The number of allocated blocks isn't a multiple of 'minimum',
-				// so we have to change this. This can happen the first time the
-				// stream grows into the double indirect range.
-				// First, free the remaining blocks that don't fit into this
-				// multiple.
-				int32 rest = run.Length() % minimum;
-				run.length = HOST_ENDIAN_TO_BFS_INT16(run.Length() - rest);
-
-				status = fVolume->Free(transaction,
-					block_run::Run(run.AllocationGroup(),
-					run.Start() + run.Length(), rest));
-				if (status != B_OK)
-					return status;
-
-				blocksNeeded += rest;
-				blocksRequested = round_up(blocksNeeded, minimum);
-
-				// Are there any blocks left in the run? If not, allocate
-				// a new one
-				if (run.length == 0)
-					continue;
-			}
-
-			// if there is no double indirect block yet, create one
-			if (data->double_indirect.IsZero()) {
-				status = _AllocateBlockArray(transaction,
-					data->double_indirect, _DoubleIndirectBlockLength());
-				if (status != B_OK)
-					return status;
-
-				data->max_double_indirect_range = data->max_indirect_range;
-			}
-
-			// calculate the index where to insert the new blocks
-
-			int32 runsPerBlock;
-			int32 directSize;
-			int32 indirectSize;
-			get_double_indirect_sizes(data->double_indirect.Length(),
-				fVolume->BlockSize(), runsPerBlock, directSize, indirectSize);
-			if (directSize <= 0 || indirectSize <= 0)
-				RETURN_ERROR(B_BAD_DATA);
-
-			off_t start = data->MaxDoubleIndirectRange()
-				- data->MaxIndirectRange();
-			int32 indirectIndex = start / indirectSize;
-			int32 index = (start % indirectSize) / directSize;
-			int32 runsPerArray = runsPerBlock * minimum;
-
-			// distribute the blocks to the array and allocate
-			// new array blocks when needed
-
-			CachedBlock cached(fVolume);
-			CachedBlock cachedDirect(fVolume);
-			block_run* array = NULL;
-			uint32 runLength = run.Length();
-
-			while (run.length != 0) {
-				// get the indirect array block
-				if (array == NULL) {
-					uint32 block = indirectIndex / runsPerBlock;
-					if (block >= minimum)
-						return EFBIG;
-
-					status = cached.SetTo(fVolume->ToBlock(
-						data->double_indirect) + block);
-					if (status != B_OK)
-						return status;
-
-					array = (block_run*)cached.Block();
-				}
-
-				do {
-					// do we need a new array block?
-					if (array[indirectIndex % runsPerBlock].IsZero()) {
-						cached.MakeWritable(transaction);
-
-						status = _AllocateBlockArray(transaction,
-							array[indirectIndex % runsPerBlock],
-							data->double_indirect.Length());
-						if (status != B_OK)
-							return status;
-					}
-
-					status = cachedDirect.SetToWritable(transaction,
-						fVolume->ToBlock(array[indirectIndex
-							% runsPerBlock]) + index / runsPerBlock);
-					if (status != B_OK)
-						return status;
-
-					block_run* runs = (block_run*)cachedDirect.Block();
-
-					do {
-						// insert the block_run into the array
-						runs[index % runsPerBlock] = run;
-						runs[index % runsPerBlock].length
-							= HOST_ENDIAN_TO_BFS_INT16(minimum);
-
-						// alter the remaining block_run
-						run.start = HOST_ENDIAN_TO_BFS_INT16(run.Start()
-							+ minimum);
-						run.length = HOST_ENDIAN_TO_BFS_INT16(run.Length()
-							- minimum);
-					} while ((++index % runsPerBlock) != 0 && run.length);
-				} while ((index % runsPerArray) != 0 && run.length);
-
-				if (index == runsPerArray)
-					index = 0;
-				if (++indirectIndex % runsPerBlock == 0) {
-					array = NULL;
-					index = 0;
-				}
-			}
-
-			data->max_double_indirect_range = HOST_ENDIAN_TO_BFS_INT64(
-				data->MaxDoubleIndirectRange()
-				+ (runLength << fVolume->BlockShift()));
-			data->size = blocksNeeded > 0 ? HOST_ENDIAN_TO_BFS_INT64(
-				data->max_double_indirect_range) : size;
-
-			continue;
-		}
-
-		RETURN_ERROR(EFBIG);
 	}
 	// update the size of the data stream
 	data->size = HOST_ENDIAN_TO_BFS_INT64(size);
@@ -2180,7 +2137,7 @@ Inode::_FreeStaticStreamArray(Transaction& transaction, int32 level,
 			fVolume->BlockSize());
 	}
 	if (indirectSize <= 0)
-		RETURN_ERROR(B_BAD_DATA);
+		return B_BAD_DATA;
 
 	off_t start;
 	if (size > offset)
@@ -2288,7 +2245,7 @@ Inode::_FreeStreamArray(Transaction& transaction, block_run* array,
 		}
 
 		if (fVolume->Free(transaction, run) < B_OK)
-			RETURN_ERROR(B_IO_ERROR);
+			return B_IO_ERROR;
 	}
 	return B_OK;
 }
@@ -2333,7 +2290,7 @@ Inode::_ShrinkStream(Transaction& transaction, off_t size)
 				// 'data->data_stream::max_indirect_range' to 'off_t&'"
 			if (_FreeStreamArray(transaction, array, fVolume->BlockSize()
 					/ sizeof(block_run), size, offset, *maxIndirect) != B_OK)
-				RETURN_ERROR(B_IO_ERROR);
+				return B_IO_ERROR;
 		}
 		if (data->max_direct_range == data->max_indirect_range) {
 			fVolume->Free(transaction, data->indirect);
@@ -2362,7 +2319,7 @@ status_t
 Inode::SetFileSize(Transaction& transaction, off_t size)
 {
 	if (size < 0)
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 
 	off_t oldSize = Size();
 
@@ -2468,7 +2425,7 @@ Inode::Free(Transaction& transaction)
 	}
 
 	if (WriteBack(transaction) < B_OK)
-		RETURN_ERROR(B_IO_ERROR);
+		return B_IO_ERROR;
 
 	return fVolume->Free(transaction, BlockRun());
 }
@@ -2791,7 +2748,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 			return B_OK;
 		}
 	} else if (parent != NULL && (mode & S_ATTR_DIR) == 0) {
-		RETURN_ERROR(B_BAD_VALUE);
+		return B_BAD_VALUE;
 	} else if ((openMode & O_DIRECTORY) != 0) {
 		// TODO: we might need to return B_NOT_A_DIRECTORY here
 		return B_ENTRY_NOT_FOUND;
@@ -2840,7 +2797,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 	// don't add it to attributes, or indices
 	if (tree && inode->IsRegularNode()
 		&& inode->SetName(transaction, name) != B_OK)
-		RETURN_ERROR(B_ERROR);
+		return B_ERROR;
 
 	// Initialize b+tree if it's a directory (and add "." & ".." if it's
 	// a standard directory for files - not for attributes or indices)
@@ -2908,7 +2865,7 @@ Inode::Create(Transaction& transaction, Inode* parent, const char* name,
 			inode->Size()));
 
 		if (inode->FileCache() == NULL || inode->Map() == NULL)
-			RETURN_ERROR(B_NO_MEMORY);
+			return B_NO_MEMORY;
 	}
 
 	// Everything worked well until this point, we have a fully
