@@ -82,3 +82,14 @@ app_server_anal/APP_SERVER_INTERNAL_DEPENDENCIES.md
 .gitignore
 app_server_anal/app_server_internal_dependencies_analyzer.py
 .xmake/
+
+# Local development documentation
+ARM64_*.md
+LEGACY_CODE_ANALYSIS.md
+Migration_docs/
+bluetooth_driver_analysis.md
+haiku_bluetooth_fixes.md
+docs/BeOS_R5_Compatibility.md
+
+# Lua build experiments
+*.lua
