@@ -336,7 +336,6 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 {
 	int16 opcodeExpected;
 	BMessage reply;
-	status_t status;
 
 	// Handle command complete information
 	request->FindInt16("opcodeExpected", index, &opcodeExpected);
@@ -381,7 +380,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: Reply for Local Version %x\n", version->status);
 
 			reply.AddInt8("status", version->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -403,7 +402,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 
 			reply.AddInt8("status", pageTimeout->status);
 			reply.AddInt32("result", pageTimeout->page_timeout);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -454,7 +453,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: Reply for Local Features %x\n", features->status);
 
 			reply.AddInt8("status", features->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -487,7 +486,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 
 
 			reply.AddInt8("status", buffer->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -508,7 +507,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: Read bdaddr status = %x\n", readbdaddr->status);
 
 			reply.AddInt8("status", readbdaddr->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -532,7 +531,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 
 
 			reply.AddInt8("status", classDev->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -554,7 +553,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: Friendly name status %x\n", readLocalName->status);
 
 			reply.AddInt8("status", readLocalName->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -569,7 +568,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: pincode accept status %x\n", *statusReply);
 
 			reply.AddInt8("status", *statusReply);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -585,7 +584,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: pincode reject status %x\n", *statusReply);
 
 			reply.AddInt8("status", *statusReply);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request, HCI_EVENT_CMD_COMPLETE, opcodeExpected);
@@ -604,7 +603,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 				linkKeyRetrieval->num_keys_read);
 
 			reply.AddInt8("status", linkKeyRetrieval->status);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			ClearWantedEvent(request);
 			break;
@@ -638,7 +637,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 
 			reply.AddInt8("status", scanEnable->status);
 			reply.AddInt8("scan_enable", scanEnable->enable);
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			// This request is not gonna be used anymore
 			ClearWantedEvent(request);
@@ -660,7 +659,7 @@ LocalDeviceImpl::CommandComplete(struct hci_ev_cmd_complete* event,
 			TRACE_BT("LocalDeviceImpl: %s for %s status %x\n", __FUNCTION__,
 				BluetoothCommandOpcode(opcodeExpected), *(uint8*)(event + 1));
 
-			status = request->SendReply(&reply);
+			(void)request->SendReply(&reply);
 
 			ClearWantedEvent(request);
 			break;
@@ -754,7 +753,7 @@ LocalDeviceImpl::InquiryResult(uint8* numberOfResponses, BMessage* request)
 		info++;
 	}
 
-	status_t status = request->SendReply(&reply);
+	(void)request->SendReply(&reply);
 }
 
 
@@ -765,7 +764,7 @@ LocalDeviceImpl::InquiryComplete(uint8* status, BMessage* request)
 
 	reply.AddInt8("status", *status);
 
-	status_t stat = request->SendReply(&reply);
+	(void)request->SendReply(&reply);
 
 	ClearWantedEvent(request);
 }
@@ -789,7 +788,7 @@ LocalDeviceImpl::RemoteNameRequestComplete(
 		bdaddrUtils::ToString(remotename->bdaddr).String(),
 		BluetoothError(remotename->status));
 
-	status_t status = request->SendReply(&reply);
+	(void)request->SendReply(&reply);
 
 	// This request is not gonna be used anymore
 	ClearWantedEvent(request);
@@ -865,7 +864,7 @@ LocalDeviceImpl::ConnectionComplete(struct hci_ev_conn_complete* event,
 		if (event->status == BT_OK)
 			reply.AddInt16("handle", event->handle);
 
-		status_t status = request->SendReply(&reply);
+		(void)request->SendReply(&reply);
 
 		// This request is not gonna be used anymore
 		ClearWantedEvent(request);
@@ -885,7 +884,7 @@ LocalDeviceImpl::DisconnectionComplete(
 		BMessage reply;
 		reply.AddInt8("status", event->status);
 
-		status_t status = request->SendReply(&reply);
+		(void)request->SendReply(&reply);
 
 		ClearWantedEvent(request);
 	}

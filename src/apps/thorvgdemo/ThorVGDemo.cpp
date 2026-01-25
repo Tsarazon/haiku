@@ -276,7 +276,7 @@ private:
 		tvg::Shape* bg = tvg::Shape::gen();
 		bg->appendRect(0, 0, w, h);
 		bg->fill(30, 30, 40, 255);
-		fCanvas->push(bg);
+		fCanvas->add(bg);
 
 		// Draw each shape
 		for (int i = 0; i < 5; i++) {
@@ -306,7 +306,7 @@ private:
 			}
 
 			shape->fill(s.r, s.g, s.b, 255);
-			fCanvas->push(shape);
+			fCanvas->add(shape);
 		}
 
 		fCanvas->draw(true);  // clear buffer before drawing
