@@ -1,0 +1,37 @@
+SubDir HAIKU_TOP src kits render ;
+
+UsePrivateHeaders render shared ;
+UsePublicHeaders render surface ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		local architecture = $(TARGET_PACKAGING_ARCH) ;
+
+		UseBuildFeatureHeaders thorvg ;
+
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) thorvg ] ;
+
+		SubDirC++Flags -DTHORVG_ENABLED ;
+
+		Includes [ FGristFiles ThorVGBackend.cpp ]
+			: [ BuildFeatureAttribute thorvg : headers ] ;
+
+		SharedLibrary [ MultiArchDefaultGristFiles librender.so ] :
+			# Core
+			KosmCanvas.cpp
+			KosmPath.cpp
+			KosmGradient.cpp
+			KosmImage.cpp
+			KosmFont.cpp
+
+			# Backend
+			thorvg/ThorVGBackend.cpp
+
+			:
+			be surface shared
+			[ BuildFeatureAttribute thorvg : library ]
+			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
+			;
+	}
+}

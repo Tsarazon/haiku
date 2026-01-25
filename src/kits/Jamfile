@@ -128,6 +128,7 @@ SubInclude HAIKU_TOP src kits shared ;
 SubInclude HAIKU_TOP src kits storage ;
 SubInclude HAIKU_TOP src kits support ;
 SubInclude HAIKU_TOP src kits surface ;
+SubInclude HAIKU_TOP src kits render ;
 SubInclude HAIKU_TOP src kits textencoding ;
 SubInclude HAIKU_TOP src kits tracker ;
 SubInclude HAIKU_TOP src kits translation ;
