@@ -72,7 +72,7 @@ ThorVGBackend::ThorVGBackend()
 {
 	fCanvas = tvg::SwCanvas::gen();
 	fScene = tvg::Scene::gen();
-	fCanvas->push(fScene);
+	fCanvas->add(fScene);
 }
 
 
@@ -117,20 +117,20 @@ ThorVGBackend::SetTarget(void* buffer, uint32 stride, uint32 width,
 void
 ThorVGBackend::Clear()
 {
-	fScene->clear();
+	fScene->remove();
 }
 
 
 void
 ThorVGBackend::Clear(const KosmColor& color)
 {
-	fScene->clear();
+	fScene->remove();
 
 	if (color.a > 0) {
 		auto bg = tvg::Shape::gen();
 		bg->appendRect(0, 0, fWidth, fHeight);
 		bg->fill(color.R8(), color.G8(), color.B8(), color.A8());
-		fScene->push(std::move(bg));
+		fScene->add(bg);
 	}
 }
 
@@ -150,7 +150,7 @@ ThorVGBackend::FillRect(const KosmRect& rect, const KosmColor& color)
 	if (fCurrentState.hasShadow)
 		_DrawShadow(shape.get());
 
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -166,7 +166,7 @@ ThorVGBackend::FillRoundRect(const KosmRect& rect, float rx, float ry,
 	if (fCurrentState.hasShadow)
 		_DrawShadow(shape.get());
 
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -182,7 +182,7 @@ ThorVGBackend::FillCircle(const KosmPoint& center, float radius,
 	if (fCurrentState.hasShadow)
 		_DrawShadow(shape.get());
 
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -198,7 +198,7 @@ ThorVGBackend::FillEllipse(const KosmPoint& center, float rx, float ry,
 	if (fCurrentState.hasShadow)
 		_DrawShadow(shape.get());
 
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -209,7 +209,7 @@ ThorVGBackend::FillPath(void* pathHandle, const KosmColor& color)
 		return;
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
-	auto shape = tvg::cast<tvg::Shape>(original->duplicate());
+	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
 	_ApplyFill(shape.get(), color);
 	_ApplyState(shape.get());
@@ -217,7 +217,7 @@ ThorVGBackend::FillPath(void* pathHandle, const KosmColor& color)
 	if (fCurrentState.hasShadow)
 		_DrawShadow(shape.get());
 
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -232,7 +232,7 @@ ThorVGBackend::FillRectGradient(const KosmRect& rect, void* gradientHandle)
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height);
 	_ApplyGradientFill(shape.get(), gradientHandle);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -244,7 +244,7 @@ ThorVGBackend::FillRoundRectGradient(const KosmRect& rect, float rx, float ry,
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height, rx, ry);
 	_ApplyGradientFill(shape.get(), gradientHandle);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -256,7 +256,7 @@ ThorVGBackend::FillCircleGradient(const KosmPoint& center, float radius,
 	shape->appendCircle(center.x, center.y, radius, radius);
 	_ApplyGradientFill(shape.get(), gradientHandle);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -268,7 +268,7 @@ ThorVGBackend::FillEllipseGradient(const KosmPoint& center, float rx, float ry,
 	shape->appendCircle(center.x, center.y, rx, ry);
 	_ApplyGradientFill(shape.get(), gradientHandle);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -279,11 +279,11 @@ ThorVGBackend::FillPathGradient(void* pathHandle, void* gradientHandle)
 		return;
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
-	auto shape = tvg::cast<tvg::Shape>(original->duplicate());
+	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
 	_ApplyGradientFill(shape.get(), gradientHandle);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -299,7 +299,7 @@ ThorVGBackend::StrokeRect(const KosmRect& rect, const KosmColor& color,
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height);
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -311,7 +311,7 @@ ThorVGBackend::StrokeRoundRect(const KosmRect& rect, float rx, float ry,
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height, rx, ry);
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -323,7 +323,7 @@ ThorVGBackend::StrokeCircle(const KosmPoint& center, float radius,
 	shape->appendCircle(center.x, center.y, radius, radius);
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -335,7 +335,7 @@ ThorVGBackend::StrokeEllipse(const KosmPoint& center, float rx, float ry,
 	shape->appendCircle(center.x, center.y, rx, ry);
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -348,7 +348,7 @@ ThorVGBackend::StrokeLine(const KosmPoint& from, const KosmPoint& to,
 	shape->lineTo(to.x, to.y);
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -360,11 +360,11 @@ ThorVGBackend::StrokePath(void* pathHandle, const KosmColor& color,
 		return;
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
-	auto shape = tvg::cast<tvg::Shape>(original->duplicate());
+	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
 	_ApplyStroke(shape.get(), color, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -376,11 +376,11 @@ ThorVGBackend::StrokePathGradient(void* pathHandle, void* gradientHandle,
 		return;
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
-	auto shape = tvg::cast<tvg::Shape>(original->duplicate());
+	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
 	_ApplyGradientStroke(shape.get(), gradientHandle, style);
 	_ApplyState(shape.get());
-	fScene->push(std::move(shape));
+	fScene->add(shape);
 }
 
 
@@ -395,7 +395,7 @@ ThorVGBackend::DrawImage(void* imageHandle, const KosmPoint& position)
 		return;
 
 	auto original = static_cast<tvg::Picture*>(imageHandle);
-	auto picture = tvg::cast<tvg::Picture>(original->duplicate());
+	auto picture = static_cast<tvg::Picture*>(original->duplicate());
 
 	picture->translate(position.x, position.y);
 	picture->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
@@ -416,10 +416,10 @@ ThorVGBackend::DrawImage(void* imageHandle, const KosmPoint& position)
 
 	if (fCurrentState.hasClipRect) {
 		auto clipper = _CreateClipShape();
-		picture->clip(std::move(tvg::cast<tvg::Shape>(clipper)));
+		picture->clip(clipper);
 	}
 
-	fScene->push(std::move(picture));
+	fScene->add(picture);
 }
 
 
@@ -430,14 +430,14 @@ ThorVGBackend::DrawImage(void* imageHandle, const KosmRect& destRect)
 		return;
 
 	auto original = static_cast<tvg::Picture*>(imageHandle);
-	auto picture = tvg::cast<tvg::Picture>(original->duplicate());
+	auto picture = static_cast<tvg::Picture*>(original->duplicate());
 
 	picture->translate(destRect.x, destRect.y);
 	picture->size(destRect.width, destRect.height);
 	picture->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
 	picture->blend(_ConvertBlendMode(fCurrentState.blendMode));
 
-	fScene->push(std::move(picture));
+	fScene->add(picture);
 }
 
 
@@ -449,7 +449,7 @@ ThorVGBackend::DrawImage(void* imageHandle, const KosmRect& srcRect,
 		return;
 
 	auto original = static_cast<tvg::Picture*>(imageHandle);
-	auto picture = tvg::cast<tvg::Picture>(original->duplicate());
+	auto picture = static_cast<tvg::Picture*>(original->duplicate());
 
 	// Scale from src to dest
 	float scaleX = destRect.width / srcRect.width;
@@ -469,12 +469,12 @@ ThorVGBackend::DrawImage(void* imageHandle, const KosmRect& srcRect,
 	// Clip to dest rect
 	auto clipper = tvg::Shape::gen();
 	clipper->appendRect(destRect.x, destRect.y, destRect.width, destRect.height);
-	picture->clip(std::move(clipper));
+	picture->clip(clipper);
 
 	picture->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
 	picture->blend(_ConvertBlendMode(fCurrentState.blendMode));
 
-	fScene->push(std::move(picture));
+	fScene->add(picture);
 }
 
 
@@ -492,7 +492,8 @@ ThorVGBackend::DrawText(const char* text, const KosmPoint& position,
 	auto fontInfo = static_cast<FontInfo*>(fontHandle);
 
 	auto tvgText = tvg::Text::gen();
-	tvgText->font(fontInfo->family, fontInfo->size);
+	tvgText->font(fontInfo->family);
+	tvgText->size(fontInfo->size);
 	tvgText->text(text);
 	tvgText->fill(color.R8(), color.G8(), color.B8());
 	tvgText->translate(position.x, position.y);
@@ -503,7 +504,7 @@ ThorVGBackend::DrawText(const char* text, const KosmPoint& position,
 	tvgText->opacity(static_cast<uint8_t>(fCurrentState.opacity * color.a * 255));
 	tvgText->blend(_ConvertBlendMode(fCurrentState.blendMode));
 
-	fScene->push(std::move(tvgText));
+	fScene->add(tvgText);
 }
 
 
@@ -518,9 +519,10 @@ ThorVGBackend::DrawTextGradient(const char* text, const KosmPoint& position,
 	auto gradient = static_cast<tvg::Fill*>(gradientHandle);
 
 	auto tvgText = tvg::Text::gen();
-	tvgText->font(fontInfo->family, fontInfo->size);
+	tvgText->font(fontInfo->family);
+	tvgText->size(fontInfo->size);
 	tvgText->text(text);
-	tvgText->fill(tvg::cast<tvg::Fill>(gradient->duplicate()));
+	tvgText->fill(static_cast<tvg::Fill*>(gradient->duplicate()));
 	tvgText->translate(position.x, position.y);
 
 	if (fontInfo->italicShear > 0)
@@ -529,7 +531,7 @@ ThorVGBackend::DrawTextGradient(const char* text, const KosmPoint& position,
 	tvgText->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
 	tvgText->blend(_ConvertBlendMode(fCurrentState.blendMode));
 
-	fScene->push(std::move(tvgText));
+	fScene->add(tvgText);
 }
 
 
@@ -544,7 +546,8 @@ ThorVGBackend::DrawTextWithOutline(const char* text, const KosmPoint& position,
 	auto fontInfo = static_cast<FontInfo*>(fontHandle);
 
 	auto tvgText = tvg::Text::gen();
-	tvgText->font(fontInfo->family, fontInfo->size);
+	tvgText->font(fontInfo->family);
+	tvgText->size(fontInfo->size);
 	tvgText->text(text);
 	tvgText->fill(fillColor.R8(), fillColor.G8(), fillColor.B8());
 	tvgText->translate(position.x, position.y);
@@ -554,7 +557,7 @@ ThorVGBackend::DrawTextWithOutline(const char* text, const KosmPoint& position,
 
 	tvgText->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
 
-	fScene->push(std::move(tvgText));
+	fScene->add(tvgText);
 }
 
 
@@ -569,7 +572,8 @@ ThorVGBackend::DrawTextInRect(const char* text, const KosmRect& rect,
 	auto fontInfo = static_cast<FontInfo*>(fontHandle);
 
 	auto tvgText = tvg::Text::gen();
-	tvgText->font(fontInfo->family, fontInfo->size);
+	tvgText->font(fontInfo->family);
+	tvgText->size(fontInfo->size);
 	tvgText->text(text);
 	tvgText->fill(color.R8(), color.G8(), color.B8());
 
@@ -589,7 +593,7 @@ ThorVGBackend::DrawTextInRect(const char* text, const KosmRect& rect,
 	tvgText->translate(rect.x, rect.y);
 	tvgText->opacity(static_cast<uint8_t>(fCurrentState.opacity * color.a * 255));
 
-	fScene->push(std::move(tvgText));
+	fScene->add(tvgText);
 }
 
 
@@ -642,7 +646,7 @@ ThorVGBackend::SetClipRoundRect(const KosmRect& rect, float radius)
 	if (fCurrentState.clipPath != nullptr)
 		delete fCurrentState.clipPath;
 
-	fCurrentState.clipPath = tvg::Shape::gen().release();
+	fCurrentState.clipPath = tvg::Shape::gen();
 	fCurrentState.clipPath->appendRect(rect.x, rect.y, rect.width, rect.height,
 		radius, radius);
 	fCurrentState.hasClipRect = false;
@@ -655,7 +659,7 @@ ThorVGBackend::SetClipCircle(const KosmPoint& center, float radius)
 	if (fCurrentState.clipPath != nullptr)
 		delete fCurrentState.clipPath;
 
-	fCurrentState.clipPath = tvg::Shape::gen().release();
+	fCurrentState.clipPath = tvg::Shape::gen();
 	fCurrentState.clipPath->appendCircle(center.x, center.y, radius, radius);
 	fCurrentState.hasClipRect = false;
 }
@@ -671,7 +675,7 @@ ThorVGBackend::SetClipPath(void* pathHandle)
 		delete fCurrentState.clipPath;
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
-	fCurrentState.clipPath = static_cast<tvg::Shape*>(original->duplicate().release());
+	fCurrentState.clipPath = static_cast<tvg::Shape*>(original->duplicate());
 	fCurrentState.hasClipRect = false;
 }
 
@@ -759,7 +763,7 @@ ThorVGBackend::ClearBlur()
 void
 ThorVGBackend::BeginMask()
 {
-	fMaskScene = tvg::Scene::gen().release();
+	fMaskScene = tvg::Scene::gen();
 	fInMask = true;
 }
 
@@ -805,7 +809,7 @@ ThorVGBackend::BeginLayer(const KosmRect& bounds, float opacity)
 	info.opacity = opacity;
 	fLayerStack.push_back(info);
 
-	fScene = layerScene.release();
+	fScene = layerScene;
 }
 
 
@@ -823,7 +827,7 @@ ThorVGBackend::EndLayer()
 
 	layerScene->opacity(static_cast<uint8_t>(info.opacity * 255));
 
-	fScene->push(std::unique_ptr<tvg::Scene>(layerScene));
+	fScene->add(layerScene);
 }
 
 
@@ -840,7 +844,7 @@ ThorVGBackend::Flush()
 	fCanvas->sync();
 
 	// Clear scene for next frame
-	fScene->clear();
+	fScene->remove();
 
 	return B_OK;
 }
@@ -853,7 +857,7 @@ ThorVGBackend::Flush()
 void*
 ThorVGBackend::CreatePath()
 {
-	return tvg::Shape::gen().release();
+	return tvg::Shape::gen();
 }
 
 
@@ -871,7 +875,7 @@ ThorVGBackend::DuplicatePath(void* path)
 {
 	if (path == nullptr)
 		return nullptr;
-	return static_cast<tvg::Shape*>(path)->duplicate().release();
+	return static_cast<tvg::Shape*>(path)->duplicate();
 }
 
 
@@ -1025,8 +1029,7 @@ ThorVGBackend::PathAppend(void* path, void* other)
 	const tvg::Point* pts;
 	uint32_t ptsCnt;
 
-	otherShape->pathCommands(&cmds, &cmdsCnt);
-	otherShape->pathCoords(&pts, &ptsCnt);
+	otherShape->path(&cmds, &cmdsCnt, &pts, &ptsCnt);
 	shape->appendPath(cmds, cmdsCnt, pts, ptsCnt);
 }
 
@@ -1056,7 +1059,7 @@ ThorVGBackend::CreateLinearGradient(float x1, float y1, float x2, float y2)
 {
 	auto gradient = tvg::LinearGradient::gen();
 	gradient->linear(x1, y1, x2, y2);
-	return gradient.release();
+	return gradient;
 }
 
 
@@ -1066,7 +1069,7 @@ ThorVGBackend::CreateRadialGradient(float cx, float cy, float radius,
 {
 	auto gradient = tvg::RadialGradient::gen();
 	gradient->radial(cx, cy, radius, fx, fy, focalRadius);
-	return gradient.release();
+	return gradient;
 }
 
 
@@ -1139,7 +1142,7 @@ ThorVGBackend::GradientSetTransform(void* gradient, const KosmMatrix& matrix)
 void*
 ThorVGBackend::CreateImage()
 {
-	return tvg::Picture::gen().release();
+	return tvg::Picture::gen();
 }
 
 
@@ -1397,7 +1400,7 @@ ThorVGBackend::_ApplyGradientFill(tvg::Shape* shape, void* gradientHandle)
 		return;
 
 	auto gradient = static_cast<tvg::Fill*>(gradientHandle);
-	shape->fill(tvg::cast<tvg::Fill>(gradient->duplicate()));
+	shape->fill(static_cast<tvg::Fill*>(gradient->duplicate()));
 
 	if (fCurrentState.opacity < 1.0f)
 		shape->opacity(static_cast<uint8_t>(fCurrentState.opacity * 255));
@@ -1432,7 +1435,7 @@ ThorVGBackend::_ApplyGradientStroke(tvg::Shape* shape, void* gradientHandle,
 	auto gradient = static_cast<tvg::Fill*>(gradientHandle);
 
 	shape->strokeWidth(style.width);
-	shape->strokeFill(tvg::cast<tvg::Fill>(gradient->duplicate()));
+	shape->strokeFill(static_cast<tvg::Fill*>(gradient->duplicate()));
 	shape->strokeMiterlimit(style.miterLimit);
 	shape->strokeCap(_ConvertLineCap(style.cap));
 	shape->strokeJoin(_ConvertLineJoin(style.join));
@@ -1469,11 +1472,11 @@ ThorVGBackend::_ApplyState(tvg::Shape* shape)
 	// Clip
 	if (fCurrentState.hasClipRect) {
 		auto clipper = _CreateClipShape();
-		shape->clip(std::unique_ptr<tvg::Shape>(clipper));
+		shape->clip(clipper);
 	} else if (fCurrentState.clipPath != nullptr) {
 		auto clipper = static_cast<tvg::Shape*>(
-			fCurrentState.clipPath->duplicate().release());
-		shape->clip(std::unique_ptr<tvg::Shape>(clipper));
+			fCurrentState.clipPath->duplicate());
+		shape->clip(clipper);
 	}
 }
 
@@ -1488,14 +1491,14 @@ ThorVGBackend::_CreateClipShape()
 		fCurrentState.clipRect.width,
 		fCurrentState.clipRect.height
 	);
-	return clipper.release();
+	return clipper;
 }
 
 
 void
 ThorVGBackend::_DrawShadow(tvg::Shape* shape)
 {
-	auto shadowShape = tvg::cast<tvg::Shape>(shape->duplicate());
+	auto shadowShape = static_cast<tvg::Shape*>(shape->duplicate());
 
 	shadowShape->fill(
 		fCurrentState.shadowColor.R8(),
@@ -1507,7 +1510,7 @@ ThorVGBackend::_DrawShadow(tvg::Shape* shape)
 	shadowShape->translate(fCurrentState.shadowOffsetX,
 		fCurrentState.shadowOffsetY);
 
-	fScene->push(std::move(shadowShape));
+	fScene->add(shadowShape);
 }
 
 
