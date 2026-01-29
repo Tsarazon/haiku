@@ -12,28 +12,28 @@
 
 
 struct KosmPath::Data {
-	RenderBackend*	backend;
-	void*			handle;
-	KosmPoint		currentPoint;
+	RenderBackend*		backend;
+	void*				handle;
+	KosmPoint			currentPoint;
+	kosm_fill_rule		fillRule;
 
 	Data()
 		:
 		backend(nullptr),
 		handle(nullptr),
-		currentPoint(0, 0)
+		currentPoint(0, 0),
+		fillRule(KOSM_FILL_RULE_NON_ZERO)
 	{
-		backend = RenderBackend::Create();
+		backend = RenderBackend::Instance();
 		if (backend != nullptr)
 			handle = backend->CreatePath();
 	}
 
 	~Data()
 	{
-		if (backend != nullptr) {
-			if (handle != nullptr)
-				backend->DestroyPath(handle);
-			delete backend;
-		}
+		if (backend != nullptr && handle != nullptr)
+			backend->DestroyPath(handle);
+		// Don't delete backend - it's a singleton
 	}
 };
 
@@ -57,6 +57,7 @@ KosmPath::KosmPath(const KosmPath& other)
 
 		fData->handle = fData->backend->DuplicatePath(other.fData->handle);
 		fData->currentPoint = other.fData->currentPoint;
+		fData->fillRule = other.fData->fillRule;
 	}
 }
 
@@ -76,6 +77,7 @@ KosmPath::operator=(const KosmPath& other)
 
 		fData->handle = fData->backend->DuplicatePath(other.fData->handle);
 		fData->currentPoint = other.fData->currentPoint;
+		fData->fillRule = other.fData->fillRule;
 	}
 	return *this;
 }
@@ -355,6 +357,24 @@ KosmPath::Transformed(const KosmMatrix& matrix) const
 void
 KosmPath::Reverse()
 {
+}
+
+
+void
+KosmPath::SetFillRule(kosm_fill_rule rule)
+{
+	if (fData != nullptr) {
+		fData->fillRule = rule;
+		if (fData->backend != nullptr && fData->handle != nullptr)
+			fData->backend->PathSetFillRule(fData->handle, rule);
+	}
+}
+
+
+kosm_fill_rule
+KosmPath::FillRule() const
+{
+	return fData != nullptr ? fData->fillRule : KOSM_FILL_RULE_NON_ZERO;
 }
 
 

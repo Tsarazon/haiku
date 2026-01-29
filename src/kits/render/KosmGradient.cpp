@@ -20,14 +20,14 @@ struct KosmGradient::Data {
 
 	Data()
 		:
-		backend(RenderBackend::Create()),
+		backend(RenderBackend::Instance()),
 		spread(KOSM_GRADIENT_SPREAD_PAD)
 	{
 	}
 
 	virtual ~Data()
 	{
-		delete backend;
+		// Don't delete backend - it's a singleton
 	}
 };
 
@@ -202,10 +202,10 @@ KosmLinearGradient::SetPoints(const KosmPoint& start, const KosmPoint& end)
 	fLinearData->handle = fData->backend->CreateLinearGradient(
 		start.x, start.y, end.x, end.y);
 
-	// Re-add color stops
-	for (const auto& stop : fData->colorStops) {
-		fData->backend->GradientAddColorStop(fLinearData->handle,
-			stop.offset, stop.color);
+	// Re-set color stops
+	if (!fData->colorStops.empty()) {
+		fData->backend->GradientSetColorStops(fLinearData->handle,
+			fData->colorStops.data(), fData->colorStops.size());
 	}
 }
 
@@ -237,10 +237,10 @@ KosmLinearGradient::NativeHandle() const
 	if (fData == nullptr || fLinearData == nullptr)
 		return nullptr;
 
-	// Update native handle with current color stops
-	for (const auto& stop : fData->colorStops) {
-		fData->backend->GradientAddColorStop(fLinearData->handle,
-			stop.offset, stop.color);
+	// Set ALL color stops at once (replaces existing, no accumulation)
+	if (!fData->colorStops.empty()) {
+		fData->backend->GradientSetColorStops(fLinearData->handle,
+			fData->colorStops.data(), fData->colorStops.size());
 	}
 
 	fData->backend->GradientSetSpread(fLinearData->handle, fData->spread);
@@ -351,9 +351,10 @@ KosmRadialGradient::SetCenter(const KosmPoint& center, float radius)
 		center.x, center.y, radius,
 		fRadialData->focal.x, fRadialData->focal.y, fRadialData->focalRadius);
 
-	for (const auto& stop : fData->colorStops) {
-		fData->backend->GradientAddColorStop(fRadialData->handle,
-			stop.offset, stop.color);
+	// Re-set color stops
+	if (!fData->colorStops.empty()) {
+		fData->backend->GradientSetColorStops(fRadialData->handle,
+			fData->colorStops.data(), fData->colorStops.size());
 	}
 }
 
@@ -402,9 +403,10 @@ KosmRadialGradient::NativeHandle() const
 	if (fData == nullptr || fRadialData == nullptr)
 		return nullptr;
 
-	for (const auto& stop : fData->colorStops) {
-		fData->backend->GradientAddColorStop(fRadialData->handle,
-			stop.offset, stop.color);
+	// Set ALL color stops at once (replaces existing, no accumulation)
+	if (!fData->colorStops.empty()) {
+		fData->backend->GradientSetColorStops(fRadialData->handle,
+			fData->colorStops.data(), fData->colorStops.size());
 	}
 
 	fData->backend->GradientSetSpread(fRadialData->handle, fData->spread);

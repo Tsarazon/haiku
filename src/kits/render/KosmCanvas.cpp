@@ -28,7 +28,7 @@ struct KosmCanvas::Impl {
 
 	~Impl()
 	{
-		delete backend;
+		// Don't delete backend - it's a singleton
 	}
 };
 
@@ -66,7 +66,7 @@ KosmCanvas::KosmCanvas(KosmSurface* surface)
 	if (fImpl == nullptr)
 		return;
 
-	fImpl->backend = RenderBackend::Create();
+	fImpl->backend = RenderBackend::Instance();
 	if (fImpl->backend == nullptr) {
 		delete fImpl;
 		fImpl = nullptr;

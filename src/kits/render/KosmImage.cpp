@@ -20,7 +20,7 @@ struct KosmImage::Data {
 
 	Data()
 		:
-		backend(RenderBackend::Create()),
+		backend(RenderBackend::Instance()),
 		handle(nullptr),
 		transform(),
 		opacity(1.0f)
@@ -33,7 +33,7 @@ struct KosmImage::Data {
 	{
 		if (backend != nullptr && handle != nullptr)
 			backend->DestroyImage(handle);
-		delete backend;
+		// Don't delete backend - it's a singleton
 	}
 };
 

@@ -50,10 +50,15 @@ RenderBackend::Terminate()
 }
 
 
+static RenderBackend* sInstance = nullptr;
+
+
 RenderBackend*
-RenderBackend::Create()
+RenderBackend::Instance()
 {
-	return new(std::nothrow) ThorVGBackend();
+	if (sInstance == nullptr)
+		sInstance = new(std::nothrow) ThorVGBackend();
+	return sInstance;
 }
 
 
@@ -88,12 +93,24 @@ ThorVGBackend::SetTarget(void* buffer, uint32 stride, uint32 width,
 {
 	tvg::ColorSpace cs;
 
+	// ThorVG ColorSpace describes uint32 component order (MSB to LSB)
+	// ARGB8888 = 0xAARRGGBB (alpha in high bits)
+	//
+	// On little-endian (x86_64, ARM64):
+	// - PIXEL_FORMAT_BGRA8888: memory [B][G][R][A] = uint32 0xAARRGGBB = ARGB8888
+	// - PIXEL_FORMAT_ARGB8888: memory [A][R][G][B] = uint32 0xBBGGRRAA (not supported)
+	//
+	// Compatible with Haiku B_RGBA32 (memory BGRA = uint32 ARGB)
+
 	switch (format) {
 		case PIXEL_FORMAT_ARGB8888:
+			// ThorVG native format - uint32 0xAARRGGBB
 			cs = tvg::ColorSpace::ARGB8888;
 			break;
 		case PIXEL_FORMAT_BGRA8888:
-			cs = tvg::ColorSpace::ABGR8888;
+			// Memory order BGRA = uint32 ARGB on little-endian
+			// This is Haiku-compatible (B_RGBA32)
+			cs = tvg::ColorSpace::ARGB8888;
 			break;
 		default:
 			return B_BAD_VALUE;
@@ -1050,6 +1067,19 @@ ThorVGBackend::PathBounds(void* path)
 }
 
 
+void
+ThorVGBackend::PathSetFillRule(void* path, kosm_fill_rule rule)
+{
+	if (path == nullptr)
+		return;
+
+	auto shape = static_cast<tvg::Shape*>(path);
+	shape->fillRule(rule == KOSM_FILL_RULE_EVEN_ODD
+		? tvg::FillRule::EvenOdd
+		: tvg::FillRule::NonZero);
+}
+
+
 // ============================================================================
 // Gradient
 // ============================================================================
@@ -1105,6 +1135,29 @@ ThorVGBackend::GradientAddColorStop(void* gradient, float offset,
 
 	fill->colorStops(newStops, count + 1);
 	delete[] newStops;
+}
+
+
+void
+ThorVGBackend::GradientSetColorStops(void* gradient, const KosmColorStop* stops,
+	uint32 count)
+{
+	if (gradient == nullptr || stops == nullptr || count == 0)
+		return;
+
+	auto fill = static_cast<tvg::Fill*>(gradient);
+
+	auto tvgStops = new tvg::Fill::ColorStop[count];
+	for (uint32 i = 0; i < count; i++) {
+		tvgStops[i].offset = stops[i].offset;
+		tvgStops[i].r = stops[i].color.R8();
+		tvgStops[i].g = stops[i].color.G8();
+		tvgStops[i].b = stops[i].color.B8();
+		tvgStops[i].a = stops[i].color.A8();
+	}
+
+	fill->colorStops(tvgStops, count);
+	delete[] tvgStops;
 }
 
 

@@ -196,6 +196,8 @@ public:
 									float startAngle, float sweepAngle);
 	virtual void				PathAppend(void* path, void* other);
 	virtual KosmRect			PathBounds(void* path);
+	virtual void				PathSetFillRule(void* path,
+									kosm_fill_rule rule);
 
 	// Gradient
 	virtual void*				CreateLinearGradient(float x1, float y1,
@@ -206,6 +208,9 @@ public:
 	virtual void				DestroyGradient(void* gradient);
 	virtual void				GradientAddColorStop(void* gradient,
 									float offset, const KosmColor& color);
+	virtual void				GradientSetColorStops(void* gradient,
+									const KosmColorStop* stops,
+									uint32 count);
 	virtual void				GradientSetSpread(void* gradient,
 									kosm_gradient_spread spread);
 	virtual void				GradientSetTransform(void* gradient,

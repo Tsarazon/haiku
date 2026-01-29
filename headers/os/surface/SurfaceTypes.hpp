@@ -10,20 +10,21 @@
 typedef uint32 surface_id;
 
 enum {
-	// 32-bit RGBA variants
-	PIXEL_FORMAT_RGBA8888 = 0,
-	PIXEL_FORMAT_BGRA8888,
-	PIXEL_FORMAT_RGB565,
+	// Primary format - ThorVG native, Haiku B_RGBA32 compatible
+	// uint32 0xAARRGGBB, memory order on little-endian: [B][G][R][A]
+	PIXEL_FORMAT_ARGB8888 = 0,		// ThorVG native, RECOMMENDED
+
+	// Legacy/compatibility formats
+	PIXEL_FORMAT_BGRA8888,			// Same as ARGB8888 on little-endian
+	PIXEL_FORMAT_RGBA8888,
 	PIXEL_FORMAT_RGBX8888,
+	PIXEL_FORMAT_XRGB8888,			// Compositor, X11/DRM
+	PIXEL_FORMAT_RGB565,
 
 	// Planar YUV
 	PIXEL_FORMAT_NV12,
 	PIXEL_FORMAT_NV21,
 	PIXEL_FORMAT_YV12,
-
-	// ThorVG and compositor formats
-	PIXEL_FORMAT_ARGB8888,			// ThorVG native
-	PIXEL_FORMAT_XRGB8888,			// Compositor, X11/DRM
 
 	// Single-channel formats
 	PIXEL_FORMAT_A8,				// Font glyphs, masks
@@ -95,7 +96,7 @@ surface_desc_init(surface_desc* desc)
 {
 	desc->width = 0;
 	desc->height = 0;
-	desc->format = PIXEL_FORMAT_BGRA8888;
+	desc->format = PIXEL_FORMAT_ARGB8888;	// ThorVG native
 	desc->usage = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE;
 	desc->bytesPerElement = 0;
 	desc->bytesPerRow = 0;

@@ -8,6 +8,7 @@
 #include <KosmCanvas.hpp>
 #include <KosmColor.hpp>
 #include <KosmGeometry.hpp>
+#include <KosmGradient.hpp>
 #include <SurfaceTypes.hpp>
 
 class RenderBackend {
@@ -17,7 +18,7 @@ public:
 	// Lifecycle
 	static	status_t			Initialize(uint32 threads = 0);
 	static	void				Terminate();
-	static	RenderBackend*		Create();
+	static	RenderBackend*		Instance();
 
 	// Target
 	virtual status_t			SetTarget(void* buffer, uint32 stride,
@@ -234,6 +235,8 @@ public:
 									float sweepAngle) = 0;
 	virtual void				PathAppend(void* path, void* other) = 0;
 	virtual KosmRect			PathBounds(void* path) = 0;
+	virtual void				PathSetFillRule(void* path,
+									kosm_fill_rule rule) = 0;
 
 	// ========================================================================
 	// Gradient
@@ -249,6 +252,9 @@ public:
 	virtual void				GradientAddColorStop(void* gradient,
 									float offset,
 									const KosmColor& color) = 0;
+	virtual void				GradientSetColorStops(void* gradient,
+									const KosmColorStop* stops,
+									uint32 count) = 0;
 	virtual void				GradientSetSpread(void* gradient,
 									kosm_gradient_spread spread) = 0;
 	virtual void				GradientSetTransform(void* gradient,

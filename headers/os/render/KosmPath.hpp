@@ -5,6 +5,7 @@
 #ifndef _KOSM_PATH_HPP
 #define _KOSM_PATH_HPP
 
+#include <KosmCanvas.hpp>
 #include <KosmGeometry.hpp>
 
 class RenderBackend;
@@ -59,6 +60,10 @@ public:
 			void			Transform(const KosmMatrix& matrix);
 			KosmPath		Transformed(const KosmMatrix& matrix) const;
 			void			Reverse();
+
+	// Fill rule
+			void			SetFillRule(kosm_fill_rule rule);
+			kosm_fill_rule	FillRule() const;
 
 	// Queries
 			bool			IsEmpty() const;

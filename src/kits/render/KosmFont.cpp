@@ -25,7 +25,7 @@ struct KosmFont::Data {
 
 	Data()
 		:
-		backend(RenderBackend::Create()),
+		backend(RenderBackend::Instance()),
 		handle(nullptr),
 		family("sans-serif"),
 		size(12.0f),
@@ -41,7 +41,7 @@ struct KosmFont::Data {
 
 	Data(const char* familyName, float fontSize)
 		:
-		backend(RenderBackend::Create()),
+		backend(RenderBackend::Instance()),
 		handle(nullptr),
 		family(familyName != nullptr ? familyName : "sans-serif"),
 		size(fontSize),
@@ -59,7 +59,7 @@ struct KosmFont::Data {
 	{
 		if (backend != nullptr && handle != nullptr)
 			backend->DestroyFont(handle);
-		delete backend;
+		// Don't delete backend - it's a singleton
 	}
 };
 
@@ -132,21 +132,21 @@ KosmFont::operator=(const KosmFont& other)
 status_t
 KosmFont::LoadFont(const char* path)
 {
-	return RenderBackend::Create()->LoadFont(path);
+	return RenderBackend::Instance()->LoadFont(path);
 }
 
 
 status_t
 KosmFont::LoadFont(const char* name, const void* data, size_t size)
 {
-	return RenderBackend::Create()->LoadFontData(name, data, size);
+	return RenderBackend::Instance()->LoadFontData(name, data, size);
 }
 
 
 status_t
 KosmFont::UnloadFont(const char* path)
 {
-	return RenderBackend::Create()->UnloadFont(path);
+	return RenderBackend::Instance()->UnloadFont(path);
 }
 
 
