@@ -782,10 +782,10 @@ KosmCanvas::ClearBlur()
 // ============================================================================
 
 void
-KosmCanvas::BeginMask()
+KosmCanvas::BeginMask(kosm_mask_method method)
 {
 	if (fImpl != nullptr)
-		fImpl->backend->BeginMask();
+		fImpl->backend->BeginMask(method);
 }
 
 
@@ -798,18 +798,26 @@ KosmCanvas::EndMask()
 
 
 void
-KosmCanvas::ApplyMask()
-{
-	if (fImpl != nullptr)
-		fImpl->backend->ApplyMask();
-}
-
-
-void
 KosmCanvas::ClearMask()
 {
 	if (fImpl != nullptr)
 		fImpl->backend->ClearMask();
+}
+
+
+void
+KosmCanvas::ClipToMask(const KosmPath& maskPath, kosm_mask_method method)
+{
+	if (fImpl != nullptr)
+		fImpl->backend->ClipToMask(maskPath.NativeHandle(), method);
+}
+
+
+void
+KosmCanvas::ClipToMask(const KosmImage& maskImage, kosm_mask_method method)
+{
+	if (fImpl != nullptr)
+		fImpl->backend->ClipToMask(maskImage.NativeHandle(), method);
 }
 
 

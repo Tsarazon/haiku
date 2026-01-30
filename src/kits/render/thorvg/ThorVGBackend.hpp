@@ -23,6 +23,7 @@ namespace tvg {
 	enum class StrokeJoin;
 	enum class FillSpread;
 	enum class TextWrap;
+	enum class MaskMethod;
 }
 
 class ThorVGBackend : public RenderBackend {
@@ -158,10 +159,11 @@ public:
 	virtual void				ClearBlur();
 
 	// Mask
-	virtual void				BeginMask();
+	virtual void				BeginMask(kosm_mask_method method);
 	virtual void				EndMask();
-	virtual void				ApplyMask();
 	virtual void				ClearMask();
+	virtual void				ClipToMask(void* maskPaint,
+									kosm_mask_method method);
 
 	// Layer
 	virtual void				BeginLayer(const KosmRect& bounds,
@@ -313,23 +315,48 @@ private:
 			tvg::TextWrap		_ConvertTextWrap(kosm_text_wrap wrap);
 
 			tvg::SwCanvas*		fCanvas;
-			tvg::Scene*			fScene;
+			tvg::Scene*			fScene;			// Current scene for drawing
+			tvg::Scene*			fRootScene;		// Root scene added to canvas
 			uint32				fWidth;
 			uint32				fHeight;
 
 			State				fCurrentState;
 			std::vector<State>	fStateStack;
 
-			// For masking
-			tvg::Scene*			fMaskScene;
-			bool				fInMask;
-
-			// For layers
+			// Layer info with mask support
 			struct LayerInfo {
 				tvg::Scene*		scene;
 				float			opacity;
+				KosmRect		bounds;
+				bool			isMaskLayer;
+				bool			isContentLayer;
+
+				LayerInfo()
+					:
+					scene(nullptr),
+					opacity(1.0f),
+					bounds{0, 0, 0, 0},
+					isMaskLayer(false),
+					isContentLayer(false)
+				{
+				}
 			};
 			std::vector<LayerInfo> fLayerStack;
+
+			// Mask state
+			struct MaskInfo {
+				tvg::Scene*		maskScene;
+				tvg::Scene*		contentScene;
+				tvg::MaskMethod	method;
+				bool			active;
+
+				MaskInfo();
+				void			Reset();
+			};
+			MaskInfo			fMaskInfo;
+			bool				fInMaskDefinition;
+
+			tvg::MaskMethod		_ConvertMaskMethod(kosm_mask_method method);
 };
 
 #endif /* _THORVG_BACKEND_HPP */

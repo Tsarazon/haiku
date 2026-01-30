@@ -180,13 +180,14 @@ public:
 	virtual void				ClearBlur() = 0;
 
 	// ========================================================================
-	// Mask
+	// Mask (Core Graphics style)
 	// ========================================================================
 
-	virtual void				BeginMask() = 0;
+	virtual void				BeginMask(kosm_mask_method method) = 0;
 	virtual void				EndMask() = 0;
-	virtual void				ApplyMask() = 0;
 	virtual void				ClearMask() = 0;
+	virtual void				ClipToMask(void* maskPaint,
+									kosm_mask_method method) = 0;
 
 	// ========================================================================
 	// Layer

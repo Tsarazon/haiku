@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstring>
 #include <cmath>
+#include <mutex>
 #include <new>
 
 
@@ -51,13 +52,15 @@ RenderBackend::Terminate()
 
 
 static RenderBackend* sInstance = nullptr;
+static std::once_flag sInstanceOnce;
 
 
 RenderBackend*
 RenderBackend::Instance()
 {
-	if (sInstance == nullptr)
+	std::call_once(sInstanceOnce, []() {
 		sInstance = new(std::nothrow) ThorVGBackend();
+	});
 	return sInstance;
 }
 
@@ -66,24 +69,63 @@ RenderBackend::Instance()
 // ThorVGBackend implementation
 // ============================================================================
 
+// MaskInfo implementation
+ThorVGBackend::MaskInfo::MaskInfo()
+	:
+	maskScene(nullptr),
+	contentScene(nullptr),
+	method(tvg::MaskMethod::Alpha),
+	active(false)
+{
+}
+
+
+void
+ThorVGBackend::MaskInfo::Reset()
+{
+	maskScene = nullptr;
+	contentScene = nullptr;
+	method = tvg::MaskMethod::Alpha;
+	active = false;
+}
+
+
 ThorVGBackend::ThorVGBackend()
 	:
 	fCanvas(nullptr),
 	fScene(nullptr),
+	fRootScene(nullptr),
 	fWidth(0),
 	fHeight(0),
-	fMaskScene(nullptr),
-	fInMask(false)
+	fMaskInfo(),
+	fInMaskDefinition(false)
 {
 	fCanvas = tvg::SwCanvas::gen();
-	fScene = tvg::Scene::gen();
-	fCanvas->add(fScene);
+	fRootScene = tvg::Scene::gen();
+	fScene = fRootScene;
+	fCanvas->add(fRootScene);
 }
 
 
 ThorVGBackend::~ThorVGBackend()
 {
+	// Clean up mask if active
+	if (fMaskInfo.maskScene != nullptr && !fMaskInfo.active) {
+		tvg::Paint::rel(fMaskInfo.maskScene);
+	}
+	if (fMaskInfo.contentScene != nullptr && !fMaskInfo.active) {
+		tvg::Paint::rel(fMaskInfo.contentScene);
+	}
+	fMaskInfo.Reset();
+
+	// Clear layer stack
+	fLayerStack.clear();
+
+	// Canvas deletes its paints automatically
 	delete fCanvas;
+	fCanvas = nullptr;
+	fRootScene = nullptr;
+	fScene = nullptr;
 }
 
 
@@ -621,7 +663,11 @@ ThorVGBackend::DrawTextInRect(const char* text, const KosmRect& rect,
 void
 ThorVGBackend::PushState()
 {
-	fStateStack.push_back(fCurrentState);
+	State saved = fCurrentState;
+	// Duplicate clipPath to avoid dangling pointer when current clipPath is changed
+	if (saved.clipPath != nullptr)
+		saved.clipPath = static_cast<tvg::Shape*>(saved.clipPath->duplicate());
+	fStateStack.push_back(saved);
 }
 
 
@@ -629,6 +675,10 @@ void
 ThorVGBackend::PopState()
 {
 	if (!fStateStack.empty()) {
+		// Release current clipPath before restoring
+		if (fCurrentState.clipPath != nullptr)
+			tvg::Paint::rel(fCurrentState.clipPath);
+
 		fCurrentState = fStateStack.back();
 		fStateStack.pop_back();
 	}
@@ -661,7 +711,7 @@ void
 ThorVGBackend::SetClipRoundRect(const KosmRect& rect, float radius)
 {
 	if (fCurrentState.clipPath != nullptr)
-		delete fCurrentState.clipPath;
+		tvg::Paint::rel(fCurrentState.clipPath);
 
 	fCurrentState.clipPath = tvg::Shape::gen();
 	fCurrentState.clipPath->appendRect(rect.x, rect.y, rect.width, rect.height,
@@ -674,7 +724,7 @@ void
 ThorVGBackend::SetClipCircle(const KosmPoint& center, float radius)
 {
 	if (fCurrentState.clipPath != nullptr)
-		delete fCurrentState.clipPath;
+		tvg::Paint::rel(fCurrentState.clipPath);
 
 	fCurrentState.clipPath = tvg::Shape::gen();
 	fCurrentState.clipPath->appendCircle(center.x, center.y, radius, radius);
@@ -689,7 +739,7 @@ ThorVGBackend::SetClipPath(void* pathHandle)
 		return;
 
 	if (fCurrentState.clipPath != nullptr)
-		delete fCurrentState.clipPath;
+		tvg::Paint::rel(fCurrentState.clipPath);
 
 	auto original = static_cast<tvg::Shape*>(pathHandle);
 	fCurrentState.clipPath = static_cast<tvg::Shape*>(original->duplicate());
@@ -702,7 +752,7 @@ ThorVGBackend::ResetClip()
 {
 	fCurrentState.hasClipRect = false;
 	if (fCurrentState.clipPath != nullptr) {
-		delete fCurrentState.clipPath;
+		tvg::Paint::rel(fCurrentState.clipPath);
 		fCurrentState.clipPath = nullptr;
 	}
 }
@@ -777,38 +827,162 @@ ThorVGBackend::ClearBlur()
 // Mask
 // ============================================================================
 
-void
-ThorVGBackend::BeginMask()
+tvg::MaskMethod
+ThorVGBackend::_ConvertMaskMethod(kosm_mask_method method)
 {
-	fMaskScene = tvg::Scene::gen();
-	fInMask = true;
+	switch (method) {
+		case KOSM_MASK_ALPHA:		return tvg::MaskMethod::Alpha;
+		case KOSM_MASK_INV_ALPHA:	return tvg::MaskMethod::InvAlpha;
+		case KOSM_MASK_LUMA:		return tvg::MaskMethod::Luma;
+		case KOSM_MASK_INV_LUMA:	return tvg::MaskMethod::InvLuma;
+		case KOSM_MASK_ADD:			return tvg::MaskMethod::Add;
+		case KOSM_MASK_SUBTRACT:	return tvg::MaskMethod::Subtract;
+		case KOSM_MASK_INTERSECT:	return tvg::MaskMethod::Intersect;
+		case KOSM_MASK_DIFFERENCE:	return tvg::MaskMethod::Difference;
+		case KOSM_MASK_LIGHTEN:		return tvg::MaskMethod::Lighten;
+		case KOSM_MASK_DARKEN:		return tvg::MaskMethod::Darken;
+		default:					return tvg::MaskMethod::Alpha;
+	}
+}
+
+
+void
+ThorVGBackend::BeginMask(kosm_mask_method method)
+{
+	// Cannot start new mask if already defining one
+	if (fInMaskDefinition)
+		return;
+
+	// Clear previous mask if any
+	ClearMask();
+
+	// Create scene for mask content
+	fMaskInfo.maskScene = tvg::Scene::gen();
+	fMaskInfo.method = _ConvertMaskMethod(method);
+	fMaskInfo.active = false;
+	fMaskInfo.contentScene = nullptr;
+
+	// Switch drawing to mask scene
+	fInMaskDefinition = true;
+
+	// Save current fScene and switch to mask scene
+	LayerInfo info;
+	info.scene = fScene;
+	info.opacity = 1.0f;
+	info.isMaskLayer = true;
+	fLayerStack.push_back(info);
+
+	fScene = fMaskInfo.maskScene;
 }
 
 
 void
 ThorVGBackend::EndMask()
 {
-	fInMask = false;
-}
+	if (!fInMaskDefinition)
+		return;
 
+	fInMaskDefinition = false;
 
-void
-ThorVGBackend::ApplyMask()
-{
-	if (fMaskScene != nullptr) {
-		fMaskScene = nullptr;
+	// Restore parent scene from stack
+	if (!fLayerStack.empty()) {
+		LayerInfo& info = fLayerStack.back();
+		if (info.isMaskLayer) {
+			// Don't add mask scene to parent - it will be used for masking
+			fScene = info.scene;
+			fLayerStack.pop_back();
+		}
 	}
+
+	// Create content scene for masked content
+	fMaskInfo.contentScene = tvg::Scene::gen();
+	fMaskInfo.active = true;
+
+	// Switch drawing to content scene
+	LayerInfo contentInfo;
+	contentInfo.scene = fScene;
+	contentInfo.opacity = 1.0f;
+	contentInfo.isContentLayer = true;
+	fLayerStack.push_back(contentInfo);
+
+	fScene = fMaskInfo.contentScene;
 }
 
 
 void
 ThorVGBackend::ClearMask()
 {
-	if (fMaskScene != nullptr) {
-		delete fMaskScene;
-		fMaskScene = nullptr;
+	if (!fMaskInfo.active && fMaskInfo.maskScene == nullptr)
+		return;
+
+	// If there's active content - apply mask and add to parent scene
+	if (fMaskInfo.active && fMaskInfo.contentScene != nullptr) {
+		// Restore parent scene
+		tvg::Scene* parentScene = nullptr;
+
+		if (!fLayerStack.empty()) {
+			LayerInfo& info = fLayerStack.back();
+			if (info.isContentLayer) {
+				parentScene = info.scene;
+				fLayerStack.pop_back();
+			}
+		}
+
+		if (parentScene == nullptr)
+			parentScene = fRootScene;
+
+		// Apply mask to content scene
+		fMaskInfo.contentScene->mask(fMaskInfo.maskScene, fMaskInfo.method);
+
+		// Add masked content to parent scene
+		parentScene->add(fMaskInfo.contentScene);
+
+		// Restore fScene
+		fScene = parentScene;
+
+		// Ownership transferred - don't free
+		fMaskInfo.contentScene = nullptr;
+		fMaskInfo.maskScene = nullptr;
+	} else {
+		// Mask was defined but no content drawn - just free
+		if (fMaskInfo.maskScene != nullptr) {
+			tvg::Paint::rel(fMaskInfo.maskScene);
+		}
+		if (fMaskInfo.contentScene != nullptr) {
+			tvg::Paint::rel(fMaskInfo.contentScene);
+		}
 	}
-	fInMask = false;
+
+	fMaskInfo.Reset();
+	fInMaskDefinition = false;
+}
+
+
+void
+ThorVGBackend::ClipToMask(void* maskPaint, kosm_mask_method method)
+{
+	if (maskPaint == nullptr)
+		return;
+
+	ClearMask();
+
+	// Duplicate mask to not depend on external ownership
+	auto originalMask = static_cast<tvg::Paint*>(maskPaint);
+	fMaskInfo.maskScene = tvg::Scene::gen();
+	fMaskInfo.maskScene->add(static_cast<tvg::Paint*>(originalMask->duplicate()));
+
+	fMaskInfo.method = _ConvertMaskMethod(method);
+	fMaskInfo.contentScene = tvg::Scene::gen();
+	fMaskInfo.active = true;
+
+	// Switch drawing to content scene
+	LayerInfo contentInfo;
+	contentInfo.scene = fScene;
+	contentInfo.opacity = 1.0f;
+	contentInfo.isContentLayer = true;
+	fLayerStack.push_back(contentInfo);
+
+	fScene = fMaskInfo.contentScene;
 }
 
 
@@ -855,13 +1029,21 @@ ThorVGBackend::EndLayer()
 status_t
 ThorVGBackend::Flush()
 {
+	// Apply mask if active
+	if (fMaskInfo.active || fInMaskDefinition)
+		ClearMask();
+
 	if (fCanvas->draw() != tvg::Result::Success)
 		return B_ERROR;
 
 	fCanvas->sync();
 
-	// Clear scene for next frame
-	fScene->remove();
+	// Clear root scene for next frame
+	if (fRootScene != nullptr)
+		fRootScene->remove();
+
+	// Reset fScene to root
+	fScene = fRootScene;
 
 	return B_OK;
 }
@@ -881,9 +1063,8 @@ ThorVGBackend::CreatePath()
 void
 ThorVGBackend::DestroyPath(void* path)
 {
-	if (path != nullptr) {
-		delete static_cast<tvg::Shape*>(path);
-	}
+	if (path != nullptr)
+		tvg::Paint::rel(static_cast<tvg::Shape*>(path));
 }
 
 
@@ -1203,7 +1384,7 @@ void
 ThorVGBackend::DestroyImage(void* image)
 {
 	if (image != nullptr)
-		delete static_cast<tvg::Picture*>(image);
+		tvg::Paint::rel(static_cast<tvg::Picture*>(image));
 }
 
 

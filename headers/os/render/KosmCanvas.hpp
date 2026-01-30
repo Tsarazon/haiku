@@ -80,6 +80,24 @@ enum kosm_fill_rule {
 
 
 // ============================================================================
+// Mask method
+// ============================================================================
+
+enum kosm_mask_method {
+	KOSM_MASK_ALPHA = 0,		// Alpha masking (default)
+	KOSM_MASK_INV_ALPHA,		// Inverted alpha
+	KOSM_MASK_LUMA,				// Luminance-based
+	KOSM_MASK_INV_LUMA,			// Inverted luminance
+	KOSM_MASK_ADD,				// Additive
+	KOSM_MASK_SUBTRACT,			// Subtractive
+	KOSM_MASK_INTERSECT,		// Intersection
+	KOSM_MASK_DIFFERENCE,		// Difference
+	KOSM_MASK_LIGHTEN,			// Lighten
+	KOSM_MASK_DARKEN			// Darken
+};
+
+
+// ============================================================================
 // Blend mode
 // ============================================================================
 
@@ -349,13 +367,18 @@ public:
 			void			ClearBlur();
 
 	// ========================================================================
-	// Masking
+	// Masking (Core Graphics style)
 	// ========================================================================
 
-			void			BeginMask();
+			void			BeginMask(kosm_mask_method method = KOSM_MASK_ALPHA);
 			void			EndMask();
-			void			ApplyMask();
 			void			ClearMask();
+
+	// Alternative: clip to existing mask
+			void			ClipToMask(const KosmPath& maskPath,
+								kosm_mask_method method = KOSM_MASK_ALPHA);
+			void			ClipToMask(const KosmImage& maskImage,
+								kosm_mask_method method = KOSM_MASK_ALPHA);
 
 	// ========================================================================
 	// Layer (for group opacity / effects)
