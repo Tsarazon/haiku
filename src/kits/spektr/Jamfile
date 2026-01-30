@@ -1,0 +1,22 @@
+SubDir HAIKU_TOP src kits spektr ;
+
+UsePrivateHeaders spektr shared ;
+UsePublicHeaders spektr render ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+
+		SharedLibrary [ MultiArchDefaultGristFiles libspektr.so ] :
+			# Layout
+			KosmFlexLayout.cpp
+			KosmGridLayout.cpp
+			KosmAnchorLayout.cpp
+			KosmAutoLayout.cpp
+
+			:
+			be render shared
+			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
+			;
+	}
+}

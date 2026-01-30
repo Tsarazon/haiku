@@ -131,7 +131,9 @@ rule HaikuImageGetSystemLibs
 			libmidi2.so
 			libnetwork.so
 			libpackage.so
+			librender.so
 			libscreensaver.so
+			libspektr.so
 			libsurface.so
 			libtextencoding.so
 			libthorvg.so
