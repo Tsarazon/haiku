@@ -28,10 +28,14 @@ public:
 			uint32				BytesPerRowOfPlane(uint32 planeIndex) const;
 			void*				BaseAddressOfPlane(uint32 planeIndex) const;
 
-			status_t			Lock(uint32 options = 0,
-									uint32* outSeed = NULL);
-			status_t			Unlock(uint32 options = 0,
-									uint32* outSeed = NULL);
+			uint32				ComponentCountOfPlane(uint32 planeIndex) const;
+			uint32				BitDepthOfComponentOfPlane(uint32 planeIndex,
+									uint32 componentIndex) const;
+			uint32				BitOffsetOfComponentOfPlane(uint32 planeIndex,
+									uint32 componentIndex) const;
+
+			status_t			Lock(uint32 options = 0, uint32* outSeed = NULL);
+			status_t			Unlock(uint32 options = 0, uint32* outSeed = NULL);
 			void*				BaseAddress() const;
 
 			uint32				Seed() const;
@@ -43,20 +47,20 @@ public:
 
 			status_t			SetAttachment(const char* key,
 									const BMessage& value);
+			status_t			SetAttachments(const BMessage& values);
 			status_t			GetAttachment(const char* key,
 									BMessage* outValue) const;
 			status_t			RemoveAttachment(const char* key);
 			status_t			CopyAllAttachments(BMessage* outValues) const;
 			status_t			RemoveAllAttachments();
 
-			area_id				Area() const;
-
-			// Purgeable support
 			status_t			SetPurgeable(surface_purgeable_state newState,
 									surface_purgeable_state* outOldState = NULL);
 			bool				IsVolatile() const;
 
-			// State accessors
+			status_t			CreateAccessToken(surface_token* outToken);
+			status_t			RevokeAllAccess();
+
 			uint32				Usage() const;
 			bool				IsLocked() const;
 			bool				IsValid() const;
@@ -74,4 +78,4 @@ private:
 			Data*				fData;
 };
 
-#endif /* _KOSM_SURFACE_HPP */
+#endif

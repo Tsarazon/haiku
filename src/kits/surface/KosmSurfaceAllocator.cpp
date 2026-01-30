@@ -14,7 +14,6 @@
 #include <string.h>
 
 #include "AllocationBackend.hpp"
-#include "KosmSurfacePrivate.hpp"
 #include "PlanarLayout.hpp"
 #include "SurfaceBuffer.hpp"
 #include "SurfaceRegistry.hpp"
@@ -23,19 +22,22 @@
 extern AllocationBackend* create_area_backend();
 
 
+struct KosmSurface::Data {
+	SurfaceBuffer*	buffer;
+};
+
+
 struct KosmSurfaceAllocator::Impl {
 	typedef HashMap<HashKey32<surface_id>, KosmSurface*> SurfaceMap;
 
 	AllocationBackend*	backend;
 	SurfaceMap			surfaces;
-	surface_id			nextId;
 	BLocker				lock;
 
 	Impl()
 		:
 		backend(create_area_backend()),
 		surfaces(),
-		nextId(1),
 		lock("surface_allocator")
 	{
 	}
@@ -45,6 +47,16 @@ struct KosmSurfaceAllocator::Impl {
 		delete backend;
 	}
 };
+
+
+static surface_id
+generate_surface_id()
+{
+	static int32 sCounter = 0;
+	int32 counter = atomic_add(&sCounter, 1);
+	bigtime_t time = system_time();
+	return (surface_id)((time << 16) ^ (counter * 2654435761u));
+}
 
 
 KosmSurfaceAllocator*
@@ -57,7 +69,7 @@ KosmSurfaceAllocator::Default()
 
 KosmSurfaceAllocator::KosmSurfaceAllocator()
 	:
-	fImpl(new Impl)
+	fImpl(new(std::nothrow) Impl)
 {
 }
 
@@ -75,6 +87,9 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 	if (outSurface == NULL)
 		return B_BAD_VALUE;
 
+	if (fImpl == NULL || fImpl->backend == NULL)
+		return B_NO_INIT;
+
 	if (desc.width == 0 || desc.height == 0)
 		return B_BAD_VALUE;
 
@@ -88,7 +103,7 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 
 	BAutolock locker(fImpl->lock);
 
-	buffer->id = fImpl->nextId++;
+	buffer->id = generate_surface_id();
 
 	KosmSurface* surface = new(std::nothrow) KosmSurface;
 	if (surface == NULL || surface->fData == NULL) {
@@ -100,9 +115,10 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 	surface->fData->buffer = buffer;
 
 	status = SurfaceRegistry::Default()->Register(buffer->id, buffer->areaId,
-		buffer->desc, buffer->allocSize);
+		buffer->desc, buffer->allocSize, buffer->planeCount);
 	if (status != B_OK) {
 		fImpl->backend->Free(buffer);
+		surface->fData->buffer = NULL;
 		delete surface;
 		return status;
 	}
@@ -111,6 +127,7 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 	if (status != B_OK) {
 		SurfaceRegistry::Default()->Unregister(buffer->id);
 		fImpl->backend->Free(buffer);
+		surface->fData->buffer = NULL;
 		delete surface;
 		return status;
 	}
@@ -123,19 +140,35 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 void
 KosmSurfaceAllocator::Free(KosmSurface* surface)
 {
-	if (surface == NULL)
+	if (surface == NULL || fImpl == NULL)
 		return;
 
 	BAutolock locker(fImpl->lock);
 
 	surface_id id = surface->ID();
+	if (id == 0)
+		return;
+
+	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	if (existing != surface)
+		return;
+
 	fImpl->surfaces.Remove(HashKey32<surface_id>(id));
 
-	status_t status = SurfaceRegistry::Default()->Unregister(id);
-	if (status == B_SURFACE_IN_USE)
-		debugger("Freeing surface that is still in use");
+	SurfaceBuffer* buffer = surface->fData->buffer;
+	surface->fData->buffer = NULL;
 
-	fImpl->backend->Free(surface->fData->buffer);
+	if (buffer != NULL) {
+		status_t status = SurfaceRegistry::Default()->Unregister(id);
+		if (status == B_SURFACE_IN_USE)
+			debugger("Freeing surface that is still in use");
+
+		if (buffer->ownsArea)
+			fImpl->backend->Free(buffer);
+		else
+			delete buffer;
+	}
+
 	delete surface;
 }
 
@@ -143,8 +176,11 @@ KosmSurfaceAllocator::Free(KosmSurface* surface)
 status_t
 KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
 {
-	if (outSurface == NULL)
+	if (outSurface == NULL || id == 0)
 		return B_BAD_VALUE;
+
+	if (fImpl == NULL)
+		return B_NO_INIT;
 
 	BAutolock locker(fImpl->lock);
 
@@ -157,76 +193,83 @@ KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
 }
 
 
-size_t
-KosmSurfaceAllocator::GetPropertyMaximum(const char* property) const
+status_t
+KosmSurfaceAllocator::LookupOrClone(surface_id id, KosmSurface** outSurface)
 {
-	if (strcmp(property, "width") == 0)
-		return fImpl->backend->GetMaxWidth();
-	if (strcmp(property, "height") == 0)
-		return fImpl->backend->GetMaxHeight();
-	return 0;
-}
+	if (outSurface == NULL || id == 0)
+		return B_BAD_VALUE;
 
+	if (fImpl == NULL)
+		return B_NO_INIT;
 
-size_t
-KosmSurfaceAllocator::GetPropertyAlignment(const char* property) const
-{
-	if (strcmp(property, "bytesPerRow") == 0)
-		return fImpl->backend->GetStrideAlignment(PIXEL_FORMAT_BGRA8888);
-	return 1;
-}
+	BAutolock locker(fImpl->lock);
 
+	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	if (surface != NULL) {
+		*outSurface = surface;
+		return B_OK;
+	}
 
-bool
-KosmSurfaceAllocator::IsFormatSupported(pixel_format format) const
-{
-	return fImpl->backend->SupportsFormat(format);
+	locker.Unlock();
+	return _CreateFromClone(id, outSurface);
 }
 
 
 status_t
-KosmSurfaceAllocator::CreateFromClone(surface_id id, area_id clonedArea,
+KosmSurfaceAllocator::_CreateFromClone(surface_id id,
 	KosmSurface** outSurface)
 {
-	if (outSurface == NULL || clonedArea < 0)
+	if (outSurface == NULL || id == 0)
 		return B_BAD_VALUE;
 
-	// Get metadata from registry
 	surface_desc desc;
 	area_id sourceArea;
+	size_t allocSize;
+	uint32 planeCount;
+
 	status_t status = SurfaceRegistry::Default()->LookupInfo(id, &desc,
-		&sourceArea);
+		&sourceArea, &allocSize, &planeCount);
 	if (status != B_OK)
 		return status;
 
-	// Verify cloned area is valid
-	area_info info;
-	if (get_area_info(clonedArea, &info) != B_OK)
-		return B_BAD_VALUE;
+	void* address = NULL;
+	area_id clonedArea = clone_area("surface_clone", &address,
+		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
+	if (clonedArea < 0)
+		return clonedArea;
 
 	BAutolock locker(fImpl->lock);
 
-	// Create SurfaceBuffer
+	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	if (existing != NULL) {
+		delete_area(clonedArea);
+		*outSurface = existing;
+		return B_OK;
+	}
+
 	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
-	if (buffer == NULL)
+	if (buffer == NULL) {
+		delete_area(clonedArea);
 		return B_NO_MEMORY;
+	}
 
 	buffer->id = id;
 	buffer->desc = desc;
 	buffer->areaId = clonedArea;
-	buffer->baseAddress = info.address;
-	buffer->allocSize = info.size;
-	buffer->planeCount = planar_get_plane_count(desc.format);
+	buffer->baseAddress = address;
+	buffer->allocSize = allocSize;
+	buffer->ownsArea = true;
+	buffer->planeCount = planeCount;
 
-	// Calculate plane info
+	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
 	for (uint32 i = 0; i < buffer->planeCount; i++) {
 		planar_calculate_plane(desc.format, i, desc.width, desc.height,
-			fImpl->backend->GetStrideAlignment(desc.format),
-			&buffer->planes[i]);
+			strideAlignment, &buffer->planes[i]);
 	}
 
 	KosmSurface* surface = new(std::nothrow) KosmSurface;
 	if (surface == NULL || surface->fData == NULL) {
+		delete_area(clonedArea);
 		delete buffer;
 		delete surface;
 		return B_NO_MEMORY;
@@ -236,11 +279,154 @@ KosmSurfaceAllocator::CreateFromClone(surface_id id, area_id clonedArea,
 
 	status = fImpl->surfaces.Put(HashKey32<surface_id>(id), surface);
 	if (status != B_OK) {
+		delete_area(clonedArea);
 		delete buffer;
+		surface->fData->buffer = NULL;
 		delete surface;
 		return status;
 	}
 
+	SurfaceRegistry::Default()->IncrementGlobalUseCount(id);
+
 	*outSurface = surface;
 	return B_OK;
+}
+
+
+status_t
+KosmSurfaceAllocator::LookupWithToken(const surface_token& token,
+	KosmSurface** outSurface)
+{
+	if (outSurface == NULL || token.id == 0)
+		return B_BAD_VALUE;
+
+	if (fImpl == NULL)
+		return B_NO_INIT;
+
+	BAutolock locker(fImpl->lock);
+
+	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(token.id));
+	if (surface != NULL) {
+		*outSurface = surface;
+		return B_OK;
+	}
+
+	locker.Unlock();
+	return _CreateFromCloneWithToken(token, outSurface);
+}
+
+
+status_t
+KosmSurfaceAllocator::_CreateFromCloneWithToken(const surface_token& token,
+	KosmSurface** outSurface)
+{
+	if (outSurface == NULL || token.id == 0)
+		return B_BAD_VALUE;
+
+	surface_desc desc;
+	area_id sourceArea;
+	size_t allocSize;
+	uint32 planeCount;
+
+	status_t status = SurfaceRegistry::Default()->LookupInfoWithToken(token,
+		&desc, &sourceArea, &allocSize, &planeCount);
+	if (status != B_OK)
+		return status;
+
+	void* address = NULL;
+	area_id clonedArea = clone_area("surface_clone", &address,
+		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
+	if (clonedArea < 0)
+		return clonedArea;
+
+	BAutolock locker(fImpl->lock);
+
+	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(token.id));
+	if (existing != NULL) {
+		delete_area(clonedArea);
+		*outSurface = existing;
+		return B_OK;
+	}
+
+	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
+	if (buffer == NULL) {
+		delete_area(clonedArea);
+		return B_NO_MEMORY;
+	}
+
+	buffer->id = token.id;
+	buffer->desc = desc;
+	buffer->areaId = clonedArea;
+	buffer->baseAddress = address;
+	buffer->allocSize = allocSize;
+	buffer->ownsArea = true;
+	buffer->planeCount = planeCount;
+
+	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
+	for (uint32 i = 0; i < buffer->planeCount; i++) {
+		planar_calculate_plane(desc.format, i, desc.width, desc.height,
+			strideAlignment, &buffer->planes[i]);
+	}
+
+	KosmSurface* surface = new(std::nothrow) KosmSurface;
+	if (surface == NULL || surface->fData == NULL) {
+		delete_area(clonedArea);
+		delete buffer;
+		delete surface;
+		return B_NO_MEMORY;
+	}
+
+	surface->fData->buffer = buffer;
+
+	status = fImpl->surfaces.Put(HashKey32<surface_id>(token.id), surface);
+	if (status != B_OK) {
+		delete_area(clonedArea);
+		delete buffer;
+		surface->fData->buffer = NULL;
+		delete surface;
+		return status;
+	}
+
+	SurfaceRegistry::Default()->IncrementGlobalUseCount(token.id);
+
+	*outSurface = surface;
+	return B_OK;
+}
+
+
+size_t
+KosmSurfaceAllocator::GetPropertyMaximum(const char* property) const
+{
+	if (fImpl == NULL || fImpl->backend == NULL)
+		return 0;
+
+	if (strcmp(property, "width") == 0)
+		return fImpl->backend->GetMaxWidth();
+	if (strcmp(property, "height") == 0)
+		return fImpl->backend->GetMaxHeight();
+
+	return 0;
+}
+
+
+size_t
+KosmSurfaceAllocator::GetPropertyAlignment(const char* property) const
+{
+	if (fImpl == NULL || fImpl->backend == NULL)
+		return 1;
+
+	if (strcmp(property, "bytesPerRow") == 0)
+		return fImpl->backend->GetStrideAlignment(PIXEL_FORMAT_ARGB8888);
+
+	return 1;
+}
+
+
+bool
+KosmSurfaceAllocator::IsFormatSupported(pixel_format format) const
+{
+	if (fImpl == NULL || fImpl->backend == NULL)
+		return false;
+
+	return fImpl->backend->SupportsFormat(format);
 }

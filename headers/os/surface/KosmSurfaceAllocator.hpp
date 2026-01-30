@@ -18,12 +18,10 @@ public:
 									KosmSurface** outSurface);
 			void				Free(KosmSurface* surface);
 
-			status_t			Lookup(surface_id id,
+			status_t			Lookup(surface_id id, KosmSurface** outSurface);
+			status_t			LookupOrClone(surface_id id,
 									KosmSurface** outSurface);
-
-			// Create surface from cloned area (cross-process)
-			status_t			CreateFromClone(surface_id id,
-									area_id clonedArea,
+			status_t			LookupWithToken(const surface_token& token,
 									KosmSurface** outSurface);
 
 			size_t				GetPropertyMaximum(const char* property) const;
@@ -35,8 +33,14 @@ private:
 								KosmSurfaceAllocator();
 								~KosmSurfaceAllocator();
 
+			status_t			_CreateFromClone(surface_id id,
+									KosmSurface** outSurface);
+			status_t			_CreateFromCloneWithToken(
+									const surface_token& token,
+									KosmSurface** outSurface);
+
 			struct Impl;
 			Impl*				fImpl;
 };
 
-#endif /* _KOSM_SURFACE_ALLOCATOR_HPP */
+#endif

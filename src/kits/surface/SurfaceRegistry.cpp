@@ -5,7 +5,6 @@
 
 #include "SurfaceRegistry.hpp"
 
-#include <new>
 #include <string.h>
 
 
@@ -21,7 +20,8 @@ SurfaceRegistry::SurfaceRegistry()
 	:
 	fRegistryArea(-1),
 	fEntries(NULL),
-	fLock(-1)
+	fLock(-1),
+	fTombstoneCount(0)
 {
 	_InitSharedArea();
 }
@@ -65,177 +65,200 @@ SurfaceRegistry::_InitSharedArea()
 
 
 int32
-SurfaceRegistry::_IndexFor(surface_id id) const
+SurfaceRegistry::_FindSlot(surface_id id) const
 {
-	return (id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	if (id == 0)
+		return -1;
+
+	int32 startIndex = (id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	int32 index = startIndex;
+
+	do {
+		const SurfaceRegistryEntry& entry = fEntries[index];
+
+		if (entry.id == id)
+			return index;
+
+		if (entry.id == 0)
+			return -1;
+
+		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	} while (index != startIndex);
+
+	return -1;
+}
+
+
+int32
+SurfaceRegistry::_FindEmptySlot(surface_id id) const
+{
+	if (id == 0)
+		return -1;
+
+	int32 startIndex = (id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	int32 index = startIndex;
+
+	do {
+		const SurfaceRegistryEntry& entry = fEntries[index];
+
+		if (entry.id == 0 || entry.id == SURFACE_ID_TOMBSTONE)
+			return index;
+
+		if (entry.id == id)
+			return index;
+
+		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	} while (index != startIndex);
+
+	return -1;
+}
+
+
+static uint64
+generate_secret()
+{
+	bigtime_t time = system_time();
+	static int32 sCounter = 0;
+	int32 counter = atomic_add(&sCounter, 1);
+	return (uint64)time ^ ((uint64)counter << 32) ^ 0x5DEECE66DULL;
 }
 
 
 status_t
 SurfaceRegistry::Register(surface_id id, area_id sourceArea,
-	const surface_desc& desc, size_t allocSize)
+	const surface_desc& desc, size_t allocSize, uint32 planeCount)
 {
+	if (id == 0)
+		return B_BAD_VALUE;
+
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindEmptySlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NO_MEMORY;
+	}
 
-	// Linear probing to find empty slot or existing entry
-	do {
-		SurfaceRegistryEntry& entry = fEntries[index];
+	SurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == 0 || entry.id == SURFACE_ID_TOMBSTONE || entry.id == id) {
-			entry.id = id;
-			entry.globalUseCount = 0;
+	if (entry.id == SURFACE_ID_TOMBSTONE)
+		fTombstoneCount--;
 
-			thread_info info;
-			get_thread_info(find_thread(NULL), &info);
-			entry.ownerTeam = info.team;
+	entry.id = id;
+	entry.globalUseCount = 0;
 
-			entry.sourceArea = sourceArea;
+	thread_info info;
+	get_thread_info(find_thread(NULL), &info);
+	entry.ownerTeam = info.team;
 
-			// Store metadata for cross-process lookup
-			entry.width = desc.width;
-			entry.height = desc.height;
-			entry.format = desc.format;
-			entry.bytesPerRow = desc.bytesPerRow;
-			entry.bytesPerElement = desc.bytesPerElement;
-			entry.allocSize = allocSize;
-			entry.planeCount = 1;  // Updated by caller if planar
+	entry.sourceArea = sourceArea;
+	entry.width = desc.width;
+	entry.height = desc.height;
+	entry.format = desc.format;
+	entry.bytesPerRow = desc.bytesPerRow;
+	entry.bytesPerElement = desc.bytesPerElement;
+	entry.allocSize = allocSize;
+	entry.planeCount = planeCount;
 
-			release_sem(fLock);
-			return B_OK;
-		}
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	entry.accessSecret = generate_secret();
+	entry.secretGeneration = 0;
 
 	release_sem(fLock);
-	return B_NO_MEMORY;
+	return B_OK;
 }
 
 
 status_t
 SurfaceRegistry::Unregister(surface_id id)
 {
+	if (id == 0)
+		return B_BAD_VALUE;
+
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
 
-	// Linear probing to find entry
-	do {
-		SurfaceRegistryEntry& entry = fEntries[index];
+	SurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == id) {
-			if (entry.globalUseCount > 0) {
-				release_sem(fLock);
-				return B_SURFACE_IN_USE;
-			}
+	if (entry.globalUseCount > 0) {
+		release_sem(fLock);
+		return B_SURFACE_IN_USE;
+	}
 
-			entry.id = SURFACE_ID_TOMBSTONE;
-			entry.globalUseCount = 0;
-			entry.ownerTeam = -1;
-			entry.sourceArea = -1;
-
-			release_sem(fLock);
-			return B_OK;
-		}
-
-		if (entry.id == 0)
-			break;  // Empty slot - entry not found (tombstone continues search)
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	entry.id = SURFACE_ID_TOMBSTONE;
+	entry.globalUseCount = 0;
+	entry.ownerTeam = -1;
+	entry.sourceArea = -1;
+	fTombstoneCount++;
 
 	release_sem(fLock);
-	return B_NAME_NOT_FOUND;
+	return B_OK;
 }
 
 
 status_t
 SurfaceRegistry::IncrementGlobalUseCount(surface_id id)
 {
+	if (id == 0)
+		return B_BAD_VALUE;
+
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
 
-	do {
-		SurfaceRegistryEntry& entry = fEntries[index];
-
-		if (entry.id == id) {
-			atomic_add(&entry.globalUseCount, 1);
-			release_sem(fLock);
-			return B_OK;
-		}
-
-		if (entry.id == 0)
-			break;
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	atomic_add(&fEntries[index].globalUseCount, 1);
 
 	release_sem(fLock);
-	return B_NAME_NOT_FOUND;
+	return B_OK;
 }
 
 
 status_t
 SurfaceRegistry::DecrementGlobalUseCount(surface_id id)
 {
+	if (id == 0)
+		return B_BAD_VALUE;
+
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
 
-	do {
-		SurfaceRegistryEntry& entry = fEntries[index];
-
-		if (entry.id == id) {
-			atomic_add(&entry.globalUseCount, -1);
-			release_sem(fLock);
-			return B_OK;
-		}
-
-		if (entry.id == 0)
-			break;
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	atomic_add(&fEntries[index].globalUseCount, -1);
 
 	release_sem(fLock);
-	return B_NAME_NOT_FOUND;
+	return B_OK;
 }
 
 
 int32
 SurfaceRegistry::GlobalUseCount(surface_id id) const
 {
+	if (id == 0)
+		return 0;
+
 	if (acquire_sem(fLock) != B_OK)
 		return 0;
 
 	int32 result = 0;
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
-
-	do {
-		const SurfaceRegistryEntry& entry = fEntries[index];
-
-		if (entry.id == id) {
-			result = entry.globalUseCount;
-			break;
-		}
-
-		if (entry.id == 0)
-			break;
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	int32 index = _FindSlot(id);
+	if (index >= 0)
+		result = fEntries[index].globalUseCount;
 
 	release_sem(fLock);
 	return result;
@@ -250,71 +273,187 @@ SurfaceRegistry::IsInUse(surface_id id) const
 
 
 status_t
-SurfaceRegistry::LookupArea(surface_id id, area_id* outArea) const
+SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
+	area_id* outArea, size_t* outAllocSize, uint32* outPlaneCount) const
 {
-	if (outArea == NULL)
+	if (id == 0)
 		return B_BAD_VALUE;
 
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
 
-	do {
-		const SurfaceRegistryEntry& entry = fEntries[index];
+	const SurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == id) {
-			*outArea = entry.sourceArea;
-			release_sem(fLock);
-			return B_OK;
-		}
+	thread_info info;
+	get_thread_info(find_thread(NULL), &info);
+	if (entry.ownerTeam != info.team) {
+		release_sem(fLock);
+		return B_NOT_ALLOWED;
+	}
 
-		if (entry.id == 0)
-			break;
+	if (outDesc != NULL) {
+		outDesc->width = entry.width;
+		outDesc->height = entry.height;
+		outDesc->format = entry.format;
+		outDesc->bytesPerRow = entry.bytesPerRow;
+		outDesc->bytesPerElement = entry.bytesPerElement;
+	}
 
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	if (outArea != NULL)
+		*outArea = entry.sourceArea;
+
+	if (outAllocSize != NULL)
+		*outAllocSize = entry.allocSize;
+
+	if (outPlaneCount != NULL)
+		*outPlaneCount = entry.planeCount;
 
 	release_sem(fLock);
-	return B_NAME_NOT_FOUND;
+	return B_OK;
 }
 
 
 status_t
-SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
-	area_id* outArea) const
+SurfaceRegistry::CreateAccessToken(surface_id id, surface_token* outToken)
 {
+	if (id == 0 || outToken == NULL)
+		return B_BAD_VALUE;
+
 	if (acquire_sem(fLock) != B_OK)
 		return B_ERROR;
 
-	int32 startIndex = _IndexFor(id);
-	int32 index = startIndex;
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
 
-	do {
-		const SurfaceRegistryEntry& entry = fEntries[index];
+	const SurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == id) {
-			if (outDesc != NULL) {
-				outDesc->width = entry.width;
-				outDesc->height = entry.height;
-				outDesc->format = entry.format;
-				outDesc->bytesPerRow = entry.bytesPerRow;
-				outDesc->bytesPerElement = entry.bytesPerElement;
-			}
-			if (outArea != NULL)
-				*outArea = entry.sourceArea;
+	thread_info info;
+	get_thread_info(find_thread(NULL), &info);
+	if (entry.ownerTeam != info.team) {
+		release_sem(fLock);
+		return B_NOT_ALLOWED;
+	}
 
-			release_sem(fLock);
-			return B_OK;
-		}
-
-		if (entry.id == 0)
-			break;
-
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
-	} while (index != startIndex);
+	outToken->id = id;
+	outToken->secret = entry.accessSecret;
+	outToken->generation = entry.secretGeneration;
 
 	release_sem(fLock);
-	return B_NAME_NOT_FOUND;
+	return B_OK;
+}
+
+
+status_t
+SurfaceRegistry::ValidateToken(const surface_token& token)
+{
+	if (token.id == 0)
+		return B_BAD_VALUE;
+
+	if (acquire_sem(fLock) != B_OK)
+		return B_ERROR;
+
+	int32 index = _FindSlot(token.id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
+
+	const SurfaceRegistryEntry& entry = fEntries[index];
+
+	if (entry.accessSecret != token.secret
+		|| entry.secretGeneration != token.generation) {
+		release_sem(fLock);
+		return B_NOT_ALLOWED;
+	}
+
+	release_sem(fLock);
+	return B_OK;
+}
+
+
+status_t
+SurfaceRegistry::RevokeAllAccess(surface_id id)
+{
+	if (id == 0)
+		return B_BAD_VALUE;
+
+	if (acquire_sem(fLock) != B_OK)
+		return B_ERROR;
+
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
+
+	SurfaceRegistryEntry& entry = fEntries[index];
+
+	thread_info info;
+	get_thread_info(find_thread(NULL), &info);
+	if (entry.ownerTeam != info.team) {
+		release_sem(fLock);
+		return B_NOT_ALLOWED;
+	}
+
+	entry.accessSecret = generate_secret();
+	entry.secretGeneration++;
+
+	release_sem(fLock);
+	return B_OK;
+}
+
+
+status_t
+SurfaceRegistry::LookupInfoWithToken(const surface_token& token,
+	surface_desc* outDesc, area_id* outArea, size_t* outAllocSize,
+	uint32* outPlaneCount) const
+{
+	if (token.id == 0)
+		return B_BAD_VALUE;
+
+	if (acquire_sem(fLock) != B_OK)
+		return B_ERROR;
+
+	int32 index = _FindSlot(token.id);
+	if (index < 0) {
+		release_sem(fLock);
+		return B_NAME_NOT_FOUND;
+	}
+
+	const SurfaceRegistryEntry& entry = fEntries[index];
+
+	if (entry.accessSecret != token.secret
+		|| entry.secretGeneration != token.generation) {
+		release_sem(fLock);
+		return B_NOT_ALLOWED;
+	}
+
+	if (outDesc != NULL) {
+		outDesc->width = entry.width;
+		outDesc->height = entry.height;
+		outDesc->format = entry.format;
+		outDesc->bytesPerRow = entry.bytesPerRow;
+		outDesc->bytesPerElement = entry.bytesPerElement;
+	}
+
+	if (outArea != NULL)
+		*outArea = entry.sourceArea;
+
+	if (outAllocSize != NULL)
+		*outAllocSize = entry.allocSize;
+
+	if (outPlaneCount != NULL)
+		*outPlaneCount = entry.planeCount;
+
+	release_sem(fLock);
+	return B_OK;
 }

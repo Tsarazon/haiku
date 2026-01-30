@@ -9,9 +9,16 @@
 #include <Debug.h>
 #include <Message.h>
 
-#include "KosmSurfacePrivate.hpp"
+#include <new>
+
 #include "SurfaceBuffer.hpp"
 #include "SurfaceRegistry.hpp"
+#include "PlanarLayout.hpp"
+
+
+struct KosmSurface::Data {
+	SurfaceBuffer*	buffer;
+};
 
 
 #define SURFACE_INVALID() (fData == NULL || fData->buffer == NULL)
@@ -35,7 +42,6 @@ KosmSurface::~KosmSurface()
 surface_id
 KosmSurface::ID() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->id;
@@ -45,7 +51,6 @@ KosmSurface::ID() const
 uint32
 KosmSurface::Width() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->desc.width;
@@ -55,7 +60,6 @@ KosmSurface::Width() const
 uint32
 KosmSurface::Height() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->desc.height;
@@ -65,9 +69,8 @@ KosmSurface::Height() const
 pixel_format
 KosmSurface::Format() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
-		return PIXEL_FORMAT_BGRA8888;
+		return PIXEL_FORMAT_ARGB8888;
 	return fData->buffer->desc.format;
 }
 
@@ -75,7 +78,6 @@ KosmSurface::Format() const
 uint32
 KosmSurface::BytesPerElement() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->desc.bytesPerElement;
@@ -85,7 +87,6 @@ KosmSurface::BytesPerElement() const
 uint32
 KosmSurface::BytesPerRow() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->desc.bytesPerRow;
@@ -95,7 +96,6 @@ KosmSurface::BytesPerRow() const
 size_t
 KosmSurface::AllocSize() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->allocSize;
@@ -105,7 +105,6 @@ KosmSurface::AllocSize() const
 uint32
 KosmSurface::PlaneCount() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->planeCount;
@@ -115,7 +114,6 @@ KosmSurface::PlaneCount() const
 uint32
 KosmSurface::WidthOfPlane(uint32 planeIndex) const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
@@ -127,7 +125,6 @@ KosmSurface::WidthOfPlane(uint32 planeIndex) const
 uint32
 KosmSurface::HeightOfPlane(uint32 planeIndex) const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
@@ -139,7 +136,6 @@ KosmSurface::HeightOfPlane(uint32 planeIndex) const
 uint32
 KosmSurface::BytesPerElementOfPlane(uint32 planeIndex) const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
@@ -151,7 +147,6 @@ KosmSurface::BytesPerElementOfPlane(uint32 planeIndex) const
 uint32
 KosmSurface::BytesPerRowOfPlane(uint32 planeIndex) const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
@@ -163,12 +158,11 @@ KosmSurface::BytesPerRowOfPlane(uint32 planeIndex) const
 void*
 KosmSurface::BaseAddressOfPlane(uint32 planeIndex) const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return NULL;
 	if (planeIndex >= fData->buffer->planeCount)
 		return NULL;
-	if (fData->buffer->lockState == 0)
+	if (fData->buffer->lockCount == 0)
 		return NULL;
 
 	uint8* base = (uint8*)fData->buffer->baseAddress;
@@ -176,23 +170,70 @@ KosmSurface::BaseAddressOfPlane(uint32 planeIndex) const
 }
 
 
+uint32
+KosmSurface::ComponentCountOfPlane(uint32 planeIndex) const
+{
+	if (SURFACE_INVALID())
+		return 0;
+	if (planeIndex >= fData->buffer->planeCount)
+		return 0;
+	return planar_get_component_count(fData->buffer->desc.format, planeIndex);
+}
+
+
+uint32
+KosmSurface::BitDepthOfComponentOfPlane(uint32 planeIndex,
+	uint32 componentIndex) const
+{
+	if (SURFACE_INVALID())
+		return 0;
+	if (planeIndex >= fData->buffer->planeCount)
+		return 0;
+	return planar_get_bit_depth(fData->buffer->desc.format, planeIndex,
+		componentIndex);
+}
+
+
+uint32
+KosmSurface::BitOffsetOfComponentOfPlane(uint32 planeIndex,
+	uint32 componentIndex) const
+{
+	if (SURFACE_INVALID())
+		return 0;
+	if (planeIndex >= fData->buffer->planeCount)
+		return 0;
+	return planar_get_bit_offset(fData->buffer->desc.format, planeIndex,
+		componentIndex);
+}
+
+
 status_t
 KosmSurface::Lock(uint32 options, uint32* outSeed)
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
 
-	if (fData->buffer->lockState != 0) {
-		if (fData->buffer->lockOwner == find_thread(NULL))
-			return B_SURFACE_ALREADY_LOCKED;
-		return B_BUSY;
-	}
+	thread_id currentThread = find_thread(NULL);
+	bool readOnly = (options & SURFACE_LOCK_READ_ONLY) != 0;
 
-	fData->buffer->lockState = (options & SURFACE_LOCK_READ_ONLY) ? 1 : 2;
-	fData->buffer->lockOwner = find_thread(NULL);
+	if (fData->buffer->lockCount > 0) {
+		if (fData->buffer->lockOwner != currentThread)
+			return B_BUSY;
+
+		if (!fData->buffer->lockedReadOnly && readOnly) {
+			// Downgrade not allowed
+		} else if (fData->buffer->lockedReadOnly && !readOnly) {
+			return B_NOT_ALLOWED;
+		}
+
+		fData->buffer->lockCount++;
+	} else {
+		fData->buffer->lockCount = 1;
+		fData->buffer->lockOwner = currentThread;
+		fData->buffer->lockedReadOnly = readOnly;
+	}
 
 	if (outSeed != NULL)
 		*outSeed = fData->buffer->seed;
@@ -204,23 +245,26 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 status_t
 KosmSurface::Unlock(uint32 options, uint32* outSeed)
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
 
-	if (fData->buffer->lockState == 0)
+	if (fData->buffer->lockCount == 0)
 		return B_SURFACE_NOT_LOCKED;
 
 	if (fData->buffer->lockOwner != find_thread(NULL))
 		return B_NOT_ALLOWED;
 
-	if (fData->buffer->lockState == 2)
-		fData->buffer->seed++;
+	fData->buffer->lockCount--;
 
-	fData->buffer->lockState = 0;
-	fData->buffer->lockOwner = -1;
+	if (fData->buffer->lockCount == 0) {
+		if (!fData->buffer->lockedReadOnly)
+			fData->buffer->seed++;
+
+		fData->buffer->lockOwner = -1;
+		fData->buffer->lockedReadOnly = false;
+	}
 
 	if (outSeed != NULL)
 		*outSeed = fData->buffer->seed;
@@ -232,10 +276,9 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 void*
 KosmSurface::BaseAddress() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return NULL;
-	if (fData->buffer->lockState == 0)
+	if (fData->buffer->lockCount == 0)
 		return NULL;
 	return fData->buffer->baseAddress;
 }
@@ -244,7 +287,6 @@ KosmSurface::BaseAddress() const
 uint32
 KosmSurface::Seed() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->seed;
@@ -254,29 +296,32 @@ KosmSurface::Seed() const
 void
 KosmSurface::IncrementUseCount()
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return;
 
 	BAutolock locker(fData->buffer->lock);
-	int32 oldCount = atomic_add(&fData->buffer->localUseCount, 1);
-	if (oldCount == 0) {
+
+	if (fData->buffer->localUseCount == 0) {
 		SurfaceRegistry::Default()->IncrementGlobalUseCount(
 			fData->buffer->id);
 	}
+	fData->buffer->localUseCount++;
 }
 
 
 void
 KosmSurface::DecrementUseCount()
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return;
 
 	BAutolock locker(fData->buffer->lock);
-	int32 oldCount = atomic_add(&fData->buffer->localUseCount, -1);
-	if (oldCount == 1) {
+
+	if (fData->buffer->localUseCount <= 0)
+		return;
+
+	fData->buffer->localUseCount--;
+	if (fData->buffer->localUseCount == 0) {
 		SurfaceRegistry::Default()->DecrementGlobalUseCount(
 			fData->buffer->id);
 	}
@@ -286,17 +331,15 @@ KosmSurface::DecrementUseCount()
 int32
 KosmSurface::LocalUseCount() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
-	return atomic_get(&fData->buffer->localUseCount);
+	return fData->buffer->localUseCount;
 }
 
 
 bool
 KosmSurface::IsInUse() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return false;
 	return SurfaceRegistry::Default()->IsInUse(fData->buffer->id);
@@ -309,15 +352,38 @@ KosmSurface::SetAttachment(const char* key, const BMessage& value)
 	if (key == NULL)
 		return B_BAD_VALUE;
 
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
 
 	fData->buffer->attachments.RemoveName(key);
-
 	return fData->buffer->attachments.AddMessage(key, &value);
+}
+
+
+status_t
+KosmSurface::SetAttachments(const BMessage& values)
+{
+	if (SURFACE_INVALID())
+		return B_BAD_VALUE;
+
+	BAutolock locker(fData->buffer->lock);
+
+	char* name;
+	type_code type;
+	int32 count;
+
+	for (int32 i = 0; values.GetInfo(B_MESSAGE_TYPE, i, &name, &type, &count)
+			== B_OK; i++) {
+		BMessage value;
+		if (values.FindMessage(name, &value) == B_OK) {
+			fData->buffer->attachments.RemoveName(name);
+			fData->buffer->attachments.AddMessage(name, &value);
+		}
+	}
+
+	return B_OK;
 }
 
 
@@ -327,12 +393,10 @@ KosmSurface::GetAttachment(const char* key, BMessage* outValue) const
 	if (key == NULL || outValue == NULL)
 		return B_BAD_VALUE;
 
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
-
 	return fData->buffer->attachments.FindMessage(key, outValue);
 }
 
@@ -343,12 +407,10 @@ KosmSurface::RemoveAttachment(const char* key)
 	if (key == NULL)
 		return B_BAD_VALUE;
 
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
-
 	return fData->buffer->attachments.RemoveName(key);
 }
 
@@ -359,12 +421,10 @@ KosmSurface::CopyAllAttachments(BMessage* outValues) const
 	if (outValues == NULL)
 		return B_BAD_VALUE;
 
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
-
 	*outValues = fData->buffer->attachments;
 	return B_OK;
 }
@@ -373,24 +433,12 @@ KosmSurface::CopyAllAttachments(BMessage* outValues) const
 status_t
 KosmSurface::RemoveAllAttachments()
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
-
 	fData->buffer->attachments.MakeEmpty();
 	return B_OK;
-}
-
-
-area_id
-KosmSurface::Area() const
-{
-	ASSERT(!SURFACE_INVALID());
-	if (SURFACE_INVALID())
-		return -1;
-	return fData->buffer->areaId;
 }
 
 
@@ -398,29 +446,27 @@ status_t
 KosmSurface::SetPurgeable(surface_purgeable_state newState,
 	surface_purgeable_state* outOldState)
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
 
+	surface_purgeable_state oldState = fData->buffer->purgeableState;
+
 	if (outOldState != NULL)
-		*outOldState = fData->buffer->purgeableState;
+		*outOldState = oldState;
 
 	if (newState == SURFACE_PURGEABLE_KEEP_CURRENT)
 		return B_OK;
 
-	surface_purgeable_state oldState = fData->buffer->purgeableState;
 	fData->buffer->purgeableState = newState;
 
-	if (newState == SURFACE_PURGEABLE_EMPTY) {
+	if (newState == SURFACE_PURGEABLE_EMPTY)
 		fData->buffer->contentsPurged = true;
-	}
 
-	if (oldState == SURFACE_PURGEABLE_EMPTY || fData->buffer->contentsPurged) {
-		if (newState == SURFACE_PURGEABLE_NON_VOLATILE) {
-			return B_SURFACE_PURGEABLE;
-		}
+	if (fData->buffer->contentsPurged
+		&& newState == SURFACE_PURGEABLE_NON_VOLATILE) {
+		return B_SURFACE_PURGED;
 	}
 
 	return B_OK;
@@ -430,7 +476,6 @@ KosmSurface::SetPurgeable(surface_purgeable_state newState,
 bool
 KosmSurface::IsVolatile() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return false;
 	return fData->buffer->purgeableState == SURFACE_PURGEABLE_VOLATILE;
@@ -440,7 +485,6 @@ KosmSurface::IsVolatile() const
 uint32
 KosmSurface::Usage() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return 0;
 	return fData->buffer->desc.usage;
@@ -450,10 +494,9 @@ KosmSurface::Usage() const
 bool
 KosmSurface::IsLocked() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return false;
-	return fData->buffer->lockState != 0;
+	return fData->buffer->lockCount > 0;
 }
 
 
@@ -468,8 +511,30 @@ KosmSurface::IsValid() const
 thread_id
 KosmSurface::LockOwner() const
 {
-	ASSERT(!SURFACE_INVALID());
 	if (SURFACE_INVALID())
 		return -1;
 	return fData->buffer->lockOwner;
+}
+
+
+status_t
+KosmSurface::CreateAccessToken(surface_token* outToken)
+{
+	if (SURFACE_INVALID())
+		return B_NO_INIT;
+	if (outToken == NULL)
+		return B_BAD_VALUE;
+
+	return SurfaceRegistry::Default()->CreateAccessToken(
+		fData->buffer->id, outToken);
+}
+
+
+status_t
+KosmSurface::RevokeAllAccess()
+{
+	if (SURFACE_INVALID())
+		return B_NO_INIT;
+
+	return SurfaceRegistry::Default()->RevokeAllAccess(fData->buffer->id);
 }

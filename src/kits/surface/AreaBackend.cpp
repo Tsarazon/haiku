@@ -8,6 +8,7 @@
 #include "SurfaceBuffer.hpp"
 
 #include <OS.h>
+
 #include <new>
 #include <stdio.h>
 #include <string.h>
@@ -32,9 +33,14 @@ public:
 	virtual	bool				SupportsUsage(uint32 usage);
 
 private:
+	static	int32				sNextId;
+
 	static	const size_t		kStrideAlignment = 64;
 	static	const size_t		kMaxDimension = 16384;
 };
+
+
+int32 AreaBackend::sNextId = 1;
 
 
 AllocationBackend::~AllocationBackend()
@@ -56,6 +62,9 @@ status_t
 AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 {
 	if (outBuffer == NULL)
+		return B_BAD_VALUE;
+
+	if (desc.width == 0 || desc.height == 0)
 		return B_BAD_VALUE;
 
 	if (desc.width > kMaxDimension || desc.height > kMaxDimension)
@@ -84,9 +93,10 @@ AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 	size_t areaSize = (buffer->allocSize + B_PAGE_SIZE - 1)
 		& ~(B_PAGE_SIZE - 1);
 
+	int32 uniqueId = atomic_add(&sNextId, 1);
 	char name[B_OS_NAME_LENGTH];
-	snprintf(name, sizeof(name), "surface_%ux%u",
-		desc.width, desc.height);
+	snprintf(name, sizeof(name), "surface_%d_%ux%u",
+		uniqueId, desc.width, desc.height);
 
 	buffer->baseAddress = NULL;
 	buffer->areaId = create_area(name, &buffer->baseAddress,
@@ -99,6 +109,7 @@ AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 		return error;
 	}
 
+	buffer->ownsArea = true;
 	memset(buffer->baseAddress, 0, buffer->allocSize);
 
 	*outBuffer = buffer;
@@ -112,7 +123,7 @@ AreaBackend::Free(SurfaceBuffer* buffer)
 	if (buffer == NULL)
 		return;
 
-	if (buffer->areaId >= 0)
+	if (buffer->ownsArea && buffer->areaId >= 0)
 		delete_area(buffer->areaId);
 
 	delete buffer;
@@ -157,22 +168,7 @@ AreaBackend::GetMaxHeight()
 bool
 AreaBackend::SupportsFormat(pixel_format format)
 {
-	switch (format) {
-		case PIXEL_FORMAT_RGBA8888:
-		case PIXEL_FORMAT_BGRA8888:
-		case PIXEL_FORMAT_RGB565:
-		case PIXEL_FORMAT_RGBX8888:
-		case PIXEL_FORMAT_ARGB8888:
-		case PIXEL_FORMAT_XRGB8888:
-		case PIXEL_FORMAT_A8:
-		case PIXEL_FORMAT_L8:
-		case PIXEL_FORMAT_NV12:
-		case PIXEL_FORMAT_NV21:
-		case PIXEL_FORMAT_YV12:
-			return true;
-		default:
-			return false;
-	}
+	return format < PIXEL_FORMAT_COUNT;
 }
 
 
@@ -180,7 +176,7 @@ bool
 AreaBackend::SupportsUsage(uint32 usage)
 {
 	uint32 supported = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE
-		| SURFACE_USAGE_COMPOSITOR;
+		| SURFACE_USAGE_COMPOSITOR | SURFACE_USAGE_PURGEABLE;
 	return (usage & ~supported) == 0;
 }
 

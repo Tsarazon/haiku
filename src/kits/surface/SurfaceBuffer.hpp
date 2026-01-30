@@ -24,9 +24,11 @@ struct SurfaceBuffer {
 
 			area_id				areaId;
 			void*				baseAddress;
+			bool				ownsArea;
 
-			int32				lockState;
+			int32				lockCount;
 			thread_id			lockOwner;
+			bool				lockedReadOnly;
 			uint32				seed;
 
 			int32				localUseCount;
@@ -42,4 +44,4 @@ private:
 			SurfaceBuffer&		operator=(const SurfaceBuffer&);
 };
 
-#endif /* _SURFACE_BUFFER_HPP */
+#endif

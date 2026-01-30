@@ -27,4 +27,4 @@ public:
 	virtual	bool				SupportsUsage(uint32 usage) = 0;
 };
 
-#endif /* _ALLOCATION_BACKEND_HPP */
+#endif

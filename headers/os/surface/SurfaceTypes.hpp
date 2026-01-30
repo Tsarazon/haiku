@@ -9,28 +9,23 @@
 
 typedef uint32 surface_id;
 
-enum {
-	// Primary format - ThorVG native, Haiku B_RGBA32 compatible
-	// uint32 0xAARRGGBB, memory order on little-endian: [B][G][R][A]
-	PIXEL_FORMAT_ARGB8888 = 0,		// ThorVG native, RECOMMENDED
-
-	// Legacy/compatibility formats
-	PIXEL_FORMAT_BGRA8888,			// Same as ARGB8888 on little-endian
+enum pixel_format {
+	PIXEL_FORMAT_ARGB8888 = 0,
+	PIXEL_FORMAT_BGRA8888,
 	PIXEL_FORMAT_RGBA8888,
 	PIXEL_FORMAT_RGBX8888,
-	PIXEL_FORMAT_XRGB8888,			// Compositor, X11/DRM
+	PIXEL_FORMAT_XRGB8888,
 	PIXEL_FORMAT_RGB565,
 
-	// Planar YUV
 	PIXEL_FORMAT_NV12,
 	PIXEL_FORMAT_NV21,
 	PIXEL_FORMAT_YV12,
 
-	// Single-channel formats
-	PIXEL_FORMAT_A8,				// Font glyphs, masks
-	PIXEL_FORMAT_L8					// Grayscale
+	PIXEL_FORMAT_A8,
+	PIXEL_FORMAT_L8,
+
+	PIXEL_FORMAT_COUNT
 };
-typedef uint32 pixel_format;
 
 enum {
 	SURFACE_USAGE_CPU_READ		= 0x0001,
@@ -49,22 +44,21 @@ enum {
 	SURFACE_LOCK_AVOID_SYNC		= 0x0002
 };
 
-enum {
+enum surface_purgeable_state {
 	SURFACE_PURGEABLE_NON_VOLATILE	= 0,
 	SURFACE_PURGEABLE_VOLATILE		= 1,
 	SURFACE_PURGEABLE_EMPTY			= 2,
 	SURFACE_PURGEABLE_KEEP_CURRENT	= 3
 };
-typedef uint32 surface_purgeable_state;
 
 enum {
-	SURFACE_CACHE_DEFAULT			= 0,
-	SURFACE_CACHE_INHIBIT			= 1,
-	SURFACE_CACHE_WRITE_THROUGH		= 2,
-	SURFACE_CACHE_WRITE_COMBINE		= 3
+	SURFACE_CACHE_DEFAULT		= 0,
+	SURFACE_CACHE_INHIBIT		= 1,
+	SURFACE_CACHE_WRITE_THROUGH	= 2,
+	SURFACE_CACHE_WRITE_COMBINE	= 3
 };
 
-typedef struct {
+struct surface_desc {
 	uint32			width;
 	uint32			height;
 	pixel_format	format;
@@ -72,21 +66,27 @@ typedef struct {
 	uint32			bytesPerElement;
 	uint32			bytesPerRow;
 	uint32			cacheMode;
-} surface_desc;
+};
 
-typedef struct {
+struct plane_info {
 	uint32			width;
 	uint32			height;
 	uint32			bytesPerElement;
 	uint32			bytesPerRow;
 	size_t			offset;
-} plane_info;
+};
+
+struct surface_token {
+	surface_id		id;
+	uint64			secret;
+	uint32			generation;
+};
 
 enum {
 	B_SURFACE_NOT_LOCKED = B_ERRORS_END + 0x1000,
 	B_SURFACE_ALREADY_LOCKED,
 	B_SURFACE_IN_USE,
-	B_SURFACE_PURGEABLE
+	B_SURFACE_PURGED
 };
 
 #ifdef __cplusplus
@@ -96,7 +96,7 @@ surface_desc_init(surface_desc* desc)
 {
 	desc->width = 0;
 	desc->height = 0;
-	desc->format = PIXEL_FORMAT_ARGB8888;	// ThorVG native
+	desc->format = PIXEL_FORMAT_ARGB8888;
 	desc->usage = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE;
 	desc->bytesPerElement = 0;
 	desc->bytesPerRow = 0;
@@ -105,4 +105,4 @@ surface_desc_init(surface_desc* desc)
 
 #endif
 
-#endif /* _SURFACE_TYPES_HPP */
+#endif
