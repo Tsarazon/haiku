@@ -39,6 +39,11 @@ private:
 			status_t			_CreateFromCloneWithToken(
 									const KosmSurfaceToken& token,
 									KosmSurface** outSurface);
+			status_t			_CloneFromRegistry(kosm_surface_id id,
+									const KosmSurfaceDesc& desc,
+									area_id sourceArea,
+									size_t allocSize, uint32 planeCount,
+									KosmSurface** outSurface);
 
 			struct Impl;
 			Impl*				fImpl;

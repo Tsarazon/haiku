@@ -16,6 +16,7 @@ KosmSurfaceBuffer::KosmSurfaceBuffer()
 	areaId(-1),
 	baseAddress(NULL),
 	ownsArea(true),
+	isOriginal(true),
 	lockCount(0),
 	lockOwner(-1),
 	lockedReadOnly(false),

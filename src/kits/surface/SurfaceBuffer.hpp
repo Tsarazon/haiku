@@ -25,6 +25,7 @@ struct KosmSurfaceBuffer {
 			area_id				areaId;
 			void*				baseAddress;
 			bool				ownsArea;
+			bool				isOriginal;
 
 			int32				lockCount;
 			thread_id			lockOwner;

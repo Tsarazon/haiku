@@ -8,15 +8,19 @@
  * Registry uses a shared area discoverable via find_area() to enable
  * cross-process surface lookup. First process creates the area,
  * subsequent processes clone it.
+ *
+ * Synchronization uses kosm_mutex (robust mutex with owner-death
+ * detection) instead of plain semaphores.
  */
 #ifndef _KOSM_SURFACE_REGISTRY_HPP
 #define _KOSM_SURFACE_REGISTRY_HPP
 
-#include <OS.h>
+#include <KosmOS.h>
 #include <SurfaceTypes.hpp>
 
 #define KOSM_SURFACE_REGISTRY_MAX_ENTRIES		4096
 #define KOSM_SURFACE_REGISTRY_AREA_NAME			"kosm_surface_registry"
+#define KOSM_SURFACE_REGISTRY_MUTEX_NAME		"kosm_surface_registry_lock"
 #define KOSM_SURFACE_ID_TOMBSTONE				((kosm_surface_id)-1)
 
 // Compaction threshold: rehash when tombstones exceed 25% of capacity
@@ -24,7 +28,7 @@
 	(KOSM_SURFACE_REGISTRY_MAX_ENTRIES / 4)
 
 struct KosmSurfaceRegistryHeader {
-	sem_id			lock;
+	kosm_mutex_id	lock;
 	int32			entryCount;
 	int32			tombstoneCount;
 	uint32			_reserved[5];
@@ -88,6 +92,9 @@ private:
 			status_t			_InitSharedArea();
 			status_t			_CreateSharedArea();
 			status_t			_CloneSharedArea(area_id sourceArea);
+
+			status_t			_Lock() const;
+			status_t			_Unlock() const;
 
 			int32				_FindSlot(kosm_surface_id id) const;
 			int32				_FindEmptySlot(kosm_surface_id id) const;

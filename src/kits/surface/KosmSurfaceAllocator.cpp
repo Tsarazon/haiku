@@ -104,6 +104,8 @@ KosmSurfaceAllocator::Allocate(const KosmSurfaceDesc& desc,
 	if (status != B_OK)
 		return status;
 
+	buffer->isOriginal = true;
+
 	BAutolock locker(fImpl->lock);
 
 	status = KOSM_SURFACE_ID_EXISTS;
@@ -169,9 +171,13 @@ KosmSurfaceAllocator::Free(KosmSurface* surface)
 	surface->fData->buffer = NULL;
 
 	if (buffer != NULL) {
-		status_t status = KosmSurfaceRegistry::Default()->Unregister(id);
-		if (status == KOSM_SURFACE_IN_USE)
-			debugger("Freeing surface that is still in use");
+		if (buffer->isOriginal) {
+			status_t status = KosmSurfaceRegistry::Default()->Unregister(id);
+			if (status == KOSM_SURFACE_IN_USE)
+				debugger("Freeing surface that is still in use");
+		} else {
+			KosmSurfaceRegistry::Default()->DecrementGlobalUseCount(id);
+		}
 
 		if (buffer->ownsArea)
 			fImpl->backend->Free(buffer);
@@ -229,12 +235,33 @@ KosmSurfaceAllocator::LookupOrClone(kosm_surface_id id,
 
 
 status_t
+KosmSurfaceAllocator::LookupWithToken(const KosmSurfaceToken& token,
+	KosmSurface** outSurface)
+{
+	if (outSurface == NULL || token.id == 0)
+		return B_BAD_VALUE;
+
+	if (fImpl == NULL)
+		return B_NO_INIT;
+
+	BAutolock locker(fImpl->lock);
+
+	KosmSurface* surface = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(token.id));
+	if (surface != NULL) {
+		*outSurface = surface;
+		return B_OK;
+	}
+
+	locker.Unlock();
+	return _CreateFromCloneWithToken(token, outSurface);
+}
+
+
+status_t
 KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 	KosmSurface** outSurface)
 {
-	if (outSurface == NULL || id == 0)
-		return B_BAD_VALUE;
-
 	KosmSurfaceDesc desc;
 	area_id sourceArea;
 	size_t allocSize;
@@ -245,6 +272,35 @@ KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 	if (status != B_OK)
 		return status;
 
+	return _CloneFromRegistry(id, desc, sourceArea, allocSize, planeCount,
+		outSurface);
+}
+
+
+status_t
+KosmSurfaceAllocator::_CreateFromCloneWithToken(const KosmSurfaceToken& token,
+	KosmSurface** outSurface)
+{
+	KosmSurfaceDesc desc;
+	area_id sourceArea;
+	size_t allocSize;
+	uint32 planeCount;
+
+	status_t status = KosmSurfaceRegistry::Default()->LookupInfoWithToken(
+		token, &desc, &sourceArea, &allocSize, &planeCount);
+	if (status != B_OK)
+		return status;
+
+	return _CloneFromRegistry(token.id, desc, sourceArea, allocSize,
+		planeCount, outSurface);
+}
+
+
+status_t
+KosmSurfaceAllocator::_CloneFromRegistry(kosm_surface_id id,
+	const KosmSurfaceDesc& desc, area_id sourceArea,
+	size_t allocSize, uint32 planeCount, KosmSurface** outSurface)
+{
 	void* address = NULL;
 	area_id clonedArea = clone_area("kosm_surface_clone", &address,
 		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
@@ -273,6 +329,7 @@ KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 	buffer->baseAddress = address;
 	buffer->allocSize = allocSize;
 	buffer->ownsArea = true;
+	buffer->isOriginal = false;
 	buffer->planeCount = planeCount;
 
 	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
@@ -291,7 +348,7 @@ KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 
 	surface->fData->buffer = buffer;
 
-	status = fImpl->surfaces.Put(
+	status_t status = fImpl->surfaces.Put(
 		HashKey32<kosm_surface_id>(id), surface);
 	if (status != B_OK) {
 		delete_area(clonedArea);
@@ -301,111 +358,15 @@ KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 		return status;
 	}
 
-	KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(id);
-
-	*outSurface = surface;
-	return B_OK;
-}
-
-
-status_t
-KosmSurfaceAllocator::LookupWithToken(const KosmSurfaceToken& token,
-	KosmSurface** outSurface)
-{
-	if (outSurface == NULL || token.id == 0)
-		return B_BAD_VALUE;
-
-	if (fImpl == NULL)
-		return B_NO_INIT;
-
-	BAutolock locker(fImpl->lock);
-
-	KosmSurface* surface = fImpl->surfaces.Get(
-		HashKey32<kosm_surface_id>(token.id));
-	if (surface != NULL) {
-		*outSurface = surface;
-		return B_OK;
-	}
-
-	locker.Unlock();
-	return _CreateFromCloneWithToken(token, outSurface);
-}
-
-
-status_t
-KosmSurfaceAllocator::_CreateFromCloneWithToken(const KosmSurfaceToken& token,
-	KosmSurface** outSurface)
-{
-	if (outSurface == NULL || token.id == 0)
-		return B_BAD_VALUE;
-
-	KosmSurfaceDesc desc;
-	area_id sourceArea;
-	size_t allocSize;
-	uint32 planeCount;
-
-	status_t status = KosmSurfaceRegistry::Default()->LookupInfoWithToken(
-		token, &desc, &sourceArea, &allocSize, &planeCount);
-	if (status != B_OK)
-		return status;
-
-	void* address = NULL;
-	area_id clonedArea = clone_area("kosm_surface_clone", &address,
-		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
-	if (clonedArea < 0)
-		return clonedArea;
-
-	BAutolock locker(fImpl->lock);
-
-	KosmSurface* existing = fImpl->surfaces.Get(
-		HashKey32<kosm_surface_id>(token.id));
-	if (existing != NULL) {
-		delete_area(clonedArea);
-		*outSurface = existing;
-		return B_OK;
-	}
-
-	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
-	if (buffer == NULL) {
-		delete_area(clonedArea);
-		return B_NO_MEMORY;
-	}
-
-	buffer->id = token.id;
-	buffer->desc = desc;
-	buffer->areaId = clonedArea;
-	buffer->baseAddress = address;
-	buffer->allocSize = allocSize;
-	buffer->ownsArea = true;
-	buffer->planeCount = planeCount;
-
-	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
-	for (uint32 i = 0; i < buffer->planeCount; i++) {
-		kosm_planar_calculate_plane(desc.format, i, desc.width, desc.height,
-			strideAlignment, &buffer->planes[i]);
-	}
-
-	KosmSurface* surface = new(std::nothrow) KosmSurface;
-	if (surface == NULL || surface->fData == NULL) {
-		delete_area(clonedArea);
-		delete buffer;
-		delete surface;
-		return B_NO_MEMORY;
-	}
-
-	surface->fData->buffer = buffer;
-
-	status = fImpl->surfaces.Put(
-		HashKey32<kosm_surface_id>(token.id), surface);
+	status = KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(id);
 	if (status != B_OK) {
+		fImpl->surfaces.Remove(HashKey32<kosm_surface_id>(id));
 		delete_area(clonedArea);
 		delete buffer;
 		surface->fData->buffer = NULL;
 		delete surface;
 		return status;
 	}
-
-	KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(token.id);
 
 	*outSurface = surface;
 	return B_OK;
