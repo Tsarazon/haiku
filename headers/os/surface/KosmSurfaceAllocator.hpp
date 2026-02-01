@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef _KOSM_SURFACE_ALLOCATOR_HPP
@@ -14,29 +14,30 @@ class KosmSurfaceAllocator {
 public:
 	static	KosmSurfaceAllocator* Default();
 
-			status_t			Allocate(const surface_desc& desc,
+			status_t			Allocate(const KosmSurfaceDesc& desc,
 									KosmSurface** outSurface);
 			void				Free(KosmSurface* surface);
 
-			status_t			Lookup(surface_id id, KosmSurface** outSurface);
-			status_t			LookupOrClone(surface_id id,
+			status_t			Lookup(kosm_surface_id id,
 									KosmSurface** outSurface);
-			status_t			LookupWithToken(const surface_token& token,
+			status_t			LookupOrClone(kosm_surface_id id,
+									KosmSurface** outSurface);
+			status_t			LookupWithToken(const KosmSurfaceToken& token,
 									KosmSurface** outSurface);
 
 			size_t				GetPropertyMaximum(const char* property) const;
 			size_t				GetPropertyAlignment(const char* property) const;
 
-			bool				IsFormatSupported(pixel_format format) const;
+			bool				IsFormatSupported(kosm_pixel_format format) const;
 
 private:
 								KosmSurfaceAllocator();
 								~KosmSurfaceAllocator();
 
-			status_t			_CreateFromClone(surface_id id,
+			status_t			_CreateFromClone(kosm_surface_id id,
 									KosmSurface** outSurface);
 			status_t			_CreateFromCloneWithToken(
-									const surface_token& token,
+									const KosmSurfaceToken& token,
 									KosmSurface** outSurface);
 
 			struct Impl;

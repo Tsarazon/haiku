@@ -1,26 +1,26 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _SURFACE_BUFFER_HPP
-#define _SURFACE_BUFFER_HPP
+#ifndef _KOSM_SURFACE_BUFFER_HPP
+#define _KOSM_SURFACE_BUFFER_HPP
 
 #include <Locker.h>
 #include <Message.h>
 #include <SurfaceTypes.hpp>
 
-#define SURFACE_MAX_PLANES 4
+#define KOSM_SURFACE_MAX_PLANES 4
 
-struct SurfaceBuffer {
-								SurfaceBuffer();
+struct KosmSurfaceBuffer {
+								KosmSurfaceBuffer();
 
-			surface_id			id;
+			kosm_surface_id		id;
 
-			surface_desc		desc;
+			KosmSurfaceDesc		desc;
 			size_t				allocSize;
 
 			uint32				planeCount;
-			plane_info			planes[SURFACE_MAX_PLANES];
+			KosmPlaneInfo		planes[KOSM_SURFACE_MAX_PLANES];
 
 			area_id				areaId;
 			void*				baseAddress;
@@ -33,15 +33,15 @@ struct SurfaceBuffer {
 
 			int32				localUseCount;
 
-			surface_purgeable_state	purgeableState;
+			kosm_purgeable_state purgeableState;
 			bool				contentsPurged;
 
 			BMessage			attachments;
 			BLocker				lock;
 
 private:
-								SurfaceBuffer(const SurfaceBuffer&);
-			SurfaceBuffer&		operator=(const SurfaceBuffer&);
+								KosmSurfaceBuffer(const KosmSurfaceBuffer&);
+			KosmSurfaceBuffer&	operator=(const KosmSurfaceBuffer&);
 };
 
 #endif

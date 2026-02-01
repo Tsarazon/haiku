@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -20,21 +20,21 @@
 #include "SurfaceRegistry.hpp"
 
 
-extern AllocationBackend* create_area_backend();
+extern KosmAllocationBackend* kosm_create_area_backend();
 
 
 struct KosmSurfaceAllocator::Impl {
-	typedef HashMap<HashKey32<surface_id>, KosmSurface*> SurfaceMap;
+	typedef HashMap<HashKey32<kosm_surface_id>, KosmSurface*> SurfaceMap;
 
-	AllocationBackend*	backend;
-	SurfaceMap			surfaces;
-	BLocker				lock;
+	KosmAllocationBackend*	backend;
+	SurfaceMap				surfaces;
+	BLocker					lock;
 
 	Impl()
 		:
-		backend(create_area_backend()),
+		backend(kosm_create_area_backend()),
 		surfaces(),
-		lock("surface_allocator")
+		lock("kosm_surface_allocator")
 	{
 	}
 
@@ -45,19 +45,17 @@ struct KosmSurfaceAllocator::Impl {
 };
 
 
-// Generates a pseudo-unique surface ID using time and counter.
-// Uses Knuth multiplicative hash for better distribution.
-// Result is truncated to 32 bits; collisions are possible but rare
-// in practice for typical surface lifetimes.
-static surface_id
+static const int32 kMaxIdRetries = 8;
+
+
+static kosm_surface_id
 generate_surface_id()
 {
 	static int32 sCounter = 0;
 	int32 counter = atomic_add(&sCounter, 1);
 	uint32 hash = (uint32)system_time() ^ (counter * 2654435761u);
 
-	// Avoid reserved values
-	if (hash == 0 || hash == SURFACE_ID_TOMBSTONE)
+	if (hash == 0 || hash == KOSM_SURFACE_ID_TOMBSTONE)
 		hash = 1;
 
 	return hash;
@@ -86,7 +84,7 @@ KosmSurfaceAllocator::~KosmSurfaceAllocator()
 
 
 status_t
-KosmSurfaceAllocator::Allocate(const surface_desc& desc,
+KosmSurfaceAllocator::Allocate(const KosmSurfaceDesc& desc,
 	KosmSurface** outSurface)
 {
 	if (outSurface == NULL)
@@ -101,17 +99,31 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 	if (!fImpl->backend->SupportsFormat(desc.format))
 		return B_BAD_VALUE;
 
-	SurfaceBuffer* buffer = NULL;
+	KosmSurfaceBuffer* buffer = NULL;
 	status_t status = fImpl->backend->Allocate(desc, &buffer);
 	if (status != B_OK)
 		return status;
 
 	BAutolock locker(fImpl->lock);
 
-	buffer->id = generate_surface_id();
+	status = KOSM_SURFACE_ID_EXISTS;
+	int32 retries = 0;
+	while (status == KOSM_SURFACE_ID_EXISTS && retries < kMaxIdRetries) {
+		buffer->id = generate_surface_id();
+		status = KosmSurfaceRegistry::Default()->Register(buffer->id,
+			buffer->areaId, buffer->desc, buffer->allocSize,
+			buffer->planeCount);
+		retries++;
+	}
+
+	if (status != B_OK) {
+		fImpl->backend->Free(buffer);
+		return status;
+	}
 
 	KosmSurface* surface = new(std::nothrow) KosmSurface;
 	if (surface == NULL || surface->fData == NULL) {
+		KosmSurfaceRegistry::Default()->Unregister(buffer->id);
 		fImpl->backend->Free(buffer);
 		delete surface;
 		return B_NO_MEMORY;
@@ -119,18 +131,10 @@ KosmSurfaceAllocator::Allocate(const surface_desc& desc,
 
 	surface->fData->buffer = buffer;
 
-	status = SurfaceRegistry::Default()->Register(buffer->id, buffer->areaId,
-		buffer->desc, buffer->allocSize, buffer->planeCount);
+	status = fImpl->surfaces.Put(
+		HashKey32<kosm_surface_id>(buffer->id), surface);
 	if (status != B_OK) {
-		fImpl->backend->Free(buffer);
-		surface->fData->buffer = NULL;
-		delete surface;
-		return status;
-	}
-
-	status = fImpl->surfaces.Put(HashKey32<surface_id>(buffer->id), surface);
-	if (status != B_OK) {
-		SurfaceRegistry::Default()->Unregister(buffer->id);
+		KosmSurfaceRegistry::Default()->Unregister(buffer->id);
 		fImpl->backend->Free(buffer);
 		surface->fData->buffer = NULL;
 		delete surface;
@@ -150,22 +154,23 @@ KosmSurfaceAllocator::Free(KosmSurface* surface)
 
 	BAutolock locker(fImpl->lock);
 
-	surface_id id = surface->ID();
+	kosm_surface_id id = surface->ID();
 	if (id == 0)
 		return;
 
-	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	KosmSurface* existing = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(id));
 	if (existing != surface)
 		return;
 
-	fImpl->surfaces.Remove(HashKey32<surface_id>(id));
+	fImpl->surfaces.Remove(HashKey32<kosm_surface_id>(id));
 
-	SurfaceBuffer* buffer = surface->fData->buffer;
+	KosmSurfaceBuffer* buffer = surface->fData->buffer;
 	surface->fData->buffer = NULL;
 
 	if (buffer != NULL) {
-		status_t status = SurfaceRegistry::Default()->Unregister(id);
-		if (status == B_SURFACE_IN_USE)
+		status_t status = KosmSurfaceRegistry::Default()->Unregister(id);
+		if (status == KOSM_SURFACE_IN_USE)
 			debugger("Freeing surface that is still in use");
 
 		if (buffer->ownsArea)
@@ -179,7 +184,7 @@ KosmSurfaceAllocator::Free(KosmSurface* surface)
 
 
 status_t
-KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
+KosmSurfaceAllocator::Lookup(kosm_surface_id id, KosmSurface** outSurface)
 {
 	if (outSurface == NULL || id == 0)
 		return B_BAD_VALUE;
@@ -189,7 +194,8 @@ KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
 
 	BAutolock locker(fImpl->lock);
 
-	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	KosmSurface* surface = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(id));
 	if (surface == NULL)
 		return B_NAME_NOT_FOUND;
 
@@ -199,7 +205,8 @@ KosmSurfaceAllocator::Lookup(surface_id id, KosmSurface** outSurface)
 
 
 status_t
-KosmSurfaceAllocator::LookupOrClone(surface_id id, KosmSurface** outSurface)
+KosmSurfaceAllocator::LookupOrClone(kosm_surface_id id,
+	KosmSurface** outSurface)
 {
 	if (outSurface == NULL || id == 0)
 		return B_BAD_VALUE;
@@ -209,7 +216,8 @@ KosmSurfaceAllocator::LookupOrClone(surface_id id, KosmSurface** outSurface)
 
 	BAutolock locker(fImpl->lock);
 
-	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	KosmSurface* surface = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(id));
 	if (surface != NULL) {
 		*outSurface = surface;
 		return B_OK;
@@ -221,38 +229,39 @@ KosmSurfaceAllocator::LookupOrClone(surface_id id, KosmSurface** outSurface)
 
 
 status_t
-KosmSurfaceAllocator::_CreateFromClone(surface_id id,
+KosmSurfaceAllocator::_CreateFromClone(kosm_surface_id id,
 	KosmSurface** outSurface)
 {
 	if (outSurface == NULL || id == 0)
 		return B_BAD_VALUE;
 
-	surface_desc desc;
+	KosmSurfaceDesc desc;
 	area_id sourceArea;
 	size_t allocSize;
 	uint32 planeCount;
 
-	status_t status = SurfaceRegistry::Default()->LookupInfo(id, &desc,
-		&sourceArea, &allocSize, &planeCount);
+	status_t status = KosmSurfaceRegistry::Default()->LookupInfo(id,
+		&desc, &sourceArea, &allocSize, &planeCount);
 	if (status != B_OK)
 		return status;
 
 	void* address = NULL;
-	area_id clonedArea = clone_area("surface_clone", &address,
+	area_id clonedArea = clone_area("kosm_surface_clone", &address,
 		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
 	if (clonedArea < 0)
 		return clonedArea;
 
 	BAutolock locker(fImpl->lock);
 
-	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(id));
+	KosmSurface* existing = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(id));
 	if (existing != NULL) {
 		delete_area(clonedArea);
 		*outSurface = existing;
 		return B_OK;
 	}
 
-	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
+	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
 	if (buffer == NULL) {
 		delete_area(clonedArea);
 		return B_NO_MEMORY;
@@ -268,7 +277,7 @@ KosmSurfaceAllocator::_CreateFromClone(surface_id id,
 
 	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
 	for (uint32 i = 0; i < buffer->planeCount; i++) {
-		planar_calculate_plane(desc.format, i, desc.width, desc.height,
+		kosm_planar_calculate_plane(desc.format, i, desc.width, desc.height,
 			strideAlignment, &buffer->planes[i]);
 	}
 
@@ -282,7 +291,8 @@ KosmSurfaceAllocator::_CreateFromClone(surface_id id,
 
 	surface->fData->buffer = buffer;
 
-	status = fImpl->surfaces.Put(HashKey32<surface_id>(id), surface);
+	status = fImpl->surfaces.Put(
+		HashKey32<kosm_surface_id>(id), surface);
 	if (status != B_OK) {
 		delete_area(clonedArea);
 		delete buffer;
@@ -291,7 +301,7 @@ KosmSurfaceAllocator::_CreateFromClone(surface_id id,
 		return status;
 	}
 
-	SurfaceRegistry::Default()->IncrementGlobalUseCount(id);
+	KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(id);
 
 	*outSurface = surface;
 	return B_OK;
@@ -299,7 +309,7 @@ KosmSurfaceAllocator::_CreateFromClone(surface_id id,
 
 
 status_t
-KosmSurfaceAllocator::LookupWithToken(const surface_token& token,
+KosmSurfaceAllocator::LookupWithToken(const KosmSurfaceToken& token,
 	KosmSurface** outSurface)
 {
 	if (outSurface == NULL || token.id == 0)
@@ -310,7 +320,8 @@ KosmSurfaceAllocator::LookupWithToken(const surface_token& token,
 
 	BAutolock locker(fImpl->lock);
 
-	KosmSurface* surface = fImpl->surfaces.Get(HashKey32<surface_id>(token.id));
+	KosmSurface* surface = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(token.id));
 	if (surface != NULL) {
 		*outSurface = surface;
 		return B_OK;
@@ -322,38 +333,39 @@ KosmSurfaceAllocator::LookupWithToken(const surface_token& token,
 
 
 status_t
-KosmSurfaceAllocator::_CreateFromCloneWithToken(const surface_token& token,
+KosmSurfaceAllocator::_CreateFromCloneWithToken(const KosmSurfaceToken& token,
 	KosmSurface** outSurface)
 {
 	if (outSurface == NULL || token.id == 0)
 		return B_BAD_VALUE;
 
-	surface_desc desc;
+	KosmSurfaceDesc desc;
 	area_id sourceArea;
 	size_t allocSize;
 	uint32 planeCount;
 
-	status_t status = SurfaceRegistry::Default()->LookupInfoWithToken(token,
-		&desc, &sourceArea, &allocSize, &planeCount);
+	status_t status = KosmSurfaceRegistry::Default()->LookupInfoWithToken(
+		token, &desc, &sourceArea, &allocSize, &planeCount);
 	if (status != B_OK)
 		return status;
 
 	void* address = NULL;
-	area_id clonedArea = clone_area("surface_clone", &address,
+	area_id clonedArea = clone_area("kosm_surface_clone", &address,
 		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
 	if (clonedArea < 0)
 		return clonedArea;
 
 	BAutolock locker(fImpl->lock);
 
-	KosmSurface* existing = fImpl->surfaces.Get(HashKey32<surface_id>(token.id));
+	KosmSurface* existing = fImpl->surfaces.Get(
+		HashKey32<kosm_surface_id>(token.id));
 	if (existing != NULL) {
 		delete_area(clonedArea);
 		*outSurface = existing;
 		return B_OK;
 	}
 
-	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
+	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
 	if (buffer == NULL) {
 		delete_area(clonedArea);
 		return B_NO_MEMORY;
@@ -369,7 +381,7 @@ KosmSurfaceAllocator::_CreateFromCloneWithToken(const surface_token& token,
 
 	size_t strideAlignment = fImpl->backend->GetStrideAlignment(desc.format);
 	for (uint32 i = 0; i < buffer->planeCount; i++) {
-		planar_calculate_plane(desc.format, i, desc.width, desc.height,
+		kosm_planar_calculate_plane(desc.format, i, desc.width, desc.height,
 			strideAlignment, &buffer->planes[i]);
 	}
 
@@ -383,7 +395,8 @@ KosmSurfaceAllocator::_CreateFromCloneWithToken(const surface_token& token,
 
 	surface->fData->buffer = buffer;
 
-	status = fImpl->surfaces.Put(HashKey32<surface_id>(token.id), surface);
+	status = fImpl->surfaces.Put(
+		HashKey32<kosm_surface_id>(token.id), surface);
 	if (status != B_OK) {
 		delete_area(clonedArea);
 		delete buffer;
@@ -392,7 +405,7 @@ KosmSurfaceAllocator::_CreateFromCloneWithToken(const surface_token& token,
 		return status;
 	}
 
-	SurfaceRegistry::Default()->IncrementGlobalUseCount(token.id);
+	KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(token.id);
 
 	*outSurface = surface;
 	return B_OK;
@@ -421,14 +434,14 @@ KosmSurfaceAllocator::GetPropertyAlignment(const char* property) const
 		return 1;
 
 	if (strcmp(property, "bytesPerRow") == 0)
-		return fImpl->backend->GetStrideAlignment(PIXEL_FORMAT_ARGB8888);
+		return fImpl->backend->GetStrideAlignment(KOSM_PIXEL_FORMAT_ARGB8888);
 
 	return 1;
 }
 
 
 bool
-KosmSurfaceAllocator::IsFormatSupported(pixel_format format) const
+KosmSurfaceAllocator::IsFormatSupported(kosm_pixel_format format) const
 {
 	if (fImpl == NULL || fImpl->backend == NULL)
 		return false;

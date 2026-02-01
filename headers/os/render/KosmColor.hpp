@@ -27,6 +27,14 @@ struct KosmColor {
 	KosmColor(float r, float g, float b, float a = 1.0f)
 		: r(r), g(g), b(b), a(a) {}
 
+	// Canonical pixel format (ARGB8888)
+	// All internal rendering uses ARGB8888 as the standard pixel layout.
+	// Use ToPixel/FromPixel for Surface Kit interop.
+
+	uint32 ToPixel() const { return ToARGB32(); }
+
+	static KosmColor FromPixel(uint32 pixel) { return FromARGB32(pixel); }
+
 	// From integer formats (8-bit per channel)
 
 	static KosmColor FromRGBA8(uint8 r, uint8 g, uint8 b, uint8 a = 255) {

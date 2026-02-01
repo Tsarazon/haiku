@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -8,7 +8,7 @@
 #include <string.h>
 
 
-SurfaceBuffer::SurfaceBuffer()
+KosmSurfaceBuffer::KosmSurfaceBuffer()
 	:
 	id(0),
 	allocSize(0),
@@ -21,10 +21,9 @@ SurfaceBuffer::SurfaceBuffer()
 	lockedReadOnly(false),
 	seed(0),
 	localUseCount(0),
-	purgeableState(SURFACE_PURGEABLE_NON_VOLATILE),
+	purgeableState(KOSM_PURGEABLE_NON_VOLATILE),
 	contentsPurged(false),
-	lock("surface_buffer")
+	lock("kosm_surface_buffer")
 {
-	surface_desc_init(&desc);
 	memset(planes, 0, sizeof(planes));
 }

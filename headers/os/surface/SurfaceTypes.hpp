@@ -1,74 +1,86 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
-#ifndef _SURFACE_TYPES_HPP
-#define _SURFACE_TYPES_HPP
+#ifndef _KOSM_SURFACE_TYPES_HPP
+#define _KOSM_SURFACE_TYPES_HPP
 
 #include <SupportDefs.h>
 
-typedef uint32 surface_id;
+typedef uint32 kosm_surface_id;
 
-enum pixel_format {
-	PIXEL_FORMAT_ARGB8888 = 0,
-	PIXEL_FORMAT_BGRA8888,
-	PIXEL_FORMAT_RGBA8888,
-	PIXEL_FORMAT_RGBX8888,
-	PIXEL_FORMAT_XRGB8888,
-	PIXEL_FORMAT_RGB565,
+enum kosm_pixel_format {
+	KOSM_PIXEL_FORMAT_ARGB8888 = 0,
+	KOSM_PIXEL_FORMAT_BGRA8888,
+	KOSM_PIXEL_FORMAT_RGBA8888,
+	KOSM_PIXEL_FORMAT_RGBX8888,
+	KOSM_PIXEL_FORMAT_XRGB8888,
+	KOSM_PIXEL_FORMAT_RGB565,
 
-	PIXEL_FORMAT_NV12,
-	PIXEL_FORMAT_NV21,
-	PIXEL_FORMAT_YV12,
+	KOSM_PIXEL_FORMAT_NV12,
+	KOSM_PIXEL_FORMAT_NV21,
+	KOSM_PIXEL_FORMAT_YV12,
 
-	PIXEL_FORMAT_A8,
-	PIXEL_FORMAT_L8,
+	KOSM_PIXEL_FORMAT_A8,
+	KOSM_PIXEL_FORMAT_L8,
 
-	PIXEL_FORMAT_COUNT
+	KOSM_PIXEL_FORMAT_COUNT
 };
 
 enum {
-	SURFACE_USAGE_CPU_READ		= 0x0001,
-	SURFACE_USAGE_CPU_WRITE		= 0x0002,
-	SURFACE_USAGE_GPU_TEXTURE	= 0x0004,
-	SURFACE_USAGE_GPU_RENDER	= 0x0008,
-	SURFACE_USAGE_COMPOSITOR	= 0x0010,
-	SURFACE_USAGE_VIDEO			= 0x0020,
-	SURFACE_USAGE_CAMERA		= 0x0040,
-	SURFACE_USAGE_PROTECTED		= 0x0080,
-	SURFACE_USAGE_PURGEABLE		= 0x0100
+	KOSM_SURFACE_USAGE_CPU_READ		= 0x0001,
+	KOSM_SURFACE_USAGE_CPU_WRITE	= 0x0002,
+	KOSM_SURFACE_USAGE_GPU_TEXTURE	= 0x0004,
+	KOSM_SURFACE_USAGE_GPU_RENDER	= 0x0008,
+	KOSM_SURFACE_USAGE_COMPOSITOR	= 0x0010,
+	KOSM_SURFACE_USAGE_VIDEO		= 0x0020,
+	KOSM_SURFACE_USAGE_CAMERA		= 0x0040,
+	KOSM_SURFACE_USAGE_PROTECTED	= 0x0080,
+	KOSM_SURFACE_USAGE_PURGEABLE	= 0x0100
 };
 
 enum {
-	SURFACE_LOCK_READ_ONLY		= 0x0001,
-	SURFACE_LOCK_AVOID_SYNC		= 0x0002
+	KOSM_SURFACE_LOCK_READ_ONLY		= 0x0001,
+	KOSM_SURFACE_LOCK_AVOID_SYNC	= 0x0002
 };
 
-enum surface_purgeable_state {
-	SURFACE_PURGEABLE_NON_VOLATILE	= 0,
-	SURFACE_PURGEABLE_VOLATILE		= 1,
-	SURFACE_PURGEABLE_EMPTY			= 2,
-	SURFACE_PURGEABLE_KEEP_CURRENT	= 3
+enum kosm_purgeable_state {
+	KOSM_PURGEABLE_NON_VOLATILE	= 0,
+	KOSM_PURGEABLE_VOLATILE		= 1,
+	KOSM_PURGEABLE_EMPTY		= 2,
+	KOSM_PURGEABLE_KEEP_CURRENT	= 3
 };
 
 enum {
-	SURFACE_CACHE_DEFAULT		= 0,
-	SURFACE_CACHE_INHIBIT		= 1,
-	SURFACE_CACHE_WRITE_THROUGH	= 2,
-	SURFACE_CACHE_WRITE_COMBINE	= 3
+	KOSM_CACHE_DEFAULT			= 0,
+	KOSM_CACHE_INHIBIT			= 1,
+	KOSM_CACHE_WRITE_THROUGH	= 2,
+	KOSM_CACHE_WRITE_COMBINE	= 3
 };
 
-struct surface_desc {
-	uint32			width;
-	uint32			height;
-	pixel_format	format;
-	uint32			usage;
-	uint32			bytesPerElement;
-	uint32			bytesPerRow;
-	uint32			cacheMode;
+struct KosmSurfaceDesc {
+	uint32				width;
+	uint32				height;
+	kosm_pixel_format	format;
+	uint32				usage;
+	uint32				bytesPerElement;
+	uint32				bytesPerRow;
+	uint32				cacheMode;
+
+	KosmSurfaceDesc()
+		:
+		width(0),
+		height(0),
+		format(KOSM_PIXEL_FORMAT_ARGB8888),
+		usage(KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE),
+		bytesPerElement(0),
+		bytesPerRow(0),
+		cacheMode(KOSM_CACHE_DEFAULT)
+	{
+	}
 };
 
-struct plane_info {
+struct KosmPlaneInfo {
 	uint32			width;
 	uint32			height;
 	uint32			bytesPerElement;
@@ -76,33 +88,18 @@ struct plane_info {
 	size_t			offset;
 };
 
-struct surface_token {
-	surface_id		id;
+struct KosmSurfaceToken {
+	kosm_surface_id	id;
 	uint64			secret;
 	uint32			generation;
 };
 
 enum {
-	B_SURFACE_NOT_LOCKED = B_ERRORS_END + 0x1000,
-	B_SURFACE_ALREADY_LOCKED,
-	B_SURFACE_IN_USE,
-	B_SURFACE_PURGED
+	KOSM_SURFACE_NOT_LOCKED = B_ERRORS_END + 0x1000,
+	KOSM_SURFACE_ALREADY_LOCKED,
+	KOSM_SURFACE_IN_USE,
+	KOSM_SURFACE_PURGED,
+	KOSM_SURFACE_ID_EXISTS
 };
-
-#ifdef __cplusplus
-
-inline void
-surface_desc_init(surface_desc* desc)
-{
-	desc->width = 0;
-	desc->height = 0;
-	desc->format = PIXEL_FORMAT_ARGB8888;
-	desc->usage = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE;
-	desc->bytesPerElement = 0;
-	desc->bytesPerRow = 0;
-	desc->cacheMode = SURFACE_CACHE_DEFAULT;
-}
-
-#endif
 
 #endif

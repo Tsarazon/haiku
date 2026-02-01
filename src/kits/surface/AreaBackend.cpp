@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -14,22 +14,22 @@
 #include <string.h>
 
 
-class AreaBackend : public AllocationBackend {
+class KosmAreaBackend : public KosmAllocationBackend {
 public:
-								AreaBackend();
-	virtual						~AreaBackend();
+								KosmAreaBackend();
+	virtual						~KosmAreaBackend();
 
-	virtual	status_t			Allocate(const surface_desc& desc,
-									SurfaceBuffer** outBuffer);
-	virtual	void				Free(SurfaceBuffer* buffer);
+	virtual	status_t			Allocate(const KosmSurfaceDesc& desc,
+									KosmSurfaceBuffer** outBuffer);
+	virtual	void				Free(KosmSurfaceBuffer* buffer);
 
-	virtual	status_t			Map(SurfaceBuffer* buffer);
-	virtual	status_t			Unmap(SurfaceBuffer* buffer);
+	virtual	status_t			Map(KosmSurfaceBuffer* buffer);
+	virtual	status_t			Unmap(KosmSurfaceBuffer* buffer);
 
-	virtual	size_t				GetStrideAlignment(pixel_format format);
+	virtual	size_t				GetStrideAlignment(kosm_pixel_format format);
 	virtual	size_t				GetMaxWidth();
 	virtual	size_t				GetMaxHeight();
-	virtual	bool				SupportsFormat(pixel_format format);
+	virtual	bool				SupportsFormat(kosm_pixel_format format);
 	virtual	bool				SupportsUsage(uint32 usage);
 
 private:
@@ -40,26 +40,27 @@ private:
 };
 
 
-int32 AreaBackend::sNextId = 1;
+int32 KosmAreaBackend::sNextId = 1;
 
 
-AllocationBackend::~AllocationBackend()
+KosmAllocationBackend::~KosmAllocationBackend()
 {
 }
 
 
-AreaBackend::AreaBackend()
+KosmAreaBackend::KosmAreaBackend()
 {
 }
 
 
-AreaBackend::~AreaBackend()
+KosmAreaBackend::~KosmAreaBackend()
 {
 }
 
 
 status_t
-AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
+KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
+	KosmSurfaceBuffer** outBuffer)
 {
 	if (outBuffer == NULL)
 		return B_BAD_VALUE;
@@ -70,19 +71,19 @@ AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 	if (desc.width > kMaxDimension || desc.height > kMaxDimension)
 		return B_BAD_VALUE;
 
-	SurfaceBuffer* buffer = new(std::nothrow) SurfaceBuffer;
+	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
 	if (buffer == NULL)
 		return B_NO_MEMORY;
 
 	buffer->desc = desc;
-	buffer->planeCount = planar_get_plane_count(desc.format);
+	buffer->planeCount = kosm_planar_get_plane_count(desc.format);
 
 	for (uint32 i = 0; i < buffer->planeCount; i++) {
-		planar_calculate_plane(desc.format, i, desc.width, desc.height,
+		kosm_planar_calculate_plane(desc.format, i, desc.width, desc.height,
 			kStrideAlignment, &buffer->planes[i]);
 	}
 
-	buffer->allocSize = planar_calculate_total_size(desc.format,
+	buffer->allocSize = kosm_planar_calculate_total_size(desc.format,
 		desc.width, desc.height, kStrideAlignment);
 
 	if (buffer->desc.bytesPerElement == 0)
@@ -95,7 +96,7 @@ AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 
 	int32 uniqueId = atomic_add(&sNextId, 1);
 	char name[B_OS_NAME_LENGTH];
-	snprintf(name, sizeof(name), "surface_%d_%ux%u",
+	snprintf(name, sizeof(name), "kosm_surface_%d_%ux%u",
 		uniqueId, desc.width, desc.height);
 
 	buffer->baseAddress = NULL;
@@ -118,7 +119,7 @@ AreaBackend::Allocate(const surface_desc& desc, SurfaceBuffer** outBuffer)
 
 
 void
-AreaBackend::Free(SurfaceBuffer* buffer)
+KosmAreaBackend::Free(KosmSurfaceBuffer* buffer)
 {
 	if (buffer == NULL)
 		return;
@@ -131,58 +132,60 @@ AreaBackend::Free(SurfaceBuffer* buffer)
 
 
 status_t
-AreaBackend::Map(SurfaceBuffer* buffer)
+KosmAreaBackend::Map(KosmSurfaceBuffer* buffer)
 {
 	return B_OK;
 }
 
 
 status_t
-AreaBackend::Unmap(SurfaceBuffer* buffer)
+KosmAreaBackend::Unmap(KosmSurfaceBuffer* buffer)
 {
 	return B_OK;
 }
 
 
 size_t
-AreaBackend::GetStrideAlignment(pixel_format format)
+KosmAreaBackend::GetStrideAlignment(kosm_pixel_format format)
 {
 	return kStrideAlignment;
 }
 
 
 size_t
-AreaBackend::GetMaxWidth()
+KosmAreaBackend::GetMaxWidth()
 {
 	return kMaxDimension;
 }
 
 
 size_t
-AreaBackend::GetMaxHeight()
+KosmAreaBackend::GetMaxHeight()
 {
 	return kMaxDimension;
 }
 
 
 bool
-AreaBackend::SupportsFormat(pixel_format format)
+KosmAreaBackend::SupportsFormat(kosm_pixel_format format)
 {
-	return format < PIXEL_FORMAT_COUNT;
+	return format < KOSM_PIXEL_FORMAT_COUNT;
 }
 
 
 bool
-AreaBackend::SupportsUsage(uint32 usage)
+KosmAreaBackend::SupportsUsage(uint32 usage)
 {
-	uint32 supported = SURFACE_USAGE_CPU_READ | SURFACE_USAGE_CPU_WRITE
-		| SURFACE_USAGE_COMPOSITOR | SURFACE_USAGE_PURGEABLE;
+	uint32 supported = KOSM_SURFACE_USAGE_CPU_READ
+		| KOSM_SURFACE_USAGE_CPU_WRITE
+		| KOSM_SURFACE_USAGE_COMPOSITOR
+		| KOSM_SURFACE_USAGE_PURGEABLE;
 	return (usage & ~supported) == 0;
 }
 
 
-AllocationBackend*
-create_area_backend()
+KosmAllocationBackend*
+kosm_create_area_backend()
 {
-	return new(std::nothrow) AreaBackend;
+	return new(std::nothrow) KosmAreaBackend;
 }

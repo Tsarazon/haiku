@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -34,7 +34,7 @@ KosmSurface::~KosmSurface()
 }
 
 
-surface_id
+kosm_surface_id
 KosmSurface::ID() const
 {
 	if (SURFACE_INVALID())
@@ -61,11 +61,11 @@ KosmSurface::Height() const
 }
 
 
-pixel_format
+kosm_pixel_format
 KosmSurface::Format() const
 {
 	if (SURFACE_INVALID())
-		return PIXEL_FORMAT_ARGB8888;
+		return KOSM_PIXEL_FORMAT_ARGB8888;
 	return fData->buffer->desc.format;
 }
 
@@ -172,7 +172,8 @@ KosmSurface::ComponentCountOfPlane(uint32 planeIndex) const
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
 		return 0;
-	return planar_get_component_count(fData->buffer->desc.format, planeIndex);
+	return kosm_planar_get_component_count(fData->buffer->desc.format,
+		planeIndex);
 }
 
 
@@ -184,8 +185,8 @@ KosmSurface::BitDepthOfComponentOfPlane(uint32 planeIndex,
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
 		return 0;
-	return planar_get_bit_depth(fData->buffer->desc.format, planeIndex,
-		componentIndex);
+	return kosm_planar_get_bit_depth(fData->buffer->desc.format,
+		planeIndex, componentIndex);
 }
 
 
@@ -197,8 +198,8 @@ KosmSurface::BitOffsetOfComponentOfPlane(uint32 planeIndex,
 		return 0;
 	if (planeIndex >= fData->buffer->planeCount)
 		return 0;
-	return planar_get_bit_offset(fData->buffer->desc.format, planeIndex,
-		componentIndex);
+	return kosm_planar_get_bit_offset(fData->buffer->desc.format,
+		planeIndex, componentIndex);
 }
 
 
@@ -211,7 +212,7 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 	BAutolock locker(fData->buffer->lock);
 
 	thread_id currentThread = find_thread(NULL);
-	bool readOnly = (options & SURFACE_LOCK_READ_ONLY) != 0;
+	bool readOnly = (options & KOSM_SURFACE_LOCK_READ_ONLY) != 0;
 
 	if (fData->buffer->lockCount > 0) {
 		if (fData->buffer->lockOwner != currentThread)
@@ -246,7 +247,7 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 	BAutolock locker(fData->buffer->lock);
 
 	if (fData->buffer->lockCount == 0)
-		return B_SURFACE_NOT_LOCKED;
+		return KOSM_SURFACE_NOT_LOCKED;
 
 	if (fData->buffer->lockOwner != find_thread(NULL))
 		return B_NOT_ALLOWED;
@@ -297,7 +298,7 @@ KosmSurface::IncrementUseCount()
 	BAutolock locker(fData->buffer->lock);
 
 	if (fData->buffer->localUseCount == 0) {
-		SurfaceRegistry::Default()->IncrementGlobalUseCount(
+		KosmSurfaceRegistry::Default()->IncrementGlobalUseCount(
 			fData->buffer->id);
 	}
 	fData->buffer->localUseCount++;
@@ -317,7 +318,7 @@ KosmSurface::DecrementUseCount()
 
 	fData->buffer->localUseCount--;
 	if (fData->buffer->localUseCount == 0) {
-		SurfaceRegistry::Default()->DecrementGlobalUseCount(
+		KosmSurfaceRegistry::Default()->DecrementGlobalUseCount(
 			fData->buffer->id);
 	}
 }
@@ -337,7 +338,7 @@ KosmSurface::IsInUse() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return SurfaceRegistry::Default()->IsInUse(fData->buffer->id);
+	return KosmSurfaceRegistry::Default()->IsInUse(fData->buffer->id);
 }
 
 
@@ -438,30 +439,30 @@ KosmSurface::RemoveAllAttachments()
 
 
 status_t
-KosmSurface::SetPurgeable(surface_purgeable_state newState,
-	surface_purgeable_state* outOldState)
+KosmSurface::SetPurgeable(kosm_purgeable_state newState,
+	kosm_purgeable_state* outOldState)
 {
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
 	BAutolock locker(fData->buffer->lock);
 
-	surface_purgeable_state oldState = fData->buffer->purgeableState;
+	kosm_purgeable_state oldState = fData->buffer->purgeableState;
 
 	if (outOldState != NULL)
 		*outOldState = oldState;
 
-	if (newState == SURFACE_PURGEABLE_KEEP_CURRENT)
+	if (newState == KOSM_PURGEABLE_KEEP_CURRENT)
 		return B_OK;
 
 	fData->buffer->purgeableState = newState;
 
-	if (newState == SURFACE_PURGEABLE_EMPTY)
+	if (newState == KOSM_PURGEABLE_EMPTY)
 		fData->buffer->contentsPurged = true;
 
 	if (fData->buffer->contentsPurged
-		&& newState == SURFACE_PURGEABLE_NON_VOLATILE) {
-		return B_SURFACE_PURGED;
+		&& newState == KOSM_PURGEABLE_NON_VOLATILE) {
+		return KOSM_SURFACE_PURGED;
 	}
 
 	return B_OK;
@@ -473,7 +474,7 @@ KosmSurface::IsVolatile() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return fData->buffer->purgeableState == SURFACE_PURGEABLE_VOLATILE;
+	return fData->buffer->purgeableState == KOSM_PURGEABLE_VOLATILE;
 }
 
 
@@ -513,14 +514,14 @@ KosmSurface::LockOwner() const
 
 
 status_t
-KosmSurface::CreateAccessToken(surface_token* outToken)
+KosmSurface::CreateAccessToken(KosmSurfaceToken* outToken)
 {
 	if (SURFACE_INVALID())
 		return B_NO_INIT;
 	if (outToken == NULL)
 		return B_BAD_VALUE;
 
-	return SurfaceRegistry::Default()->CreateAccessToken(
+	return KosmSurfaceRegistry::Default()->CreateAccessToken(
 		fData->buffer->id, outToken);
 }
 
@@ -531,5 +532,6 @@ KosmSurface::RevokeAllAccess()
 	if (SURFACE_INVALID())
 		return B_NO_INIT;
 
-	return SurfaceRegistry::Default()->RevokeAllAccess(fData->buffer->id);
+	return KosmSurfaceRegistry::Default()->RevokeAllAccess(
+		fData->buffer->id);
 }

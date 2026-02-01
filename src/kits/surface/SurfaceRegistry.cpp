@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -8,15 +8,15 @@
 #include <string.h>
 
 
-SurfaceRegistry*
-SurfaceRegistry::Default()
+KosmSurfaceRegistry*
+KosmSurfaceRegistry::Default()
 {
-	static SurfaceRegistry sDefault;
+	static KosmSurfaceRegistry sDefault;
 	return &sDefault;
 }
 
 
-SurfaceRegistry::SurfaceRegistry()
+KosmSurfaceRegistry::KosmSurfaceRegistry()
 	:
 	fRegistryArea(-1),
 	fHeader(NULL),
@@ -27,10 +27,9 @@ SurfaceRegistry::SurfaceRegistry()
 }
 
 
-SurfaceRegistry::~SurfaceRegistry()
+KosmSurfaceRegistry::~KosmSurfaceRegistry()
 {
 	if (fRegistryArea >= 0) {
-		// Only delete semaphore if we created it
 		if (fIsOwner && fHeader != NULL && fHeader->lock >= 0)
 			delete_sem(fHeader->lock);
 		delete_area(fRegistryArea);
@@ -39,38 +38,42 @@ SurfaceRegistry::~SurfaceRegistry()
 
 
 status_t
-SurfaceRegistry::_InitSharedArea()
+KosmSurfaceRegistry::_InitSharedArea()
 {
-	// Try to find existing registry created by another process
-	area_id existingArea = find_area(SURFACE_REGISTRY_AREA_NAME);
+	area_id existingArea = find_area(KOSM_SURFACE_REGISTRY_AREA_NAME);
 
 	if (existingArea >= 0)
 		return _CloneSharedArea(existingArea);
 
-	// First process - create new registry
-	return _CreateSharedArea();
+	status_t status = _CreateSharedArea();
+	if (status != B_OK) {
+		existingArea = find_area(KOSM_SURFACE_REGISTRY_AREA_NAME);
+		if (existingArea >= 0)
+			return _CloneSharedArea(existingArea);
+	}
+
+	return status;
 }
 
 
 status_t
-SurfaceRegistry::_CreateSharedArea()
+KosmSurfaceRegistry::_CreateSharedArea()
 {
-	size_t size = sizeof(SurfaceRegistryHeader)
-		+ sizeof(SurfaceRegistryEntry) * SURFACE_REGISTRY_MAX_ENTRIES;
+	size_t size = sizeof(KosmSurfaceRegistryHeader)
+		+ sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	size = (size + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
 
 	void* address = NULL;
-	fRegistryArea = create_area(SURFACE_REGISTRY_AREA_NAME, &address,
+	fRegistryArea = create_area(KOSM_SURFACE_REGISTRY_AREA_NAME, &address,
 		B_ANY_ADDRESS, size, B_NO_LOCK,
 		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA);
 
 	if (fRegistryArea < 0)
 		return fRegistryArea;
 
-	fHeader = (SurfaceRegistryHeader*)address;
-	fEntries = (SurfaceRegistryEntry*)(fHeader + 1);
+	fHeader = (KosmSurfaceRegistryHeader*)address;
+	fEntries = (KosmSurfaceRegistryEntry*)(fHeader + 1);
 
-	// Initialize header
 	fHeader->lock = create_sem(1, "kosm_surface_registry_lock");
 	if (fHeader->lock < 0) {
 		status_t error = fHeader->lock;
@@ -85,8 +88,8 @@ SurfaceRegistry::_CreateSharedArea()
 	fHeader->tombstoneCount = 0;
 	memset(fHeader->_reserved, 0, sizeof(fHeader->_reserved));
 
-	// Initialize entries
-	memset(fEntries, 0, sizeof(SurfaceRegistryEntry) * SURFACE_REGISTRY_MAX_ENTRIES);
+	memset(fEntries, 0,
+		sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES);
 
 	fIsOwner = true;
 	return B_OK;
@@ -94,7 +97,7 @@ SurfaceRegistry::_CreateSharedArea()
 
 
 status_t
-SurfaceRegistry::_CloneSharedArea(area_id sourceArea)
+KosmSurfaceRegistry::_CloneSharedArea(area_id sourceArea)
 {
 	void* address = NULL;
 	fRegistryArea = clone_area("kosm_surface_registry_clone", &address,
@@ -103,8 +106,8 @@ SurfaceRegistry::_CloneSharedArea(area_id sourceArea)
 	if (fRegistryArea < 0)
 		return fRegistryArea;
 
-	fHeader = (SurfaceRegistryHeader*)address;
-	fEntries = (SurfaceRegistryEntry*)(fHeader + 1);
+	fHeader = (KosmSurfaceRegistryHeader*)address;
+	fEntries = (KosmSurfaceRegistryEntry*)(fHeader + 1);
 	fIsOwner = false;
 
 	return B_OK;
@@ -112,16 +115,16 @@ SurfaceRegistry::_CloneSharedArea(area_id sourceArea)
 
 
 int32
-SurfaceRegistry::_FindSlot(surface_id id) const
+KosmSurfaceRegistry::_FindSlot(kosm_surface_id id) const
 {
 	if (id == 0)
 		return -1;
 
-	int32 startIndex = (id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	int32 startIndex = (id - 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	int32 index = startIndex;
 
 	do {
-		const SurfaceRegistryEntry& entry = fEntries[index];
+		const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 		if (entry.id == id)
 			return index;
@@ -129,7 +132,7 @@ SurfaceRegistry::_FindSlot(surface_id id) const
 		if (entry.id == 0)
 			return -1;
 
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+		index = (index + 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	} while (index != startIndex);
 
 	return -1;
@@ -137,24 +140,24 @@ SurfaceRegistry::_FindSlot(surface_id id) const
 
 
 int32
-SurfaceRegistry::_FindEmptySlot(surface_id id) const
+KosmSurfaceRegistry::_FindEmptySlot(kosm_surface_id id) const
 {
 	if (id == 0)
 		return -1;
 
-	int32 startIndex = (id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	int32 startIndex = (id - 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	int32 index = startIndex;
 
 	do {
-		const SurfaceRegistryEntry& entry = fEntries[index];
+		const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
-		if (entry.id == 0 || entry.id == SURFACE_ID_TOMBSTONE)
+		if (entry.id == 0 || entry.id == KOSM_SURFACE_ID_TOMBSTONE)
 			return index;
 
 		if (entry.id == id)
 			return index;
 
-		index = (index + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+		index = (index + 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	} while (index != startIndex);
 
 	return -1;
@@ -162,32 +165,29 @@ SurfaceRegistry::_FindEmptySlot(surface_id id) const
 
 
 void
-SurfaceRegistry::_Compact()
+KosmSurfaceRegistry::_Compact()
 {
-	// Rehash all live entries to eliminate tombstones
-	// Must be called with lock held
-
-	SurfaceRegistryEntry* temp = new(std::nothrow) SurfaceRegistryEntry[
-		SURFACE_REGISTRY_MAX_ENTRIES];
+	KosmSurfaceRegistryEntry* temp = new(std::nothrow)
+		KosmSurfaceRegistryEntry[KOSM_SURFACE_REGISTRY_MAX_ENTRIES];
 	if (temp == NULL)
 		return;
 
-	memset(temp, 0, sizeof(SurfaceRegistryEntry) * SURFACE_REGISTRY_MAX_ENTRIES);
+	memset(temp, 0,
+		sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES);
 
-	// Copy live entries to temp with new hash positions
-	for (int32 i = 0; i < SURFACE_REGISTRY_MAX_ENTRIES; i++) {
-		const SurfaceRegistryEntry& entry = fEntries[i];
-		if (entry.id != 0 && entry.id != SURFACE_ID_TOMBSTONE) {
-			// Find slot in temp array
-			int32 newIndex = (entry.id - 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+	for (int32 i = 0; i < KOSM_SURFACE_REGISTRY_MAX_ENTRIES; i++) {
+		const KosmSurfaceRegistryEntry& entry = fEntries[i];
+		if (entry.id != 0 && entry.id != KOSM_SURFACE_ID_TOMBSTONE) {
+			int32 newIndex = (entry.id - 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 			while (temp[newIndex].id != 0) {
-				newIndex = (newIndex + 1) % SURFACE_REGISTRY_MAX_ENTRIES;
+				newIndex = (newIndex + 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 			}
 			temp[newIndex] = entry;
 		}
 	}
 
-	memcpy(fEntries, temp, sizeof(SurfaceRegistryEntry) * SURFACE_REGISTRY_MAX_ENTRIES);
+	memcpy(fEntries, temp,
+		sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES);
 	delete[] temp;
 
 	fHeader->tombstoneCount = 0;
@@ -205,8 +205,8 @@ generate_secret()
 
 
 status_t
-SurfaceRegistry::Register(surface_id id, area_id sourceArea,
-	const surface_desc& desc, size_t allocSize, uint32 planeCount)
+KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
+	const KosmSurfaceDesc& desc, size_t allocSize, uint32 planeCount)
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -223,9 +223,14 @@ SurfaceRegistry::Register(surface_id id, area_id sourceArea,
 		return B_NO_MEMORY;
 	}
 
-	SurfaceRegistryEntry& entry = fEntries[index];
+	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
-	if (entry.id == SURFACE_ID_TOMBSTONE)
+	if (entry.id == id) {
+		release_sem(fHeader->lock);
+		return KOSM_SURFACE_ID_EXISTS;
+	}
+
+	if (entry.id == KOSM_SURFACE_ID_TOMBSTONE)
 		fHeader->tombstoneCount--;
 
 	entry.id = id;
@@ -255,7 +260,7 @@ SurfaceRegistry::Register(surface_id id, area_id sourceArea,
 
 
 status_t
-SurfaceRegistry::Unregister(surface_id id)
+KosmSurfaceRegistry::Unregister(kosm_surface_id id)
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -272,14 +277,14 @@ SurfaceRegistry::Unregister(surface_id id)
 		return B_NAME_NOT_FOUND;
 	}
 
-	SurfaceRegistryEntry& entry = fEntries[index];
+	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	if (entry.globalUseCount > 0) {
 		release_sem(fHeader->lock);
-		return B_SURFACE_IN_USE;
+		return KOSM_SURFACE_IN_USE;
 	}
 
-	entry.id = SURFACE_ID_TOMBSTONE;
+	entry.id = KOSM_SURFACE_ID_TOMBSTONE;
 	entry.globalUseCount = 0;
 	entry.ownerTeam = -1;
 	entry.sourceArea = -1;
@@ -287,8 +292,7 @@ SurfaceRegistry::Unregister(surface_id id)
 	fHeader->entryCount--;
 	fHeader->tombstoneCount++;
 
-	// Compact if too many tombstones
-	if (fHeader->tombstoneCount > SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
+	if (fHeader->tombstoneCount > KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
 		_Compact();
 
 	release_sem(fHeader->lock);
@@ -297,7 +301,7 @@ SurfaceRegistry::Unregister(surface_id id)
 
 
 status_t
-SurfaceRegistry::IncrementGlobalUseCount(surface_id id)
+KosmSurfaceRegistry::IncrementGlobalUseCount(kosm_surface_id id)
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -314,7 +318,7 @@ SurfaceRegistry::IncrementGlobalUseCount(surface_id id)
 		return B_NAME_NOT_FOUND;
 	}
 
-	atomic_add(&fEntries[index].globalUseCount, 1);
+	fEntries[index].globalUseCount++;
 
 	release_sem(fHeader->lock);
 	return B_OK;
@@ -322,7 +326,7 @@ SurfaceRegistry::IncrementGlobalUseCount(surface_id id)
 
 
 status_t
-SurfaceRegistry::DecrementGlobalUseCount(surface_id id)
+KosmSurfaceRegistry::DecrementGlobalUseCount(kosm_surface_id id)
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -339,7 +343,8 @@ SurfaceRegistry::DecrementGlobalUseCount(surface_id id)
 		return B_NAME_NOT_FOUND;
 	}
 
-	atomic_add(&fEntries[index].globalUseCount, -1);
+	if (fEntries[index].globalUseCount > 0)
+		fEntries[index].globalUseCount--;
 
 	release_sem(fHeader->lock);
 	return B_OK;
@@ -347,7 +352,7 @@ SurfaceRegistry::DecrementGlobalUseCount(surface_id id)
 
 
 int32
-SurfaceRegistry::GlobalUseCount(surface_id id) const
+KosmSurfaceRegistry::GlobalUseCount(kosm_surface_id id) const
 {
 	if (id == 0)
 		return 0;
@@ -369,15 +374,16 @@ SurfaceRegistry::GlobalUseCount(surface_id id) const
 
 
 bool
-SurfaceRegistry::IsInUse(surface_id id) const
+KosmSurfaceRegistry::IsInUse(kosm_surface_id id) const
 {
 	return GlobalUseCount(id) > 0;
 }
 
 
 status_t
-SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
-	area_id* outArea, size_t* outAllocSize, uint32* outPlaneCount) const
+KosmSurfaceRegistry::LookupInfo(kosm_surface_id id,
+	KosmSurfaceDesc* outDesc, area_id* outArea,
+	size_t* outAllocSize, uint32* outPlaneCount) const
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -394,9 +400,8 @@ SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
 		return B_NAME_NOT_FOUND;
 	}
 
-	const SurfaceRegistryEntry& entry = fEntries[index];
+	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
-	// Cross-process lookup allowed for same-team only (without token)
 	thread_info info;
 	get_thread_info(find_thread(NULL), &info);
 	if (entry.ownerTeam != info.team) {
@@ -427,7 +432,8 @@ SurfaceRegistry::LookupInfo(surface_id id, surface_desc* outDesc,
 
 
 status_t
-SurfaceRegistry::CreateAccessToken(surface_id id, surface_token* outToken)
+KosmSurfaceRegistry::CreateAccessToken(kosm_surface_id id,
+	KosmSurfaceToken* outToken)
 {
 	if (id == 0 || outToken == NULL)
 		return B_BAD_VALUE;
@@ -444,7 +450,7 @@ SurfaceRegistry::CreateAccessToken(surface_id id, surface_token* outToken)
 		return B_NAME_NOT_FOUND;
 	}
 
-	const SurfaceRegistryEntry& entry = fEntries[index];
+	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
 	get_thread_info(find_thread(NULL), &info);
@@ -463,7 +469,7 @@ SurfaceRegistry::CreateAccessToken(surface_id id, surface_token* outToken)
 
 
 status_t
-SurfaceRegistry::ValidateToken(const surface_token& token)
+KosmSurfaceRegistry::ValidateToken(const KosmSurfaceToken& token)
 {
 	if (token.id == 0)
 		return B_BAD_VALUE;
@@ -480,7 +486,7 @@ SurfaceRegistry::ValidateToken(const surface_token& token)
 		return B_NAME_NOT_FOUND;
 	}
 
-	const SurfaceRegistryEntry& entry = fEntries[index];
+	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	if (entry.accessSecret != token.secret
 		|| entry.secretGeneration != token.generation) {
@@ -494,7 +500,7 @@ SurfaceRegistry::ValidateToken(const surface_token& token)
 
 
 status_t
-SurfaceRegistry::RevokeAllAccess(surface_id id)
+KosmSurfaceRegistry::RevokeAllAccess(kosm_surface_id id)
 {
 	if (id == 0)
 		return B_BAD_VALUE;
@@ -511,7 +517,7 @@ SurfaceRegistry::RevokeAllAccess(surface_id id)
 		return B_NAME_NOT_FOUND;
 	}
 
-	SurfaceRegistryEntry& entry = fEntries[index];
+	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
 	get_thread_info(find_thread(NULL), &info);
@@ -529,9 +535,9 @@ SurfaceRegistry::RevokeAllAccess(surface_id id)
 
 
 status_t
-SurfaceRegistry::LookupInfoWithToken(const surface_token& token,
-	surface_desc* outDesc, area_id* outArea, size_t* outAllocSize,
-	uint32* outPlaneCount) const
+KosmSurfaceRegistry::LookupInfoWithToken(const KosmSurfaceToken& token,
+	KosmSurfaceDesc* outDesc, area_id* outArea,
+	size_t* outAllocSize, uint32* outPlaneCount) const
 {
 	if (token.id == 0)
 		return B_BAD_VALUE;
@@ -548,9 +554,8 @@ SurfaceRegistry::LookupInfoWithToken(const surface_token& token,
 		return B_NAME_NOT_FOUND;
 	}
 
-	const SurfaceRegistryEntry& entry = fEntries[index];
+	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
-	// Validate token for cross-process access
 	if (entry.accessSecret != token.secret
 		|| entry.secretGeneration != token.generation) {
 		release_sem(fHeader->lock);

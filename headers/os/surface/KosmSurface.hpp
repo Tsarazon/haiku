@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 #ifndef _KOSM_SURFACE_HPP
@@ -12,11 +12,11 @@ class BMessage;
 
 class KosmSurface {
 public:
-			surface_id			ID() const;
+			kosm_surface_id		ID() const;
 
 			uint32				Width() const;
 			uint32				Height() const;
-			pixel_format		Format() const;
+			kosm_pixel_format	Format() const;
 			uint32				BytesPerElement() const;
 			uint32				BytesPerRow() const;
 			size_t				AllocSize() const;
@@ -54,11 +54,11 @@ public:
 			status_t			CopyAllAttachments(BMessage* outValues) const;
 			status_t			RemoveAllAttachments();
 
-			status_t			SetPurgeable(surface_purgeable_state newState,
-									surface_purgeable_state* outOldState = NULL);
+			status_t			SetPurgeable(kosm_purgeable_state newState,
+									kosm_purgeable_state* outOldState = NULL);
 			bool				IsVolatile() const;
 
-			status_t			CreateAccessToken(surface_token* outToken);
+			status_t			CreateAccessToken(KosmSurfaceToken* outToken);
 			status_t			RevokeAllAccess();
 
 			uint32				Usage() const;

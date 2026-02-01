@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 Mobile Haiku, Inc. All rights reserved.
+ * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  */
 
@@ -12,43 +12,43 @@ struct FormatInfo {
 };
 
 
-static const FormatInfo kFormatInfo[PIXEL_FORMAT_COUNT] = {
-	[PIXEL_FORMAT_ARGB8888]	= { 1, 4 },
-	[PIXEL_FORMAT_BGRA8888]	= { 1, 4 },
-	[PIXEL_FORMAT_RGBA8888]	= { 1, 4 },
-	[PIXEL_FORMAT_RGBX8888]	= { 1, 4 },
-	[PIXEL_FORMAT_XRGB8888]	= { 1, 4 },
-	[PIXEL_FORMAT_RGB565]	= { 1, 2 },
-	[PIXEL_FORMAT_NV12]		= { 2, 1 },
-	[PIXEL_FORMAT_NV21]		= { 2, 1 },
-	[PIXEL_FORMAT_YV12]		= { 3, 1 },
-	[PIXEL_FORMAT_A8]		= { 1, 1 },
-	[PIXEL_FORMAT_L8]		= { 1, 1 },
+static const FormatInfo kFormatInfo[KOSM_PIXEL_FORMAT_COUNT] = {
+	[KOSM_PIXEL_FORMAT_ARGB8888]	= { 1, 4 },
+	[KOSM_PIXEL_FORMAT_BGRA8888]	= { 1, 4 },
+	[KOSM_PIXEL_FORMAT_RGBA8888]	= { 1, 4 },
+	[KOSM_PIXEL_FORMAT_RGBX8888]	= { 1, 4 },
+	[KOSM_PIXEL_FORMAT_XRGB8888]	= { 1, 4 },
+	[KOSM_PIXEL_FORMAT_RGB565]		= { 1, 2 },
+	[KOSM_PIXEL_FORMAT_NV12]		= { 2, 1 },
+	[KOSM_PIXEL_FORMAT_NV21]		= { 2, 1 },
+	[KOSM_PIXEL_FORMAT_YV12]		= { 3, 1 },
+	[KOSM_PIXEL_FORMAT_A8]			= { 1, 1 },
+	[KOSM_PIXEL_FORMAT_L8]			= { 1, 1 },
 };
 
 
 uint32
-planar_get_plane_count(pixel_format format)
+kosm_planar_get_plane_count(kosm_pixel_format format)
 {
-	if (format >= PIXEL_FORMAT_COUNT)
+	if (format >= KOSM_PIXEL_FORMAT_COUNT)
 		return 1;
 	return kFormatInfo[format].planeCount;
 }
 
 
 uint32
-planar_get_bytes_per_pixel(pixel_format format)
+kosm_planar_get_bytes_per_pixel(kosm_pixel_format format)
 {
-	if (format >= PIXEL_FORMAT_COUNT)
+	if (format >= KOSM_PIXEL_FORMAT_COUNT)
 		return 4;
 	return kFormatInfo[format].bytesPerPixel;
 }
 
 
 bool
-planar_is_format_planar(pixel_format format)
+kosm_planar_is_planar(kosm_pixel_format format)
 {
-	return planar_get_plane_count(format) > 1;
+	return kosm_planar_get_plane_count(format) > 1;
 }
 
 
@@ -60,9 +60,9 @@ align_stride(size_t stride, size_t alignment)
 
 
 void
-planar_calculate_plane(pixel_format format, uint32 planeIndex,
+kosm_planar_calculate_plane(kosm_pixel_format format, uint32 planeIndex,
 	uint32 width, uint32 height, size_t strideAlignment,
-	plane_info* outInfo)
+	KosmPlaneInfo* outInfo)
 {
 	if (outInfo == NULL)
 		return;
@@ -73,32 +73,33 @@ planar_calculate_plane(pixel_format format, uint32 planeIndex,
 	outInfo->bytesPerRow = 0;
 	outInfo->offset = 0;
 
-	uint32 planeCount = planar_get_plane_count(format);
+	uint32 planeCount = kosm_planar_get_plane_count(format);
 	if (planeIndex >= planeCount)
 		return;
 
 	if (planeIndex == 0) {
 		outInfo->width = width;
 		outInfo->height = height;
-		outInfo->bytesPerElement = planar_get_bytes_per_pixel(format);
+		outInfo->bytesPerElement = kosm_planar_get_bytes_per_pixel(format);
 		outInfo->bytesPerRow = align_stride(
 			width * outInfo->bytesPerElement, strideAlignment);
 		outInfo->offset = 0;
 		return;
 	}
 
-	plane_info plane0;
-	planar_calculate_plane(format, 0, width, height, strideAlignment, &plane0);
+	KosmPlaneInfo plane0;
+	kosm_planar_calculate_plane(format, 0, width, height, strideAlignment,
+		&plane0);
 	size_t plane0Size = plane0.bytesPerRow * plane0.height;
 
-	if (format == PIXEL_FORMAT_NV12 || format == PIXEL_FORMAT_NV21) {
+	if (format == KOSM_PIXEL_FORMAT_NV12 || format == KOSM_PIXEL_FORMAT_NV21) {
 		outInfo->width = (width + 1) / 2;
 		outInfo->height = (height + 1) / 2;
 		outInfo->bytesPerElement = 2;
 		outInfo->bytesPerRow = align_stride(
 			outInfo->width * 2, strideAlignment);
 		outInfo->offset = plane0Size;
-	} else if (format == PIXEL_FORMAT_YV12) {
+	} else if (format == KOSM_PIXEL_FORMAT_YV12) {
 		outInfo->width = (width + 1) / 2;
 		outInfo->height = (height + 1) / 2;
 		outInfo->bytesPerElement = 1;
@@ -114,15 +115,15 @@ planar_calculate_plane(pixel_format format, uint32 planeIndex,
 
 
 size_t
-planar_calculate_total_size(pixel_format format, uint32 width, uint32 height,
-	size_t strideAlignment)
+kosm_planar_calculate_total_size(kosm_pixel_format format,
+	uint32 width, uint32 height, size_t strideAlignment)
 {
 	size_t total = 0;
-	uint32 planeCount = planar_get_plane_count(format);
+	uint32 planeCount = kosm_planar_get_plane_count(format);
 
 	for (uint32 i = 0; i < planeCount; i++) {
-		plane_info plane;
-		planar_calculate_plane(format, i, width, height, strideAlignment,
+		KosmPlaneInfo plane;
+		kosm_planar_calculate_plane(format, i, width, height, strideAlignment,
 			&plane);
 		size_t planeEnd = plane.offset + plane.bytesPerRow * plane.height;
 		if (planeEnd > total)
@@ -134,28 +135,28 @@ planar_calculate_total_size(pixel_format format, uint32 width, uint32 height,
 
 
 uint32
-planar_get_component_count(pixel_format format, uint32 planeIndex)
+kosm_planar_get_component_count(kosm_pixel_format format, uint32 planeIndex)
 {
 	switch (format) {
-		case PIXEL_FORMAT_ARGB8888:
-		case PIXEL_FORMAT_BGRA8888:
-		case PIXEL_FORMAT_RGBA8888:
-		case PIXEL_FORMAT_RGBX8888:
-		case PIXEL_FORMAT_XRGB8888:
+		case KOSM_PIXEL_FORMAT_ARGB8888:
+		case KOSM_PIXEL_FORMAT_BGRA8888:
+		case KOSM_PIXEL_FORMAT_RGBA8888:
+		case KOSM_PIXEL_FORMAT_RGBX8888:
+		case KOSM_PIXEL_FORMAT_XRGB8888:
 			return 4;
 
-		case PIXEL_FORMAT_RGB565:
+		case KOSM_PIXEL_FORMAT_RGB565:
 			return 3;
 
-		case PIXEL_FORMAT_NV12:
-		case PIXEL_FORMAT_NV21:
+		case KOSM_PIXEL_FORMAT_NV12:
+		case KOSM_PIXEL_FORMAT_NV21:
 			return (planeIndex == 0) ? 1 : 2;
 
-		case PIXEL_FORMAT_YV12:
+		case KOSM_PIXEL_FORMAT_YV12:
 			return 1;
 
-		case PIXEL_FORMAT_A8:
-		case PIXEL_FORMAT_L8:
+		case KOSM_PIXEL_FORMAT_A8:
+		case KOSM_PIXEL_FORMAT_L8:
 			return 1;
 
 		default:
@@ -165,29 +166,29 @@ planar_get_component_count(pixel_format format, uint32 planeIndex)
 
 
 uint32
-planar_get_bit_depth(pixel_format format, uint32 planeIndex,
+kosm_planar_get_bit_depth(kosm_pixel_format format, uint32 planeIndex,
 	uint32 componentIndex)
 {
 	switch (format) {
-		case PIXEL_FORMAT_ARGB8888:
-		case PIXEL_FORMAT_BGRA8888:
-		case PIXEL_FORMAT_RGBA8888:
-		case PIXEL_FORMAT_RGBX8888:
-		case PIXEL_FORMAT_XRGB8888:
+		case KOSM_PIXEL_FORMAT_ARGB8888:
+		case KOSM_PIXEL_FORMAT_BGRA8888:
+		case KOSM_PIXEL_FORMAT_RGBA8888:
+		case KOSM_PIXEL_FORMAT_RGBX8888:
+		case KOSM_PIXEL_FORMAT_XRGB8888:
 			return 8;
 
-		case PIXEL_FORMAT_RGB565:
+		case KOSM_PIXEL_FORMAT_RGB565:
 			if (componentIndex == 1)
 				return 6;
 			return 5;
 
-		case PIXEL_FORMAT_NV12:
-		case PIXEL_FORMAT_NV21:
-		case PIXEL_FORMAT_YV12:
+		case KOSM_PIXEL_FORMAT_NV12:
+		case KOSM_PIXEL_FORMAT_NV21:
+		case KOSM_PIXEL_FORMAT_YV12:
 			return 8;
 
-		case PIXEL_FORMAT_A8:
-		case PIXEL_FORMAT_L8:
+		case KOSM_PIXEL_FORMAT_A8:
+		case KOSM_PIXEL_FORMAT_L8:
 			return 8;
 
 		default:
@@ -196,13 +197,17 @@ planar_get_bit_depth(pixel_format format, uint32 planeIndex,
 }
 
 
+// Component index convention: R=0, G=1, B=2, A=3
+// Bit offsets are within a little-endian uint32 pixel.
+
 uint32
-planar_get_bit_offset(pixel_format format, uint32 planeIndex,
+kosm_planar_get_bit_offset(kosm_pixel_format format, uint32 planeIndex,
 	uint32 componentIndex)
 {
 	switch (format) {
-		case PIXEL_FORMAT_ARGB8888:
-			// Memory: [B][G][R][A] on little-endian
+		case KOSM_PIXEL_FORMAT_ARGB8888:
+			// LE uint32: 0xAARRGGBB
+			// Memory: [B][G][R][A]
 			switch (componentIndex) {
 				case 0: return 16;	// R
 				case 1: return 8;	// G
@@ -211,17 +216,19 @@ planar_get_bit_offset(pixel_format format, uint32 planeIndex,
 			}
 			break;
 
-		case PIXEL_FORMAT_BGRA8888:
+		case KOSM_PIXEL_FORMAT_BGRA8888:
+			// LE uint32: 0xAARRGGBB (same as ARGB8888)
 			// Memory: [B][G][R][A]
 			switch (componentIndex) {
-				case 0: return 8;	// G
-				case 1: return 16;	// R
+				case 0: return 16;	// R
+				case 1: return 8;	// G
 				case 2: return 0;	// B
 				case 3: return 24;	// A
 			}
 			break;
 
-		case PIXEL_FORMAT_RGBA8888:
+		case KOSM_PIXEL_FORMAT_RGBA8888:
+			// LE uint32: 0xAABBGGRR
 			// Memory: [R][G][B][A]
 			switch (componentIndex) {
 				case 0: return 0;	// R
@@ -231,7 +238,8 @@ planar_get_bit_offset(pixel_format format, uint32 planeIndex,
 			}
 			break;
 
-		case PIXEL_FORMAT_RGBX8888:
+		case KOSM_PIXEL_FORMAT_RGBX8888:
+			// Memory: [R][G][B][X]
 			switch (componentIndex) {
 				case 0: return 0;	// R
 				case 1: return 8;	// G
@@ -240,7 +248,8 @@ planar_get_bit_offset(pixel_format format, uint32 planeIndex,
 			}
 			break;
 
-		case PIXEL_FORMAT_XRGB8888:
+		case KOSM_PIXEL_FORMAT_XRGB8888:
+			// Memory: [B][G][R][X]
 			switch (componentIndex) {
 				case 0: return 16;	// R
 				case 1: return 8;	// G
@@ -249,7 +258,7 @@ planar_get_bit_offset(pixel_format format, uint32 planeIndex,
 			}
 			break;
 
-		case PIXEL_FORMAT_RGB565:
+		case KOSM_PIXEL_FORMAT_RGB565:
 			switch (componentIndex) {
 				case 0: return 11;	// R
 				case 1: return 5;	// G
@@ -257,19 +266,19 @@ planar_get_bit_offset(pixel_format format, uint32 planeIndex,
 			}
 			break;
 
-		case PIXEL_FORMAT_NV12:
+		case KOSM_PIXEL_FORMAT_NV12:
 			if (planeIndex == 0)
 				return 0;	// Y
 			return (componentIndex == 0) ? 0 : 8;	// U, V
 
-		case PIXEL_FORMAT_NV21:
+		case KOSM_PIXEL_FORMAT_NV21:
 			if (planeIndex == 0)
 				return 0;	// Y
 			return (componentIndex == 0) ? 8 : 0;	// V, U
 
-		case PIXEL_FORMAT_YV12:
-		case PIXEL_FORMAT_A8:
-		case PIXEL_FORMAT_L8:
+		case KOSM_PIXEL_FORMAT_YV12:
+		case KOSM_PIXEL_FORMAT_A8:
+		case KOSM_PIXEL_FORMAT_L8:
 			return 0;
 
 		default:
