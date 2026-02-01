@@ -80,6 +80,8 @@ Bitmap::SetRange(size_t index, size_t count)
 	if (count == 0)
 		return;
 
+	ASSERT(index < fSize && index + count <= fSize);
+
 	size_t endIndex = index + count;
 	size_t startElem = index / kBitsPerElement;
 	size_t endElem = (endIndex - 1) / kBitsPerElement;
@@ -116,6 +118,8 @@ Bitmap::ClearRange(size_t index, size_t count)
 {
 	if (count == 0)
 		return;
+
+	ASSERT(index < fSize && index + count <= fSize);
 
 	size_t endIndex = index + count;
 	size_t startElem = index / kBitsPerElement;
@@ -172,6 +176,72 @@ bitmap_clz(addr_t value)
 }
 
 
+// Population count - counts number of set bits in a word.
+// Compiles to popcnt on x86_64, sequence on ARM64.
+static inline int
+bitmap_popcount(addr_t value)
+{
+#if __SIZEOF_POINTER__ == 8
+	return __builtin_popcountll(value);
+#else
+	return __builtin_popcount(value);
+#endif
+}
+
+
+// Returns the total number of set bits in the bitmap.
+// Uses hardware popcount instruction for O(1) per word.
+size_t
+Bitmap::CountSet() const
+{
+	size_t count = 0;
+	for (size_t i = 0; i < fElementsCount; i++)
+		count += bitmap_popcount(fBits[i]);
+
+	// Mask off any trailing bits beyond fSize in the last element
+	size_t tailBits = fSize % kBitsPerElement;
+	if (tailBits != 0 && fElementsCount > 0) {
+		addr_t tailMask = ~((addr_t(1) << tailBits) - 1);
+		count -= bitmap_popcount(fBits[fElementsCount - 1] & tailMask);
+	}
+
+	return count;
+}
+
+
+// Finds the lowest set bit starting from fromIndex.
+// Uses hardware bit-scan instructions for O(1) per word instead of O(bits).
+ssize_t
+Bitmap::GetLowestSet(size_t fromIndex) const
+{
+	if (fromIndex >= fSize)
+		return -1;
+
+	size_t elemIndex = fromIndex / kBitsPerElement;
+	size_t bitOffset = fromIndex % kBitsPerElement;
+
+	addr_t masked = fBits[elemIndex];
+	if (bitOffset != 0)
+		masked &= ~((addr_t(1) << bitOffset) - 1);
+
+	if (masked != 0) {
+		size_t bit = bitmap_ctz(masked);
+		size_t result = elemIndex * kBitsPerElement + bit;
+		return (result < fSize) ? (ssize_t)result : -1;
+	}
+
+	for (++elemIndex; elemIndex < fElementsCount; ++elemIndex) {
+		if (fBits[elemIndex] != 0) {
+			size_t bit = bitmap_ctz(fBits[elemIndex]);
+			size_t result = elemIndex * kBitsPerElement + bit;
+			return (result < fSize) ? (ssize_t)result : -1;
+		}
+	}
+
+	return -1;
+}
+
+
 // Finds the lowest clear bit starting from fromIndex.
 // Uses hardware bit-scan instructions for O(1) per word instead of O(bits).
 ssize_t
@@ -207,6 +277,8 @@ Bitmap::GetLowestClear(size_t fromIndex) const
 
 
 // Finds the lowest contiguous run of 'count' clear bits starting from fromIndex.
+// Optimized to check whole words at once: if all bits in a word are clear,
+// skips the entire word in O(1) instead of checking each bit individually.
 ssize_t
 Bitmap::GetLowestContiguousClear(size_t count, size_t fromIndex) const
 {
@@ -223,12 +295,29 @@ Bitmap::GetLowestContiguousClear(size_t count, size_t fromIndex) const
 
 		size_t found = 1;
 		while (found < count) {
-			if (Get(index + found))
+			size_t checkPos = index + found;
+			size_t elemIndex = checkPos / kBitsPerElement;
+			size_t bitOffset = checkPos % kBitsPerElement;
+
+			// Fast path: skip entire zero words at once
+			if (bitOffset == 0
+				&& count - found >= (size_t)kBitsPerElement) {
+				if (fBits[elemIndex] == 0) {
+					found += kBitsPerElement;
+					continue;
+				}
+				// Word has set bits; find first set bit to know how far
+				// we actually got
+				found += bitmap_ctz(fBits[elemIndex]);
+				break;
+			}
+
+			if (Get(checkPos))
 				break;
 			found++;
 		}
 
-		if (found == count)
+		if (found >= count)
 			return index;
 
 		index = GetLowestClear(index + found + 1);
@@ -257,6 +346,39 @@ Bitmap::GetHighestSet() const
 	ssize_t result = i * kBitsPerElement + bit;
 
 	return (result < (ssize_t)fSize) ? result : -1;
+}
+
+
+// Finds the highest clear bit in the bitmap.
+// Uses hardware bit-scan instructions for O(1) per word.
+ssize_t
+Bitmap::GetHighestClear() const
+{
+	if (fElementsCount == 0)
+		return -1;
+
+	// Handle the last element specially to mask off bits beyond fSize
+	ssize_t i = fElementsCount - 1;
+	size_t tailBits = fSize % kBitsPerElement;
+
+	addr_t inverted = ~fBits[i];
+	if (tailBits != 0)
+		inverted &= (addr_t(1) << tailBits) - 1;
+
+	if (inverted != 0) {
+		int bit = (kBitsPerElement - 1) - bitmap_clz(inverted);
+		return i * kBitsPerElement + bit;
+	}
+
+	for (--i; i >= 0; --i) {
+		inverted = ~fBits[i];
+		if (inverted != 0) {
+			int bit = (kBitsPerElement - 1) - bitmap_clz(inverted);
+			return i * kBitsPerElement + bit;
+		}
+	}
+
+	return -1;
 }
 
 

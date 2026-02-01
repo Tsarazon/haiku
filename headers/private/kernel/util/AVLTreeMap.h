@@ -114,7 +114,6 @@ protected:
 
 public:
 	// Iterator
-	// (need to implement it here, otherwise gcc 2.95.3 chokes)
 	class Iterator : public ConstIterator {
 	public:
 		inline Iterator()
@@ -579,9 +578,9 @@ public:
 	inline int operator()(const Value &a, const Value &b) const
 	{
 		if (a < b)
-			return -1;
-		else if (a > b)
 			return 1;
+		else if (a > b)
+			return -1;
 		return 0;
 	}
 };

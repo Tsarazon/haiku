@@ -37,9 +37,13 @@ public:
 			void		SetRange(size_t index, size_t count);
 			void		ClearRange(size_t index, size_t count);
 
+			size_t		CountSet() const;
+
+			ssize_t		GetLowestSet(size_t fromIndex = 0) const;
 			ssize_t		GetLowestClear(size_t fromIndex = 0) const;
 			ssize_t		GetLowestContiguousClear(size_t count, size_t fromIndex = 0) const;
 			ssize_t		GetHighestSet() const;
+			ssize_t		GetHighestClear() const;
 
 private:
 			size_t		fElementsCount;
@@ -89,4 +93,3 @@ using BKernel::Bitmap;
 
 
 #endif	// KERNEL_UTIL_BITMAP_H
-

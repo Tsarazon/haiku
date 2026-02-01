@@ -56,6 +56,8 @@ public:
 	inline bool IsEmpty() const;
 	void MakeEmpty();
 
+	status_t Reserve(size_t count);
+
 	inline Iterator Begin();
 	inline ConstIterator Begin() const;
 	inline Iterator End();
@@ -279,6 +281,11 @@ _VECTOR_CLASS_NAME::PopBack()
 
 // _MoveItems
 /*!	\brief Moves elements within an array.
+
+	NOTE: This uses memmove() and is only safe for trivially copyable types.
+	Using Vector with non-trivially-copyable types (types with non-trivial
+	copy constructors or destructors) results in undefined behavior.
+
 	\param items The elements to be moved.
 	\param offset The index to which the elements shall be moved. May be
 		   negative.
@@ -429,6 +436,32 @@ _VECTOR_CLASS_NAME::MakeEmpty()
 	_Resize(0);
 }
 
+// Reserve
+/*!	\brief Pre-allocates capacity for the given number of elements.
+
+	Ensures the vector has enough capacity to hold at least \a count
+	elements without further memory allocations. Does not change the
+	logical size (Count()) of the vector.
+
+	\param count The minimum number of elements to reserve capacity for.
+	\return
+	- \c B_OK: Everything went fine (or capacity was already sufficient).
+	- \c B_NO_MEMORY: Insufficient memory for this operation.
+*/
+_VECTOR_TEMPLATE_LIST
+status_t
+_VECTOR_CLASS_NAME::Reserve(size_t count)
+{
+	if (count <= fCapacity)
+		return B_OK;
+
+	int32 savedCount = fItemCount;
+	if (!_Resize(count))
+		return B_NO_MEMORY;
+	fItemCount = savedCount;
+	return B_OK;
+}
+
 // Begin
 /*!	\brief Returns an iterator referring to the beginning of the vector.
 
@@ -569,6 +602,8 @@ _VECTOR_CLASS_NAME::ElementAt(int32 index) const
 		return fItems[index];
 	// Return the 0th element by default. Unless the allocation failed, there
 	// is always a 0th element -- uninitialized perhaps.
+	// NOTE: Calling this on an empty vector (fItemCount == 0) is undefined
+	// behavior, as fItems[0] may be uninitialized or fItems may be NULL.
 	return fItems[0];
 }
 
@@ -586,6 +621,8 @@ _VECTOR_CLASS_NAME::ElementAt(int32 index)
 		return fItems[index];
 	// Return the 0th element by default. Unless the allocation failed, there
 	// is always a 0th element -- uninitialized perhaps.
+	// NOTE: Calling this on an empty vector (fItemCount == 0) is undefined
+	// behavior, as fItems[0] may be uninitialized or fItems may be NULL.
 	return fItems[0];
 }
 
