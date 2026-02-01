@@ -88,7 +88,6 @@ protected:
 			Definition			fDefinition;
 
 public:
-	// (need to implement it here, otherwise gcc 2.95.3 chokes)
 	class Iterator : public ConstIterator {
 	public:
 		inline Iterator()

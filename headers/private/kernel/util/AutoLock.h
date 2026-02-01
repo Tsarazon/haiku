@@ -145,15 +145,12 @@ typedef AutoLocker<spinlock, SpinLocking> SpinLocker;
 
 class InterruptsSpinLocking {
 public:
-// NOTE: work-around for annoying GCC 4+ "fState may be used uninitialized"
-// warning.
-#if __GNUC__ >= 4
+	// Silence "fState may be used uninitialized" warning.
 	InterruptsSpinLocking()
 		:
 		fState(0)
 	{
 	}
-#endif
 
 	inline bool Lock(spinlock* lockable)
 	{

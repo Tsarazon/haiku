@@ -155,11 +155,7 @@ Bitmap::ClearRange(size_t index, size_t count)
 static inline int
 bitmap_ctz(addr_t value)
 {
-#if __SIZEOF_POINTER__ == 8
 	return __builtin_ctzll(value);
-#else
-	return __builtin_ctz(value);
-#endif
 }
 
 
@@ -168,11 +164,7 @@ bitmap_ctz(addr_t value)
 static inline int
 bitmap_clz(addr_t value)
 {
-#if __SIZEOF_POINTER__ == 8
 	return __builtin_clzll(value);
-#else
-	return __builtin_clz(value);
-#endif
 }
 
 
@@ -181,11 +173,7 @@ bitmap_clz(addr_t value)
 static inline int
 bitmap_popcount(addr_t value)
 {
-#if __SIZEOF_POINTER__ == 8
 	return __builtin_popcountll(value);
-#else
-	return __builtin_popcount(value);
-#endif
 }
 
 

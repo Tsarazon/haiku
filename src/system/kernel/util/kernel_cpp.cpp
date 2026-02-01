@@ -34,10 +34,8 @@
 #ifndef USING_LIBGCC
 #	if __GNUC__ >= 6 || defined(__clang__)
 const std::nothrow_t std::nothrow = std::nothrow_t{ };
-#	elif __GNUC__ >= 3
-const std::nothrow_t std::nothrow = {};
 #	else
-const nothrow_t std::nothrow = {};
+const std::nothrow_t std::nothrow = {};
 #	endif
 #endif
 
@@ -50,16 +48,6 @@ const nothrow_t std::nothrow = {};
 #endif
 
 const mynothrow_t mynothrow = {};
-
-#if __GNUC__ == 2
-
-extern "C" void
-__pure_virtual()
-{
-	panic("pure virtual function call\n");
-}
-
-#elif __GNUC__ >= 3
 
 extern "C" void
 __cxa_pure_virtual()
@@ -79,8 +67,6 @@ extern "C" void
 __cxa_finalize(void* dsoHandle)
 {
 }
-
-#endif
 
 // full C++ support in the kernel
 #if (defined(_KERNEL_MODE) || defined(_LOADER_MODE))
@@ -338,49 +324,6 @@ void
 __register_frame_info()
 {
 	panic("__register_frame_info");
-}
-
-/* ARM */
-extern "C" void
-__aeabi_unwind_cpp_pr0(void)
-{
-	panic("__aeabi_unwind_cpp_pr0");
-}
-
-extern "C" void
-__aeabi_unwind_cpp_pr1(void)
-{
-	panic("__aeabi_unwind_cpp_pr1");
-}
-
-extern "C" void
-__aeabi_unwind_cpp_pr2(void)
-{
-	panic("__aeabi_unwind_cpp_pr2");
-}
-
-extern "C" void
-_Unwind_Complete(void)
-{
-	panic("_Unwind_Complete");
-}
-
-extern "C" void
-_Unwind_VRS_Set(void)
-{
-	panic("_Unwind_VRS_Set");
-}
-
-extern "C" void
-_Unwind_VRS_Get(void)
-{
-	panic("_Unwind_VRS_Get");
-}
-
-extern "C" void
-__gnu_unwind_frame(void)
-{
-	panic("__gnu_unwind_frame");
 }
 
 #endif	// __GNUC__ >= 4
