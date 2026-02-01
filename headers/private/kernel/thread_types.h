@@ -67,6 +67,7 @@ struct user_thread;				// defined in libroot/user_thread.h
 struct VMAddressSpace;
 struct user_mutex_context;		// defined in user_mutex.cpp
 struct xsi_sem_context;			// defined in xsi_semaphore.cpp
+struct kosm_mutex_entry;		// defined in kosm_mutex.cpp
 
 namespace Scheduler {
 	struct ThreadData;
@@ -330,6 +331,10 @@ struct Thread : TeamThreadIteratorEntry<thread_id>, KernelReferenceable {
 	void			(*post_interrupt_callback)(void*);
 	void*			post_interrupt_data;
 
+	// KosmOS robust mutex: list of mutexes held by this thread.
+	// Managed by kosm_mutex.cpp via held_list_add/held_list_remove.
+	struct kosm_mutex_entry*	first_held_kosm_mutex;
+
 #if KDEBUG_RW_LOCK_DEBUG
 	rw_lock*		held_read_locks[64] = {}; // only modified by this thread
 #endif
@@ -475,6 +480,7 @@ struct Team : TeamThreadIteratorEntry<team_id>, KernelReferenceable,
 	struct list		watcher_list;
 	struct list		sem_list;		// protected by sSemsSpinlock
 	struct list		port_list;		// protected by sPortsLock
+	struct list		kosm_mutex_list;	// protected by sMutexListSpinlock
 	struct arch_team arch_info;
 
 	addr_t			user_data;

@@ -12,6 +12,7 @@
 #include <image.h>
 #include <image_defs.h>
 #include <OS.h>
+#include <KosmOS.h>
 
 #include <signal.h>
 #include <sys/socket.h>
@@ -92,6 +93,18 @@ extern status_t		_kern_mutex_switch_lock(int32* fromMutex, uint32 fromFlags,
 extern status_t		_kern_mutex_sem_acquire(int32* sem, const char* name,
 						uint32 flags, bigtime_t timeout);
 extern status_t		_kern_mutex_sem_release(int32* sem, uint32 flags);
+
+/* kosm robust mutex functions */
+extern kosm_mutex_id	_kern_kosm_create_mutex(const char* name, uint32 flags);
+extern status_t		_kern_kosm_delete_mutex(kosm_mutex_id id);
+extern kosm_mutex_id	_kern_kosm_find_mutex(const char* name);
+extern status_t		_kern_kosm_acquire_mutex(kosm_mutex_id id);
+extern status_t		_kern_kosm_acquire_mutex_etc(kosm_mutex_id id,
+						uint32 flags, bigtime_t timeout);
+extern status_t		_kern_kosm_release_mutex(kosm_mutex_id id);
+extern status_t		_kern_kosm_mark_mutex_consistent(kosm_mutex_id id);
+extern status_t		_kern_kosm_get_mutex_info(kosm_mutex_id id,
+						kosm_mutex_info* info, size_t size);
 
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);

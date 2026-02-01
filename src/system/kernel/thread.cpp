@@ -51,6 +51,8 @@
 #include <vm/VMAddressSpace.h>
 #include <wait_for_objects.h>
 
+#include <kosm_mutex.h>
+
 #include "TeamThreadTables.h"
 
 
@@ -295,7 +297,8 @@ Thread::Thread(const char* name, thread_id threadID, struct cpu_ent* cpu)
 	last_time(0),
 	cpu_clock_offset(0),
 	post_interrupt_callback(NULL),
-	post_interrupt_data(NULL)
+	post_interrupt_data(NULL),
+	first_held_kosm_mutex(NULL)
 {
 	id = threadID >= 0 ? threadID : allocate_thread_id();
 	visible = false;
@@ -1818,6 +1821,10 @@ _dump_thread_info(Thread *thread, bool shortInfo)
 					kprintf("rwlock    %p   ", thread->wait.object);
 					break;
 
+				case THREAD_BLOCK_TYPE_KOSM_MUTEX:
+					kprintf("kosm_mtx  %p   ", thread->wait.object);
+					break;
+
 				case THREAD_BLOCK_TYPE_USER:
 					kprintf("user%*s", B_PRINTF_POINTER_WIDTH + 11, "");
 					break;
@@ -2106,6 +2113,9 @@ thread_exit(void)
 		thread->user_thread = NULL;
 
 		threadLocker.Unlock();
+
+		// Release any held KosmOS mutexes
+		kosm_mutex_release_owned(thread);
 
 		// Delete the thread's user thread, if it's not the main thread. If it
 		// is, we can save the work, since it will be deleted with the team's
