@@ -14,17 +14,13 @@
 #include <string.h>
 
 #include "AllocationBackend.hpp"
+#include "KosmSurfacePrivate.hpp"
 #include "PlanarLayout.hpp"
 #include "SurfaceBuffer.hpp"
 #include "SurfaceRegistry.hpp"
 
 
 extern AllocationBackend* create_area_backend();
-
-
-struct KosmSurface::Data {
-	SurfaceBuffer*	buffer;
-};
 
 
 struct KosmSurfaceAllocator::Impl {
@@ -49,13 +45,22 @@ struct KosmSurfaceAllocator::Impl {
 };
 
 
+// Generates a pseudo-unique surface ID using time and counter.
+// Uses Knuth multiplicative hash for better distribution.
+// Result is truncated to 32 bits; collisions are possible but rare
+// in practice for typical surface lifetimes.
 static surface_id
 generate_surface_id()
 {
 	static int32 sCounter = 0;
 	int32 counter = atomic_add(&sCounter, 1);
-	bigtime_t time = system_time();
-	return (surface_id)((time << 16) ^ (counter * 2654435761u));
+	uint32 hash = (uint32)system_time() ^ (counter * 2654435761u);
+
+	// Avoid reserved values
+	if (hash == 0 || hash == SURFACE_ID_TOMBSTONE)
+		hash = 1;
+
+	return hash;
 }
 
 

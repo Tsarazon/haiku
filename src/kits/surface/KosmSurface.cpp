@@ -11,14 +11,9 @@
 
 #include <new>
 
-#include "SurfaceBuffer.hpp"
+#include "KosmSurfacePrivate.hpp"
 #include "SurfaceRegistry.hpp"
 #include "PlanarLayout.hpp"
-
-
-struct KosmSurface::Data {
-	SurfaceBuffer*	buffer;
-};
 
 
 #define SURFACE_INVALID() (fData == NULL || fData->buffer == NULL)

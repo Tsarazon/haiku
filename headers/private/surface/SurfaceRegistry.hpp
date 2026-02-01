@@ -4,6 +4,10 @@
  *
  * System-wide surface registry for cross-process buffer sharing.
  * Similar to iOS IOSurface global/local use count model.
+ *
+ * Registry uses a shared area discoverable via find_area() to enable
+ * cross-process surface lookup. First process creates the area,
+ * subsequent processes clone it.
  */
 #ifndef _SURFACE_REGISTRY_HPP
 #define _SURFACE_REGISTRY_HPP
@@ -12,7 +16,18 @@
 #include <SurfaceTypes.hpp>
 
 #define SURFACE_REGISTRY_MAX_ENTRIES 4096
+#define SURFACE_REGISTRY_AREA_NAME "kosm_surface_registry"
 #define SURFACE_ID_TOMBSTONE ((surface_id)-1)
+
+// Compaction threshold: rehash when tombstones exceed 25% of capacity
+#define SURFACE_REGISTRY_TOMBSTONE_THRESHOLD (SURFACE_REGISTRY_MAX_ENTRIES / 4)
+
+struct SurfaceRegistryHeader {
+	sem_id			lock;
+	int32			entryCount;
+	int32			tombstoneCount;
+	uint32			_reserved[5];
+};
 
 struct SurfaceRegistryEntry {
 	surface_id		id;
@@ -68,13 +83,17 @@ private:
 								~SurfaceRegistry();
 
 			status_t			_InitSharedArea();
+			status_t			_CreateSharedArea();
+			status_t			_CloneSharedArea(area_id sourceArea);
+
 			int32				_FindSlot(surface_id id) const;
 			int32				_FindEmptySlot(surface_id id) const;
+			void				_Compact();
 
 			area_id				fRegistryArea;
+			SurfaceRegistryHeader* fHeader;
 			SurfaceRegistryEntry* fEntries;
-	mutable	sem_id				fLock;
-			int32				fTombstoneCount;
+			bool				fIsOwner;
 };
 
 #endif
