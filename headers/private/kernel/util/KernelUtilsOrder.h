@@ -36,9 +36,9 @@ public:
 	inline int operator()(const Value &a, const Value &b) const
 	{
 		if (a < b)
-			return -1;
-		else if (b < a)
 			return 1;
+		else if (b < a)
+			return -1;
 		return 0;
 	}
 };
