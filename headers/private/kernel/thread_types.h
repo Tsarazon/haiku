@@ -335,6 +335,13 @@ struct Thread : TeamThreadIteratorEntry<thread_id>, KernelReferenceable {
 	// Managed by kosm_mutex.cpp via held_list_add/held_list_remove.
 	struct kosm_mutex_entry*	first_held_kosm_mutex;
 
+	// Priority inheritance state for KosmOS mutexes.
+	// kosm_base_priority stores the thread's own priority before
+	// any PI boost. pi_recalculate_locked() restores it when all
+	// PI mutexes are released or waiters depart.
+	int32						kosm_base_priority;
+	bool						kosm_pi_boosted;
+
 #if KDEBUG_RW_LOCK_DEBUG
 	rw_lock*		held_read_locks[64] = {}; // only modified by this thread
 #endif

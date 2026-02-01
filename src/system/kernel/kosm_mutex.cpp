@@ -2,11 +2,18 @@
  * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * Robust mutex implementation for cross-process synchronization.
- * Follows the same table/slot/spinlock architecture as sem.cpp.
+ * Robust mutex with single-level priority inheritance for cross-process
+ * synchronization.  Follows the same table/slot/spinlock architecture
+ * as sem.cpp.
  *
- * When a holder thread dies, the kernel automatically releases the
- * mutex and wakes the next waiter with KOSM_MUTEX_OWNER_DEAD status.
+ * When a holder thread dies the kernel automatically releases the mutex
+ * and wakes the next waiter with KOSM_MUTEX_OWNER_DEAD status.
+ *
+ * Single-level priority inheritance (KOSM_MUTEX_PRIO_INHERIT):
+ *   holder_priority = max(base_priority,
+ *                         max(waiter_priorities across all held PI mutexes))
+ *   Recalculated on every waiter add/remove and ownership transfer.
+ *   Transitive PI is not implemented.
  */
 
 #include <kosm_mutex.h>
@@ -65,6 +72,7 @@ struct kosm_mutex_entry {
 			char*				name;
 			team_id				owner_team;
 			thread_id			holder_thread;
+			Thread*				holder_ptr;
 			int32				recursion;
 			uint32				creation_flags;
 			int32				state;
@@ -79,9 +87,9 @@ struct kosm_mutex_entry {
 	kosm_mutex_id				id;
 	spinlock					lock;
 	WaiterQueue					queue;
+	int32						max_waiter_priority;
 
 	// Held-list links (hlist pattern for O(1) insert/remove).
-	// Links this entry into the holder thread's held_kosm_mutexes list.
 	struct kosm_mutex_entry*	next_held;
 	struct kosm_mutex_entry**	prev_held_ptr;
 };
@@ -125,6 +133,77 @@ held_list_remove(kosm_mutex_entry* entry)
 }
 
 
+// Priority inheritance helpers
+
+/*!	Rescan the waiter queue and update max_waiter_priority.
+	Must be called with entry->lock held.
+*/
+static void
+pi_update_max_waiter(kosm_mutex_entry* entry)
+{
+	int32 maxPri = -1;
+	WaiterQueue::Iterator it = entry->queue.GetIterator();
+	while (kosm_mutex_waiter* w = it.Next()) {
+		if (w->thread->priority > maxPri)
+			maxPri = w->thread->priority;
+	}
+	entry->max_waiter_priority = maxPri;
+}
+
+
+/*!	Boost a thread's effective priority for PI.
+	Must be called with thread's scheduler_lock held.
+
+	TODO(SMP): If the boosted thread is running on another CPU, the
+	priority change won't take effect until the next scheduling decision
+	on that CPU.  For proper SMP support, send an IPI or call
+	scheduler_enqueue_in_run_queue() to force a reschedule.  Safe to
+	defer while targeting 1-2 cores.
+*/
+static void
+pi_boost_thread_locked(Thread* thread, int32 neededPriority)
+{
+	if (neededPriority <= thread->priority)
+		return;
+	if (!thread->kosm_pi_boosted) {
+		thread->kosm_base_priority = thread->priority;
+		thread->kosm_pi_boosted = true;
+	}
+	thread->priority = neededPriority;
+}
+
+
+/*!	Recalculate a thread's effective priority from all held PI mutexes.
+	Restores base priority if no boost is needed.
+	Must be called with thread's scheduler_lock held.
+
+	Reads max_waiter_priority from held entries without their spinlocks.
+	On ARM64/x86-64 aligned int32 reads are atomic; a slightly stale
+	value is self-correcting on the next waiter add/remove event.
+*/
+static void
+pi_recalculate_locked(Thread* thread)
+{
+	if (!thread->kosm_pi_boosted)
+		return;
+
+	int32 maxNeeded = thread->kosm_base_priority;
+
+	for (kosm_mutex_entry* held = thread->first_held_kosm_mutex;
+		 held != NULL; held = held->next_held) {
+		if ((held->u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT) == 0)
+			continue;
+		int32 wp = atomic_get(&held->max_waiter_priority);
+		if (wp > maxNeeded)
+			maxNeeded = wp;
+	}
+
+	thread->priority = maxNeeded;
+	if (maxNeeded == thread->kosm_base_priority)
+		thread->kosm_pi_boosted = false;
+}
+
+
 // Slot management
 
 static void
@@ -165,19 +244,30 @@ static void
 uninit_mutex_locked(struct kosm_mutex_entry& entry, char** _name,
 	SpinLocker& locker)
 {
+	bool isPI = (entry.u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT) != 0;
+	Thread* holder = entry.u.used.holder_ptr;
+
 	// Wake all waiters with error
 	while (kosm_mutex_waiter* waiter = entry.queue.RemoveHead()) {
 		waiter->queued = false;
 		thread_unblock(waiter->thread, B_BAD_VALUE);
 	}
 
-	// If held, remove from holder's list
+	entry.max_waiter_priority = -1;
+
+	// If held, remove from holder's list and recalculate PI
 	held_list_remove(&entry);
+
+	if (isPI && holder != NULL) {
+		SpinLocker schedulerLocker(holder->scheduler_lock);
+		pi_recalculate_locked(holder);
+	}
 
 	int32 id = entry.id;
 	entry.id = -1;
 	*_name = entry.u.used.name;
 	entry.u.used.name = NULL;
+	entry.u.used.holder_ptr = NULL;
 
 	locker.Unlock();
 
@@ -223,10 +313,12 @@ dump_kosm_mutex_list(int argc, char** argv)
 			stateStr = "LOST";
 
 		kprintf("%p %6" B_PRId32 " %6" B_PRId32 " %6" B_PRId32
-			" %4" B_PRId32 "  %-5s  %s\n",
+			" %4" B_PRId32 "  %-5s  %s%s\n",
 			entry, entry->id, entry->u.used.owner_team,
 			entry->u.used.holder_thread, entry->u.used.recursion,
-			stateStr, entry->u.used.name);
+			stateStr, entry->u.used.name,
+			(entry->u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT)
+				? " [PI]" : "");
 	}
 
 	return 0;
@@ -245,15 +337,16 @@ dump_kosm_mutex_info(int argc, char** argv)
 	addr_t num = strtoul(argv[1], &endptr, 0);
 
 	if (endptr == argv[1]) {
-		// Search by name
+		bool found = false;
 		for (int32 i = 0; i < sMaxMutexes; i++) {
 			if (sMutexes[i].id >= 0 && sMutexes[i].u.used.name != NULL
 				&& strcmp(argv[1], sMutexes[i].u.used.name) == 0) {
 				num = (addr_t)&sMutexes[i];
+				found = true;
 				break;
 			}
 		}
-		if (endptr == argv[1]) {
+		if (!found) {
 			kprintf("kosm_mutex \"%s\" not found\n", argv[1]);
 			return 0;
 		}
@@ -276,19 +369,30 @@ dump_kosm_mutex_info(int argc, char** argv)
 	if (entry->id >= 0) {
 		kprintf("name:      '%s'\n", entry->u.used.name);
 		kprintf("owner:     %" B_PRId32 "\n", entry->u.used.owner_team);
-		kprintf("holder:    %" B_PRId32 "\n", entry->u.used.holder_thread);
+		kprintf("holder:    %" B_PRId32 " (%p)\n",
+			entry->u.used.holder_thread, entry->u.used.holder_ptr);
 		kprintf("recursion: %" B_PRId32 "\n", entry->u.used.recursion);
-		kprintf("flags:     0x%" B_PRIx32 "\n", entry->u.used.creation_flags);
+		kprintf("flags:     0x%" B_PRIx32 "%s\n",
+			entry->u.used.creation_flags,
+			(entry->u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT)
+				? " [PI]" : "");
 		kprintf("state:     %s\n",
 			entry->u.used.state == KOSM_MUTEX_STATE_NORMAL ? "normal" :
-			entry->u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY ? "needs_recovery" :
-			"not_recoverable");
+			entry->u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY
+				? "needs_recovery" : "not_recoverable");
+
+		if (entry->u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT) {
+			kprintf("max_wpri:  %" B_PRId32 "\n",
+				entry->max_waiter_priority);
+		}
 
 		kprintf("queue:    ");
 		if (!entry->queue.IsEmpty()) {
 			WaiterQueue::Iterator it = entry->queue.GetIterator();
-			while (kosm_mutex_waiter* waiter = it.Next())
-				kprintf(" %" B_PRId32, waiter->thread->id);
+			while (kosm_mutex_waiter* waiter = it.Next()) {
+				kprintf(" %" B_PRId32 "(pri:%" B_PRId32 ")",
+					waiter->thread->id, waiter->thread->priority);
+			}
 			kprintf("\n");
 		} else {
 			kprintf(" -\n");
@@ -307,7 +411,6 @@ kosm_mutex_init(kernel_args* args)
 {
 	TRACE(("kosm_mutex_init: entry\n"));
 
-	// Scale table size with available memory (more conservatively than sems)
 	int32 pages = vm_page_num_pages() / 4;
 	while (sMaxMutexes < pages && sMaxMutexes < kMaxMutexes)
 		sMaxMutexes <<= 1;
@@ -326,6 +429,7 @@ kosm_mutex_init(kernel_args* args)
 	memset(sMutexes, 0, sizeof(struct kosm_mutex_entry) * sMaxMutexes);
 	for (int32 i = 0; i < sMaxMutexes; i++) {
 		sMutexes[i].id = -1;
+		sMutexes[i].max_waiter_priority = -1;
 		sMutexes[i].next_held = NULL;
 		sMutexes[i].prev_held_ptr = NULL;
 		free_mutex_slot(i, i);
@@ -333,7 +437,7 @@ kosm_mutex_init(kernel_args* args)
 
 	add_debugger_command_etc("kosm_mutexes", &dump_kosm_mutex_list,
 		"List active KosmOS mutexes",
-		"[ ([ \"team\" | \"owner\" ] <team>) | (\"name\" <name>) ]\n"
+		"[ ([ \"team\" | \"owner\" ] <team>) | (\"name\" <n>) ]\n"
 		"Lists all active kosm mutexes matching the filter.\n", 0);
 	add_debugger_command_etc("kosm_mutex", &dump_kosm_mutex_info,
 		"Dump info about a KosmOS mutex",
@@ -384,10 +488,12 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		entry->u.used.name = tempName;
 		entry->u.used.owner_team = team->id;
 		entry->u.used.holder_thread = -1;
+		entry->u.used.holder_ptr = NULL;
 		entry->u.used.recursion = 0;
 		entry->u.used.creation_flags = flags;
 		entry->u.used.state = KOSM_MUTEX_STATE_NORMAL;
 		new(&entry->queue) WaiterQueue;
+		entry->max_waiter_priority = -1;
 		entry->next_held = NULL;
 		entry->prev_held_ptr = NULL;
 		id = entry->id;
@@ -454,8 +560,9 @@ delete_mutex_internal(kosm_mutex_id id, bool checkPermission)
 }
 
 
-/*!	Called when a thread is being destroyed. Releases all mutexes held by
-	the thread and wakes waiters with KOSM_MUTEX_OWNER_DEAD.
+/*!	Called when a thread is being destroyed. Releases all mutexes held
+	by the thread and wakes waiters with KOSM_MUTEX_OWNER_DEAD.
+	Transfers ownership (and PI boost) to the first blocked waiter.
 */
 void
 kosm_mutex_release_owned(Thread* thread)
@@ -467,18 +574,18 @@ kosm_mutex_release_owned(Thread* thread)
 
 		SpinLocker entryLocker(entry->lock);
 
-		// Verify this mutex is still held by this thread (might have been
-		// deleted between our check and acquiring the lock)
 		if (entry->id < 0 || entry->u.used.holder_thread != thread->id) {
 			held_list_remove(entry);
 			continue;
 		}
 
+		bool isPI = (entry->u.used.creation_flags
+			& KOSM_MUTEX_PRIO_INHERIT) != 0;
+
 		entry->u.used.state = KOSM_MUTEX_STATE_NEEDS_RECOVERY;
 		entry->u.used.recursion = 0;
 		held_list_remove(entry);
 
-		// Transfer to first blocked waiter, if any
 		bool transferred = false;
 		while (kosm_mutex_waiter* waiter = entry->queue.Head()) {
 			SpinLocker schedulerLocker(waiter->thread->scheduler_lock);
@@ -487,23 +594,34 @@ kosm_mutex_release_owned(Thread* thread)
 				waiter->queued = false;
 
 				entry->u.used.holder_thread = waiter->thread->id;
+				entry->u.used.holder_ptr = waiter->thread;
 				entry->u.used.recursion = 1;
 				held_list_add(waiter->thread, entry);
+
+				if (isPI) {
+					pi_update_max_waiter(entry);
+					pi_boost_thread_locked(waiter->thread,
+						entry->max_waiter_priority);
+				}
 
 				thread_unblock_locked(waiter->thread,
 					KOSM_MUTEX_OWNER_DEAD);
 				transferred = true;
 				break;
 			}
-			// Waiter timed out or was interrupted, skip
 			entry->queue.Remove(waiter);
 			waiter->queued = false;
 		}
 
-		if (!transferred)
+		if (!transferred) {
 			entry->u.used.holder_thread = -1;
+			entry->u.used.holder_ptr = NULL;
+			if (isPI)
+				entry->max_waiter_priority = -1;
+		}
 	}
 
+	// Dead thread's priority does not need recalculation
 	scheduler_reschedule_if_necessary();
 }
 
@@ -604,6 +722,65 @@ kosm_acquire_mutex(kosm_mutex_id id)
 }
 
 
+/*!	Fast-path trylock. Avoids the scheduler_lock / signal check overhead
+	of kosm_acquire_mutex_etc() when the mutex is contended.
+*/
+status_t
+kosm_try_acquire_mutex(kosm_mutex_id id, uint32 flags)
+{
+	int32 slot = id % sMaxMutexes;
+
+	if (!sMutexesActive)
+		return B_NO_MORE_SEMS;
+	if (id < 0)
+		return B_BAD_VALUE;
+
+	InterruptsLocker _;
+	SpinLocker entryLocker(sMutexes[slot].lock);
+
+	if (sMutexes[slot].id != id)
+		return B_BAD_VALUE;
+
+	struct kosm_mutex_entry& entry = sMutexes[slot];
+
+	if ((flags & B_CHECK_PERMISSION) != 0
+		&& entry.u.used.owner_team == team_get_kernel_team_id()) {
+		return B_NOT_ALLOWED;
+	}
+
+	Thread* thread = thread_get_current_thread();
+	thread_id currentThread = thread->id;
+
+	// Not held — acquire
+	if (entry.u.used.holder_thread < 0) {
+		if (entry.u.used.state == KOSM_MUTEX_STATE_NOT_RECOVERABLE)
+			return KOSM_MUTEX_NOT_RECOVERABLE;
+
+		entry.u.used.holder_thread = currentThread;
+		entry.u.used.holder_ptr = thread;
+		entry.u.used.recursion = 1;
+		held_list_add(thread, &entry);
+
+		if (entry.u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY)
+			return KOSM_MUTEX_OWNER_DEAD;
+
+		return B_OK;
+	}
+
+	// Recursive
+	if (entry.u.used.holder_thread == currentThread) {
+		if ((entry.u.used.creation_flags & KOSM_MUTEX_RECURSIVE) != 0) {
+			entry.u.used.recursion++;
+			return B_OK;
+		}
+		return KOSM_MUTEX_DEADLOCK;
+	}
+
+	// Contended — immediate fail, no scheduler_lock, no signal check
+	return B_WOULD_BLOCK;
+}
+
+
 status_t
 kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 {
@@ -637,16 +814,18 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 		return B_NOT_ALLOWED;
 	}
 
-	thread_id currentThread = thread_get_current_thread_id();
+	Thread* thread = thread_get_current_thread();
+	thread_id currentThread = thread->id;
 
-	// Case 1: mutex not held
+	// Case 1: mutex not held — uncontested acquire
 	if (entry.u.used.holder_thread < 0) {
 		if (entry.u.used.state == KOSM_MUTEX_STATE_NOT_RECOVERABLE)
 			return KOSM_MUTEX_NOT_RECOVERABLE;
 
 		entry.u.used.holder_thread = currentThread;
+		entry.u.used.holder_ptr = thread;
 		entry.u.used.recursion = 1;
-		held_list_add(thread_get_current_thread(), &entry);
+		held_list_add(thread, &entry);
 
 		if (entry.u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY)
 			return KOSM_MUTEX_OWNER_DEAD;
@@ -669,8 +848,6 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 	if ((flags & B_ABSOLUTE_TIMEOUT) != 0 && timeout < 0)
 		return B_TIMED_OUT;
 
-	Thread* thread = thread_get_current_thread();
-
 	// Check for pending signals
 	SpinLocker schedulerLocker(thread->scheduler_lock);
 	if (thread_is_interrupted(thread, flags)) {
@@ -686,6 +863,16 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 	entry.queue.Add(&waiter);
 	waiter.queued = true;
 
+	// PI: boost holder to prevent priority inversion
+	if ((entry.u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT) != 0
+		&& entry.u.used.holder_ptr != NULL) {
+		pi_update_max_waiter(&entry);
+		SpinLocker holderSchedLocker(
+			entry.u.used.holder_ptr->scheduler_lock);
+		pi_boost_thread_locked(entry.u.used.holder_ptr,
+			entry.max_waiter_priority);
+	}
+
 	thread_prepare_to_block(thread, flags, THREAD_BLOCK_TYPE_KOSM_MUTEX,
 		(void*)(addr_t)id);
 
@@ -698,9 +885,17 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 
 	if (waiter.queued) {
 		// Acquisition failed (timeout, interrupt, or mutex deleted).
-		// Remove ourselves from the queue.
 		entry.queue.Remove(&waiter);
 		waiter.queued = false;
+
+		// PI: we left the queue, recalculate holder's priority
+		if ((entry.u.used.creation_flags & KOSM_MUTEX_PRIO_INHERIT) != 0
+			&& entry.u.used.holder_ptr != NULL) {
+			pi_update_max_waiter(&entry);
+			SpinLocker holderSchedLocker(
+				entry.u.used.holder_ptr->scheduler_lock);
+			pi_recalculate_locked(entry.u.used.holder_ptr);
+		}
 	}
 	// If !queued, the release path already transferred ownership to us
 	// and acquireStatus is B_OK or KOSM_MUTEX_OWNER_DEAD.
@@ -744,17 +939,27 @@ kosm_release_mutex(kosm_mutex_id id)
 	// Full release
 	held_list_remove(&entry);
 
+	bool isPI = (entry.u.used.creation_flags
+		& KOSM_MUTEX_PRIO_INHERIT) != 0;
+
 	// If released without marking consistent after OWNER_DEAD,
 	// the mutex becomes not recoverable.
 	if (entry.u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY) {
 		entry.u.used.state = KOSM_MUTEX_STATE_NOT_RECOVERABLE;
 		entry.u.used.holder_thread = -1;
+		entry.u.used.holder_ptr = NULL;
 		entry.u.used.recursion = 0;
 
-		// Wake all waiters with NOT_RECOVERABLE
 		while (kosm_mutex_waiter* waiter = entry.queue.RemoveHead()) {
 			waiter->queued = false;
 			thread_unblock(waiter->thread, KOSM_MUTEX_NOT_RECOVERABLE);
+		}
+		entry.max_waiter_priority = -1;
+
+		if (isPI) {
+			Thread* self = thread_get_current_thread();
+			SpinLocker selfSchedLocker(self->scheduler_lock);
+			pi_recalculate_locked(self);
 		}
 
 		return B_OK;
@@ -769,11 +974,36 @@ kosm_release_mutex(kosm_mutex_id id)
 			waiter->queued = false;
 
 			entry.u.used.holder_thread = waiter->thread->id;
+			entry.u.used.holder_ptr = waiter->thread;
 			entry.u.used.recursion = 1;
 			held_list_add(waiter->thread, &entry);
 
+			// PI: boost new holder from remaining waiters
+			if (isPI) {
+				pi_update_max_waiter(&entry);
+				pi_boost_thread_locked(waiter->thread,
+					entry.max_waiter_priority);
+			}
+
 			thread_unblock_locked(waiter->thread, B_OK);
-			goto done;
+			schedulerLocker.Unlock();
+			entryLocker.Unlock();
+
+			// PI: recalculate own priority (may still hold other
+			// PI mutexes)
+			bool doReschedule = (entry.u.used.creation_flags
+				& B_DO_NOT_RESCHEDULE) == 0;
+
+			if (isPI || doReschedule) {
+				Thread* self = thread_get_current_thread();
+				SpinLocker selfSchedLocker(self->scheduler_lock);
+				if (isPI)
+					pi_recalculate_locked(self);
+				if (doReschedule)
+					scheduler_reschedule_if_necessary_locked();
+			}
+
+			return B_OK;
 		}
 
 		// Waiter no longer blocked (timed out or interrupted), skip
@@ -783,14 +1013,15 @@ kosm_release_mutex(kosm_mutex_id id)
 
 	// No waiters, mutex is now free
 	entry.u.used.holder_thread = -1;
+	entry.u.used.holder_ptr = NULL;
 	entry.u.used.recursion = 0;
+	entry.max_waiter_priority = -1;
+	entryLocker.Unlock();
 
-done:
-	if ((entry.u.used.creation_flags & B_DO_NOT_RESCHEDULE) == 0) {
-		entryLocker.Unlock();
-		SpinLocker schedulerLocker(
-			thread_get_current_thread()->scheduler_lock);
-		scheduler_reschedule_if_necessary_locked();
+	if (isPI) {
+		Thread* self = thread_get_current_thread();
+		SpinLocker selfSchedLocker(self->scheduler_lock);
+		pi_recalculate_locked(self);
 	}
 
 	return B_OK;
@@ -897,6 +1128,13 @@ _user_kosm_acquire_mutex(kosm_mutex_id id)
 		B_CAN_INTERRUPT | B_CHECK_PERMISSION, 0);
 
 	return syscall_restart_handle_post(error);
+}
+
+
+status_t
+_user_kosm_try_acquire_mutex(kosm_mutex_id id)
+{
+	return kosm_try_acquire_mutex(id, B_CHECK_PERMISSION);
 }
 
 

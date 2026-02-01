@@ -21,6 +21,7 @@ typedef int32 kosm_mutex_id;
 
 #define KOSM_MUTEX_SHARED			0x0001
 #define KOSM_MUTEX_RECURSIVE		0x0002
+#define KOSM_MUTEX_PRIO_INHERIT		0x0004
 
 enum {
 	KOSM_MUTEX_OWNER_DEAD			= B_ERRORS_END + 0x2000,
@@ -43,6 +44,7 @@ extern status_t			kosm_delete_mutex(kosm_mutex_id id);
 extern kosm_mutex_id	kosm_find_mutex(const char* name);
 
 extern status_t			kosm_acquire_mutex(kosm_mutex_id id);
+extern status_t			kosm_try_acquire_mutex(kosm_mutex_id id);
 extern status_t			kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags,
 							bigtime_t timeout);
 extern status_t			kosm_release_mutex(kosm_mutex_id id);

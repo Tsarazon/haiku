@@ -29,6 +29,7 @@ void			kosm_mutex_delete_owned(struct Team* team);
 int32			kosm_mutex_max(void);
 int32			kosm_mutex_used(void);
 off_t			kosm_mutex_team_link_offset(void);
+status_t		kosm_try_acquire_mutex(kosm_mutex_id id, uint32 flags);
 
 /* Syscalls */
 
@@ -36,6 +37,7 @@ kosm_mutex_id	_user_kosm_create_mutex(const char* userName, uint32 flags);
 status_t		_user_kosm_delete_mutex(kosm_mutex_id id);
 kosm_mutex_id	_user_kosm_find_mutex(const char* userName);
 status_t		_user_kosm_acquire_mutex(kosm_mutex_id id);
+status_t		_user_kosm_try_acquire_mutex(kosm_mutex_id id);
 status_t		_user_kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags,
 					bigtime_t timeout);
 status_t		_user_kosm_release_mutex(kosm_mutex_id id);

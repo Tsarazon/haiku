@@ -298,7 +298,9 @@ Thread::Thread(const char* name, thread_id threadID, struct cpu_ent* cpu)
 	cpu_clock_offset(0),
 	post_interrupt_callback(NULL),
 	post_interrupt_data(NULL),
-	first_held_kosm_mutex(NULL)
+	first_held_kosm_mutex(NULL),
+	kosm_base_priority(0),
+	kosm_pi_boosted(false)
 {
 	id = threadID >= 0 ? threadID : allocate_thread_id();
 	visible = false;

@@ -99,6 +99,7 @@ extern kosm_mutex_id	_kern_kosm_create_mutex(const char* name, uint32 flags);
 extern status_t		_kern_kosm_delete_mutex(kosm_mutex_id id);
 extern kosm_mutex_id	_kern_kosm_find_mutex(const char* name);
 extern status_t		_kern_kosm_acquire_mutex(kosm_mutex_id id);
+extern status_t		_kern_kosm_try_acquire_mutex(kosm_mutex_id id);
 extern status_t		_kern_kosm_acquire_mutex_etc(kosm_mutex_id id,
 						uint32 flags, bigtime_t timeout);
 extern status_t		_kern_kosm_release_mutex(kosm_mutex_id id);
