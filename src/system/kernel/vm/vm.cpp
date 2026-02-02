@@ -1599,7 +1599,6 @@ vm_create_anonymous_area(team_id team, const char *name, addr_t size,
 		wiring = B_CONTIGUOUS;
 	}
 
-	physical_address_restrictions stackPhysicalRestrictions;
 	bool doReserveMemory = false;
 	addr_t reservedMemory = 0;
 	switch (wiring) {
