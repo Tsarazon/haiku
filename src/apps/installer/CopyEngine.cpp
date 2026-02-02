@@ -93,13 +93,23 @@ CopyEngine::CopyEngine(ProgressReporter* reporter, EntryFilter* entryFilter)
 
 CopyEngine::~CopyEngine()
 {
-	while (fBufferQueue.Size() > 0)
-		snooze(10000);
-
 	fQuitting = true;
+
+	// Close the queue to unblock the writer thread's Pop() call.
+	// It will receive B_NO_INIT and exit cleanly.
+	// Don't delete elements yet - writer thread may hold a reference.
+	const vector<Buffer*>* remaining = NULL;
+	fBufferQueue.Close(false, &remaining);
+
 	if (fWriterThread >= B_OK) {
 		int32 exitValue;
 		wait_for_thread(fWriterThread, &exitValue);
+	}
+
+	// Writer thread has exited, safe to delete remaining buffers
+	if (remaining != NULL) {
+		for (size_t i = 0; i < remaining->size(); i++)
+			delete (*remaining)[i];
 	}
 }
 

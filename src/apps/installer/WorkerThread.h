@@ -20,8 +20,14 @@ class ProgressReporter;
 
 static const char kBootPath[] = "/boot";
 
+// Relative path to haiku_loader.efi inside system directory hierarchy.
+// Used both for the running system (under /boot/system/) and for the
+// installed target (under <target>/system/).
+static const char kEFILoaderSubPath[]
+	= "data/platform_loaders/haiku_loader.efi";
+
 static const off_t kMinTargetPartitionSize = 20 * 1024 * 1024;		// 20 MB
-static const off_t kESPSize = 360 * 1024 * 1024;					// 360 MB
+static const off_t kESPSize = 200 * 1024 * 1024;					// 200 MB
 
 
 class WorkerThread : public BLooper {
@@ -55,11 +61,13 @@ private:
 			status_t			_GetMountPoint(partition_id partitionID,
 									BPath& mountPoint, BVolume* volume = NULL);
 
+			bool				_HasEFILoader(const BPath& systemRoot);
+
 			status_t			_WriteBootSector(BPath& path);
 			status_t			_CreateESPIfNeeded(BDiskDevice* targetDevice);
 			status_t			_FindESPPartition(BPath& espMountPoint);
 			status_t			_InstallEFIBootloader(
-									const BPath& targetDirectory);
+									const char* loaderSourcePath);
 			status_t			_CopyFile(const char* source,
 									const char* destination);
 			status_t			_LaunchFinishScript(BPath& path);

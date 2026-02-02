@@ -81,6 +81,7 @@ BlockingQueue<Element>::Close(bool deleteElements,
 		int32 count = fElements.size();
 		for (int32 i = 0; i < count; i++)
 			delete fElements[i];
+		fElements.clear();
 	}
 	return error;
 }
@@ -163,12 +164,13 @@ BlockingQueue<Element>::Remove(Element* element)
 		release_sem(fElementSemaphore);
 		return B_ENTRY_NOT_FOUND;
 	}
-#if 0
+	// We acquired 1 semaphore count but removed 'count' elements.
+	// Acquire the extra (count - 1) to keep semaphore in sync with
+	// the actual number of elements in the queue.
 	if (count > 1) {
-		ERROR(("ERROR: BlockingQueue::Remove(): Removed %ld elements!\n",
-			count));
+		acquire_sem_etc(fElementSemaphore, count - 1,
+			B_RELATIVE_TIMEOUT, 0);
 	}
-#endif
 	return error;
 }
 
