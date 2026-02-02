@@ -39,9 +39,8 @@
 #include "AutoLocker.h"
 #include "CopyEngine.h"
 #include "InstallerDefs.h"
+#include "InstallerWindow.h"
 #include "PackageViews.h"
-#include "PartitionMenuItem.h"
-#include "ProgressReporter.h"
 #include "StringForSize.h"
 #include "UnzipEngine.h"
 

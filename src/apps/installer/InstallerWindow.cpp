@@ -9,6 +9,8 @@
 #include "InstallerWindow.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 #include <Alert.h>
@@ -38,13 +40,13 @@
 #include <TextView.h>
 #include <TranslationUtils.h>
 #include <TranslatorFormats.h>
+#include <View.h>
 
 #include "tracker_private.h"
 
 #include "DialogPane.h"
 #include "InstallerDefs.h"
 #include "PackageViews.h"
-#include "PartitionMenuItem.h"
 #include "WorkerThread.h"
 
 
@@ -62,6 +64,66 @@ const uint32 LAUNCH_BOOTMAN = 'iWBM';
 const uint32 START_SCAN = 'iSSC';
 const uint32 PACKAGE_CHECKBOX = 'iPCB';
 const uint32 ENCOURAGE_DRIVESETUP = 'iENC';
+
+
+// #pragma mark - PartitionMenuItem
+
+
+PartitionMenuItem::PartitionMenuItem(const char* name, const char* label,
+		const char* menuLabel, BMessage* message, partition_id id)
+	:
+	BMenuItem(label, message),
+	fID(id),
+	fMenuLabel(strdup(menuLabel)),
+	fName(strdup(name)),
+	fIsValidTarget(true)
+{
+}
+
+
+PartitionMenuItem::~PartitionMenuItem()
+{
+	free(fMenuLabel);
+	free(fName);
+}
+
+
+partition_id
+PartitionMenuItem::ID() const
+{
+	return fID;
+}
+
+
+const char*
+PartitionMenuItem::MenuLabel() const
+{
+	return fMenuLabel != NULL ? fMenuLabel : Label();
+}
+
+
+const char*
+PartitionMenuItem::Name() const
+{
+	return fName != NULL ? fName : Label();
+}
+
+
+void
+PartitionMenuItem::SetIsValidTarget(bool isValidTarget)
+{
+	fIsValidTarget = isValidTarget;
+}
+
+
+bool
+PartitionMenuItem::IsValidTarget() const
+{
+	return fIsValidTarget;
+}
+
+
+// #pragma mark - LogoView
 
 
 class LogoView : public BView {
@@ -157,7 +219,7 @@ LogoView::_Init()
 }
 
 
-// #pragma mark -
+// #pragma mark - InstallerWindow
 
 
 static BLayoutItem*
@@ -989,5 +1051,3 @@ InstallerWindow::_ComparePackages(const void* firstArg, const void* secondArg)
 		return 1;
 	return strcmp(package1->Name(), package2->Name());
 }
-
-

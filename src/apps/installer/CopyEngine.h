@@ -1,5 +1,6 @@
 /*
  * Copyright 2008-2009, Stephan Aßmus <superstippi@gmx.de>
+ * Copyright 2009, Stephan Aßmus <superstippi@gmx.de>
  *  All rights reserved. Distributed under the terms of the MIT License.
  */
 #ifndef COPY_ENGINE_H
@@ -16,7 +17,46 @@
 #include "BlockingQueue.h"
 
 class BFile;
-class ProgressReporter;
+
+
+// #pragma mark - ProgressReporter
+
+
+class ProgressReporter {
+public:
+								ProgressReporter(const BMessenger& messenger,
+									BMessage* message);
+	virtual						~ProgressReporter();
+
+			void				Reset();
+
+			void				AddItems(int64 count, off_t bytes);
+
+			void				StartTimer();
+
+			void				ItemsWritten(uint64 items, off_t bytes,
+									const char* itemName,
+									const char* targetFolder);
+
+private:
+			void				_UpdateProgress(const char* itemName,
+									const char* targetFolder);
+
+private:
+			bigtime_t			fStartTime;
+
+			off_t				fBytesToWrite;
+			off_t				fBytesWritten;
+
+			int64				fItemsToWrite;
+			uint64				fItemsWritten;
+
+			BMessenger			fMessenger;
+			BMessage*			fMessage;
+};
+
+
+// #pragma mark - CopyEngine
 
 
 class CopyEngine {

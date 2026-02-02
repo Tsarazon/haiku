@@ -8,13 +8,9 @@ SubDirHdrs [ FDirName $(HAIKU_TOP) src servers launch ] ;
 
 Application Installer :
 	CopyEngine.cpp
-	EULAWindow.cpp
 	InstallerApp.cpp
-	InstallerDefs.cpp
 	InstallerWindow.cpp
 	PackageViews.cpp
-	PartitionMenuItem.cpp
-	ProgressReporter.cpp
 	UnzipEngine.cpp
 	WorkerThread.cpp
 
@@ -32,10 +28,9 @@ SEARCH on <src!apps!installer>Utility.cpp = [
 DoCatalogs Installer :
 	x-vnd.Haiku-Installer
 	:
-	EULAWindow.cpp
+	CopyEngine.cpp
 	InstallerApp.cpp
 	InstallerWindow.cpp
 	PackageViews.cpp
-	ProgressReporter.cpp
 	WorkerThread.cpp
 ;

@@ -1,5 +1,6 @@
 /*
  * Copyright 2005, Jérôme DUVAL. All rights reserved.
+ * Copyright 2013, Jérôme DUVAL.
  * Distributed under the terms of the MIT License.
  */
 #ifndef INSTALLER_APP_H
@@ -8,9 +9,16 @@
 
 #include <Application.h>
 #include <Catalog.h>
+#include <Window.h>
 
-#include "EULAWindow.h"
 #include "InstallerWindow.h"
+
+
+class EULAWindow : public BWindow {
+public:
+								EULAWindow();
+	virtual bool				QuitRequested();
+};
 
 
 class InstallerApp : public BApplication {

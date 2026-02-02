@@ -14,8 +14,8 @@ static const uint32 MSG_INSTALL_FINISHED = 'iIFN';
 static const uint32 MSG_RESET = 'iRSI';
 static const uint32 MSG_WRITE_BOOT_SECTOR = 'iWBS';
 
-extern const char* const kPackagesDirectoryPath;
-extern const char* const kSourcesDirectoryPath;
+static const char* const kPackagesDirectoryPath = "_packages_";
+static const char* const kSourcesDirectoryPath = "_sources_";
 
 
 #endif	// INSTALLER_DEFS_H

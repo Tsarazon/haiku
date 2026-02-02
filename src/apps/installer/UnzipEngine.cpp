@@ -18,8 +18,8 @@
 #include <String.h>
 
 #include "CommandPipe.h"
+#include "CopyEngine.h"
 #include "SemaphoreLocker.h"
-#include "ProgressReporter.h"
 
 
 using std::nothrow;
