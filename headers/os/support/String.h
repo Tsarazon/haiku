@@ -13,7 +13,6 @@
 
 
 class BStringList;
-class BStringRef;
 
 
 class BString {
@@ -22,9 +21,7 @@ public:
 							BString(const char* string);
 							BString(const BString& string);
 							BString(const char* string, int32 maxLength);
-#if __cplusplus >= 201103L
 							BString(BString&& string) noexcept;
-#endif
 							~BString();
 
 			// Access
@@ -42,9 +39,7 @@ public:
 			BString&		operator=(const BString& string);
 			BString&		operator=(const char* string);
 			BString&		operator=(char c);
-#if __cplusplus >= 201103L
 			BString&		operator=(BString&& string) noexcept;
-#endif
 
 			BString&		SetTo(const char* string);
 			BString&		SetTo(const char* string, int32 maxLength);
@@ -310,10 +305,6 @@ public:
 			// Unchecked char access
 			char			operator[](int32 index) const;
 
-#if __GNUC__ == 2
-			char&			operator[](int32 index);
-#endif
-
 			// Checked char access
 			char			ByteAt(int32 index) const;
 			const char*		CharAt(int32 charIndex, int32* bytes = NULL) const;
@@ -366,7 +357,6 @@ public:
 
 private:
 			class PosVect;
-			friend class BStringRef;
 
 			enum PrivateDataTag {
 				PRIVATE_DATA

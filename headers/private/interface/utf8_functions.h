@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2010, Haiku, Inc.
+ * Copyright 2004-2025, Haiku, Inc.
  * Distributed under the terms of the MIT License.
  */
 #ifndef _UTF8_FUNCTIONS_H
@@ -226,5 +226,79 @@ UTF8ToCharCode(const char **bytes)
 
 	#undef UTF8_SUBSTITUTE_CHARACTER
 }
+
+
+/*!	UTF8Decode decodes one UTF-8 character from \a src, stores the codepoint
+	in \a codepoint, and returns the number of bytes consumed (1-4).
+	Returns 1 for invalid continuation bytes (codepoint set to U+FFFD).
+*/
+static inline int32
+UTF8Decode(const char* src, uint32& codepoint)
+{
+	uint8 c = (uint8)src[0];
+
+	if (c < 0x80) {
+		codepoint = c;
+		return 1;
+	}
+
+	if (c < 0xC0) {
+		codepoint = 0xFFFD;
+		return 1;
+	}
+
+	if (c < 0xE0) {
+		codepoint = ((uint32)(c & 0x1F) << 6)
+			| (src[1] & 0x3F);
+		return 2;
+	}
+
+	if (c < 0xF0) {
+		codepoint = ((uint32)(c & 0x0F) << 12)
+			| ((uint32)(src[1] & 0x3F) << 6)
+			| (src[2] & 0x3F);
+		return 3;
+	}
+
+	codepoint = ((uint32)(c & 0x07) << 18)
+		| ((uint32)(src[1] & 0x3F) << 12)
+		| ((uint32)(src[2] & 0x3F) << 6)
+		| (src[3] & 0x3F);
+	return 4;
+}
+
+
+/*!	UTF8Encode encodes one Unicode \a codepoint as UTF-8 into \a dst,
+	and returns the number of bytes written (1-4).
+	The caller must ensure \a dst has at least 4 bytes of space.
+*/
+static inline int32
+UTF8Encode(uint32 codepoint, char* dst)
+{
+	if (codepoint < 0x80) {
+		dst[0] = (char)codepoint;
+		return 1;
+	}
+
+	if (codepoint < 0x800) {
+		dst[0] = (char)(0xC0 | (codepoint >> 6));
+		dst[1] = (char)(0x80 | (codepoint & 0x3F));
+		return 2;
+	}
+
+	if (codepoint < 0x10000) {
+		dst[0] = (char)(0xE0 | (codepoint >> 12));
+		dst[1] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+		dst[2] = (char)(0x80 | (codepoint & 0x3F));
+		return 3;
+	}
+
+	dst[0] = (char)(0xF0 | (codepoint >> 18));
+	dst[1] = (char)(0x80 | ((codepoint >> 12) & 0x3F));
+	dst[2] = (char)(0x80 | ((codepoint >> 6) & 0x3F));
+	dst[3] = (char)(0x80 | (codepoint & 0x3F));
+	return 4;
+}
+
 
 #endif	// _UTF8_FUNCTIONS_H

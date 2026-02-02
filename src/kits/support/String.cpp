@@ -1,5 +1,5 @@
 /*
- * Copyright 2001-2021 Haiku, Inc. All rights reserved.
+ * Copyright 2001-2025 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
  * Authors:
@@ -26,6 +26,7 @@
 #include <StringList.h>
 
 #include <StringPrivate.h>
+#include <UnicodeUtils.h>
 #include <utf8_functions.h>
 
 
@@ -75,6 +76,18 @@ static inline const char*
 safestr(const char* string)
 {
 	return string != NULL ? string : "";
+}
+
+
+//! Check whether the string contains only ASCII bytes.
+static inline bool
+is_ascii_only(const char* string, int32 length)
+{
+	for (int32 i = 0; i < length; i++) {
+		if ((uint8)string[i] >= 0x80)
+			return false;
+	}
+	return true;
 }
 
 
@@ -193,13 +206,11 @@ BString::BString(const char* string, int32 maxLength)
 }
 
 
-#if __cplusplus >= 201103L
 BString::BString(BString&& string) noexcept
 {
 	fPrivateData = string.fPrivateData;
 	string.fPrivateData = NULL;
 }
-#endif
 
 
 BString::~BString()
@@ -269,7 +280,6 @@ BString::operator=(char c)
 }
 
 
-#if __cplusplus >= 201103L
 BString&
 BString::operator=(BString&& string) noexcept
 {
@@ -280,7 +290,6 @@ BString::operator=(BString&& string) noexcept
 	}
 	return *this;
 }
-#endif
 
 
 BString&
@@ -410,11 +419,7 @@ BString::SetToFormatVarArgs(const char* format, va_list args)
 	char buffer[bufferSize];
 
 	va_list clonedArgs;
-#if __GNUC__ == 2
-	__va_copy(clonedArgs, args);
-#else
 	va_copy(clonedArgs, args);
-#endif
 	int32 bytes = vsnprintf(buffer, bufferSize, format, clonedArgs);
 	va_end(clonedArgs);
 
@@ -1887,23 +1892,6 @@ BString::ReplaceCharsSet(const char* setOfChars, const char* with)
 //	#pragma mark - Unchecked char access
 
 
-#if __GNUC__ == 2
-char&
-BString::operator[](int32 index)
-{
-	if (_MakeWritable() != B_OK) {
-		static char invalid;
-		return invalid;
-	}
-
-	_ReferenceCount() = -1;
-		// mark string as unshareable
-
-	return fPrivateData[index];
-}
-#endif
-
-
 const char*
 BString::CharAt(int32 charIndex, int32* bytes) const
 {
@@ -1985,10 +1973,38 @@ BString&
 BString::ToLower()
 {
 	int32 length = Length();
-	if (length > 0 && _MakeWritable() == B_OK) {
-		for (int32 count = 0; count < length; count++)
-			fPrivateData[count] = tolower(fPrivateData[count]);
+	if (length <= 0)
+		return *this;
+
+	// Fast path: ASCII-only strings can be converted in-place
+	if (is_ascii_only(fPrivateData, length)) {
+		if (_MakeWritable() == B_OK) {
+			for (int32 i = 0; i < length; i++)
+				fPrivateData[i] = tolower(fPrivateData[i]);
+		}
+		return *this;
 	}
+
+	// UTF-8 path: convert codepoint-by-codepoint into a new buffer.
+	// Case conversion can change byte length for some codepoints,
+	// so we allocate conservatively.
+	char* buffer = (char*)malloc(length * 2 + 1);
+	if (buffer == NULL)
+		return *this;
+
+	int32 srcPos = 0;
+	int32 dstPos = 0;
+	while (srcPos < length) {
+		uint32 codepoint;
+		int32 charLen = UTF8Decode(fPrivateData + srcPos, codepoint);
+		dstPos += UTF8Encode(unicode_tolower(codepoint), buffer + dstPos);
+		srcPos += charLen;
+	}
+
+	if (_MakeWritable(dstPos, false) == B_OK)
+		memcpy(fPrivateData, buffer, dstPos);
+
+	free(buffer);
 	return *this;
 }
 
@@ -1997,10 +2013,34 @@ BString&
 BString::ToUpper()
 {
 	int32 length = Length();
-	if (length > 0 && _MakeWritable() == B_OK) {
-		for (int32 count = 0; count < length; count++)
-			fPrivateData[count] = toupper(fPrivateData[count]);
+	if (length <= 0)
+		return *this;
+
+	if (is_ascii_only(fPrivateData, length)) {
+		if (_MakeWritable() == B_OK) {
+			for (int32 i = 0; i < length; i++)
+				fPrivateData[i] = toupper(fPrivateData[i]);
+		}
+		return *this;
 	}
+
+	char* buffer = (char*)malloc(length * 2 + 1);
+	if (buffer == NULL)
+		return *this;
+
+	int32 srcPos = 0;
+	int32 dstPos = 0;
+	while (srcPos < length) {
+		uint32 codepoint;
+		int32 charLen = UTF8Decode(fPrivateData + srcPos, codepoint);
+		dstPos += UTF8Encode(unicode_toupper(codepoint), buffer + dstPos);
+		srcPos += charLen;
+	}
+
+	if (_MakeWritable(dstPos, false) == B_OK)
+		memcpy(fPrivateData, buffer, dstPos);
+
+	free(buffer);
 	return *this;
 }
 
@@ -2009,12 +2049,42 @@ BString&
 BString::Capitalize()
 {
 	int32 length = Length();
+	if (length <= 0)
+		return *this;
 
-	if (length > 0 && _MakeWritable() == B_OK) {
-		fPrivateData[0] = toupper(fPrivateData[0]);
-		for (int32 count = 1; count < length; count++)
-			fPrivateData[count] = tolower(fPrivateData[count]);
+	if (is_ascii_only(fPrivateData, length)) {
+		if (_MakeWritable() == B_OK) {
+			fPrivateData[0] = toupper(fPrivateData[0]);
+			for (int32 i = 1; i < length; i++)
+				fPrivateData[i] = tolower(fPrivateData[i]);
+		}
+		return *this;
 	}
+
+	char* buffer = (char*)malloc(length * 2 + 1);
+	if (buffer == NULL)
+		return *this;
+
+	int32 srcPos = 0;
+	int32 dstPos = 0;
+	bool first = true;
+	while (srcPos < length) {
+		uint32 codepoint;
+		int32 charLen = UTF8Decode(fPrivateData + srcPos, codepoint);
+		if (first) {
+			codepoint = unicode_toupper(codepoint);
+			first = false;
+		} else {
+			codepoint = unicode_tolower(codepoint);
+		}
+		dstPos += UTF8Encode(codepoint, buffer + dstPos);
+		srcPos += charLen;
+	}
+
+	if (_MakeWritable(dstPos, false) == B_OK)
+		memcpy(fPrivateData, buffer, dstPos);
+
+	free(buffer);
 	return *this;
 }
 
@@ -2023,30 +2093,66 @@ BString&
 BString::CapitalizeEachWord()
 {
 	int32 length = Length();
+	if (length <= 0)
+		return *this;
 
-	if (length > 0 && _MakeWritable() == B_OK) {
-		int32 count = 0;
-		do {
-			// Find the first alphabetical character...
-			for (; count < length; count++) {
-				if (isalpha(fPrivateData[count])) {
-					// ...found! Convert it to uppercase.
-					fPrivateData[count] = toupper(fPrivateData[count]);
-					count++;
-					break;
+	if (is_ascii_only(fPrivateData, length)) {
+		if (_MakeWritable() == B_OK) {
+			int32 count = 0;
+			do {
+				// Find the first alphabetical character...
+				for (; count < length; count++) {
+					if (isalpha(fPrivateData[count])) {
+						fPrivateData[count] = toupper(fPrivateData[count]);
+						count++;
+						break;
+					}
 				}
-			}
-
-			// Now find the first non-alphabetical character,
-			// and meanwhile, turn to lowercase all the alphabetical ones
-			for (; count < length; count++) {
-				if (isalpha(fPrivateData[count]))
-					fPrivateData[count] = tolower(fPrivateData[count]);
-				else
-					break;
-			}
-		} while (count < length);
+				// Now find the first non-alphabetical character,
+				// and meanwhile, turn to lowercase all the alphabetical ones
+				for (; count < length; count++) {
+					if (isalpha(fPrivateData[count]))
+						fPrivateData[count] = tolower(fPrivateData[count]);
+					else
+						break;
+				}
+			} while (count < length);
+		}
+		return *this;
 	}
+
+	// UTF-8 path
+	char* buffer = (char*)malloc(length * 2 + 1);
+	if (buffer == NULL)
+		return *this;
+
+	int32 srcPos = 0;
+	int32 dstPos = 0;
+	bool wordStart = true;
+
+	while (srcPos < length) {
+		uint32 codepoint;
+		int32 charLen = UTF8Decode(fPrivateData + srcPos, codepoint);
+
+		if (unicode_isalpha(codepoint)) {
+			if (wordStart) {
+				codepoint = unicode_toupper(codepoint);
+				wordStart = false;
+			} else {
+				codepoint = unicode_tolower(codepoint);
+			}
+		} else {
+			wordStart = true;
+		}
+
+		dstPos += UTF8Encode(codepoint, buffer + dstPos);
+		srcPos += charLen;
+	}
+
+	if (_MakeWritable(dstPos, false) == B_OK)
+		memcpy(fPrivateData, buffer, dstPos);
+
+	free(buffer);
 	return *this;
 }
 
@@ -2401,10 +2507,8 @@ BString::_Clone(const char* data, int32 length)
 	if (newData == NULL)
 		return NULL;
 
-	if (data != NULL && length > 0) {
-		// "data" may not span over the whole length
-		strncpy(newData, data, length);
-	}
+	if (data != NULL && length > 0)
+		memcpy(newData, data, length);
 
 	return newData;
 }
@@ -2468,7 +2572,7 @@ BString::_DoAppend(const char* string, int32 length)
 {
 	int32 oldLength = Length();
 	if (_MakeWritable(oldLength + length, true) == B_OK) {
-		strncpy(fPrivateData + oldLength, string, length);
+		memcpy(fPrivateData + oldLength, string, length);
 		return true;
 	}
 	return false;
@@ -2478,12 +2582,11 @@ BString::_DoAppend(const char* string, int32 length)
 bool
 BString::_DoPrepend(const char* string, int32 length)
 {
-	// TODO: this could be optimized (allocate a new buffer, use memcpy())
 	int32 oldLength = Length();
 	if (_MakeWritable(oldLength + length, true) == B_OK) {
 		memmove(fPrivateData + length, fPrivateData, oldLength);
 		if (string && length)
-			strncpy(fPrivateData, string, length);
+			memcpy(fPrivateData, string, length);
 		return true;
 	}
 	return false;
@@ -2498,7 +2601,7 @@ BString::_DoInsert(const char* string, int32 offset, int32 length)
 		memmove(fPrivateData + offset + length, fPrivateData + offset,
 			oldLength - offset);
 		if (string != NULL && length)
-			strncpy(fPrivateData + offset, string, length);
+			memcpy(fPrivateData + offset, string, length);
 		return true;
 	}
 	return false;
@@ -2544,15 +2647,31 @@ BString::_IFindAfter(const char* string, int32 offset, int32 length) const
 int32
 BString::_FindBefore(const char* string, int32 offset, int32 length) const
 {
-	if (fPrivateData != NULL) {
-		const char* ptr = fPrivateData + offset - length;
+	if (fPrivateData == NULL || length <= 0 || offset < length)
+		return B_ERROR;
 
-		while (ptr >= fPrivateData) {
-			if (!memcmp(ptr, string, length))
+	const char* start = fPrivateData;
+	const char* ptr = fPrivateData + offset - length;
+
+	if (length == 1) {
+		// single-byte search: just compare the byte directly
+		char c = string[0];
+		while (ptr >= start) {
+			if (*ptr == c)
 				return ptr - fPrivateData;
 			ptr--;
 		}
+		return B_ERROR;
 	}
+
+	// multi-byte search: check the first byte before doing a full memcmp
+	char firstChar = string[0];
+	while (ptr >= start) {
+		if (*ptr == firstChar && memcmp(ptr, string, length) == 0)
+			return ptr - fPrivateData;
+		ptr--;
+	}
+
 	return B_ERROR;
 }
 
@@ -2560,15 +2679,25 @@ BString::_FindBefore(const char* string, int32 offset, int32 length) const
 int32
 BString::_IFindBefore(const char* string, int32 offset, int32 length) const
 {
-	if (fPrivateData != NULL) {
-		char* ptr1 = fPrivateData + offset - length;
+	if (fPrivateData == NULL || length <= 0 || offset < length)
+		return B_ERROR;
 
-		while (ptr1 >= fPrivateData) {
-			if (!strncasecmp(ptr1, string, length))
-				return ptr1 - fPrivateData;
-			ptr1--;
+	const char* start = fPrivateData;
+	char* ptr = fPrivateData + offset - length;
+
+	// pre-compute both cases of the first byte to avoid repeated tolower/toupper
+	char lowerFirst = tolower(string[0]);
+	char upperFirst = toupper(string[0]);
+
+	while (ptr >= start) {
+		char c = *ptr;
+		if ((c == lowerFirst || c == upperFirst)
+			&& strncasecmp(ptr, string, length) == 0) {
+			return ptr - fPrivateData;
 		}
+		ptr--;
 	}
+
 	return B_ERROR;
 }
 
@@ -2714,101 +2843,6 @@ BString::_ReplaceAtPositions(const PosVect* positions, int32 searchLength,
 	_FreePrivateData();
 	fPrivateData = newData;
 }
-
-
-//	#pragma mark - backwards compatibility
-
-
-/*!	Translates to (missing const):
-	BString& BString::operator<<(BString& string)
-*/
-extern "C" BString&
-__ls__7BStringR7BString(BString* self, BString& string)
-{
-	return self->operator<<(string);
-}
-
-
-#if __GNUC__ > 3
-
-//	#pragma mark - BStringRef backwards compatibility
-
-
-class BStringRef {
-public:
-	BStringRef(BString& string, int32 position);
-	~BStringRef() {}
-
-	operator char() const;
-
-	char* operator&();
-	const char* operator&() const;
-
-	BStringRef& operator=(char c);
-	BStringRef& operator=(const BStringRef& rc);
-
-private:
-	BString&	fString;
-	int32		fPosition;
-};
-
-
-BStringRef::BStringRef(BString& string, int32 position)
-	:
-	fString(string), fPosition(position)
-{
-}
-
-
-BStringRef::operator char() const
-{
-	return fPosition < fString.Length() ? fString.fPrivateData[fPosition] : 0;
-}
-
-
-BStringRef&
-BStringRef::operator=(char c)
-{
-	fString._MakeWritable();
-	fString.fPrivateData[fPosition] = c;
-	return *this;
-}
-
-
-BStringRef&
-BStringRef::operator=(const BStringRef &rc)
-{
-	return operator=(rc.fString.fPrivateData[rc.fPosition]);
-}
-
-
-const char*
-BStringRef::operator&() const
-{
-	return &fString.fPrivateData[fPosition];
-}
-
-
-char*
-BStringRef::operator&()
-{
-	if (fString._MakeWritable() != B_OK)
-		return NULL;
-
-	fString._ReferenceCount() = -1;
-		// mark as unsharable
-	return &fString.fPrivateData[fPosition];
-}
-
-
-
-extern "C" BStringRef
-_ZN7BStringixEi(BString* self, int32 index)
-
-{
-	return BStringRef(*self, index);
-}
-#endif
 
 
 //	#pragma mark - Non-member compare for sorting, etc.

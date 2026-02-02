@@ -22,3 +22,4 @@
 #include <TypeConstants.h>
 #include <UTF8.h>
 #include <syslog.h>
+#include <UnicodeUtils.h>
