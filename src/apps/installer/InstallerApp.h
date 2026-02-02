@@ -6,12 +6,23 @@
 #ifndef INSTALLER_APP_H
 #define INSTALLER_APP_H
 
-
 #include <Application.h>
 #include <Catalog.h>
+#include <SupportDefs.h>
 #include <Window.h>
 
 #include "InstallerWindow.h"
+
+
+// Install progress messages
+static const uint32 MSG_STATUS_MESSAGE = 'iSTM';
+static const uint32 MSG_INSTALL_FINISHED = 'iIFN';
+static const uint32 MSG_RESET = 'iRSI';
+static const uint32 MSG_WRITE_BOOT_SECTOR = 'iWBS';
+
+// Installation paths
+static const char* const kPackagesDirectoryPath = "_packages_";
+static const char* const kSourcesDirectoryPath = "_sources_";
 
 
 class EULAWindow : public BWindow {

@@ -37,12 +37,11 @@
 #include <VolumeRoster.h>
 
 #include "AutoLocker.h"
-#include "CopyEngine.h"
-#include "InstallerDefs.h"
+#include "InstallEngine.h"
+#include "InstallerApp.h"
 #include "InstallerWindow.h"
 #include "PackageViews.h"
 #include "StringForSize.h"
-#include "UnzipEngine.h"
 
 
 #undef B_TRANSLATION_CONTEXT

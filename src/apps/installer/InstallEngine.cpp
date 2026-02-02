@@ -5,8 +5,7 @@
  * All rights reserved. Distributed under the terms of the MIT License.
  */
 
-
-#include "CopyEngine.h"
+#include "InstallEngine.h"
 
 #include <new>
 
@@ -19,11 +18,12 @@
 #include <Directory.h>
 #include <fs_attr.h>
 #include <Locale.h>
+#include <Node.h>
 #include <NodeInfo.h>
 #include <Path.h>
 #include <SymLink.h>
 
-#include "SemaphoreLocker.h"
+#include "Concurrency.h"
 
 
 using std::nothrow;
@@ -32,20 +32,16 @@ using std::nothrow;
 #define B_TRANSLATION_CONTEXT "InstallProgress"
 
 
-// #pragma mark - ProgressReporter
-
+// ProgressReporter
 
 ProgressReporter::ProgressReporter(const BMessenger& messenger,
 		BMessage* message)
 	:
 	fStartTime(0),
-
 	fBytesToWrite(0),
 	fBytesWritten(0),
-
 	fItemsToWrite(0),
 	fItemsWritten(0),
-
 	fMessenger(messenger),
 	fMessage(message)
 {
@@ -63,7 +59,6 @@ ProgressReporter::Reset()
 {
 	fBytesToWrite = 0;
 	fBytesWritten = 0;
-
 	fItemsToWrite = 0;
 	fItemsWritten = 0;
 
@@ -118,8 +113,6 @@ ProgressReporter::_UpdateProgress(const char* itemName,
 	if (fMessage == NULL)
 		return;
 
-	// TODO: Could add time to finish calculation here...
-
 	BMessage message(*fMessage);
 	float progress = 100.0 * fBytesWritten / fBytesToWrite;
 	message.AddFloat("progress", progress);
@@ -131,8 +124,7 @@ ProgressReporter::_UpdateProgress(const char* itemName,
 }
 
 
-// #pragma mark - CopyEngine::Buffer
-
+// CopyEngine::Buffer
 
 CopyEngine::Buffer::Buffer(BFile* file)
 	:
@@ -153,16 +145,14 @@ CopyEngine::Buffer::~Buffer()
 }
 
 
-// #pragma mark - CopyEngine::EntryFilter
-
+// CopyEngine::EntryFilter
 
 CopyEngine::EntryFilter::~EntryFilter()
 {
 }
 
 
-// #pragma mark - CopyEngine
-
+// CopyEngine
 
 CopyEngine::CopyEngine(ProgressReporter* reporter, EntryFilter* entryFilter)
 	:
@@ -170,24 +160,18 @@ CopyEngine::CopyEngine(ProgressReporter* reporter, EntryFilter* entryFilter)
 	fWriterThread(-1),
 	fQuitting(false),
 	fWriteError(B_OK),
-
 	fAbsoluteSourcePath(),
-
 	fAddedBytesToProgress(0),
 	fAddedItemsToProgress(0),
-
 	fBytesRead(0),
 	fLastBytesRead(0),
 	fItemsCopied(0),
 	fLastItemsCopied(0),
 	fTimeRead(0),
-
 	fBytesWritten(0),
 	fTimeWritten(0),
-
 	fCurrentTargetFolder(NULL),
 	fCurrentItem(NULL),
-
 	fProgressReporter(reporter),
 	fEntryFilter(entryFilter)
 {
@@ -208,9 +192,6 @@ CopyEngine::~CopyEngine()
 {
 	fQuitting = true;
 
-	// Close the queue to unblock the writer thread's Pop() call.
-	// It will receive B_NO_INIT and exit cleanly.
-	// Don't delete elements yet - writer thread may hold a reference.
 	const vector<Buffer*>* remaining = NULL;
 	fBufferQueue.Close(false, &remaining);
 
@@ -219,7 +200,6 @@ CopyEngine::~CopyEngine()
 		wait_for_thread(fWriterThread, &exitValue);
 	}
 
-	// Writer thread has exited, safe to delete remaining buffers
 	if (remaining != NULL) {
 		for (size_t i = 0; i < remaining->size(); i++)
 			delete (*remaining)[i];
@@ -240,19 +220,15 @@ CopyEngine::ResetTargets(const char* source)
 
 	fAddedBytesToProgress = 0;
 	fAddedItemsToProgress = 0;
-
 	fBytesRead = 0;
 	fLastBytesRead = 0;
 	fItemsCopied = 0;
 	fLastItemsCopied = 0;
 	fTimeRead = 0;
-
 	fBytesWritten = 0;
 	fTimeWritten = 0;
-
 	fCurrentTargetFolder = NULL;
 	fCurrentItem = NULL;
-
 	fWriteError = B_OK;
 }
 
@@ -729,4 +705,310 @@ CopyEngine::_WriteThread()
 	if (seconds > 0) {
 		printf("%.2f MB written (%.2f MB/s)\n", megaBytes, megaBytes / seconds);
 	}
+}
+
+
+// UnzipEngine
+
+UnzipEngine::UnzipEngine(ProgressReporter* reporter, sem_id cancelSemaphore)
+	:
+	fPackage(""),
+	fRetrievingListing(false),
+	fBytesToUncompress(0),
+	fBytesUncompressed(0),
+	fLastBytesUncompressed(0),
+	fItemsToUncompress(0),
+	fItemsUncompressed(0),
+	fLastItemsUncompressed(0),
+	fProgressReporter(reporter),
+	fCancelSemaphore(cancelSemaphore)
+{
+}
+
+
+UnzipEngine::~UnzipEngine()
+{
+}
+
+
+status_t
+UnzipEngine::SetTo(const char* pathToPackage, const char* destinationFolder)
+{
+	fPackage = pathToPackage;
+	fDestinationFolder = destinationFolder;
+
+	fEntrySizeMap.Clear();
+
+	fBytesToUncompress = 0;
+	fBytesUncompressed = 0;
+	fLastBytesUncompressed = 0;
+	fItemsToUncompress = 0;
+	fItemsUncompressed = 0;
+	fLastItemsUncompressed = 0;
+
+	BPrivate::BCommandPipe commandPipe;
+	status_t ret = commandPipe.AddArg("unzip");
+	if (ret == B_OK)
+		ret = commandPipe.AddArg("-l");
+	if (ret == B_OK)
+		ret = commandPipe.AddArg(fPackage.String());
+	if (ret != B_OK)
+		return ret;
+
+	FILE* stdOutAndErrPipe = NULL;
+	thread_id unzipThread = commandPipe.PipeInto(&stdOutAndErrPipe);
+	if (unzipThread < 0)
+		return (status_t)unzipThread;
+
+	fRetrievingListing = true;
+	ret = commandPipe.ReadLines(stdOutAndErrPipe, this);
+	fRetrievingListing = false;
+
+	printf("%" B_PRIu64 " items in %" B_PRIdOFF " bytes\n", fItemsToUncompress,
+		fBytesToUncompress);
+
+	return ret;
+}
+
+
+status_t
+UnzipEngine::UnzipPackage()
+{
+	if (fItemsToUncompress == 0)
+		return B_NO_INIT;
+
+	BPrivate::BCommandPipe commandPipe;
+	status_t ret = commandPipe.AddArg("unzip");
+	if (ret == B_OK)
+		ret = commandPipe.AddArg("-o");
+	if (ret == B_OK)
+		ret = commandPipe.AddArg(fPackage.String());
+	if (ret == B_OK)
+		ret = commandPipe.AddArg("-d");
+	if (ret == B_OK)
+		ret = commandPipe.AddArg(fDestinationFolder.String());
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to construct argument list for unzip "
+			"process: %s\n", strerror(ret));
+		return ret;
+	}
+
+	FILE* stdOutAndErrPipe = NULL;
+	thread_id unzipThread = commandPipe.PipeInto(&stdOutAndErrPipe);
+	if (unzipThread < 0)
+		return (status_t)unzipThread;
+
+	ret = commandPipe.ReadLines(stdOutAndErrPipe, this);
+	if (ret != B_OK) {
+		fprintf(stderr, "Piping the unzip process failed: %s\n",
+			strerror(ret));
+		return ret;
+	}
+
+	BPath descriptionPath(fDestinationFolder.String(),
+		".OptionalPackageDescription");
+	ret = descriptionPath.InitCheck();
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to construct path to "
+			".OptionalPackageDescription: %s\n", strerror(ret));
+		return ret;
+	}
+
+	BEntry descriptionEntry(descriptionPath.Path());
+	if (!descriptionEntry.Exists())
+		return B_OK;
+
+	BFile descriptionFile(&descriptionEntry, B_READ_ONLY);
+	ret = descriptionFile.InitCheck();
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to construct file to "
+			".OptionalPackageDescription: %s\n", strerror(ret));
+		return ret;
+	}
+
+	BPath aboutSystemPath(fDestinationFolder.String(),
+		"system/apps/AboutSystem");
+	ret = aboutSystemPath.InitCheck();
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to construct path to AboutSystem: %s\n",
+			strerror(ret));
+		return ret;
+	}
+
+	BNode aboutSystemNode(aboutSystemPath.Path());
+	ret = aboutSystemNode.InitCheck();
+	if (ret != B_OK) {
+		fprintf(stderr, "Failed to construct node to AboutSystem: %s\n",
+			strerror(ret));
+		return ret;
+	}
+
+	const char* kCopyrightsAttrName = "COPYRIGHTS";
+
+	BString copyrightAttr;
+	ret = aboutSystemNode.ReadAttrString(kCopyrightsAttrName, &copyrightAttr);
+	if (ret != B_OK && ret != B_ENTRY_NOT_FOUND) {
+		fprintf(stderr, "Failed to read current COPYRIGHTS attribute from "
+			"AboutSystem: %s\n", strerror(ret));
+		return ret;
+	}
+
+	size_t bufferSize = 2048;
+	char buffer[bufferSize + 1];
+	buffer[bufferSize] = '\0';
+	while (true) {
+		ssize_t read = descriptionFile.Read(buffer, bufferSize);
+		if (read > 0) {
+			int32 length = copyrightAttr.Length();
+			if (read < (ssize_t)bufferSize)
+				buffer[read] = '\0';
+			int32 bufferLength = strlen(buffer);
+			copyrightAttr << buffer;
+			if (copyrightAttr.Length() != length + bufferLength) {
+				fprintf(stderr, "Failed to append buffer to COPYRIGHTS "
+					"attribute.\n");
+				return B_NO_MEMORY;
+			}
+		} else
+			break;
+	}
+
+	if (copyrightAttr[copyrightAttr.Length() - 1] != '\n')
+		copyrightAttr << '\n' << '\n';
+	else
+		copyrightAttr << '\n';
+
+	ret = aboutSystemNode.WriteAttrString(kCopyrightsAttrName, &copyrightAttr);
+	if (ret != B_OK && ret != B_ENTRY_NOT_FOUND) {
+		fprintf(stderr, "Failed to read current COPYRIGHTS attribute from "
+			"AboutSystem: %s\n", strerror(ret));
+		return ret;
+	}
+
+	descriptionFile.Unset();
+	descriptionEntry.Remove();
+
+	return B_OK;
+}
+
+
+bool
+UnzipEngine::IsCanceled()
+{
+	if (fCancelSemaphore < 0)
+		return false;
+
+	SemaphoreLocker locker(fCancelSemaphore);
+	return !locker.IsLocked();
+}
+
+
+status_t
+UnzipEngine::ReadLine(const BString& line)
+{
+	if (fRetrievingListing)
+		return _ReadLineListing(line);
+	else
+		return _ReadLineExtract(line);
+}
+
+
+status_t
+UnzipEngine::_ReadLineListing(const BString& line)
+{
+	static const char* kListingFormat = "%llu  %s %s   %s\n";
+
+	const char* string = line.String();
+	while (string[0] == ' ')
+		string++;
+
+	uint64 bytes;
+	char date[16];
+	char time[16];
+	char path[1024];
+	if (sscanf(string, kListingFormat, &bytes, &date, &time, &path) == 4) {
+		fBytesToUncompress += bytes;
+
+		BString itemPath(path);
+		BString itemName(path);
+		int leafPos = itemPath.FindLast('/');
+		if (leafPos >= 0)
+			itemName = itemPath.String() + leafPos + 1;
+
+		uint32 itemCount = 1;
+		if (bytes == 0 && itemName.Length() == 0) {
+			BPath destination(fDestinationFolder.String());
+			if (destination.Append(itemPath.String()) == B_OK) {
+				BEntry test(destination.Path());
+				if (test.Exists() && test.IsDirectory()) {
+					itemCount = 0;
+				}
+			}
+		}
+
+		fItemsToUncompress += itemCount;
+		fEntrySizeMap.Put(itemName.String(), bytes);
+	}
+
+	return B_OK;
+}
+
+
+status_t
+UnzipEngine::_ReadLineExtract(const BString& line)
+{
+	const char* kCreatingFormat = "   creating:";
+	const char* kInflatingFormat = "  inflating:";
+	const char* kLinkingFormat = "    linking:";
+	if (line.FindFirst(kCreatingFormat) == 0
+		|| line.FindFirst(kInflatingFormat) == 0
+		|| line.FindFirst(kLinkingFormat) == 0) {
+
+		fItemsUncompressed++;
+
+		BString itemPath;
+
+		int pos = line.FindLast(" -> ");
+		if (pos > 0)
+			line.CopyInto(itemPath, 13, pos - 13);
+		else
+			line.CopyInto(itemPath, 13, line.CountChars() - 14);
+
+		itemPath.Trim();
+		pos = itemPath.FindLast('/');
+		BString itemName = itemPath.String() + pos + 1;
+		itemPath.Truncate(pos);
+
+		off_t bytes = 0;
+		if (fEntrySizeMap.ContainsKey(itemName.String())) {
+			bytes = fEntrySizeMap.Get(itemName.String());
+			fBytesUncompressed += bytes;
+		}
+
+		_UpdateProgress(itemName.String(), itemPath.String());
+	}
+
+	return B_OK;
+}
+
+
+void
+UnzipEngine::_UpdateProgress(const char* item, const char* targetFolder)
+{
+	if (fProgressReporter == NULL)
+		return;
+
+	uint64 items = 0;
+	if (fLastItemsUncompressed < fItemsUncompressed) {
+		items = fItemsUncompressed - fLastItemsUncompressed;
+		fLastItemsUncompressed = fItemsUncompressed;
+	}
+
+	off_t bytes = 0;
+	if (fLastBytesUncompressed < fBytesUncompressed) {
+		bytes = fBytesUncompressed - fLastBytesUncompressed;
+		fLastBytesUncompressed = fBytesUncompressed;
+	}
+
+	fProgressReporter->ItemsWritten(items, bytes, item, targetFolder);
 }

@@ -45,7 +45,7 @@
 #include "tracker_private.h"
 
 #include "DialogPane.h"
-#include "InstallerDefs.h"
+#include "InstallerApp.h"
 #include "PackageViews.h"
 #include "WorkerThread.h"
 

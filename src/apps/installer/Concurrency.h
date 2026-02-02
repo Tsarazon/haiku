@@ -1,9 +1,10 @@
 /*
  * Copyright 2004, Ingo Weinhold, ingo_weinhold@gmx.de.
- * All rights reserved. Distributed under the terms of the MIT license.
+ * Copyright 2008-2009, Stephan Aßmus <superstippi@gmx.de>
+ * All rights reserved. Distributed under the terms of the MIT License.
  */
-#ifndef BLOCKING_QUEUE_H
-#define BLOCKING_QUEUE_H
+#ifndef CONCURRENCY_H
+#define CONCURRENCY_H
 
 #include <vector>
 
@@ -12,6 +13,41 @@
 #include "AutoLocker.h"
 
 using std::vector;
+
+
+// SemaphoreLocking policy for AutoLocker
+
+class SemaphoreLocking {
+public:
+	inline bool Lock(sem_id* lockable)
+	{
+		return acquire_sem(*lockable) == B_OK;
+	}
+
+	inline void Unlock(sem_id* lockable)
+	{
+		release_sem(*lockable);
+	}
+};
+
+
+class SemaphoreLocker : public AutoLocker<sem_id, SemaphoreLocking> {
+public:
+	inline SemaphoreLocker(sem_id semaphore, bool alreadyLocked = false,
+			bool lockIfNotLocked = true)
+		:
+		AutoLocker<sem_id, SemaphoreLocking>(),
+		fSem(semaphore)
+	{
+		SetTo(&fSem, alreadyLocked, lockIfNotLocked);
+	}
+
+private:
+	sem_id	fSem;
+};
+
+
+// BlockingQueue - thread-safe queue with blocking Pop
 
 typedef BLocker Locker;
 
@@ -39,7 +75,7 @@ private:
 			sem_id				fElementSemaphore;
 };
 
-// constructor
+
 template<typename Element>
 BlockingQueue<Element>::BlockingQueue(const char* name)
 	: fElements(),
@@ -48,7 +84,7 @@ BlockingQueue<Element>::BlockingQueue(const char* name)
 	fElementSemaphore = create_sem(0, (name ? name : "blocking queue"));
 }
 
-// destructor
+
 template<typename Element>
 BlockingQueue<Element>::~BlockingQueue()
 {
@@ -56,7 +92,7 @@ BlockingQueue<Element>::~BlockingQueue()
 		delete_sem(fElementSemaphore);
 }
 
-// InitCheck
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::InitCheck() const
@@ -64,7 +100,7 @@ BlockingQueue<Element>::InitCheck() const
 	return (fElementSemaphore < 0 ? fElementSemaphore : B_OK);
 }
 
-// Close
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::Close(bool deleteElements,
@@ -86,7 +122,7 @@ BlockingQueue<Element>::Close(bool deleteElements,
 	return error;
 }
 
-// Push
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::Push(Element* element)
@@ -105,7 +141,7 @@ BlockingQueue<Element>::Push(Element* element)
 	return error;
 }
 
-// Pop
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::Pop(Element** element, bigtime_t timeout)
@@ -125,7 +161,7 @@ BlockingQueue<Element>::Pop(Element** element, bigtime_t timeout)
 	return B_OK;
 }
 
-// Peek
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::Peek(Element** element)
@@ -140,7 +176,7 @@ BlockingQueue<Element>::Peek(Element** element)
 	return B_OK;
 }
 
-// Remove
+
 template<typename Element>
 status_t
 BlockingQueue<Element>::Remove(Element* element)
@@ -164,9 +200,6 @@ BlockingQueue<Element>::Remove(Element* element)
 		release_sem(fElementSemaphore);
 		return B_ENTRY_NOT_FOUND;
 	}
-	// We acquired 1 semaphore count but removed 'count' elements.
-	// Acquire the extra (count - 1) to keep semaphore in sync with
-	// the actual number of elements in the queue.
 	if (count > 1) {
 		acquire_sem_etc(fElementSemaphore, count - 1,
 			B_RELATIVE_TIMEOUT, 0);
@@ -174,7 +207,7 @@ BlockingQueue<Element>::Remove(Element* element)
 	return error;
 }
 
-// Size
+
 template<typename Element>
 int32
 BlockingQueue<Element>::Size()
@@ -183,4 +216,4 @@ BlockingQueue<Element>::Size()
 	return (fElements.size());
 }
 
-#endif	// BLOCKING_QUEUE_H
+#endif	// CONCURRENCY_H
