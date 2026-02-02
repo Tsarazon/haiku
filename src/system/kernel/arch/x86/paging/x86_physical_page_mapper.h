@@ -12,34 +12,6 @@
 struct kernel_args;
 
 
-#ifndef __x86_64__
-
-
-class TranslationMapPhysicalPageMapper {
-public:
-	virtual						~TranslationMapPhysicalPageMapper() { }
-
-	virtual	void				Delete() = 0;
-
-	virtual	void*				GetPageTableAt(phys_addr_t physicalAddress) = 0;
-		// Must be invoked with thread pinned to current CPU.
-};
-
-
-class X86PhysicalPageMapper : public VMPhysicalPageMapper {
-public:
-	virtual	status_t			CreateTranslationMapPhysicalPageMapper(
-									TranslationMapPhysicalPageMapper** _mapper)
-										= 0;
-
-	virtual	void*				InterruptGetPageTableAt(
-									phys_addr_t physicalAddress) = 0;
-};
-
-
-#else
-
-
 class TranslationMapPhysicalPageMapper {
 public:
 	void	Delete();
@@ -79,9 +51,6 @@ public:
 
 
 #include "paging/x86_physical_page_mapper_mapped.h"
-
-
-#endif	// __x86_64__
 
 
 #endif	// KERNEL_ARCH_X86_PAGING_X86_PHYSICAL_PAGE_MAPPER_H

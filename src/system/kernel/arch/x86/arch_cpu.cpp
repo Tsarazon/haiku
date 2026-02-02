@@ -82,7 +82,6 @@ struct set_mtrrs_parameter {
 };
 
 
-#ifdef __x86_64__
 extern addr_t _stac;
 extern addr_t _clac;
 extern addr_t _xsave;
@@ -92,16 +91,11 @@ uint64 gXsaveMask;
 uint64 gFPUSaveLength = 512;
 bool gHasXsave = false;
 bool gHasXsavec = false;
-#endif
 
 extern "C" void x86_reboot(void);
 	// from arch.S
 
 void (*gCpuIdleFunc)(void);
-#ifndef __x86_64__
-void (*gX86SwapFPUFunc)(void* oldState, const void* newState) = x86_noop_swap;
-bool gHasSSE = false;
-#endif
 
 static uint32 sCpuRendezvous;
 static uint32 sCpuRendezvous2;
@@ -345,33 +339,7 @@ void
 x86_init_fpu(void)
 {
 	// All x86_64 CPUs support SSE, don't need to bother checking for it.
-#ifndef __x86_64__
-	if (!x86_check_feature(IA32_FEATURE_FPU, FEATURE_COMMON)) {
-		// No FPU... time to install one in your 386?
-		dprintf("%s: Warning: CPU has no reported FPU.\n", __func__);
-		gX86SwapFPUFunc = x86_noop_swap;
-		return;
-	}
-
-	if (!x86_check_feature(IA32_FEATURE_SSE, FEATURE_COMMON)
-		|| !x86_check_feature(IA32_FEATURE_FXSR, FEATURE_COMMON)) {
-		dprintf("%s: CPU has no SSE... just enabling FPU.\n", __func__);
-		// we don't have proper SSE support, just enable FPU
-		x86_write_cr0(x86_read_cr0() & ~(CR0_FPU_EMULATION | CR0_MONITOR_FPU));
-		gX86SwapFPUFunc = x86_fnsave_swap;
-		return;
-	}
-#endif
-
 	dprintf("%s: CPU has SSE... enabling FXSR and XMM.\n", __func__);
-#ifndef __x86_64__
-	// enable OS support for SSE
-	x86_write_cr4(x86_read_cr4() | CR4_OS_FXSR | CR4_OS_XMM_EXCEPTION);
-	x86_write_cr0(x86_read_cr0() & ~(CR0_FPU_EMULATION | CR0_MONITOR_FPU));
-
-	gX86SwapFPUFunc = x86_fxsave_swap;
-	gHasSSE = true;
-#endif
 }
 
 
@@ -1719,22 +1687,11 @@ init_tsc(kernel_args* args)
 	init_tsc_with_msr(args, &conversionFactor);
 	uint64 conversionFactorNsecs = (uint64)conversionFactor * 1000;
 
-#ifdef __x86_64__
 	// The x86_64 system_time() implementation uses 64-bit multiplication and
 	// therefore shifting is not necessary for low frequencies (it's also not
 	// too likely that there'll be any x86_64 CPUs clocked under 1GHz).
 	__x86_setup_system_time((uint64)conversionFactor << 32,
 		conversionFactorNsecs);
-#else
-	if (conversionFactorNsecs >> 32 != 0) {
-		// the TSC frequency is < 1 GHz, which forces us to shift the factor
-		__x86_setup_system_time(conversionFactor, conversionFactorNsecs >> 16,
-			true);
-	} else {
-		// the TSC frequency is >= 1 GHz
-		__x86_setup_system_time(conversionFactor, conversionFactorNsecs, false);
-	}
-#endif
 }
 
 
@@ -1786,7 +1743,6 @@ arch_cpu_init_percpu(kernel_args* args, int cpu)
 	if (sUsePAT)
 		init_pat(cpu);
 
-#ifdef __x86_64__
 	// if RDTSCP or RDPID are available write cpu number in TSC_AUX
 	if (x86_check_feature(IA32_FEATURE_AMD_EXT_RDTSCP, FEATURE_EXT_AMD)
 		|| x86_check_feature(IA32_FEATURE_RDPID, FEATURE_7_ECX)) {
@@ -1802,7 +1758,6 @@ arch_cpu_init_percpu(kernel_args* args, int cpu)
 				x86_write_msr(MSR_F10H_DE_CFG, value | DE_CFG_SERIALIZE_LFENCE);
 		}
 	}
-#endif
 
 	if (x86_check_feature(IA32_FEATURE_APERFMPERF, FEATURE_6_ECX)) {
 		gCPU[cpu].arch.mperf_prev = x86_read_msr(IA32_MSR_MPERF);
@@ -1832,7 +1787,6 @@ arch_cpu_init(kernel_args* args)
 }
 
 
-#ifdef __x86_64__
 static void
 enable_smap(void* dummy, int cpu)
 {
@@ -1859,7 +1813,6 @@ enable_xsavemask(void* dummy, int cpu)
 {
 	xsetbv(0, gXsaveMask);
 }
-#endif
 
 
 status_t
@@ -1887,7 +1840,6 @@ arch_cpu_init_post_vm(kernel_args* args)
 		x86_init_fpu();
 	// else fpu gets set up in smp code
 
-#ifdef __x86_64__
 	// if available enable SMEP (Supervisor Memory Execution Protection)
 	if (x86_check_feature(IA32_FEATURE_SMEP, FEATURE_7_EBX)) {
 		if (!get_safemode_boolean(B_SAFEMODE_DISABLE_SMEP_SMAP, false)) {
@@ -1934,7 +1886,6 @@ arch_cpu_init_post_vm(kernel_args* args)
 		dprintf("enable %s 0x%" B_PRIx64 " %" B_PRId64 "\n",
 			gHasXsavec ? "XSAVEC" : "XSAVE", gXsaveMask, gFPUSaveLength);
 	}
-#endif
 
 	return B_OK;
 }
@@ -2032,13 +1983,8 @@ arch_cpu_shutdown(bool rebootSystem)
 	if (acpi_shutdown(rebootSystem) == B_OK)
 		return B_OK;
 
-	if (!rebootSystem) {
-#ifndef __x86_64__
-		return apm_shutdown();
-#else
+	if (!rebootSystem)
 		return B_NOT_SUPPORTED;
-#endif
-	}
 
 	cpu_status state = disable_interrupts();
 

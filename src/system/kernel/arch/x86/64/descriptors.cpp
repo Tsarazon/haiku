@@ -42,8 +42,7 @@ class Descriptor {
 public:
 	constexpr				Descriptor();
 	inline					Descriptor(uint32_t first, uint32_t second);
-	constexpr				Descriptor(DescriptorType type, bool kernelOnly,
-								bool compatMode = false);
+	constexpr				Descriptor(DescriptorType type, bool kernelOnly);
 
 protected:
 	union {
@@ -186,7 +185,7 @@ Descriptor::Descriptor(uint32_t first, uint32_t second)
 
 
 constexpr
-Descriptor::Descriptor(DescriptorType type, bool kernelOnly, bool compatMode)
+Descriptor::Descriptor(DescriptorType type, bool kernelOnly)
 	:
 	fLimit0(-1),
 	fBase0(0),
@@ -196,8 +195,8 @@ Descriptor::Descriptor(DescriptorType type, bool kernelOnly, bool compatMode)
 	fPresent(1),
 	fLimit1(0xf),
 	fUnused(0),
-	fLong(is_code_segment(type) && !compatMode ? 1 : 0),
-	fDB(is_code_segment(type) && !compatMode ? 0 : 1),
+	fLong(is_code_segment(type) ? 1 : 0),
+	fDB(is_code_segment(type) ? 0 : 1),
 	fGranularity(1),
 	fBase1(0)
 {
@@ -241,7 +240,7 @@ GlobalDescriptorTable::GlobalDescriptorTable()
 		Descriptor(),
 		Descriptor(DescriptorType::CodeExecuteOnly, true),
 		Descriptor(DescriptorType::DataWritable, true),
-		Descriptor(DescriptorType::CodeExecuteOnly, false, true),
+		Descriptor(),  // reserved (was USER32_CODE_SELECTOR, slot needed for SYSRET arithmetic)
 		Descriptor(DescriptorType::DataWritable, false),
 		Descriptor(DescriptorType::CodeExecuteOnly, false),
 	}

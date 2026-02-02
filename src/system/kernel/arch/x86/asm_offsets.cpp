@@ -44,12 +44,10 @@ dummy()
 	static_assert(sizeof(struct iframe) % 16 == 0 || sizeof(struct iframe) % 4 == 0,
 				  "iframe size must be properly aligned for stack operations");
 
-	#ifdef __x86_64__
 	// x86_64 requires 16-byte stack alignment before call instructions
 	// TODO: Fix iframe struct to be 16-byte aligned
 	// static_assert(sizeof(struct iframe) % 16 == 0,
 	//			  "x86_64 iframe must be 16-byte aligned");
-	#endif
 
 	// CPU and thread state structures
 
@@ -71,7 +69,6 @@ dummy()
 	DEFINE_OFFSET_MACRO(THREAD, Thread, kernel_stack_top);
 	DEFINE_OFFSET_MACRO(THREAD, Thread, fault_handler);
 
-	#ifdef __x86_64__
 	// x86_64-specific thread state
 	DEFINE_MACRO(THREAD_user_fpu_state, offsetof(Thread, arch_info.user_fpu_state));
 
@@ -79,7 +76,6 @@ dummy()
 	DEFINE_OFFSET_MACRO(ARCH_THREAD, arch_thread, syscall_rsp);
 	DEFINE_OFFSET_MACRO(ARCH_THREAD, arch_thread, user_rsp);
 	DEFINE_OFFSET_MACRO(ARCH_THREAD, arch_thread, current_stack);
-	#endif
 
 	// Interrupt frame (saved CPU state on kernel entry)
 
@@ -96,7 +92,6 @@ dummy()
 	DEFINE_OFFSET_MACRO(IFRAME, iframe, flags);
 	DEFINE_OFFSET_MACRO(IFRAME, iframe, user_sp);
 
-	#ifdef __x86_64__
 	// Additional x86_64 registers
 	DEFINE_OFFSET_MACRO(IFRAME, iframe, r8);
 	DEFINE_OFFSET_MACRO(IFRAME, iframe, r9);
@@ -106,10 +101,6 @@ dummy()
 	// Validate FPU state pointer alignment
 	static_assert(offsetof(struct iframe, fpu) % 8 == 0,
 				  "FPU state pointer must be 8-byte aligned");
-	#else
-	// x86 (32-bit) specific saved registers
-	DEFINE_OFFSET_MACRO(IFRAME, iframe, orig_eax);
-	#endif
 
 	// Syscall dispatch structures
 

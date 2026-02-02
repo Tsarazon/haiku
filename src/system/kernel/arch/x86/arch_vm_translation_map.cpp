@@ -13,12 +13,7 @@
 #include <boot/kernel_args.h>
 #include <safemode.h>
 
-#ifdef __x86_64__
-#	include "paging/64bit/X86PagingMethod64Bit.h"
-#else
-#	include "paging/32bit/X86PagingMethod32Bit.h"
-#	include "paging/pae/X86PagingMethodPAE.h"
-#endif
+#include "paging/64bit/X86PagingMethod64Bit.h"
 
 
 //#define TRACE_VM_TMAP
@@ -31,14 +26,7 @@
 
 static union {
 	uint64	align;
-	#ifdef __x86_64__
 	char	sixty_four[sizeof(X86PagingMethod64Bit)];
-	#else
-	char	thirty_two[sizeof(X86PagingMethod32Bit)];
-	#if B_HAIKU_PHYSICAL_BITS == 64
-	char	pae[sizeof(X86PagingMethodPAE)];
-	#endif
-	#endif
 } sPagingMethodBuffer;
 
 
@@ -73,8 +61,6 @@ validate_physical_memory_ranges(kernel_args* args)
 	return true;
 }
 
-
-#ifdef __x86_64__
 
 static status_t
 init_64bit_paging_method(kernel_args* args)
@@ -111,80 +97,6 @@ init_64bit_paging_method(kernel_args* args)
 
 	return B_OK;
 }
-
-#else // !__x86_64__
-
-static bool
-is_pae_needed(kernel_args* args)
-{
-	// PAE required if NX bit is available (security feature)
-	if (x86_check_feature(IA32_FEATURE_AMD_EXT_NX, FEATURE_EXT_AMD))
-		return true;
-
-	// PAE required if any physical memory above 4GB
-	for (uint32 i = 0; i < args->num_physical_memory_ranges; i++) {
-		phys_addr_t end = args->physical_memory_range[i].start
-		+ args->physical_memory_range[i].size;
-		if (end > 0x100000000ULL)
-			return true;
-	}
-
-	return false;
-}
-
-
-static status_t
-init_32bit_paging_method(kernel_args* args)
-{
-	bool paeAvailable = x86_check_feature(IA32_FEATURE_PAE, FEATURE_COMMON);
-	bool paeNeeded = is_pae_needed(args);
-	bool paeDisabled = get_safemode_boolean_early(args,
-												  B_SAFEMODE_4_GB_MEMORY_LIMIT, false);
-
-	bool usePAE = paeAvailable && paeNeeded && !paeDisabled;
-
-	#if B_HAIKU_PHYSICAL_BITS == 64
-	if (usePAE) {
-		// Verify PAE actually works by checking CR4
-		uint64 cr4 = x86_read_cr4();
-		if ((cr4 & IA32_CR4_PAE) != 0) {
-			// Already enabled, verify it reads back
-			uint64 testCr4 = x86_read_cr4();
-			if ((testCr4 & IA32_CR4_PAE) == 0) {
-				dprintf("WARNING: PAE enabled but CR4.PAE reads back as 0\n");
-				usePAE = false;
-			}
-		}
-	}
-
-	if (usePAE) {
-		dprintf("using PAE paging\n");
-		gX86PagingMethod = new(&sPagingMethodBuffer) X86PagingMethodPAE;
-	} else {
-		if (paeNeeded && !paeAvailable) {
-			dprintf("ERROR: PAE needed but not available\n");
-			return B_NOT_SUPPORTED;
-		}
-		if (paeNeeded && paeDisabled) {
-			dprintf("WARNING: PAE needed but disabled via safemode\n");
-		}
-		dprintf("using 32-bit paging\n");
-		gX86PagingMethod = new(&sPagingMethodBuffer) X86PagingMethod32Bit;
-	}
-	#else
-	dprintf("using 32-bit paging\n");
-	gX86PagingMethod = new(&sPagingMethodBuffer) X86PagingMethod32Bit;
-	#endif
-
-	if (gX86PagingMethod == NULL || *(void**)gX86PagingMethod == NULL) {
-		panic("failed to construct paging method");
-		return B_NO_MEMORY;
-	}
-
-	return B_OK;
-}
-
-#endif // !__x86_64__
 
 
 // #pragma mark - VM API
@@ -237,12 +149,7 @@ arch_vm_translation_map_init(kernel_args *args,
 	}
 	#endif
 
-	status_t status;
-	#ifdef __x86_64__
-	status = init_64bit_paging_method(args);
-	#else
-	status = init_32bit_paging_method(args);
-	#endif
+	status_t status = init_64bit_paging_method(args);
 
 	if (status != B_OK)
 		return status;

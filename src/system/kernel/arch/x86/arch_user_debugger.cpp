@@ -33,11 +33,7 @@
 #define B_WATCHPOINT_NOT_FOUND				B_NAME_NOT_FOUND
 
 
-#ifdef __x86_64__
 extern bool gHasXsave;
-#else
-extern bool gHasSSE;
-#endif
 
 // Software breakpoint instruction (int3)
 const uint8 kX86SoftwareBreakpoint[1] = { 0xcc };
@@ -74,8 +70,6 @@ static bool sQEmuSingleStepHack = false;
 
 // #pragma mark - Helper Functions: CPU State Management
 
-
-#ifdef __x86_64__
 
 /*!	Copies CPU register state from iframe to debug_cpu_state structure
  * \param frame Interrupt frame containing CPU state
@@ -162,63 +156,6 @@ set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 	frame->sp = cpuState->rsp;
 }
 
-#else	// __x86_64__
-
-/*!	Copies CPU register state from iframe to debug_cpu_state structure (x86)
- * \param frame Interrupt frame containing CPU state
- * \param cpuState Output structure to receive register values
- */
-static void
-get_iframe_registers(const iframe* frame, debug_cpu_state* cpuState)
-{
-	cpuState->gs = frame->gs;
-	cpuState->fs = frame->fs;
-	cpuState->es = frame->es;
-	cpuState->ds = frame->ds;
-	cpuState->edi = frame->di;
-	cpuState->esi = frame->si;
-	cpuState->ebp = frame->bp;
-	cpuState->esp = frame->sp;
-	cpuState->ebx = frame->bx;
-	cpuState->edx = frame->orig_edx;
-	cpuState->ecx = frame->cx;
-	cpuState->eax = frame->orig_eax;
-	cpuState->vector = frame->vector;
-	cpuState->error_code = frame->error_code;
-	cpuState->eip = frame->ip;
-	cpuState->cs = frame->cs;
-	cpuState->eflags = frame->flags;
-	cpuState->user_esp = frame->user_sp;
-	cpuState->user_ss = frame->user_ss;
-}
-
-
-/*!	Updates iframe with CPU register state from debug_cpu_state (x86)
- * \param frame Interrupt frame to be modified
- * \param cpuState Source structure containing new register values
- */
-static void
-set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
-{
-	// Note: Segment registers are not updated for safety reasons
-	frame->di = cpuState->edi;
-	frame->si = cpuState->esi;
-	frame->bp = cpuState->ebp;
-	frame->bx = cpuState->ebx;
-	frame->dx = cpuState->edx;
-	frame->cx = cpuState->ecx;
-	frame->ax = cpuState->eax;
-	frame->ip = cpuState->eip;
-
-	// Preserve system flags, only allow user-settable flags
-	frame->flags = (frame->flags & ~X86_EFLAGS_USER_SETTABLE_FLAGS)
-	| (cpuState->eflags & X86_EFLAGS_USER_SETTABLE_FLAGS);
-
-	frame->user_sp = cpuState->user_esp;
-}
-
-#endif	// __x86_64__
-
 
 /*!	Retrieves complete CPU state including FPU/SSE/AVX registers
  * \param thread Thread whose state to capture
@@ -231,7 +168,6 @@ set_iframe_registers(iframe* frame, const debug_cpu_state* cpuState)
 static void
 get_cpu_state(Thread* thread, iframe* frame, debug_cpu_state* cpuState)
 {
-	#ifdef __x86_64__
 	// Initialize extended registers area
 	memset(&cpuState->extended_registers, 0,
 		   sizeof(cpuState->extended_registers));
@@ -249,32 +185,6 @@ get_cpu_state(Thread* thread, iframe* frame, debug_cpu_state* cpuState)
 				   sizeof(cpuState->extended_registers.fp_fxsave));
 		}
 	}
-	#else
-	Thread* thisThread = thread_get_current_thread();
-	if (gHasSSE) {
-		if (thread == thisThread) {
-			// FXSAVE requires 16-byte alignment. Use thread's fpu_state buffer
-			// which is guaranteed to be aligned. Disable interrupts to safely
-			// use this buffer.
-			Thread* thread = thread_get_current_thread();
-			InterruptsLocker locker;
-			x86_fxsave(thread->arch_info.fpu_state);
-			// FXSAVE does not reinit FPU state (unlike FNSAVE)
-		}
-		memcpy(&cpuState->extended_registers, thread->arch_info.fpu_state,
-			   sizeof(cpuState->extended_registers));
-	} else {
-		if (thread == thisThread) {
-			x86_fnsave(&cpuState->extended_registers);
-			// FNSAVE reinitializes FPU state, so reload it
-			x86_frstor(&cpuState->extended_registers);
-		} else {
-			memcpy(&cpuState->extended_registers, thread->arch_info.fpu_state,
-				   sizeof(cpuState->extended_registers));
-		}
-		// TODO: Convert to FXSAVE format for consistency!
-	}
-	#endif
 	get_iframe_registers(frame, cpuState);
 }
 
@@ -849,25 +759,10 @@ arch_set_debug_cpu_state(const debug_cpu_state* cpuState)
 	if (frame == NULL)
 		return;
 
-	#ifdef __x86_64__
 	Thread* thread = thread_get_current_thread();
 	memcpy(thread->arch_info.user_fpu_state, &cpuState->extended_registers,
 		   sizeof(cpuState->extended_registers));
 	frame->fpu = &thread->arch_info.user_fpu_state;
-	#else
-	if (gHasSSE) {
-		// FXRSTOR requires 16-byte alignment. Use thread's fpu_state buffer
-		// temporarily. Disable interrupts for safe access.
-		Thread* thread = thread_get_current_thread();
-		InterruptsLocker locker;
-		memcpy(thread->arch_info.fpu_state, &cpuState->extended_registers,
-			   sizeof(cpuState->extended_registers));
-		x86_fxrstor(thread->arch_info.fpu_state);
-	} else {
-		// TODO: Implement! Need to convert from FXSAVE format to FNSAVE format
-		// Currently not supported
-	}
-	#endif
 	set_iframe_registers(frame, cpuState);
 }
 

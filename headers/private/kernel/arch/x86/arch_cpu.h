@@ -577,10 +577,6 @@ typedef struct arch_cpu_info {
 
 	// local TSS for this cpu
 	struct tss			tss;
-#ifndef __x86_64__
-	struct tss			double_fault_tss;
-	void*				kernel_tls;
-#endif
 } arch_cpu_info;
 
 
@@ -695,25 +691,6 @@ void x86_fatal_exception(iframe* frame);
 void x86_unexpected_exception(iframe* frame);
 void x86_hardware_interrupt(iframe* frame);
 void x86_page_fault_exception(iframe* iframe);
-
-#ifndef __x86_64__
-
-void x86_swap_pgdir(addr_t newPageDir);
-
-void x86_context_switch(struct arch_thread* oldState,
-	struct arch_thread* newState);
-
-void x86_fnsave(void* fpuState);
-void x86_frstor(const void* fpuState);
-
-void x86_fxsave(void* fpuState);
-void x86_fxrstor(const void* fpuState);
-
-void x86_noop_swap(void* oldFpuState, const void* newFpuState);
-void x86_fnsave_swap(void* oldFpuState, const void* newFpuState);
-void x86_fxsave_swap(void* oldFpuState, const void* newFpuState);
-
-#endif
 
 
 static inline void

@@ -123,199 +123,6 @@ lookup_symbol(Thread* thread, addr_t address, addr_t* _baseAddress,
 }
 
 
-#ifndef __x86_64__
-
-
-static void
-set_debug_argument_variable(int32 index, uint64 value)
-{
-	char name[8];
-	snprintf(name, sizeof(name), "_arg%d", index);
-	set_debug_variable(name, value);
-}
-
-
-template<typename Type>
-static Type
-read_function_argument_value(void* argument, bool& _valueKnown)
-{
-	Type value;
-	if (debug_memcpy(B_CURRENT_TEAM, &value, argument, sizeof(Type)) == B_OK) {
-		_valueKnown = true;
-		return value;
-	}
-
-	_valueKnown = false;
-	return 0;
-}
-
-
-static status_t
-print_demangled_call(const char* image, const char* symbol, addr_t args,
-	bool noObjectMethod, bool addDebugVariables)
-{
-	static const size_t kBufferSize = 256;
-	char* buffer = (char*)debug_malloc(kBufferSize);
-	if (buffer == NULL)
-		return B_NO_MEMORY;
-
-	bool isObjectMethod;
-	const char* name = debug_demangle_symbol(symbol, buffer, kBufferSize,
-		&isObjectMethod);
-	if (name == NULL) {
-		debug_free(buffer);
-		return B_ERROR;
-	}
-
-	uint32* arg = (uint32*)args;
-
-	if (noObjectMethod)
-		isObjectMethod = false;
-	if (isObjectMethod) {
-		const char* lastName = strrchr(name, ':') - 1;
-		int namespaceLength = lastName - name;
-
-		uint32 argValue = 0;
-		if (debug_memcpy(B_CURRENT_TEAM, &argValue, arg, 4) == B_OK) {
-			kprintf("<%s> %.*s<\33[32m%#" B_PRIx32 "\33[0m>%s", image,
-				namespaceLength, name, argValue, lastName);
-		} else
-			kprintf("<%s> %.*s<\?\?\?>%s", image, namespaceLength, name, lastName);
-
-		if (addDebugVariables)
-			set_debug_variable("_this", argValue);
-		arg++;
-	} else
-		kprintf("<%s> %s", image, name);
-
-	kprintf("(");
-
-	size_t length;
-	int32 type, i = 0;
-	uint32 cookie = 0;
-	while (debug_get_next_demangled_argument(&cookie, symbol, buffer,
-			kBufferSize, &type, &length) == B_OK) {
-		if (i++ > 0)
-			kprintf(", ");
-
-		// retrieve value and type identifier
-
-		uint64 value;
-		bool valueKnown = false;
-
-		switch (type) {
-			case B_INT64_TYPE:
-				value = read_function_argument_value<int64>(arg, valueKnown);
-				if (valueKnown)
-					kprintf("int64: \33[34m%lld\33[0m", value);
-				break;
-			case B_INT32_TYPE:
-				value = read_function_argument_value<int32>(arg, valueKnown);
-				if (valueKnown)
-					kprintf("int32: \33[34m%d\33[0m", (int32)value);
-				break;
-			case B_INT16_TYPE:
-				value = read_function_argument_value<int16>(arg, valueKnown);
-				if (valueKnown)
-					kprintf("int16: \33[34m%d\33[0m", (int16)value);
-				break;
-			case B_INT8_TYPE:
-				value = read_function_argument_value<int8>(arg, valueKnown);
-				if (valueKnown)
-					kprintf("int8: \33[34m%d\33[0m", (int8)value);
-				break;
-			case B_UINT64_TYPE:
-				value = read_function_argument_value<uint64>(arg, valueKnown);
-				if (valueKnown) {
-					kprintf("uint64: \33[34m%#Lx\33[0m", value);
-					if (value < 0x100000)
-						kprintf(" (\33[34m%Lu\33[0m)", value);
-				}
-				break;
-			case B_UINT32_TYPE:
-				value = read_function_argument_value<uint32>(arg, valueKnown);
-				if (valueKnown) {
-					kprintf("uint32: \33[34m%#x\33[0m", (uint32)value);
-					if (value < 0x100000)
-						kprintf(" (\33[34m%u\33[0m)", (uint32)value);
-				}
-				break;
-			case B_UINT16_TYPE:
-				value = read_function_argument_value<uint16>(arg, valueKnown);
-				if (valueKnown) {
-					kprintf("uint16: \33[34m%#x\33[0m (\33[34m%u\33[0m)",
-						(uint16)value, (uint16)value);
-				}
-				break;
-			case B_UINT8_TYPE:
-				value = read_function_argument_value<uint8>(arg, valueKnown);
-				if (valueKnown) {
-					kprintf("uint8: \33[34m%#x\33[0m (\33[34m%u\33[0m)",
-						(uint8)value, (uint8)value);
-				}
-				break;
-			case B_BOOL_TYPE:
-				value = read_function_argument_value<uint8>(arg, valueKnown);
-				if (valueKnown)
-					kprintf("\33[34m%s\33[0m", value ? "true" : "false");
-				break;
-			default:
-				if (buffer[0])
-					kprintf("%s: ", buffer);
-
-				if (length == 4) {
-					value = read_function_argument_value<uint32>(arg,
-						valueKnown);
-					if (valueKnown) {
-						if (value == 0
-							&& (type == B_POINTER_TYPE || type == B_REF_TYPE))
-							kprintf("NULL");
-						else
-							kprintf("\33[34m%#x\33[0m", (uint32)value);
-					}
-					break;
-				}
-
-
-				if (length == 8) {
-					value = read_function_argument_value<uint64>(arg,
-						valueKnown);
-				} else
-					value = (uint64)arg;
-
-				if (valueKnown)
-					kprintf("\33[34m%#Lx\33[0m", value);
-				break;
-		}
-
-		if (!valueKnown)
-			kprintf("???");
-
-		if (valueKnown && type == B_STRING_TYPE) {
-			if (value == 0)
-				kprintf(" \33[31m\"<NULL>\"\33[0m");
-			else if (debug_strlcpy(B_CURRENT_TEAM, buffer, (char*)(addr_t)value,
-					kBufferSize) < B_OK) {
-				kprintf(" \33[31m\"<\?\?\?>\"\33[0m");
-			} else
-				kprintf(" \33[36m\"%s\"\33[0m", buffer);
-		}
-
-		if (addDebugVariables)
-			set_debug_argument_variable(i, value);
-		arg = (uint32*)((uint8*)arg + length);
-	}
-
-	debug_free(buffer);
-
-	kprintf(")");
-	return B_OK;
-}
-
-
-#else	// __x86_64__
-
-
 static status_t
 print_demangled_call(const char* image, const char* symbol, addr_t args,
 	bool noObjectMethod, bool addDebugVariables)
@@ -359,9 +166,6 @@ print_demangled_call(const char* image, const char* symbol, addr_t args,
 	kprintf(")");
 	return B_OK;
 }
-
-
-#endif	// __x86_64__
 
 
 static void
@@ -422,7 +226,6 @@ print_iframe(iframe* frame)
 {
 	bool isUser = IFRAME_IS_USER(frame);
 
-#ifdef __x86_64__
 	kprintf("%s iframe at %p (end = %p)\n", isUser ? "user" : "kernel", frame,
 		frame + 1);
 
@@ -438,21 +241,6 @@ print_iframe(iframe* frame)
 		frame->r14, frame->r15);
 	kprintf(" rip %#-18lx    rsp %#-18lx rflags %#lx\n", frame->ip,
 		frame->sp, frame->flags);
-#else
-	kprintf("%s iframe at %p (end = %p)\n", isUser ? "user" : "kernel", frame,
-		isUser ? (void*)(frame + 1) : (void*)&frame->user_sp);
-
-	kprintf(" eax %#-10x    ebx %#-10x     ecx %#-10x  edx %#x\n",
-		frame->ax, frame->bx, frame->cx, frame->dx);
-	kprintf(" esi %#-10x    edi %#-10x     ebp %#-10x  esp %#x\n",
-		frame->si, frame->di, frame->bp, frame->sp);
-	kprintf(" eip %#-10x eflags %#-10x", frame->ip, frame->flags);
-	if (isUser) {
-		// from user space
-		kprintf("user esp %#x", frame->user_sp);
-	}
-	kprintf("\n");
-#endif
 
 	kprintf(" vector: %#lx, error code: %#lx\n",
 		(long unsigned int)frame->vector,
@@ -604,7 +392,6 @@ find_debug_variable(const char* variableName, bool& settable)
 	if (frame == NULL)
 		return NULL;
 
-#ifdef __x86_64__
 	CHECK_DEBUG_VARIABLE("cs", frame->cs, false);
 	CHECK_DEBUG_VARIABLE("ss", frame->ss, false);
 	CHECK_DEBUG_VARIABLE("r15", frame->r15, true);
@@ -625,30 +412,6 @@ find_debug_variable(const char* variableName, bool& settable)
 	CHECK_DEBUG_VARIABLE("rip", frame->ip, true);
 	CHECK_DEBUG_VARIABLE("rflags", frame->flags, true);
 	CHECK_DEBUG_VARIABLE("rsp", frame->sp, true);
-#else
-	CHECK_DEBUG_VARIABLE("gs", frame->gs, false);
-	CHECK_DEBUG_VARIABLE("fs", frame->fs, false);
-	CHECK_DEBUG_VARIABLE("es", frame->es, false);
-	CHECK_DEBUG_VARIABLE("ds", frame->ds, false);
-	CHECK_DEBUG_VARIABLE("cs", frame->cs, false);
-	CHECK_DEBUG_VARIABLE("edi", frame->di, true);
-	CHECK_DEBUG_VARIABLE("esi", frame->si, true);
-	CHECK_DEBUG_VARIABLE("ebp", frame->bp, true);
-	CHECK_DEBUG_VARIABLE("esp", frame->sp, true);
-	CHECK_DEBUG_VARIABLE("ebx", frame->bx, true);
-	CHECK_DEBUG_VARIABLE("edx", frame->dx, true);
-	CHECK_DEBUG_VARIABLE("ecx", frame->cx, true);
-	CHECK_DEBUG_VARIABLE("eax", frame->ax, true);
-	CHECK_DEBUG_VARIABLE("orig_eax", frame->orig_eax, true);
-	CHECK_DEBUG_VARIABLE("orig_edx", frame->orig_edx, true);
-	CHECK_DEBUG_VARIABLE("eip", frame->ip, true);
-	CHECK_DEBUG_VARIABLE("eflags", frame->flags, true);
-
-	if (IFRAME_IS_USER(frame)) {
-		CHECK_DEBUG_VARIABLE("user_esp", frame->user_sp, true);
-		CHECK_DEBUG_VARIABLE("user_ss", frame->user_ss, false);
-	}
-#endif
 
 	return NULL;
 }
@@ -749,168 +512,6 @@ stack_trace(int argc, char** argv)
 
 	return 0;
 }
-
-
-#ifndef __x86_64__
-static void
-print_call(Thread *thread, addr_t eip, addr_t ebp, addr_t nextEbp,
-	int32 argCount)
-{
-	const char *symbol, *image;
-	addr_t baseAddress;
-	bool exactMatch;
-	status_t status;
-	bool demangled = false;
-	int32 *arg = (int32 *)(nextEbp + 8);
-
-	status = lookup_symbol(thread, eip, &baseAddress, &symbol, &image,
-		&exactMatch);
-
-	kprintf("%08lx %08lx   ", ebp, eip);
-
-	if (status == B_OK) {
-		if (symbol != NULL) {
-			if (exactMatch && (argCount == 0 || argCount == -1)) {
-				status = print_demangled_call(image, symbol, (addr_t)arg,
-					argCount == -1, true);
-				if (status == B_OK)
-					demangled = true;
-			}
-			if (!demangled) {
-				kprintf("<%s>:%s%s", image, symbol,
-					exactMatch ? "" : " (nearest)");
-			}
-		} else {
-			kprintf("<%s@%p>:unknown + 0x%04lx", image,
-				(void *)baseAddress, eip - baseAddress);
-		}
-	} else {
-		VMArea *area = NULL;
-		if (thread->team->address_space != NULL)
-			area = thread->team->address_space->LookupArea(eip);
-		if (area != NULL) {
-			kprintf("%d:%s@%p + %#lx", area->id, area->name,
-				(void *)area->Base(), eip - area->Base());
-		}
-	}
-
-	if (!demangled) {
-		kprintf("(");
-
-		for (int32 i = 0; i < argCount; i++) {
-			if (i > 0)
-				kprintf(", ");
-			kprintf("%#x", *arg);
-			if (*arg > -0x10000 && *arg < 0x10000)
-				kprintf(" (%d)", *arg);
-
-			set_debug_argument_variable(i + 1, *(uint32 *)arg);
-			arg++;
-		}
-
-		kprintf(")\n");
-	} else
-		kprintf("\n");
-
-	set_debug_variable("_frame", nextEbp);
-}
-
-
-static int
-show_call(int argc, char **argv)
-{
-	static const char* usage
-		= "usage: %s [ <thread id> ] <call index> [ -<arg count> ]\n"
-		"Prints a function call with parameters of the current, respectively\n"
-		"the specified thread.\n"
-		"  <thread id>   -  The ID of the thread for which to print the call.\n"
-		"  <call index>  -  The index of the call in the stack trace.\n"
-		"  <arg count>   -  The number of call arguments to print (use 'c' to\n"
-		"                   force the C++ demangler to use class methods,\n"
-		"                   use 'd' to disable demangling).\n";
-	if (argc == 2 && strcmp(argv[1], "--help") == 0) {
-		kprintf(usage, argv[0]);
-		return 0;
-	}
-
-	Thread *thread = NULL;
-	phys_addr_t oldPageDirectory = 0;
-	addr_t ebp = x86_get_stack_frame();
-	int32 argCount = 0;
-
-	if (argc >= 2 && argv[argc - 1][0] == '-') {
-		if (argv[argc - 1][1] == 'c')
-			argCount = -1;
-		else if (argv[argc - 1][1] == 'd')
-			argCount = -2;
-		else
-			argCount = strtoul(argv[argc - 1] + 1, NULL, 0);
-
-		if (argCount < -2 || argCount > 16) {
-			kprintf("Invalid argument count \"%d\".\n", argCount);
-			return 0;
-		}
-		argc--;
-	}
-
-	if (argc < 2 || argc > 3) {
-		kprintf(usage, argv[0]);
-		return 0;
-	}
-
-	if (!setup_for_thread(argc == 3 ? argv[1] : NULL, &thread, &ebp,
-			&oldPageDirectory))
-		return 0;
-
-	DebuggedThreadSetter threadSetter(thread);
-
-	int32 callIndex = strtoul(argv[argc == 3 ? 2 : 1], NULL, 0);
-
-	if (thread != NULL)
-		kprintf("thread %d, %s\n", thread->id, thread->name);
-
-	bool onKernelStack = true;
-
-	for (int32 index = 0; index <= callIndex; index++) {
-		onKernelStack = onKernelStack
-			&& is_kernel_stack_address(thread, ebp);
-
-		if (onKernelStack && is_iframe(thread, ebp)) {
-			struct iframe *frame = (struct iframe *)ebp;
-
-			if (index == callIndex)
-				print_call(thread, frame->ip, ebp, frame->bp, argCount);
-
- 			ebp = frame->bp;
-		} else {
-			addr_t eip, nextEbp;
-
-			if (get_next_frame_debugger(ebp, &nextEbp, &eip) != B_OK) {
-				kprintf("%08lx -- read fault\n", ebp);
-				break;
-			}
-
-			if (eip == 0 || ebp == 0)
-				break;
-
-			if (index == callIndex)
-				print_call(thread, eip, ebp, nextEbp, argCount);
-
-			ebp = nextEbp;
-		}
-
-		if (ebp == 0)
-			break;
-	}
-
-	if (oldPageDirectory != 0) {
-		// switch back to the previous page directory to not cause any troubles
-		x86_write_cr3(oldPageDirectory);
-	}
-
-	return 0;
-}
-#endif
 
 
 static int
@@ -1215,11 +816,7 @@ arch_debug_unset_current_thread(void)
 	// Can't just write 0 to the GS base, that will cause the read from %gs:0
 	// to fault. Instead point it at a NULL pointer, %gs:0 will get this value.
 	static Thread* unsetThread = NULL;
-#ifdef __x86_64__
 	x86_write_msr(IA32_MSR_GS_BASE, (addr_t)&unsetThread);
-#else
-	asm volatile("mov %0, %%gs:0" : : "r" (unsetThread) : "memory");
-#endif
 }
 
 
@@ -1283,7 +880,6 @@ arch_debug_gdb_get_registers(char* buffer, size_t bufferSize)
 	if (frame == NULL)
 		return B_NOT_SUPPORTED;
 
-#ifdef __x86_64__
 	// For x86_64 the register order is:
 	//
 	//    rax, rbx, rcx, rdx, rsi, rdi, rbp, rsp,
@@ -1308,29 +904,6 @@ arch_debug_gdb_get_registers(char* buffer, size_t bufferSize)
 		{ B_UINT32_TYPE, 0 }, { B_UINT32_TYPE, 0 },
 		{ B_UINT32_TYPE, 0 }, { B_UINT32_TYPE, 0 },
 	};
-#else
-	// For x86 the register order is:
-	//
-	//    eax, ecx, edx, ebx,
-	//    esp, ebp, esi, edi,
-	//    eip, eflags,
-	//    cs, ss, ds, es, fs, gs
-	//
-	// Note that even though the segment descriptors are actually 16 bits wide,
-	// gdb requires them as 32 bit integers.
-	static const int32 kRegisterCount = 16;
-	gdb_register registers[kRegisterCount] = {
-		{ B_UINT32_TYPE, frame->ax }, { B_UINT32_TYPE, frame->cx },
-		{ B_UINT32_TYPE, frame->dx }, { B_UINT32_TYPE, frame->bx },
-		{ B_UINT32_TYPE, frame->sp }, { B_UINT32_TYPE, frame->bp },
-		{ B_UINT32_TYPE, frame->si }, { B_UINT32_TYPE, frame->di },
-		{ B_UINT32_TYPE, frame->ip }, { B_UINT32_TYPE, frame->flags },
-		{ B_UINT32_TYPE, frame->cs }, { B_UINT32_TYPE, frame->ds },
-			// assume ss == ds
-		{ B_UINT32_TYPE, frame->ds }, { B_UINT32_TYPE, frame->es },
-		{ B_UINT32_TYPE, frame->fs }, { B_UINT32_TYPE, frame->gs },
-	};
-#endif
 
 	const char* const bufferStart = buffer;
 
@@ -1425,9 +998,6 @@ arch_debug_init(kernel_args* args)
 		"Stack crawl for current thread (or any other)");
 	add_debugger_command("iframe", &dump_iframes,
 		"Dump iframes for the specified thread");
-#ifndef __x86_64__
-	add_debugger_command("call", &show_call, "Show call with arguments");
-#endif
 	add_debugger_command_etc("in_context", &cmd_in_context,
 		"Executes a command in the context of a given thread",
 		"<thread ID> <command> ...\n"

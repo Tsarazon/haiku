@@ -30,8 +30,6 @@
 #include <arch/int.h>
 #include <arch/cpu.h>
 
-#include <arch/x86/bios.h>
-
 
 //#define TRACE_ARCH_VM
 #ifdef TRACE_ARCH_VM
@@ -736,11 +734,7 @@ arch_vm_init_post_area(kernel_args *args)
 		"\n"
 		"Lists all memory type ranges with their types and areas.\n", 0);
 
-#ifndef __x86_64__
-	return bios_init();
-#else
 	return B_OK;
-#endif
 }
 
 
