@@ -44,30 +44,6 @@
 #define DUMP_CPU_PATCHLEVEL_TYPE	1
 
 
-/* cpu vendor info */
-struct cpu_vendor_info {
-	const char *vendor;
-	const char *ident_string[2];
-};
-
-static const struct cpu_vendor_info vendor_info[VENDOR_NUM] = {
-	{ "Intel", { "GenuineIntel" } },
-	{ "AMD", { "AuthenticAMD" } },
-	{ "Cyrix", { "CyrixInstead" } },
-	{ "UMC", { "UMC UMC UMC" } },
-	{ "NexGen", { "NexGenDriven" } },
-	{ "Centaur", { "CentaurHauls" } },
-	{ "Rise", { "RiseRiseRise" } },
-	{ "Transmeta", { "GenuineTMx86", "TransmetaCPU" } },
-	{ "NSC", { "Geode by NSC" } },
-	{ "Hygon", { "HygonGenuine" } },
-};
-
-#define K8_SMIONCMPHALT			(1ULL << 27)
-#define K8_C1EONCMPHALT			(1ULL << 28)
-
-#define K8_CMPHALT				(K8_SMIONCMPHALT | K8_C1EONCMPHALT)
-
 struct set_mtrr_parameter {
 	int32	index;
 	uint64	base;
@@ -102,19 +78,15 @@ static uint32 sCpuRendezvous2;
 static uint32 sCpuRendezvous3;
 static vint32 sTSCSyncRendezvous;
 
-/* Some specials for the double fault handler */
 static addr_t sDoubleFaultStacks = 0;
-static const size_t kDoubleFaultStackSize = 4096;	// size per CPU
+static const size_t kDoubleFaultStackSize = 4096;
 
 static x86_cpu_module_info* sCpuModule;
 
-
-/* CPU topology information */
 static uint32 (*sGetCPUTopologyID)(int currentCPU);
 static uint32 sHierarchyMask[CPU_TOPOLOGY_LEVELS];
 static uint32 sHierarchyShift[CPU_TOPOLOGY_LEVELS];
 
-/* Cache topology information */
 static uint32 sCacheSharingMask[CPU_MAX_CACHE_LEVEL];
 
 static void* sUcodeData = NULL;
@@ -123,6 +95,9 @@ static void* sLoadedUcodeUpdate;
 static spinlock sUcodeUpdateLock = B_SPINLOCK_INITIALIZER;
 
 static bool sUsePAT = false;
+
+
+// #pragma mark - ACPI shutdown
 
 
 static status_t
@@ -152,7 +127,9 @@ acpi_shutdown(bool rebootSystem)
 }
 
 
-/*!	Disable CPU caches, and invalidate them. */
+// #pragma mark - Cache control
+
+
 static void
 disable_caches()
 {
@@ -163,7 +140,6 @@ disable_caches()
 }
 
 
-/*!	Invalidate CPU caches, and enable them. */
 static void
 enable_caches()
 {
@@ -174,30 +150,25 @@ enable_caches()
 }
 
 
+// #pragma mark - MTRR
+
+
 static void
 set_mtrr(void* _parameter, int cpu)
 {
 	struct set_mtrr_parameter* parameter
 		= (struct set_mtrr_parameter*)_parameter;
 
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous);
 
-	// One CPU has to reset sCpuRendezvous3 -- it is needed to prevent the CPU
-	// that initiated the call_all_cpus() from doing that again and clearing
-	// sCpuRendezvous2 before the last CPU has actually left the loop in
-	// smp_cpu_rendezvous();
 	if (cpu == 0)
 		atomic_set((int32*)&sCpuRendezvous3, 0);
 
 	disable_caches();
-
 	sCpuModule->set_mtrr(parameter->index, parameter->base, parameter->length,
 		parameter->type);
-
 	enable_caches();
 
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous2);
 	smp_cpu_rendezvous(&sCpuRendezvous3);
 }
@@ -208,24 +179,16 @@ set_mtrrs(void* _parameter, int cpu)
 {
 	set_mtrrs_parameter* parameter = (set_mtrrs_parameter*)_parameter;
 
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous);
 
-	// One CPU has to reset sCpuRendezvous3 -- it is needed to prevent the CPU
-	// that initiated the call_all_cpus() from doing that again and clearing
-	// sCpuRendezvous2 before the last CPU has actually left the loop in
-	// smp_cpu_rendezvous();
 	if (cpu == 0)
 		atomic_set((int32*)&sCpuRendezvous3, 0);
 
 	disable_caches();
-
 	sCpuModule->set_mtrrs(parameter->defaultType, parameter->infos,
 		parameter->count);
-
 	enable_caches();
 
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous2);
 	smp_cpu_rendezvous(&sCpuRendezvous3);
 }
@@ -234,23 +197,15 @@ set_mtrrs(void* _parameter, int cpu)
 static void
 init_mtrrs(void* _unused, int cpu)
 {
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous);
 
-	// One CPU has to reset sCpuRendezvous3 -- it is needed to prevent the CPU
-	// that initiated the call_all_cpus() from doing that again and clearing
-	// sCpuRendezvous2 before the last CPU has actually left the loop in
-	// smp_cpu_rendezvous();
 	if (cpu == 0)
 		atomic_set((int32*)&sCpuRendezvous3, 0);
 
 	disable_caches();
-
 	sCpuModule->init_mtrrs();
-
 	enable_caches();
 
-	// wait until all CPUs have arrived here
 	smp_cpu_rendezvous(&sCpuRendezvous2);
 	smp_cpu_rendezvous(&sCpuRendezvous3);
 }
@@ -260,12 +215,6 @@ uint32
 x86_count_mtrrs(void)
 {
 	if (sUsePAT) {
-		// When PAT is supported, we completely ignore MTRRs and leave them as
-		// initialized by firmware. This follows the suggestion in Intel SDM
-		// that these don't usually need to be touched by anything after system
-		// init. Using page attributes is the more flexible and modern approach
-		// to memory type handling and they can override MTRRs in the critical
-		// case of write-combining, usually used for framebuffers.
 		dprintf("ignoring MTRRs due to PAT support\n");
 		return 0;
 	}
@@ -294,8 +243,6 @@ x86_set_mtrr(uint32 index, uint64 base, uint64 length, uint8 type)
 status_t
 x86_get_mtrr(uint32 index, uint64* _base, uint64* _length, uint8* _type)
 {
-	// the MTRRs are identical on all CPUs, so it doesn't matter
-	// on which CPU this runs
 	return sCpuModule->get_mtrr(index, _base, _length, _type);
 }
 
@@ -316,6 +263,9 @@ x86_set_mtrrs(uint8 defaultType, const x86_mtrr_info* infos, uint32 count)
 }
 
 
+// #pragma mark - PAT
+
+
 static void
 init_pat(int cpu)
 {
@@ -324,7 +274,6 @@ init_pat(int cpu)
 	uint64 value = x86_read_msr(IA32_MSR_PAT);
 	dprintf("PAT MSR on CPU %d before init: %#" B_PRIx64 "\n", cpu, value);
 
-	// Use PAT entry 4 for write-combining, leave the rest as is
 	value &= ~(IA32_MSR_PAT_ENTRY_MASK << IA32_MSR_PAT_ENTRY_SHIFT(4));
 	value |= IA32_MSR_PAT_TYPE_WRITE_COMBINING << IA32_MSR_PAT_ENTRY_SHIFT(4);
 
@@ -335,330 +284,226 @@ init_pat(int cpu)
 }
 
 
+// #pragma mark - FPU
+
+
 void
 x86_init_fpu(void)
 {
-	// All x86_64 CPUs support SSE, don't need to bother checking for it.
 	dprintf("%s: CPU has SSE... enabling FXSR and XMM.\n", __func__);
 }
 
 
+// #pragma mark - CPU feature dump
+
+
 #if DUMP_FEATURE_STRING
+
+struct feature_entry {
+	uint32				flag;
+	enum x86_feature_type	type;
+	const char*			name;
+};
+
+static const feature_entry kFeatureTable[] = {
+	// FEATURE_COMMON (CPUID.1 EDX)
+	{ IA32_FEATURE_FPU,		FEATURE_COMMON,		"fpu " },
+	{ IA32_FEATURE_VME,		FEATURE_COMMON,		"vme " },
+	{ IA32_FEATURE_DE,		FEATURE_COMMON,		"de " },
+	{ IA32_FEATURE_PSE,		FEATURE_COMMON,		"pse " },
+	{ IA32_FEATURE_TSC,		FEATURE_COMMON,		"tsc " },
+	{ IA32_FEATURE_MSR,		FEATURE_COMMON,		"msr " },
+	{ IA32_FEATURE_PAE,		FEATURE_COMMON,		"pae " },
+	{ IA32_FEATURE_MCE,		FEATURE_COMMON,		"mce " },
+	{ IA32_FEATURE_CX8,		FEATURE_COMMON,		"cx8 " },
+	{ IA32_FEATURE_APIC,		FEATURE_COMMON,		"apic " },
+	{ IA32_FEATURE_SEP,		FEATURE_COMMON,		"sep " },
+	{ IA32_FEATURE_MTRR,		FEATURE_COMMON,		"mtrr " },
+	{ IA32_FEATURE_PGE,		FEATURE_COMMON,		"pge " },
+	{ IA32_FEATURE_MCA,		FEATURE_COMMON,		"mca " },
+	{ IA32_FEATURE_CMOV,		FEATURE_COMMON,		"cmov " },
+	{ IA32_FEATURE_PAT,		FEATURE_COMMON,		"pat " },
+	{ IA32_FEATURE_PSE36,		FEATURE_COMMON,		"pse36 " },
+	{ IA32_FEATURE_PSN,		FEATURE_COMMON,		"psn " },
+	{ IA32_FEATURE_CLFSH,		FEATURE_COMMON,		"clfsh " },
+	{ IA32_FEATURE_DS,		FEATURE_COMMON,		"ds " },
+	{ IA32_FEATURE_ACPI,		FEATURE_COMMON,		"acpi " },
+	{ IA32_FEATURE_MMX,		FEATURE_COMMON,		"mmx " },
+	{ IA32_FEATURE_FXSR,		FEATURE_COMMON,		"fxsr " },
+	{ IA32_FEATURE_SSE,		FEATURE_COMMON,		"sse " },
+	{ IA32_FEATURE_SSE2,		FEATURE_COMMON,		"sse2 " },
+	{ IA32_FEATURE_SS,		FEATURE_COMMON,		"ss " },
+	{ IA32_FEATURE_HTT,		FEATURE_COMMON,		"htt " },
+	{ IA32_FEATURE_TM,		FEATURE_COMMON,		"tm " },
+	{ IA32_FEATURE_PBE,		FEATURE_COMMON,		"pbe " },
+
+	// FEATURE_EXT (CPUID.1 ECX)
+	{ IA32_FEATURE_EXT_SSE3,		FEATURE_EXT,	"sse3 " },
+	{ IA32_FEATURE_EXT_PCLMULQDQ,		FEATURE_EXT,	"pclmulqdq " },
+	{ IA32_FEATURE_EXT_DTES64,		FEATURE_EXT,	"dtes64 " },
+	{ IA32_FEATURE_EXT_MONITOR,		FEATURE_EXT,	"monitor " },
+	{ IA32_FEATURE_EXT_DSCPL,		FEATURE_EXT,	"dscpl " },
+	{ IA32_FEATURE_EXT_VMX,			FEATURE_EXT,	"vmx " },
+	{ IA32_FEATURE_EXT_SMX,			FEATURE_EXT,	"smx " },
+	{ IA32_FEATURE_EXT_EST,			FEATURE_EXT,	"est " },
+	{ IA32_FEATURE_EXT_TM2,			FEATURE_EXT,	"tm2 " },
+	{ IA32_FEATURE_EXT_SSSE3,		FEATURE_EXT,	"ssse3 " },
+	{ IA32_FEATURE_EXT_CNXTID,		FEATURE_EXT,	"cnxtid " },
+	{ IA32_FEATURE_EXT_FMA,			FEATURE_EXT,	"fma " },
+	{ IA32_FEATURE_EXT_CX16,		FEATURE_EXT,	"cx16 " },
+	{ IA32_FEATURE_EXT_XTPR,		FEATURE_EXT,	"xtpr " },
+	{ IA32_FEATURE_EXT_PDCM,		FEATURE_EXT,	"pdcm " },
+	{ IA32_FEATURE_EXT_PCID,		FEATURE_EXT,	"pcid " },
+	{ IA32_FEATURE_EXT_DCA,			FEATURE_EXT,	"dca " },
+	{ IA32_FEATURE_EXT_SSE4_1,		FEATURE_EXT,	"sse4_1 " },
+	{ IA32_FEATURE_EXT_SSE4_2,		FEATURE_EXT,	"sse4_2 " },
+	{ IA32_FEATURE_EXT_X2APIC,		FEATURE_EXT,	"x2apic " },
+	{ IA32_FEATURE_EXT_MOVBE,		FEATURE_EXT,	"movbe " },
+	{ IA32_FEATURE_EXT_POPCNT,		FEATURE_EXT,	"popcnt " },
+	{ IA32_FEATURE_EXT_TSCDEADLINE,	FEATURE_EXT,	"tscdeadline " },
+	{ IA32_FEATURE_EXT_AES,			FEATURE_EXT,	"aes " },
+	{ IA32_FEATURE_EXT_XSAVE,		FEATURE_EXT,	"xsave " },
+	{ IA32_FEATURE_EXT_OSXSAVE,		FEATURE_EXT,	"osxsave " },
+	{ IA32_FEATURE_EXT_AVX,			FEATURE_EXT,	"avx " },
+	{ IA32_FEATURE_EXT_F16C,		FEATURE_EXT,	"f16c " },
+	{ IA32_FEATURE_EXT_RDRND,		FEATURE_EXT,	"rdrnd " },
+	{ IA32_FEATURE_EXT_HYPERVISOR,		FEATURE_EXT,	"hypervisor " },
+
+	// FEATURE_EXT_AMD_ECX (CPUID.80000001 ECX)
+	{ IA32_FEATURE_AMD_EXT_MWAITX,	FEATURE_EXT_AMD_ECX,	"mwaitx " },
+
+	// FEATURE_EXT_AMD (CPUID.80000001 EDX)
+	{ IA32_FEATURE_AMD_EXT_SYSCALL,	FEATURE_EXT_AMD,	"syscall " },
+	{ IA32_FEATURE_AMD_EXT_NX,		FEATURE_EXT_AMD,	"nx " },
+	{ IA32_FEATURE_AMD_EXT_MMXEXT,		FEATURE_EXT_AMD,	"mmxext " },
+	{ IA32_FEATURE_AMD_EXT_FFXSR,		FEATURE_EXT_AMD,	"ffxsr " },
+	{ IA32_FEATURE_AMD_EXT_PDPE1GB,	FEATURE_EXT_AMD,	"pdpe1gb " },
+	{ IA32_FEATURE_AMD_EXT_LONG,		FEATURE_EXT_AMD,	"long " },
+	{ IA32_FEATURE_AMD_EXT_3DNOWEXT,	FEATURE_EXT_AMD,	"3dnowext " },
+	{ IA32_FEATURE_AMD_EXT_3DNOW,		FEATURE_EXT_AMD,	"3dnow " },
+
+	// FEATURE_6_EAX (CPUID.6 EAX)
+	{ IA32_FEATURE_DTS,		FEATURE_6_EAX,		"dts " },
+	{ IA32_FEATURE_ITB,		FEATURE_6_EAX,		"itb " },
+	{ IA32_FEATURE_ARAT,		FEATURE_6_EAX,		"arat " },
+	{ IA32_FEATURE_PLN,		FEATURE_6_EAX,		"pln " },
+	{ IA32_FEATURE_ECMD,		FEATURE_6_EAX,		"ecmd " },
+	{ IA32_FEATURE_PTM,		FEATURE_6_EAX,		"ptm " },
+	{ IA32_FEATURE_HWP,		FEATURE_6_EAX,		"hwp " },
+	{ IA32_FEATURE_HWP_NOTIFY,	FEATURE_6_EAX,		"hwp_notify " },
+	{ IA32_FEATURE_HWP_ACTWIN,	FEATURE_6_EAX,		"hwp_actwin " },
+	{ IA32_FEATURE_HWP_EPP,	FEATURE_6_EAX,		"hwp_epp " },
+	{ IA32_FEATURE_HWP_PLR,	FEATURE_6_EAX,		"hwp_plr " },
+	{ IA32_FEATURE_HDC,		FEATURE_6_EAX,		"hdc " },
+	{ IA32_FEATURE_TBMT3,		FEATURE_6_EAX,		"tbmt3 " },
+	{ IA32_FEATURE_HWP_CAP,	FEATURE_6_EAX,		"hwp_cap " },
+	{ IA32_FEATURE_HWP_PECI,	FEATURE_6_EAX,		"hwp_peci " },
+	{ IA32_FEATURE_HWP_FLEX,	FEATURE_6_EAX,		"hwp_flex " },
+	{ IA32_FEATURE_HWP_FAST,	FEATURE_6_EAX,		"hwp_fast " },
+	{ IA32_FEATURE_HW_FEEDBACK,	FEATURE_6_EAX,		"hw_feedback " },
+	{ IA32_FEATURE_HWP_IGNIDL,	FEATURE_6_EAX,		"hwp_ignidl " },
+
+	// FEATURE_6_ECX (CPUID.6 ECX)
+	{ IA32_FEATURE_APERFMPERF,	FEATURE_6_ECX,		"aperfmperf " },
+	{ IA32_FEATURE_EPB,		FEATURE_6_ECX,		"epb " },
+
+	// FEATURE_7_EBX (CPUID.7 EBX)
+	{ IA32_FEATURE_TSC_ADJUST,	FEATURE_7_EBX,		"tsc_adjust " },
+	{ IA32_FEATURE_SGX,		FEATURE_7_EBX,		"sgx " },
+	{ IA32_FEATURE_BMI1,		FEATURE_7_EBX,		"bmi1 " },
+	{ IA32_FEATURE_HLE,		FEATURE_7_EBX,		"hle " },
+	{ IA32_FEATURE_AVX2,		FEATURE_7_EBX,		"avx2 " },
+	{ IA32_FEATURE_SMEP,		FEATURE_7_EBX,		"smep " },
+	{ IA32_FEATURE_BMI2,		FEATURE_7_EBX,		"bmi2 " },
+	{ IA32_FEATURE_ERMS,		FEATURE_7_EBX,		"erms " },
+	{ IA32_FEATURE_INVPCID,		FEATURE_7_EBX,		"invpcid " },
+	{ IA32_FEATURE_RTM,		FEATURE_7_EBX,		"rtm " },
+	{ IA32_FEATURE_CQM,		FEATURE_7_EBX,		"cqm " },
+	{ IA32_FEATURE_MPX,		FEATURE_7_EBX,		"mpx " },
+	{ IA32_FEATURE_RDT_A,		FEATURE_7_EBX,		"rdt_a " },
+	{ IA32_FEATURE_AVX512F,		FEATURE_7_EBX,		"avx512f " },
+	{ IA32_FEATURE_AVX512DQ,	FEATURE_7_EBX,		"avx512dq " },
+	{ IA32_FEATURE_RDSEED,		FEATURE_7_EBX,		"rdseed " },
+	{ IA32_FEATURE_ADX,		FEATURE_7_EBX,		"adx " },
+	{ IA32_FEATURE_SMAP,		FEATURE_7_EBX,		"smap " },
+	{ IA32_FEATURE_AVX512IFMA,	FEATURE_7_EBX,		"avx512ifma " },
+	{ IA32_FEATURE_PCOMMIT,		FEATURE_7_EBX,		"pcommit " },
+	{ IA32_FEATURE_CLFLUSHOPT,	FEATURE_7_EBX,		"cflushopt " },
+	{ IA32_FEATURE_CLWB,		FEATURE_7_EBX,		"clwb " },
+	{ IA32_FEATURE_INTEL_PT,	FEATURE_7_EBX,		"intel_pt " },
+	{ IA32_FEATURE_AVX512PF,	FEATURE_7_EBX,		"avx512pf " },
+	{ IA32_FEATURE_AVX512ER,	FEATURE_7_EBX,		"avx512er " },
+	{ IA32_FEATURE_AVX512CD,	FEATURE_7_EBX,		"avx512cd " },
+	{ IA32_FEATURE_SHA_NI,		FEATURE_7_EBX,		"sha_ni " },
+	{ IA32_FEATURE_AVX512BW,	FEATURE_7_EBX,		"avx512bw " },
+	{ IA32_FEATURE_AVX512VI,	FEATURE_7_EBX,		"avx512vi " },
+
+	// FEATURE_7_ECX (CPUID.7 ECX)
+	{ IA32_FEATURE_AVX512VMBI,	FEATURE_7_ECX,		"avx512vmbi " },
+	{ IA32_FEATURE_UMIP,		FEATURE_7_ECX,		"umip " },
+	{ IA32_FEATURE_PKU,		FEATURE_7_ECX,		"pku " },
+	{ IA32_FEATURE_OSPKE,		FEATURE_7_ECX,		"ospke " },
+	{ IA32_FEATURE_WAITPKG,		FEATURE_7_ECX,		"waitpkg " },
+	{ IA32_FEATURE_AVX512VMBI2,	FEATURE_7_ECX,		"avx512vmbi2 " },
+	{ IA32_FEATURE_GFNI,		FEATURE_7_ECX,		"gfni " },
+	{ IA32_FEATURE_VAES,		FEATURE_7_ECX,		"vaes " },
+	{ IA32_FEATURE_VPCLMULQDQ,	FEATURE_7_ECX,		"vpclmulqdq " },
+	{ IA32_FEATURE_AVX512_VNNI,	FEATURE_7_ECX,		"avx512vnni " },
+	{ IA32_FEATURE_AVX512_BITALG,	FEATURE_7_ECX,		"avx512bitalg " },
+	{ IA32_FEATURE_AVX512_VPOPCNTDQ, FEATURE_7_ECX,	"avx512vpopcntdq " },
+	{ IA32_FEATURE_LA57,		FEATURE_7_ECX,		"la57 " },
+	{ IA32_FEATURE_RDPID,		FEATURE_7_ECX,		"rdpid " },
+	{ IA32_FEATURE_SGX_LC,		FEATURE_7_ECX,		"sgx_lc " },
+
+	// FEATURE_7_EDX (CPUID.7 EDX)
+	{ IA32_FEATURE_HYBRID_CPU,		FEATURE_7_EDX,	"hybrid " },
+	{ IA32_FEATURE_IBRS,			FEATURE_7_EDX,	"ibrs " },
+	{ IA32_FEATURE_STIBP,			FEATURE_7_EDX,	"stibp " },
+	{ IA32_FEATURE_L1D_FLUSH,		FEATURE_7_EDX,	"l1d_flush " },
+	{ IA32_FEATURE_ARCH_CAPABILITIES,	FEATURE_7_EDX,	"msr_arch " },
+	{ IA32_FEATURE_SSBD,			FEATURE_7_EDX,	"ssbd " },
+
+	// FEATURE_EXT_7_EDX (CPUID.80000007 EDX)
+	{ IA32_FEATURE_AMD_HW_PSTATE,	FEATURE_EXT_7_EDX,	"hwpstate " },
+	{ IA32_FEATURE_INVARIANT_TSC,	FEATURE_EXT_7_EDX,	"constant_tsc " },
+	{ IA32_FEATURE_CPB,		FEATURE_EXT_7_EDX,	"cpb " },
+	{ IA32_FEATURE_PROC_FEEDBACK,	FEATURE_EXT_7_EDX,	"proc_feedback " },
+
+	// FEATURE_D_1_EAX (CPUID.D.1 EAX)
+	{ IA32_FEATURE_XSAVEOPT,	FEATURE_D_1_EAX,	"xsaveopt " },
+	{ IA32_FEATURE_XSAVEC,		FEATURE_D_1_EAX,	"xsavec " },
+	{ IA32_FEATURE_XGETBV1,	FEATURE_D_1_EAX,	"xgetbv1 " },
+	{ IA32_FEATURE_XSAVES,		FEATURE_D_1_EAX,	"xsaves " },
+
+	// FEATURE_EXT_8_EBX (CPUID.80000008 EBX)
+	{ IA32_FEATURE_CLZERO,		FEATURE_EXT_8_EBX,	"clzero " },
+	{ IA32_FEATURE_IBPB,		FEATURE_EXT_8_EBX,	"ibpb " },
+	{ IA32_FEATURE_AMD_SSBD,	FEATURE_EXT_8_EBX,	"amd_ssbd " },
+	{ IA32_FEATURE_VIRT_SSBD,	FEATURE_EXT_8_EBX,	"virt_ssbd " },
+	{ IA32_FEATURE_AMD_SSB_NO,	FEATURE_EXT_8_EBX,	"amd_ssb_no " },
+	{ IA32_FEATURE_CPPC,		FEATURE_EXT_8_EBX,	"cppc " },
+};
+
+static const uint32 kFeatureTableCount = B_COUNT_OF(kFeatureTable);
+
 static void
 dump_feature_string(int currentCPU, cpu_ent* cpu)
 {
 	char features[768];
 	features[0] = 0;
 
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_FPU)
-		strlcat(features, "fpu ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_VME)
-		strlcat(features, "vme ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_DE)
-		strlcat(features, "de ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PSE)
-		strlcat(features, "pse ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_TSC)
-		strlcat(features, "tsc ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_MSR)
-		strlcat(features, "msr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PAE)
-		strlcat(features, "pae ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_MCE)
-		strlcat(features, "mce ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_CX8)
-		strlcat(features, "cx8 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_APIC)
-		strlcat(features, "apic ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_SEP)
-		strlcat(features, "sep ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_MTRR)
-		strlcat(features, "mtrr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PGE)
-		strlcat(features, "pge ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_MCA)
-		strlcat(features, "mca ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_CMOV)
-		strlcat(features, "cmov ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PAT)
-		strlcat(features, "pat ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PSE36)
-		strlcat(features, "pse36 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PSN)
-		strlcat(features, "psn ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_CLFSH)
-		strlcat(features, "clfsh ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_DS)
-		strlcat(features, "ds ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_ACPI)
-		strlcat(features, "acpi ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_MMX)
-		strlcat(features, "mmx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_FXSR)
-		strlcat(features, "fxsr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_SSE)
-		strlcat(features, "sse ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_SSE2)
-		strlcat(features, "sse2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_SS)
-		strlcat(features, "ss ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_HTT)
-		strlcat(features, "htt ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_TM)
-		strlcat(features, "tm ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_COMMON] & IA32_FEATURE_PBE)
-		strlcat(features, "pbe ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_SSE3)
-		strlcat(features, "sse3 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_PCLMULQDQ)
-		strlcat(features, "pclmulqdq ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_DTES64)
-		strlcat(features, "dtes64 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_MONITOR)
-		strlcat(features, "monitor ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_DSCPL)
-		strlcat(features, "dscpl ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_VMX)
-		strlcat(features, "vmx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_SMX)
-		strlcat(features, "smx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_EST)
-		strlcat(features, "est ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_TM2)
-		strlcat(features, "tm2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_SSSE3)
-		strlcat(features, "ssse3 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_CNXTID)
-		strlcat(features, "cnxtid ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_FMA)
-		strlcat(features, "fma ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_CX16)
-		strlcat(features, "cx16 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_XTPR)
-		strlcat(features, "xtpr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_PDCM)
-		strlcat(features, "pdcm ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_PCID)
-		strlcat(features, "pcid ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_DCA)
-		strlcat(features, "dca ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_SSE4_1)
-		strlcat(features, "sse4_1 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_SSE4_2)
-		strlcat(features, "sse4_2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_X2APIC)
-		strlcat(features, "x2apic ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_MOVBE)
-		strlcat(features, "movbe ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_POPCNT)
-		strlcat(features, "popcnt ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_TSCDEADLINE)
-		strlcat(features, "tscdeadline ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_AES)
-		strlcat(features, "aes ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_XSAVE)
-		strlcat(features, "xsave ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_OSXSAVE)
-		strlcat(features, "osxsave ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_AVX)
-		strlcat(features, "avx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_F16C)
-		strlcat(features, "f16c ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_RDRND)
-		strlcat(features, "rdrnd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR)
-		strlcat(features, "hypervisor ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD_ECX] & IA32_FEATURE_AMD_EXT_MWAITX)
-		strlcat(features, "mwaitx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_SYSCALL)
-		strlcat(features, "syscall ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_NX)
-		strlcat(features, "nx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_MMXEXT)
-		strlcat(features, "mmxext ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_FFXSR)
-		strlcat(features, "ffxsr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_PDPE1GB)
-		strlcat(features, "pdpe1gb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_LONG)
-		strlcat(features, "long ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_3DNOWEXT)
-		strlcat(features, "3dnowext ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_AMD] & IA32_FEATURE_AMD_EXT_3DNOW)
-		strlcat(features, "3dnow ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_DTS)
-		strlcat(features, "dts ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_ITB)
-		strlcat(features, "itb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_ARAT)
-		strlcat(features, "arat ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_PLN)
-		strlcat(features, "pln ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_ECMD)
-		strlcat(features, "ecmd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_PTM)
-		strlcat(features, "ptm ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP)
-		strlcat(features, "hwp ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_NOTIFY)
-		strlcat(features, "hwp_notify ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_ACTWIN)
-		strlcat(features, "hwp_actwin ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_EPP)
-		strlcat(features, "hwp_epp ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_PLR)
-		strlcat(features, "hwp_plr ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HDC)
-		strlcat(features, "hdc ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_TBMT3)
-		strlcat(features, "tbmt3 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_CAP)
-		strlcat(features, "hwp_cap ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_PECI)
-		strlcat(features, "hwp_peci ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_FLEX)
-		strlcat(features, "hwp_flex ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_FAST)
-		strlcat(features, "hwp_fast ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HW_FEEDBACK)
-		strlcat(features, "hw_feedback ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_HWP_IGNIDL)
-		strlcat(features, "hwp_ignidl ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_ECX] & IA32_FEATURE_APERFMPERF)
-		strlcat(features, "aperfmperf ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_6_ECX] & IA32_FEATURE_EPB)
-		strlcat(features, "epb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_TSC_ADJUST)
-		strlcat(features, "tsc_adjust ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_SGX)
-		strlcat(features, "sgx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_BMI1)
-		strlcat(features, "bmi1 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_HLE)
-		strlcat(features, "hle ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX2)
-		strlcat(features, "avx2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_SMEP)
-		strlcat(features, "smep ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_BMI2)
-		strlcat(features, "bmi2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_ERMS)
-		strlcat(features, "erms ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_INVPCID)
-		strlcat(features, "invpcid ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_RTM)
-		strlcat(features, "rtm ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_CQM)
-		strlcat(features, "cqm ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_MPX)
-		strlcat(features, "mpx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_RDT_A)
-		strlcat(features, "rdt_a ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512F)
-		strlcat(features, "avx512f ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512DQ)
-		strlcat(features, "avx512dq ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_RDSEED)
-		strlcat(features, "rdseed ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_ADX)
-		strlcat(features, "adx ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_SMAP)
-		strlcat(features, "smap ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512IFMA)
-		strlcat(features, "avx512ifma ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_PCOMMIT)
-		strlcat(features, "pcommit ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_CLFLUSHOPT)
-		strlcat(features, "cflushopt ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_CLWB)
-		strlcat(features, "clwb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_INTEL_PT)
-		strlcat(features, "intel_pt ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512PF)
-		strlcat(features, "avx512pf ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512ER)
-		strlcat(features, "avx512er ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512CD)
-		strlcat(features, "avx512cd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_SHA_NI)
-		strlcat(features, "sha_ni ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512BW)
-		strlcat(features, "avx512bw ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EBX] & IA32_FEATURE_AVX512VI)
-		strlcat(features, "avx512vi ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_AVX512VMBI)
-		strlcat(features, "avx512vmbi ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_UMIP)
-		strlcat(features, "umip ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_PKU)
-		strlcat(features, "pku ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_OSPKE)
-		strlcat(features, "ospke ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_WAITPKG)
-		strlcat(features, "waitpkg ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_AVX512VMBI2)
-		strlcat(features, "avx512vmbi2 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_GFNI)
-		strlcat(features, "gfni ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_VAES)
-		strlcat(features, "vaes ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_VPCLMULQDQ)
-		strlcat(features, "vpclmulqdq ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_AVX512_VNNI)
-		strlcat(features, "avx512vnni ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_AVX512_BITALG)
-		strlcat(features, "avx512bitalg ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_AVX512_VPOPCNTDQ)
-		strlcat(features, "avx512vpopcntdq ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_LA57)
-		strlcat(features, "la57 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_RDPID)
-		strlcat(features, "rdpid ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_ECX] & IA32_FEATURE_SGX_LC)
-		strlcat(features, "sgx_lc ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_HYBRID_CPU)
-		strlcat(features, "hybrid ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_IBRS)
-		strlcat(features, "ibrs ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_STIBP)
-		strlcat(features, "stibp ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_L1D_FLUSH)
-		strlcat(features, "l1d_flush ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_ARCH_CAPABILITIES)
-		strlcat(features, "msr_arch ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_SSBD)
-		strlcat(features, "ssbd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_7_EDX] & IA32_FEATURE_AMD_HW_PSTATE)
-		strlcat(features, "hwpstate ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_7_EDX] & IA32_FEATURE_INVARIANT_TSC)
-		strlcat(features, "constant_tsc ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_7_EDX] & IA32_FEATURE_CPB)
-		strlcat(features, "cpb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_7_EDX] & IA32_FEATURE_PROC_FEEDBACK)
-		strlcat(features, "proc_feedback ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_D_1_EAX] & IA32_FEATURE_XSAVEOPT)
-		strlcat(features, "xsaveopt ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_D_1_EAX] & IA32_FEATURE_XSAVEC)
-		strlcat(features, "xsavec ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_D_1_EAX] & IA32_FEATURE_XGETBV1)
-		strlcat(features, "xgetbv1 ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_D_1_EAX] & IA32_FEATURE_XSAVES)
-		strlcat(features, "xsaves ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_CLZERO)
-		strlcat(features, "clzero ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_IBPB)
-		strlcat(features, "ibpb ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_AMD_SSBD)
-		strlcat(features, "amd_ssbd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_VIRT_SSBD)
-		strlcat(features, "virt_ssbd ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_AMD_SSB_NO)
-		strlcat(features, "amd_ssb_no ", sizeof(features));
-	if (cpu->arch.feature[FEATURE_EXT_8_EBX] & IA32_FEATURE_CPPC)
-		strlcat(features, "cppc ", sizeof(features));
+	for (uint32 i = 0; i < kFeatureTableCount; i++) {
+		if (cpu->arch.feature[kFeatureTable[i].type] & kFeatureTable[i].flag)
+			strlcat(features, kFeatureTable[i].name, sizeof(features));
+	}
+
 	dprintf("CPU %d: features: %s\n", currentCPU, features);
 }
+
 #endif	// DUMP_FEATURE_STRING
+
+
+// #pragma mark - CPU topology
 
 
 static void
@@ -717,7 +562,6 @@ detect_amd_cpu_topology(uint32 maxBasicLeaf, uint32 maxExtendedLeaf)
 	}
 
 	compute_cpu_hierarchy_masks(maxLogicalID, maxCoreID);
-
 	return B_OK;
 }
 
@@ -771,7 +615,6 @@ get_intel_cpu_initial_x2apic_id(int /* currentCPU */)
 static inline status_t
 detect_intel_cpu_topology_x2apic(uint32 maxBasicLeaf)
 {
-
 	uint32 leaf = 0;
 	cpuid_info cpuid;
 	if (maxBasicLeaf >= 0x1f) {
@@ -801,11 +644,11 @@ detect_intel_cpu_topology_x2apic(uint32 maxBasicLeaf)
 			break;
 
 		switch (levelType) {
-			case 1:	// SMT
+			case 1:
 				hierarchyLevels[CPU_TOPOLOGY_SMT] = levelValue;
 				levelsSet |= 1;
 				break;
-			case 2:	// core
+			case 2:
 				hierarchyLevels[CPU_TOPOLOGY_CORE] = levelValue;
 				levelsSet |= 2;
 				break;
@@ -852,7 +695,6 @@ detect_intel_cpu_topology_legacy(uint32 maxBasicLeaf)
 	}
 
 	compute_cpu_hierarchy_masks(maxLogicalID, maxCoreID);
-
 	return B_OK;
 }
 
@@ -915,19 +757,14 @@ detect_cpu_topology(int currentCPU, cpu_ent* cpu, uint32 maxBasicLeaf,
 
 		status_t result = B_UNSUPPORTED;
 		if (x86_check_feature(IA32_FEATURE_HTT, FEATURE_COMMON)) {
-			if (cpu->arch.vendor == VENDOR_AMD
-				|| cpu->arch.vendor == VENDOR_HYGON) {
+			if (cpu->arch.vendor == VENDOR_AMD) {
 				result = detect_amd_cpu_topology(maxBasicLeaf, maxExtendedLeaf);
-
 				if (result == B_OK)
 					detect_amd_cache_topology(maxExtendedLeaf);
-			}
-
-			if (cpu->arch.vendor == VENDOR_INTEL) {
+			} else if (cpu->arch.vendor == VENDOR_INTEL) {
 				result = detect_intel_cpu_topology_x2apic(maxBasicLeaf);
 				if (result != B_OK)
 					result = detect_intel_cpu_topology_legacy(maxBasicLeaf);
-
 				if (result == B_OK)
 					detect_intel_cache_topology(maxBasicLeaf);
 			}
@@ -935,9 +772,7 @@ detect_cpu_topology(int currentCPU, cpu_ent* cpu, uint32 maxBasicLeaf,
 
 		if (result != B_OK) {
 			dprintf("No CPU topology information available.\n");
-
 			sGetCPUTopologyID = get_simple_cpu_topology_id;
-
 			sHierarchyMask[CPU_TOPOLOGY_PACKAGE] = ~uint32(0);
 		}
 	}
@@ -982,6 +817,9 @@ detect_cpu_topology(int currentCPU, cpu_ent* cpu, uint32 maxBasicLeaf,
 }
 
 
+// #pragma mark - Microcode: Intel
+
+
 static void
 detect_intel_patch_level(cpu_ent* cpu)
 {
@@ -996,19 +834,6 @@ detect_intel_patch_level(cpu_ent* cpu)
 
 	uint64 value = x86_read_msr(IA32_MSR_UCODE_REV);
 	cpu->arch.patch_level = value >> 32;
-}
-
-
-static void
-detect_amd_patch_level(cpu_ent* cpu)
-{
-	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR) {
-		cpu->arch.patch_level = 0;
-		return;
-	}
-
-	uint64 value = x86_read_msr(IA32_MSR_UCODE_REV);
-	cpu->arch.patch_level = (uint32)value;
 }
 
 
@@ -1028,15 +853,14 @@ find_microcode_intel(addr_t data, size_t size, uint32 patchLevel)
 			dprintf("find_microcode_intel update is too small for header\n");
 			break;
 		}
-		struct intel_microcode_header* header =
-			(struct intel_microcode_header*)data;
+		struct intel_microcode_header* header
+			= (struct intel_microcode_header*)data;
 
 		uint32 totalSize = header->total_size;
 		uint32 dataSize = header->data_size;
 		if (dataSize == 0) {
 			dataSize = 2000;
-			totalSize = sizeof(struct intel_microcode_header)
-				+ dataSize;
+			totalSize = sizeof(struct intel_microcode_header) + dataSize;
 		}
 		if (totalSize > size) {
 			dprintf("find_microcode_intel update is too small for data\n");
@@ -1044,7 +868,6 @@ find_microcode_intel(addr_t data, size_t size, uint32 patchLevel)
 		}
 
 		uint32* dwords = (uint32*)data;
-		// prepare the next update
 		size -= totalSize;
 		data += totalSize;
 
@@ -1059,9 +882,8 @@ find_microcode_intel(addr_t data, size_t size, uint32 patchLevel)
 			continue;
 		}
 		uint32 sum = 0;
-		for (uint32 i = 0; i < totalSize / 4; i++) {
+		for (uint32 i = 0; i < totalSize / 4; i++)
 			sum += dwords[i];
-		}
 		if (sum != 0) {
 			dprintf("find_microcode_intel incorrect checksum\n");
 			continue;
@@ -1078,11 +900,11 @@ find_microcode_intel(addr_t data, size_t size, uint32 patchLevel)
 			+ sizeof(struct intel_microcode_extended_signature_header))) {
 			continue;
 		}
-		struct intel_microcode_extended_signature_header* extSigHeader =
-			(struct intel_microcode_extended_signature_header*)((addr_t)header
+		struct intel_microcode_extended_signature_header* extSigHeader
+			= (struct intel_microcode_extended_signature_header*)((addr_t)header
 				+ sizeof(struct intel_microcode_header) + dataSize);
-		struct intel_microcode_extended_signature* extended_signature =
-			(struct intel_microcode_extended_signature*)((addr_t)extSigHeader
+		struct intel_microcode_extended_signature* extended_signature
+			= (struct intel_microcode_extended_signature*)((addr_t)extSigHeader
 				+ sizeof(struct intel_microcode_extended_signature_header));
 		for (uint32 i = 0; i < extSigHeader->extended_signature_count; i++) {
 			if (signature == extended_signature[i].processor_signature
@@ -1097,12 +919,13 @@ find_microcode_intel(addr_t data, size_t size, uint32 patchLevel)
 static void
 load_microcode_intel(int currentCPU, cpu_ent* cpu)
 {
-	// serialize for HT cores
 	if (currentCPU != 0)
 		acquire_spinlock(&sUcodeUpdateLock);
+
 	detect_intel_patch_level(cpu);
 	uint32 revision = cpu->arch.patch_level;
-	struct intel_microcode_header* update = (struct intel_microcode_header*)sLoadedUcodeUpdate;
+	struct intel_microcode_header* update
+		= (struct intel_microcode_header*)sLoadedUcodeUpdate;
 	if (update == NULL) {
 		update = find_microcode_intel((addr_t)sUcodeData, sUcodeDataSize,
 			revision);
@@ -1119,12 +942,29 @@ load_microcode_intel(int currentCPU, cpu_ent* cpu)
 		} else {
 			if (sLoadedUcodeUpdate == NULL)
 				sLoadedUcodeUpdate = update;
-			dprintf("CPU %d: updated from revision 0x%" B_PRIx32 " to 0x%" B_PRIx32
-				"\n", currentCPU, revision, cpu->arch.patch_level);
+			dprintf("CPU %d: updated from revision 0x%" B_PRIx32 " to 0x%"
+				B_PRIx32 "\n", currentCPU, revision, cpu->arch.patch_level);
 		}
 	}
+
 	if (currentCPU != 0)
 		release_spinlock(&sUcodeUpdateLock);
+}
+
+
+// #pragma mark - Microcode: AMD
+
+
+static void
+detect_amd_patch_level(cpu_ent* cpu)
+{
+	if (cpu->arch.feature[FEATURE_EXT] & IA32_FEATURE_EXT_HYPERVISOR) {
+		cpu->arch.patch_level = 0;
+		return;
+	}
+
+	uint64 value = x86_read_msr(IA32_MSR_UCODE_REV);
+	cpu->arch.patch_level = (uint32)value;
 }
 
 
@@ -1149,8 +989,7 @@ find_microcode_amd(addr_t data, size_t size, uint32 patchLevel)
 	size -= sizeof(*container);
 	data += sizeof(*container);
 
-	struct amd_section_header* section =
-		(struct amd_section_header*)data;
+	struct amd_section_header* section = (struct amd_section_header*)data;
 	if (section->type != 0 || section->size == 0) {
 		dprintf("find_microcode_amd update first section invalid\n");
 		return NULL;
@@ -1191,11 +1030,12 @@ find_microcode_amd(addr_t data, size_t size, uint32 patchLevel)
 		data += section->size;
 
 		if (header->processor_rev_id != equiv_id) {
-			dprintf("find_microcode_amd update found rev_id %x\n", header->processor_rev_id);
+			dprintf("find_microcode_amd update found rev_id %x\n",
+				header->processor_rev_id);
 			continue;
 		}
 		if (patchLevel >= header->patch_id) {
-			dprintf("find_microcode_intel update_revision is lower\n");
+			dprintf("find_microcode_amd update_revision is lower\n");
 			continue;
 		}
 		if (header->nb_dev_id != 0 || header->sb_dev_id != 0) {
@@ -1217,12 +1057,13 @@ find_microcode_amd(addr_t data, size_t size, uint32 patchLevel)
 static void
 load_microcode_amd(int currentCPU, cpu_ent* cpu)
 {
-	// serialize for HT cores
 	if (currentCPU != 0)
 		acquire_spinlock(&sUcodeUpdateLock);
+
 	detect_amd_patch_level(cpu);
 	uint32 revision = cpu->arch.patch_level;
-	struct amd_microcode_header* update = (struct amd_microcode_header*)sLoadedUcodeUpdate;
+	struct amd_microcode_header* update
+		= (struct amd_microcode_header*)sLoadedUcodeUpdate;
 	if (update == NULL) {
 		update = find_microcode_amd((addr_t)sUcodeData, sUcodeDataSize,
 			revision);
@@ -1230,19 +1071,16 @@ load_microcode_amd(int currentCPU, cpu_ent* cpu)
 	if (update != NULL) {
 		addr_t data = (addr_t)update;
 		wbinvd();
-
 		x86_write_msr(MSR_K8_UCODE_UPDATE, data);
-
 		detect_amd_patch_level(cpu);
 		if (revision == cpu->arch.patch_level) {
 			dprintf("CPU %d: update failed\n", currentCPU);
 		} else {
 			if (sLoadedUcodeUpdate == NULL)
 				sLoadedUcodeUpdate = update;
-			dprintf("CPU %d: updated from revision 0x%" B_PRIx32 " to 0x%" B_PRIx32
-				"\n", currentCPU, revision, cpu->arch.patch_level);
+			dprintf("CPU %d: updated from revision 0x%" B_PRIx32 " to 0x%"
+				B_PRIx32 "\n", currentCPU, revision, cpu->arch.patch_level);
 		}
-
 	} else {
 		dprintf("CPU %d: no update found\n", currentCPU);
 	}
@@ -1267,6 +1105,9 @@ load_microcode(int currentCPU)
 }
 
 
+// #pragma mark - Hybrid CPU
+
+
 static uint8
 get_hybrid_cpu_type()
 {
@@ -1274,7 +1115,7 @@ get_hybrid_cpu_type()
 	if ((cpu->arch.feature[FEATURE_7_EDX] & IA32_FEATURE_HYBRID_CPU) == 0)
 		return 0;
 
-#define X86_HYBRID_CPU_TYPE_ID_SHIFT       24
+#define X86_HYBRID_CPU_TYPE_ID_SHIFT	24
 	cpuid_info cpuid;
 	get_current_cpuid(&cpuid, 0x1a, 0);
 	return cpuid.regs.eax >> X86_HYBRID_CPU_TYPE_ID_SHIFT;
@@ -1285,12 +1126,28 @@ static const char*
 get_hybrid_cpu_type_string(uint8 type)
 {
 	switch (type) {
-		case 0x20:
-			return "Atom";
-		case 0x40:
-			return "Core";
-		default:
-			return "";
+		case 0x20:	return "Atom";
+		case 0x40:	return "Core";
+		default:	return "";
+	}
+}
+
+
+// #pragma mark - CPU identification
+
+
+static void
+identify_vendor(cpu_ent* cpu, const char* vendorString)
+{
+	if (strcmp(vendorString, "GenuineIntel") == 0) {
+		cpu->arch.vendor = VENDOR_INTEL;
+		cpu->arch.vendor_name = "Intel";
+	} else if (strcmp(vendorString, "AuthenticAMD") == 0) {
+		cpu->arch.vendor = VENDOR_AMD;
+		cpu->arch.vendor_name = "AMD";
+	} else {
+		cpu->arch.vendor = VENDOR_UNKNOWN;
+		cpu->arch.vendor_name = "UNKNOWN";
 	}
 }
 
@@ -1302,7 +1159,6 @@ detect_cpu(int currentCPU, bool full = true)
 	char vendorString[17];
 	cpuid_info cpuid;
 
-	// clear out the cpu info data
 	cpu->arch.vendor = VENDOR_UNKNOWN;
 	cpu->arch.vendor_name = "UNKNOWN VENDOR";
 	cpu->arch.feature[FEATURE_COMMON] = 0;
@@ -1314,15 +1170,12 @@ detect_cpu(int currentCPU, bool full = true)
 	cpu->arch.feature[FEATURE_D_1_EAX] = 0;
 	cpu->arch.model_name[0] = 0;
 
-	// print some fun data
 	get_current_cpuid(&cpuid, 0, 0);
 	uint32 maxBasicLeaf = cpuid.eax_0.max_eax;
 
-	// build the vendor string
 	memset(vendorString, 0, sizeof(vendorString));
 	memcpy(vendorString, cpuid.eax_0.vendor_id, sizeof(cpuid.eax_0.vendor_id));
 
-	// get the family, model, stepping
 	get_current_cpuid(&cpuid, 1, 0);
 	cpu->arch.type = cpuid.eax_1.type;
 	cpu->arch.family = cpuid.eax_1.family;
@@ -1338,28 +1191,12 @@ detect_cpu(int currentCPU, bool full = true)
 			cpu->arch.extended_model, cpu->arch.stepping, vendorString);
 	}
 
-	// figure out what vendor we have here
+	identify_vendor(cpu, vendorString);
 
-	for (int32 i = 0; i < VENDOR_NUM; i++) {
-		if (vendor_info[i].ident_string[0]
-			&& !strcmp(vendorString, vendor_info[i].ident_string[0])) {
-			cpu->arch.vendor = (x86_vendors)i;
-			cpu->arch.vendor_name = vendor_info[i].vendor;
-			break;
-		}
-		if (vendor_info[i].ident_string[1]
-			&& !strcmp(vendorString, vendor_info[i].ident_string[1])) {
-			cpu->arch.vendor = (x86_vendors)i;
-			cpu->arch.vendor_name = vendor_info[i].vendor;
-			break;
-		}
-	}
-
-	// see if we can get the model name
+	// model name
 	get_current_cpuid(&cpuid, 0x80000000, 0);
 	uint32 maxExtendedLeaf = cpuid.eax_0.max_eax;
 	if (maxExtendedLeaf >= 0x80000004) {
-		// build the model string (need to swap ecx/edx data before copying)
 		unsigned int temp;
 		memset(cpu->arch.model_name, 0, sizeof(cpu->arch.model_name));
 
@@ -1400,10 +1237,10 @@ detect_cpu(int currentCPU, bool full = true)
 		strlcpy(cpu->arch.model_name, "unknown", sizeof(cpu->arch.model_name));
 	}
 
-	// load feature bits
+	// feature bits
 	get_current_cpuid(&cpuid, 1, 0);
-	cpu->arch.feature[FEATURE_COMMON] = cpuid.eax_1.features; // edx
-	cpu->arch.feature[FEATURE_EXT] = cpuid.eax_1.extended_features; // ecx
+	cpu->arch.feature[FEATURE_COMMON] = cpuid.eax_1.features;
+	cpu->arch.feature[FEATURE_EXT] = cpuid.eax_1.extended_features;
 
 	if (!full)
 		return;
@@ -1411,8 +1248,8 @@ detect_cpu(int currentCPU, bool full = true)
 	if (maxExtendedLeaf >= 0x80000001) {
 		get_current_cpuid(&cpuid, 0x80000001, 0);
 		if (cpu->arch.vendor == VENDOR_AMD)
-			cpu->arch.feature[FEATURE_EXT_AMD_ECX] = cpuid.regs.ecx; // ecx
-		cpu->arch.feature[FEATURE_EXT_AMD] = cpuid.regs.edx; // edx
+			cpu->arch.feature[FEATURE_EXT_AMD_ECX] = cpuid.regs.ecx;
+		cpu->arch.feature[FEATURE_EXT_AMD] = cpuid.regs.edx;
 		if (cpu->arch.vendor != VENDOR_AMD)
 			cpu->arch.feature[FEATURE_EXT_AMD] &= IA32_FEATURES_INTEL_EXT;
 	}
@@ -1442,7 +1279,7 @@ detect_cpu(int currentCPU, bool full = true)
 
 	if (maxExtendedLeaf >= 0x80000008) {
 		get_current_cpuid(&cpuid, 0x80000008, 0);
-			cpu->arch.feature[FEATURE_EXT_8_EBX] = cpuid.regs.ebx;
+		cpu->arch.feature[FEATURE_EXT_8_EBX] = cpuid.regs.ebx;
 	}
 
 	detect_cpu_topology(currentCPU, cpu, maxBasicLeaf, maxExtendedLeaf);
@@ -1498,9 +1335,6 @@ x86_get_double_fault_stack(int32 cpu, size_t* _size)
 }
 
 
-/*!	If on a double fault stack, returns the index of the current CPU.
-	Otherwise, returns -1.
-*/
 int32
 x86_double_fault_get_cpu()
 {
@@ -1512,44 +1346,7 @@ x86_double_fault_get_cpu()
 }
 
 
-//	#pragma mark -
-
-
-status_t
-arch_cpu_preboot_init_percpu(kernel_args* args, int cpu)
-{
-	if (cpu == 0) {
-		// We can't allocate pages at this stage in the boot process, only virtual addresses.
-		sDoubleFaultStacks = vm_allocate_early(args,
-			kDoubleFaultStackSize * smp_get_num_cpus(), 0, 0, 0);
-	}
-
-	// On SMP system we want to synchronize the CPUs' TSCs, so system_time()
-	// will return consistent values.
-	if (smp_get_num_cpus() > 1) {
-		// let the first CPU prepare the rendezvous point
-		if (cpu == 0)
-			sTSCSyncRendezvous = smp_get_num_cpus() - 1;
-
-		// One CPU after the other will drop out of this loop and be caught by
-		// the loop below, until the last CPU (0) gets there. Save for +/- a few
-		// cycles the CPUs should pass the second loop at the same time.
-		while (sTSCSyncRendezvous != cpu) {
-		}
-
-		sTSCSyncRendezvous = cpu - 1;
-
-		while (sTSCSyncRendezvous != -1) {
-		}
-
-		// reset TSC to 0
-		x86_write_msr(IA32_MSR_TSC, 0);
-	}
-
-	x86_descriptors_preboot_init_percpu(args, cpu);
-
-	return B_OK;
-}
+// #pragma mark - Idle
 
 
 static void
@@ -1559,40 +1356,7 @@ halt_idle(void)
 }
 
 
-static void
-amdc1e_noarat_idle(void)
-{
-	uint64 msr = x86_read_msr(K8_MSR_IPM);
-	if (msr & K8_CMPHALT)
-		x86_write_msr(K8_MSR_IPM, msr & ~K8_CMPHALT);
-	halt_idle();
-}
-
-
-static bool
-detect_amdc1e_noarat()
-{
-	cpu_ent* cpu = get_cpu_struct();
-
-	if (cpu->arch.vendor != VENDOR_AMD)
-		return false;
-
-	if (cpu->arch.feature[FEATURE_6_EAX] & IA32_FEATURE_ARAT)
-		return false;
-
-	uint32 family = cpu->arch.family + cpu->arch.extended_family;
-	uint32 model = (cpu->arch.extended_model << 4) | cpu->arch.model;
-	if (family >= 0x12) {
-		// Family 0x12 and higher processors support ARAT correctly,
-		// but they don't declare it in the CPUID until 0x17 (Zen).
-		cpu->arch.feature[FEATURE_6_EAX] |= IA32_FEATURE_ARAT;
-		return false;
-	}
-
-	// Family lower than 0xf processors doesn't support C1E
-	// Family 0xf with model <= 0x40 processors doesn't support C1E
-	return (family > 0xf) || (family == 0xf && model > 0x40);
-}
+// #pragma mark - TSC calibration
 
 
 static void
@@ -1615,13 +1379,10 @@ init_tsc_with_cpuid(kernel_args* args, uint32* conversionFactor)
 	uint32 khz = cpuid.regs.ecx / 1000;
 	uint32 denominator = cpuid.regs.eax;
 	uint32 numerator = cpuid.regs.ebx;
-	if (khz == 0 && model == 0x5f) {
-		// CPUID_LEAF_FREQUENCY isn't supported, hardcoding
+	if (khz == 0 && model == 0x5f)
 		khz = 25000;
-	}
 
 	if (khz == 0 && maxBasicLeaf >= IA32_CPUID_LEAF_FREQUENCY) {
-		// for these CPUs the base frequency is also the tsc frequency
 		get_current_cpuid(&cpuid, IA32_CPUID_LEAF_FREQUENCY, 0);
 		khz = cpuid.regs.eax * 1000 * denominator / numerator;
 	}
@@ -1629,10 +1390,7 @@ init_tsc_with_cpuid(kernel_args* args, uint32* conversionFactor)
 		return;
 
 	dprintf("CPU: using TSC frequency from CPUID\n");
-	// compute for microseconds as follows (1000000 << 32) / (tsc freq in Hz),
-	// or (1000 << 32) / (tsc freq in kHz)
 	*conversionFactor = (1000ULL << 32) / (khz * numerator / denominator);
-	// overwrite the bootloader value
 	args->arch_args.system_time_cv_factor = *conversionFactor;
 }
 
@@ -1667,11 +1425,9 @@ init_tsc_with_msr(kernel_args* args, uint32* conversionFactor)
 	if (numerator < 0x10)
 		return;
 
-	dprintf("CPU: using TSC frequency from MSR %" B_PRIu64 "\n", khz * numerator / denominator);
-	// compute for microseconds as follows (1000000 << 32) / (tsc freq in Hz),
-	// or (1000 << 32) / (tsc freq in kHz)
+	dprintf("CPU: using TSC frequency from MSR %" B_PRIu64 "\n",
+		khz * numerator / denominator);
 	*conversionFactor = (1000ULL << 32) / (khz * numerator / denominator);
-	// overwrite the bootloader value
 	args->arch_args.system_time_cv_factor = *conversionFactor;
 }
 
@@ -1679,19 +1435,44 @@ init_tsc_with_msr(kernel_args* args, uint32* conversionFactor)
 static void
 init_tsc(kernel_args* args)
 {
-	// init the TSC -> system_time() conversion factors
-
-	// try to find the TSC frequency with CPUID
 	uint32 conversionFactor = args->arch_args.system_time_cv_factor;
 	init_tsc_with_cpuid(args, &conversionFactor);
 	init_tsc_with_msr(args, &conversionFactor);
 	uint64 conversionFactorNsecs = (uint64)conversionFactor * 1000;
 
-	// The x86_64 system_time() implementation uses 64-bit multiplication and
-	// therefore shifting is not necessary for low frequencies (it's also not
-	// too likely that there'll be any x86_64 CPUs clocked under 1GHz).
 	__x86_setup_system_time((uint64)conversionFactor << 32,
 		conversionFactorNsecs);
+}
+
+
+// #pragma mark - Initialization
+
+
+status_t
+arch_cpu_preboot_init_percpu(kernel_args* args, int cpu)
+{
+	if (cpu == 0) {
+		sDoubleFaultStacks = vm_allocate_early(args,
+			kDoubleFaultStackSize * smp_get_num_cpus(), 0, 0, 0);
+	}
+
+	if (smp_get_num_cpus() > 1) {
+		if (cpu == 0)
+			sTSCSyncRendezvous = smp_get_num_cpus() - 1;
+
+		while (sTSCSyncRendezvous != cpu) {
+		}
+
+		sTSCSyncRendezvous = cpu - 1;
+
+		while (sTSCSyncRendezvous != -1) {
+		}
+
+		x86_write_msr(IA32_MSR_TSC, 0);
+	}
+
+	x86_descriptors_preboot_init_percpu(args, cpu);
+	return B_OK;
 }
 
 
@@ -1704,11 +1485,7 @@ arch_cpu_init_percpu(kernel_args* args, int cpu)
 
 	if (cpu == 0) {
 		init_tsc(args);
-
-		if (detect_amdc1e_noarat())
-			gCpuIdleFunc = amdc1e_noarat_idle;
-		else
-			gCpuIdleFunc = halt_idle;
+		gCpuIdleFunc = halt_idle;
 	}
 
 	if (x86_check_feature(IA32_FEATURE_MCE, FEATURE_COMMON))
@@ -1718,38 +1495,26 @@ arch_cpu_init_percpu(kernel_args* args, int cpu)
 	if (cpu == 0) {
 		bool supportsPAT = x86_check_feature(IA32_FEATURE_PAT, FEATURE_COMMON);
 
-		// Pentium II Errata A52 and Pentium III Errata E27 say the upper four
-		// entries of the PAT are not useable as the PAT bit is ignored for 4K
-		// PTEs. Pentium 4 Errata N46 says the PAT bit can be assumed 0 in some
-		// specific cases. To avoid issues, disable PAT on such CPUs.
-		bool brokenPAT = cpuEnt->arch.vendor == VENDOR_INTEL
-			&& cpuEnt->arch.extended_family == 0
-			&& cpuEnt->arch.extended_model == 0
-			&& ((cpuEnt->arch.family == 6 && cpuEnt->arch.model <= 13)
-				|| (cpuEnt->arch.family == 15 && cpuEnt->arch.model <= 6));
-
-		sUsePAT = supportsPAT && !brokenPAT
+		sUsePAT = supportsPAT
 			&& !get_safemode_boolean_early(args, B_SAFEMODE_DISABLE_PAT, false);
 
 		if (sUsePAT) {
 			dprintf("using PAT for memory type configuration\n");
 		} else {
 			dprintf("not using PAT for memory type configuration (%s)\n",
-				supportsPAT ? (brokenPAT ? "broken" : "disabled")
-					: "unsupported");
+				supportsPAT ? "disabled" : "unsupported");
 		}
 	}
 
 	if (sUsePAT)
 		init_pat(cpu);
 
-	// if RDTSCP or RDPID are available write cpu number in TSC_AUX
 	if (x86_check_feature(IA32_FEATURE_AMD_EXT_RDTSCP, FEATURE_EXT_AMD)
 		|| x86_check_feature(IA32_FEATURE_RDPID, FEATURE_7_ECX)) {
 		x86_write_msr(IA32_MSR_TSC_AUX, cpu);
 	}
 
-	// make LFENCE a dispatch serializing instruction on AMD 64bit
+	// make LFENCE dispatch-serializing on AMD
 	if (cpuEnt->arch.vendor == VENDOR_AMD) {
 		uint32 family = cpuEnt->arch.family + cpuEnt->arch.extended_family;
 		if (family >= 0x10 && family != 0x11) {
@@ -1772,17 +1537,14 @@ arch_cpu_init_percpu(kernel_args* args, int cpu)
 status_t
 arch_cpu_init(kernel_args* args)
 {
-	if (args->ucode_data != NULL
-		&& args->ucode_data_size > 0) {
+	if (args->ucode_data != NULL && args->ucode_data_size > 0) {
 		sUcodeData = args->ucode_data;
 		sUcodeDataSize = args->ucode_data_size;
 	} else {
 		dprintf("CPU: no microcode provided\n");
 	}
 
-	// Initialize descriptor tables.
 	x86_descriptors_init(args);
-
 	return B_OK;
 }
 
@@ -1818,7 +1580,6 @@ enable_xsavemask(void* dummy, int cpu)
 status_t
 arch_cpu_init_post_vm(kernel_args* args)
 {
-	// allocate the area for the double fault stacks
 	area_id stacks = create_area("double fault stacks",
 		(void**)&sDoubleFaultStacks, B_EXACT_ADDRESS,
 		kDoubleFaultStackSize * smp_get_num_cpus(),
@@ -1830,7 +1591,6 @@ arch_cpu_init_post_vm(kernel_args* args)
 		= static_cast<X86VMTranslationMap*>(
 			VMAddressSpace::Kernel()->TranslationMap())->PagingStructures();
 
-	// Set active translation map on each CPU.
 	for (uint32 i = 0; i < args->num_cpus; i++) {
 		gCPU[i].arch.active_paging_structures = kernelPagingStructures;
 		kernelPagingStructures->AddReference();
@@ -1838,9 +1598,8 @@ arch_cpu_init_post_vm(kernel_args* args)
 
 	if (!apic_available())
 		x86_init_fpu();
-	// else fpu gets set up in smp code
 
-	// if available enable SMEP (Supervisor Memory Execution Protection)
+	// SMEP
 	if (x86_check_feature(IA32_FEATURE_SMEP, FEATURE_7_EBX)) {
 		if (!get_safemode_boolean(B_SAFEMODE_DISABLE_SMEP_SMAP, false)) {
 			dprintf("enable SMEP\n");
@@ -1849,23 +1608,21 @@ arch_cpu_init_post_vm(kernel_args* args)
 			dprintf("SMEP disabled per safemode setting\n");
 	}
 
-	// if available enable SMAP (Supervisor Memory Access Protection)
+	// SMAP
 	if (x86_check_feature(IA32_FEATURE_SMAP, FEATURE_7_EBX)) {
 		if (!get_safemode_boolean(B_SAFEMODE_DISABLE_SMEP_SMAP, false)) {
 			dprintf("enable SMAP\n");
 			call_all_cpus_sync(&enable_smap, NULL);
-
 			arch_altcodepatch_replace(ALTCODEPATCH_TAG_STAC, &_stac, 3);
 			arch_altcodepatch_replace(ALTCODEPATCH_TAG_CLAC, &_clac, 3);
 		} else
 			dprintf("SMAP disabled per safemode setting\n");
 	}
 
-	// if available enable XSAVE (XSAVE and extended states)
+	// XSAVE
 	gHasXsave = x86_check_feature(IA32_FEATURE_EXT_XSAVE, FEATURE_EXT);
 	if (gHasXsave) {
-		gHasXsavec = x86_check_feature(IA32_FEATURE_XSAVEC,
-			FEATURE_D_1_EAX);
+		gHasXsavec = x86_check_feature(IA32_FEATURE_XSAVEC, FEATURE_D_1_EAX);
 
 		call_all_cpus_sync(&enable_osxsave, NULL);
 		gXsaveMask = IA32_XCR0_X87 | IA32_XCR0_SSE;
@@ -1880,8 +1637,7 @@ arch_cpu_init_post_vm(kernel_args* args)
 
 		arch_altcodepatch_replace(ALTCODEPATCH_TAG_XSAVE,
 			gHasXsavec ? &_xsavec : &_xsave, 4);
-		arch_altcodepatch_replace(ALTCODEPATCH_TAG_XRSTOR,
-			&_xrstor, 4);
+		arch_altcodepatch_replace(ALTCODEPATCH_TAG_XRSTOR, &_xrstor, 4);
 
 		dprintf("enable %s 0x%" B_PRIx64 " %" B_PRId64 "\n",
 			gHasXsavec ? "XSAVEC" : "XSAVE", gXsaveMask, gFPUSaveLength);
@@ -1894,8 +1650,6 @@ arch_cpu_init_post_vm(kernel_args* args)
 status_t
 arch_cpu_init_post_modules(kernel_args* args)
 {
-	// initialize CPU module
-
 	void* cookie = open_module_list("cpu");
 
 	while (true) {
@@ -1909,7 +1663,6 @@ arch_cpu_init_post_modules(kernel_args* args)
 
 	close_module_list(cookie);
 
-	// initialize MTRRs if available
 	if (x86_count_mtrrs() > 0) {
 		sCpuRendezvous = sCpuRendezvous2 = 0;
 		call_all_cpus(&init_mtrrs, NULL);
@@ -1921,14 +1674,15 @@ arch_cpu_init_post_modules(kernel_args* args)
 		COMMPAGE_ENTRY_X86_THREAD_EXIT, (const void*)x86_userspace_thread_exit,
 		threadExitLen);
 
-	// add the functions to the commpage image
 	image_id image = get_commpage_image();
-
 	elf_add_memory_image_symbol(image, "commpage_thread_exit",
 		threadExitPosition, threadExitLen, B_SYMBOL_TYPE_TEXT);
 
 	return B_OK;
 }
+
+
+// #pragma mark - TLB
 
 
 void
@@ -1944,8 +1698,6 @@ arch_cpu_global_TLB_invalidate(void)
 	uint32 flags = x86_read_cr4();
 
 	if (flags & IA32_CR4_GLOBAL_PAGES) {
-		// disable and reenable the global pages to flush all TLBs regardless
-		// of the global page bit
 		x86_write_cr4(flags & ~IA32_CR4_GLOBAL_PAGES);
 		x86_write_cr4(flags | IA32_CR4_GLOBAL_PAGES);
 	} else {
@@ -1970,11 +1722,12 @@ arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
 void
 arch_cpu_invalidate_TLB_list(addr_t pages[], int num_pages)
 {
-	int i;
-	for (i = 0; i < num_pages; i++) {
+	for (int i = 0; i < num_pages; i++)
 		invalidate_TLB(pages[i]);
-	}
 }
+
+
+// #pragma mark - Shutdown
 
 
 status_t
@@ -1988,13 +1741,11 @@ arch_cpu_shutdown(bool rebootSystem)
 
 	cpu_status state = disable_interrupts();
 
-	// try to reset the system using the keyboard controller
+	// try keyboard controller reset
 	out8(0xfe, 0x64);
-
-	// Give some time to the controller to do its job (0.5s)
 	snooze(500000);
 
-	// if that didn't help, try it this way
+	// fallback
 	x86_reboot();
 
 	restore_interrupts(state);
@@ -2007,4 +1758,3 @@ arch_cpu_sync_icache(void* address, size_t length)
 {
 	// instruction cache is always consistent on x86
 }
-

@@ -29,8 +29,56 @@
 #endif
 
 
-static void *sLocalAPIC = NULL;
+/*! x2APIC MSR base for register access.
+	MSR address = X2APIC_MSR_BASE + (MMIO_offset >> 4).
+	Intel SDM Vol. 3, Section 10.12.1, Table 10-6.
+*/
+#define X2APIC_MSR_BASE		0x800
+
+
+static void* sLocalAPIC = NULL;
 static bool sX2APIC = false;
+
+// Register access backends, set once in apic_init().
+static uint32 (*sApicRead)(uint32 offset);
+static void (*sApicWrite)(uint32 offset, uint32 data);
+
+
+// #pragma mark - xAPIC backend (Memory-Mapped I/O)
+
+
+static uint32
+xapic_read(uint32 offset)
+{
+	return *(volatile uint32*)((char*)sLocalAPIC + offset);
+}
+
+
+static void
+xapic_write(uint32 offset, uint32 data)
+{
+	*(volatile uint32*)((char*)sLocalAPIC + offset) = data;
+}
+
+
+// #pragma mark - x2APIC backend (MSR)
+
+
+static uint32
+x2apic_read(uint32 offset)
+{
+	return (uint32)x86_read_msr(X2APIC_MSR_BASE + (offset >> 4));
+}
+
+
+static void
+x2apic_write(uint32 offset, uint32 data)
+{
+	x86_write_msr(X2APIC_MSR_BASE + (offset >> 4), data);
+}
+
+
+// #pragma mark - Public API
 
 
 bool
@@ -47,111 +95,69 @@ x2apic_available()
 }
 
 
-static uint32
-apic_read(uint32 offset)
-{
-	return *(volatile uint32 *)((char *)sLocalAPIC + offset);
-}
-
-
-static void
-apic_write(uint32 offset, uint32 data)
-{
-	*(volatile uint32 *)((char *)sLocalAPIC + offset) = data;
-}
-
-
 uint32
 apic_local_id()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_ID);
-	else
-		return (apic_read(APIC_ID) & 0xffffffff) >> 24;
+	uint32 id = sApicRead(APIC_ID);
+	// xAPIC stores the ID in bits [31:24], x2APIC uses the full register
+	return sX2APIC ? id : ((id & 0xffffffff) >> 24);
 }
 
 
 uint32
-apic_version()
+apic_local_version()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_VERSION);
-	else
-		return apic_read(APIC_VERSION);
+	return sApicRead(APIC_VERSION);
 }
 
 
 uint32
 apic_task_priority()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_TASK_PRIORITY);
-	else
-		return apic_read(APIC_TASK_PRIORITY);
+	return sApicRead(APIC_TASK_PRIORITY);
 }
 
 
 void
 apic_set_task_priority(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_TASK_PRIORITY, config);
-	else
-		apic_write(APIC_TASK_PRIORITY, config);
+	sApicWrite(APIC_TASK_PRIORITY, config);
 }
 
 
 void
 apic_end_of_interrupt()
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_EOI, 0);
-	else
-		apic_write(APIC_EOI, 0);
+	sApicWrite(APIC_EOI, 0);
 }
 
 
 uint32
 apic_logical_apic_id()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_LOGICAL_DEST);
-	else
-		return apic_read(APIC_LOGICAL_DEST);
+	return sApicRead(APIC_LOGICAL_DEST);
 }
 
 
 void
 apic_disable_local_ints()
 {
-	// just clear them out completely
-	if (sX2APIC) {
-		x86_write_msr(IA32_MSR_APIC_LVT_LINT0, APIC_LVT_MASKED);
-		x86_write_msr(IA32_MSR_APIC_LVT_LINT1, APIC_LVT_MASKED);
-	} else {
-		apic_write(APIC_LVT_LINT0, APIC_LVT_MASKED);
-		apic_write(APIC_LVT_LINT1, APIC_LVT_MASKED);
-	}
+	sApicWrite(APIC_LVT_LINT0, APIC_LVT_MASKED);
+	sApicWrite(APIC_LVT_LINT1, APIC_LVT_MASKED);
 }
 
 
 uint32
 apic_spurious_intr_vector()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_SPURIOUS_INTR_VECTOR);
-	else
-		return apic_read(APIC_SPURIOUS_INTR_VECTOR);
+	return sApicRead(APIC_SPURIOUS_INTR_VECTOR);
 }
 
 
 void
 apic_set_spurious_intr_vector(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_SPURIOUS_INTR_VECTOR, config);
-	else
-		apic_write(APIC_SPURIOUS_INTR_VECTOR, config);
+	sApicWrite(APIC_SPURIOUS_INTR_VECTOR, config);
 }
 
 
@@ -159,17 +165,13 @@ void
 apic_set_interrupt_command(uint32 destination, uint32 mode)
 {
 	if (sX2APIC) {
-		uint64 command = 0;
-		command |= (uint64)destination << 32;
-		command |= mode;
+		// x2APIC: single 64-bit MSR write, full destination in upper 32 bits
+		uint64 command = (uint64)destination << 32 | mode;
 		x86_write_msr(IA32_MSR_APIC_INTR_COMMAND, command);
 	} else {
-		uint32 command2 = 0;
-		command2 |= destination << 24;
-		apic_write(APIC_INTR_COMMAND_2, command2);
-
-		uint32 command1 = mode;
-		apic_write(APIC_INTR_COMMAND_1, command1);
+		// xAPIC: two separate 32-bit writes, destination in bits [31:24]
+		sApicWrite(APIC_INTR_COMMAND_2, destination << 24);
+		sApicWrite(APIC_INTR_COMMAND_1, mode);
 	}
 }
 
@@ -177,105 +179,81 @@ apic_set_interrupt_command(uint32 destination, uint32 mode)
 bool
 apic_interrupt_delivered(void)
 {
+	// x2APIC writes are serializing, delivery is immediate
 	if (sX2APIC)
 		return true;
-	else
-		return (apic_read(APIC_INTR_COMMAND_1) & APIC_DELIVERY_STATUS) == 0;
+	return (sApicRead(APIC_INTR_COMMAND_1) & APIC_DELIVERY_STATUS) == 0;
 }
 
 
 uint32
 apic_lvt_timer()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_LVT_TIMER);
-	else
-		return apic_read(APIC_LVT_TIMER);
+	return sApicRead(APIC_LVT_TIMER);
 }
 
 
 void
 apic_set_lvt_timer(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_LVT_TIMER, config);
-	else
-		apic_write(APIC_LVT_TIMER, config);
+	sApicWrite(APIC_LVT_TIMER, config);
 }
 
 
 uint32
 apic_lvt_error()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_LVT_ERROR);
-	else
-		return apic_read(APIC_LVT_ERROR);
+	return sApicRead(APIC_LVT_ERROR);
 }
 
 
 void
 apic_set_lvt_error(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_LVT_ERROR, config);
-	else
-		apic_write(APIC_LVT_ERROR, config);
+	sApicWrite(APIC_LVT_ERROR, config);
 }
 
 
 uint32
 apic_lvt_initial_timer_count()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_INITIAL_TIMER_COUNT);
-	else
-		return apic_read(APIC_INITIAL_TIMER_COUNT);
+	return sApicRead(APIC_INITIAL_TIMER_COUNT);
 }
 
 
 void
 apic_set_lvt_initial_timer_count(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_INITIAL_TIMER_COUNT, config);
-	else
-		apic_write(APIC_INITIAL_TIMER_COUNT, config);
+	sApicWrite(APIC_INITIAL_TIMER_COUNT, config);
 }
 
 
 uint32
 apic_lvt_current_timer_count()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_CURRENT_TIMER_COUNT);
-	else
-		return apic_read(APIC_CURRENT_TIMER_COUNT);
+	return sApicRead(APIC_CURRENT_TIMER_COUNT);
 }
 
 
 uint32
 apic_lvt_timer_divide_config()
 {
-	if (sX2APIC)
-		return x86_read_msr(IA32_MSR_APIC_TIMER_DIVIDE_CONFIG);
-	else
-		return apic_read(APIC_TIMER_DIVIDE_CONFIG);
+	return sApicRead(APIC_TIMER_DIVIDE_CONFIG);
 }
 
 
 void
 apic_set_lvt_timer_divide_config(uint32 config)
 {
-	if (sX2APIC)
-		x86_write_msr(IA32_MSR_APIC_TIMER_DIVIDE_CONFIG, config);
-	else
-		apic_write(APIC_TIMER_DIVIDE_CONFIG, config);
+	sApicWrite(APIC_TIMER_DIVIDE_CONFIG, config);
 }
 
 
+// #pragma mark - Initialization
+
+
 status_t
-apic_init(kernel_args *args)
+apic_init(kernel_args* args)
 {
 	if (args->arch_args.apic == NULL)
 		return B_NO_INIT;
@@ -291,6 +269,8 @@ apic_init(kernel_args *args)
 			TRACE("x2apic disabled per safemode setting\n");
 		} else {
 			sX2APIC = true;
+			sApicRead = x2apic_read;
+			sApicWrite = x2apic_write;
 			return B_OK;
 		}
 	}
@@ -305,14 +285,18 @@ apic_init(kernel_args *args)
 		return B_ERROR;
 	}
 
+	sApicRead = xapic_read;
+	sApicWrite = xapic_write;
+
 	return B_OK;
 }
 
 
 status_t
-apic_per_cpu_init(kernel_args *args, int32 cpu)
+apic_per_cpu_init(kernel_args* args, int32 cpu)
 {
 	if (sX2APIC) {
+		// Ensure x2APIC mode is enabled on this CPU
 		uint64 apic_base = x86_read_msr(IA32_MSR_APIC_BASE);
 		if ((apic_base & IA32_MSR_APIC_BASE_X2APIC) == 0) {
 			x86_write_msr(IA32_MSR_APIC_BASE, apic_base
@@ -322,15 +306,16 @@ apic_per_cpu_init(kernel_args *args, int32 cpu)
 
 	TRACE("setting up %sapic for CPU %" B_PRId32 ": apic id %" B_PRIu32 ", "
 		"version %" B_PRIu32 "\n", sX2APIC ? "x2" : "", cpu, apic_local_id(),
-		apic_version());
+		apic_local_version());
 
+	// xAPIC flat logical destination mode (not used in x2APIC)
 	if (!sX2APIC && cpu < 8) {
-		apic_write(APIC_DEST_FORMAT, uint32(-1));
+		sApicWrite(APIC_DEST_FORMAT, uint32(-1));
 
 		uint8 logical_apic_id = 1 << cpu;
-		uint32 value = apic_read(APIC_LOGICAL_DEST);
+		uint32 value = sApicRead(APIC_LOGICAL_DEST);
 		value &= 0xffffff;
-		apic_write(APIC_LOGICAL_DEST, value | (logical_apic_id << 24));
+		sApicWrite(APIC_LOGICAL_DEST, value | (logical_apic_id << 24));
 	}
 
 	// get logical APIC ID
@@ -352,28 +337,28 @@ apic_per_cpu_init(kernel_args *args, int32 cpu)
 #if 0
 	if (cpu == 0) {
 		/* setup LINT0 as ExtINT */
-		config = (apic_read(APIC_LINT0) & 0xffff00ff);
+		config = (sApicRead(APIC_LINT0) & 0xffff00ff);
 		config |= APIC_LVT_DM_ExtINT | APIC_LVT_IIPP | APIC_LVT_TM;
-		apic_write(APIC_LINT0, config);
+		sApicWrite(APIC_LINT0, config);
 
 		/* setup LINT1 as NMI */
-		config = (apic_read(APIC_LINT1) & 0xffff00ff);
+		config = (sApicRead(APIC_LINT1) & 0xffff00ff);
 		config |= APIC_LVT_DM_NMI | APIC_LVT_IIPP;
-		apic_write(APIC_LINT1, config);
+		sApicWrite(APIC_LINT1, config);
 	}
 	if (cpu > 0) {
-		dprintf("LINT0: %p\n", (void *)apic_read(APIC_LINT0));
-		dprintf("LINT1: %p\n", (void *)apic_read(APIC_LINT1));
+		dprintf("LINT0: %p\n", (void*)sApicRead(APIC_LINT0));
+		dprintf("LINT1: %p\n", (void*)sApicRead(APIC_LINT1));
 
 		/* disable LINT0/1 */
-		config = apic_read(APIC_LINT0);
-		apic_write(APIC_LINT0, config | APIC_LVT_MASKED);
+		config = sApicRead(APIC_LINT0);
+		sApicWrite(APIC_LINT0, config | APIC_LVT_MASKED);
 
-		config = apic_read(APIC_LINT1);
-		apic_write(APIC_LINT1, config | APIC_LVT_MASKED);
+		config = sApicRead(APIC_LINT1);
+		sApicWrite(APIC_LINT1, config | APIC_LVT_MASKED);
 	} else {
-		dprintf("0: LINT0: %p\n", (void *)apic_read(APIC_LINT0));
-		dprintf("0: LINT1: %p\n", (void *)apic_read(APIC_LINT1));
+		dprintf("0: LINT0: %p\n", (void*)sApicRead(APIC_LINT0));
+		dprintf("0: LINT1: %p\n", (void*)sApicRead(APIC_LINT1));
 	}
 #endif
 
