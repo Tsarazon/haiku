@@ -19,6 +19,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <vm/vm.h>
+
 #include <algorithm>
 
 
@@ -147,8 +149,6 @@ scsi_register_device(scsi_bus_info *bus, uchar target_id,
 		return pnp->register_node(bus->node, SCSI_DEVICE_MODULE_NAME, attrs,
 			NULL, NULL);
 	}
-
-	return B_OK;
 }
 
 
@@ -217,11 +217,26 @@ scsi_create_autosense_request(scsi_device_info *device)
 	total_size = SCSI_MAX_SENSE_SIZE + sizeof(physical_entry);
 	total_size = (total_size + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
 
-	// allocate buffer for space sense data and S/G list
-	device->auto_sense_area = create_area("auto_sense", (void**)&buffer,
-		B_ANY_KERNEL_ADDRESS, B_PAGE_SIZE, B_32_BIT_FULL_LOCK,
-		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
-		// TODO: Use B_FULL_LOCK, if addresses >= 4 GB are supported!
+	// allocate buffer for sense data and S/G list;
+	// buffer must be DMA-accessible by the controller, so respect its
+	// address restrictions
+	uint64 high_address = device->bus->dma_params.high_address;
+	if (high_address < UINT64_MAX) {
+		virtual_address_restrictions virtualRestrictions = {};
+		virtualRestrictions.address_specification = B_ANY_KERNEL_ADDRESS;
+		physical_address_restrictions physicalRestrictions = {};
+		physicalRestrictions.high_address = high_address;
+
+		device->auto_sense_area = create_area_etc(B_SYSTEM_TEAM, "auto_sense",
+			B_PAGE_SIZE, B_FULL_LOCK,
+			B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, 0, 0,
+			&virtualRestrictions, &physicalRestrictions, (void**)&buffer);
+	} else {
+		device->auto_sense_area = create_area("auto_sense", (void**)&buffer,
+			B_ANY_KERNEL_ADDRESS, B_PAGE_SIZE, B_FULL_LOCK,
+			B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
+	}
+
 	if (device->auto_sense_area < 0)
 		goto err;
 

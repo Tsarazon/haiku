@@ -194,10 +194,9 @@ scsi_alloc_dma_buffer(dma_buffer *buffer, dma_params *dma_params, uint32 size)
 			physicalRestrictions.alignment = dma_params->alignment + 1;
 		if (boundary != ~(uint32)0)
 			physicalRestrictions.boundary = boundary + 1;
-#if B_HAIKU_PHYSICAL_BITS > 32
-		physicalRestrictions.high_address = 0x100000000ULL;
-			// TODO: Use 64 bit addresses, if possible!
-#endif
+		if (dma_params->high_address < UINT64_MAX)
+			physicalRestrictions.high_address = dma_params->high_address;
+
 		buffer->area = create_area_etc(B_SYSTEM_TEAM, "DMA buffer", size,
 			B_CONTIGUOUS, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, 0, 0,
 			&virtualRestrictions, &physicalRestrictions,
@@ -212,10 +211,24 @@ scsi_alloc_dma_buffer(dma_buffer *buffer, dma_params *dma_params, uint32 size)
 		buffer->size = size;
 	} else {
 		// we can live with a fragmented buffer - very nice
-		buffer->area = create_area("DMA buffer",
-			(void **)&buffer->address, B_ANY_KERNEL_ADDRESS, size,
-			B_32_BIT_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
-				// TODO: Use B_FULL_LOCK, if possible!
+		if (dma_params->high_address < UINT64_MAX) {
+			// controller has address restrictions, use create_area_etc
+			virtual_address_restrictions virtualRestrictions = {};
+			virtualRestrictions.address_specification = B_ANY_KERNEL_ADDRESS;
+			physical_address_restrictions physicalRestrictions = {};
+			physicalRestrictions.high_address = dma_params->high_address;
+
+			buffer->area = create_area_etc(B_SYSTEM_TEAM, "DMA buffer", size,
+				B_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, 0, 0,
+				&virtualRestrictions, &physicalRestrictions,
+				(void**)&buffer->address);
+		} else {
+			// no address restrictions, plain allocation
+			buffer->area = create_area("DMA buffer",
+				(void **)&buffer->address, B_ANY_KERNEL_ADDRESS, size,
+				B_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
+		}
+
 		if (buffer->area < 0) {
 			SHOW_ERROR(2, "Cannot create DMA buffer of %" B_PRIu32 " bytes",
 				size);
@@ -225,16 +238,18 @@ scsi_alloc_dma_buffer(dma_buffer *buffer, dma_params *dma_params, uint32 size)
 		buffer->size = size;
 	}
 
-	// create S/G list
+	// create S/G list for the DMA buffer itself
 	// worst case is one entry per page, and size is page-aligned
 	size_t sg_list_size = buffer->size / B_PAGE_SIZE * sizeof( physical_entry );
 	// create_area has page-granularity
 	sg_list_size = (sg_list_size + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
 
+	// S/G list is only accessed by CPU (not DMA'd by controller),
+	// so no physical address restrictions needed
 	buffer->sg_list_area = create_area("DMA buffer S/G table",
 		(void **)&buffer->sg_list, B_ANY_KERNEL_ADDRESS, sg_list_size,
-		B_32_BIT_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
-			// TODO: Use B_FULL_LOCK, if possible!
+		B_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
+
 	if (buffer->sg_list_area < 0) {
 		SHOW_ERROR( 2, "Cannot create DMA buffer S/G list of %" B_PRIuSIZE
 			" bytes", sg_list_size );
@@ -482,7 +497,7 @@ scsi_dma_buffer_daemon(void *dev, int counter)
 	buffer = &device->dma_buffer;
 
 	if (!buffer->inuse
-		&& buffer->last_use - system_time() > SCSI_DMA_BUFFER_CLEANUP_DELAY) {
+		&& system_time() - buffer->last_use > SCSI_DMA_BUFFER_CLEANUP_DELAY) {
 		scsi_free_dma_buffer(buffer);
 		scsi_free_dma_buffer_sg_orig(buffer);
 	}
