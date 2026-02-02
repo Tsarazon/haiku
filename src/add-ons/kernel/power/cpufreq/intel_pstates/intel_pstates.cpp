@@ -27,7 +27,6 @@ static uint16 sMinPState;
 static uint16 sMaxPState;
 static uint16 sBoostPState;
 static bool sHWPActive;
-static bool sHWPEPP;
 static uint8 sHWPLowest;
 static uint8 sHWPGuaranteed;
 static uint8 sHWPEfficient;
@@ -149,39 +148,6 @@ pstates_decrease_performance(int delta)
 }
 
 
-static bool
-is_cpu_model_supported(cpu_ent* cpu)
-{
-	uint8 model = cpu->arch.model + (cpu->arch.extended_model << 4);
-
-	if (cpu->arch.vendor != VENDOR_INTEL)
-		return false;
-
-	if (cpu->arch.family != 6)
-		return false;
-
-	if (x86_check_feature(IA32_FEATURE_HWP, FEATURE_6_EAX))
-		return true;
-
-	const uint8 kSupportedFamily6Models[] = {
-		0x2a, 0x2d, 0x3a, 0x3c, 0x3d, 0x3e, 0x3f, 0x45, 0x46, 0x47, 0x4a,
-		0x4d, 0x4e, 0x4f, 0x55, 0x56, 0x57, 0x5a, 0x5c, 0x5e, 0x5f, 0x75,
-		0x7a, 0x85
-	};
-	/* TODO: support Atom Silvermont and Airmont: 0x37, 0x4c */
-	const int kSupportedFamily6ModelsCount
-		= sizeof(kSupportedFamily6Models) / sizeof(uint8);
-
-	int i;
-	for (i = 0; i < kSupportedFamily6ModelsCount; i++) {
-		if (model == kSupportedFamily6Models[i])
-			break;
-	}
-
-	return i != kSupportedFamily6ModelsCount;
-}
-
-
 static void
 set_normal_pstate(void* /* dummy */, int cpu)
 {
@@ -189,12 +155,14 @@ set_normal_pstate(void* /* dummy */, int cpu)
 		if (x86_check_feature(IA32_FEATURE_HWP_NOTIFY, FEATURE_6_EAX))
 			x86_write_msr(IA32_MSR_HWP_INTERRUPT, 0);
 		x86_write_msr(IA32_MSR_PM_ENABLE, 1);
-		uint64 hwpRequest = x86_read_msr(IA32_MSR_HWP_REQUEST);
+
 		uint64 caps = x86_read_msr(IA32_MSR_HWP_CAPABILITIES);
 		sHWPLowest = IA32_HWP_CAPS_LOWEST_PERFORMANCE(caps);
 		sHWPEfficient = IA32_HWP_CAPS_EFFICIENT_PERFORMANCE(caps);
 		sHWPGuaranteed = IA32_HWP_CAPS_GUARANTEED_PERFORMANCE(caps);
 		sHWPHighest = IA32_HWP_CAPS_HIGHEST_PERFORMANCE(caps);
+
+		uint64 hwpRequest = x86_read_msr(IA32_MSR_HWP_REQUEST);
 
 		hwpRequest &= ~IA32_HWP_REQUEST_DESIRED_PERFORMANCE;
 		hwpRequest &= ~IA32_HWP_REQUEST_ACTIVITY_WINDOW;
@@ -216,11 +184,12 @@ set_normal_pstate(void* /* dummy */, int cpu)
 		}
 
 		if (sHWPPackage) {
-			x86_write_msr(IA32_MSR_HWP_REQUEST, hwpRequest
-				| IA32_HWP_REQUEST_PACKAGE_CONTROL);
+			x86_write_msr(IA32_MSR_HWP_REQUEST,
+				hwpRequest | IA32_HWP_REQUEST_PACKAGE_CONTROL);
 			x86_write_msr(IA32_MSR_HWP_REQUEST_PKG, hwpRequest);
-		} else
+		} else {
 			x86_write_msr(IA32_MSR_HWP_REQUEST, hwpRequest);
+		}
 	} else {
 		measure_pstate(&sCPUEntries[cpu]);
 		set_pstate(sMaxPState);
@@ -239,24 +208,31 @@ init_pstates()
 
 	int32 cpuCount = smp_get_num_cpus();
 	for (int32 i = 0; i < cpuCount; i++) {
-		if (!is_cpu_model_supported(&gCPU[i]))
+		if (gCPU[i].arch.vendor != VENDOR_INTEL)
+			return B_ERROR;
+	}
+
+	// HWP with EPP: fully hardware-managed P-states
+	// otherwise fall back to EIST (Enhanced SpeedStep) legacy path
+	bool hwpCapable = x86_check_feature(IA32_FEATURE_HWP, FEATURE_6_EAX);
+	bool hwpEPP = x86_check_feature(IA32_FEATURE_HWP_EPP, FEATURE_6_EAX);
+	sHWPActive = hwpCapable && hwpEPP;
+
+	if (!sHWPActive) {
+		if (!x86_check_feature(IA32_FEATURE_EST, FEATURE_COMMON))
 			return B_ERROR;
 	}
 
 	uint64 platformInfo = x86_read_msr(IA32_MSR_PLATFORM_INFO);
-	sHWPEPP = x86_check_feature(IA32_FEATURE_HWP_EPP, FEATURE_6_EAX);
-	sHWPActive = (x86_check_feature(IA32_FEATURE_HWP, FEATURE_6_EAX)
-		&& sHWPEPP);
 	sMinPState = (platformInfo >> 40) & 0xff;
 	sMaxPState = (platformInfo >> 8) & 0xff;
 	sBoostPState
 		= max_c(x86_read_msr(IA32_MSR_TURBO_RATIO_LIMIT) & 0xff, sMaxPState);
-	/* x86_check_feature(IA32_FEATURE_HWP_PLR, FEATURE_6_EAX)) */
 	sHWPPackage = false;
 
 	dprintf("using Intel P-States: min %" B_PRIu16 ", max %" B_PRIu16
 		", boost %" B_PRIu16 "%s\n", sMinPState, sMaxPState, sBoostPState,
-		sHWPActive ? ", HWP active" : "");
+		sHWPActive ? ", HWP active" : ", EIST legacy");
 
 	if (sMaxPState <= sMinPState || sMaxPState == 0) {
 		dprintf("unexpected or invalid Intel P-States limits, aborting\n");
@@ -320,4 +296,3 @@ module_info* modules[] = {
 	(module_info*)&sIntelPStates,
 	NULL
 };
-

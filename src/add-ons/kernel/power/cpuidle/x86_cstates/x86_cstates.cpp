@@ -84,7 +84,7 @@ cstates_idle(void)
 	bigtime_t idleTime = sIdleTime[cpu];
 	int state = min_c(idleTime / timeStep, sCStateCount - 1);
 
-	if(state < 0 || state >= sCStateCount) {
+	if (state < 0 || state >= sCStateCount) {
 		panic("State %d of CPU %" B_PRId32 " is out of range (0 to %d), "
 			"idleTime %" B_PRIdBIGTIME "/%" B_PRIdBIGTIME, state, cpu,
 			sCStateCount, idleTime, timeStep);
@@ -104,7 +104,6 @@ cstates_idle(void)
 	bigtime_t delta = system_time() - start;
 	locker.Unlock();
 
-	// Negative delta shouldn't happen, but apparently it does...
 	if (delta >= 0)
 		sIdleTime[cpu] = (idleTime + delta) / 2;
 }
@@ -125,17 +124,30 @@ cstates_wait(int32* variable, int32 test)
 }
 
 
+static void
+apply_cstate_quirks(uint32* mwaitSubStates)
+{
+	cpu_ent* cpu = &gCPU[0];
+	if (cpu->arch.vendor != VENDOR_INTEL || cpu->arch.family != 6)
+		return;
+
+	uint8 model = cpu->arch.model + (cpu->arch.extended_model << 4);
+
+	// Skylake: disable C5 and C6 (same as Linux)
+	if (model == 0x5e && (*mwaitSubStates & (0xf << 28)) != 0)
+		*mwaitSubStates &= 0xf00fffff;
+}
+
+
 static status_t
 init_cstates()
 {
 	if (!x86_check_feature(IA32_FEATURE_EXT_MONITOR, FEATURE_EXT))
 		return B_ERROR;
 
-	// we need invariant TSC
 	if (!x86_check_feature(IA32_FEATURE_INVARIANT_TSC, FEATURE_EXT_7_EDX))
 		return B_ERROR;
 
-	// get C-state data
 	cpuid_info cpuid;
 	get_current_cpuid(&cpuid, 0, 0);
 	uint32 maxBasicLeaf = cpuid.eax_0.max_eax;
@@ -146,7 +158,6 @@ init_cstates()
 
 	get_current_cpuid(&cpuid, IA32_CPUID_LEAF_MWAIT, 0);
 	uint32 minMonitorLineSize = cpuid.regs.eax & 0xffff;
-	//uint32 maxMonitorLineSize = cpuid.regs.ebx & 0xffff;
 	uint32 mwaitSubStates = cpuid.regs.edx;
 	if (minMonitorLineSize < sizeof(int32)) {
 		dprintf("can't use x86 C-States: line size too small\n");
@@ -157,26 +168,17 @@ init_cstates()
 		return B_ERROR;
 	}
 
-	// check Enumeration of Monitor-Mwait extensions is supported
-	// and check treating interrupts as break-events even when interrupts disabled is supported
 	if ((cpuid.regs.ecx & CPUID_MWAIT_ECX_SUPPORT) != CPUID_MWAIT_ECX_SUPPORT) {
 		dprintf("can't use x86 C-States: extensions missing\n");
 		return B_ERROR;
 	}
 
-	cpu_ent* cpu = &gCPU[0];
-	uint8 model = cpu->arch.model + (cpu->arch.extended_model << 4);
-	if (cpu->arch.vendor == VENDOR_INTEL && cpu->arch.family == 6) {
-		// disable C5 and C6 states on Skylake (same as Linux)
-		if (model == 0x5e && (mwaitSubStates & (0xf << 28)) != 0)
-			mwaitSubStates &= 0xf00fffff;
-	}
+	apply_cstate_quirks(&mwaitSubStates);
 
 	char cStates[64];
 	unsigned int offset = 0;
 	for (int32 i = 1; i < CPUIDLE_CSTATE_MAX; i++) {
 		int32 subStates = (mwaitSubStates >> (i * 4)) & 0xf;
-		// no sub-states means the state is not available
 		if (subStates == 0)
 			continue;
 
