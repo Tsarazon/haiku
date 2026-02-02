@@ -16,8 +16,6 @@
  *   Transitive PI is not implemented.
  */
 
-#include <kosm_mutex.h>
-
 #include <stdlib.h>
 #include <string.h>
 
@@ -30,6 +28,8 @@
 #include <syscall_restart.h>
 #include <team.h>
 #include <thread.h>
+
+#include <kosm_mutex.h>
 #include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 #include <vm/vm_page.h>
@@ -726,7 +726,7 @@ kosm_acquire_mutex(kosm_mutex_id id)
 	of kosm_acquire_mutex_etc() when the mutex is contended.
 */
 status_t
-kosm_try_acquire_mutex(kosm_mutex_id id, uint32 flags)
+kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
 {
 	int32 slot = id % sMaxMutexes;
 
@@ -1134,7 +1134,7 @@ _user_kosm_acquire_mutex(kosm_mutex_id id)
 status_t
 _user_kosm_try_acquire_mutex(kosm_mutex_id id)
 {
-	return kosm_try_acquire_mutex(id, B_CHECK_PERMISSION);
+	return kosm_try_acquire_mutex_etc(id, B_CHECK_PERMISSION);
 }
 
 

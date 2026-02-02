@@ -48,6 +48,7 @@
 #include <tracing.h>
 #include <user_atomic.h>
 #include <user_mutex.h>
+#include <kosm_mutex.h>
 #include <usergroup.h>
 #include <UserTimer.h>
 #include <util/AutoLock.h>
