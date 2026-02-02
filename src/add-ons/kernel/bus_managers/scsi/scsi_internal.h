@@ -25,8 +25,8 @@
 
 
 #define MAX_PATH_ID 255
-#define MAX_TARGET_ID 15
-#define MAX_LUN_ID 7
+#define MAX_TARGET_ID 255
+#define MAX_LUN_ID 255
 
 
 // maximum number of fragments for temporary S/G lists
@@ -87,7 +87,7 @@ typedef struct scsi_bus_info {
 	int lock_count;				// sum of blocked[0..1] and sim_overflow
 	int blocked[2];				// depth of nested locks by bus manager (0) and SIM (1)
 	int left_slots;				// left command queuing slots on HBA
-	bool sim_overflow;			// 1, if SIM refused req because of bus queue overflow
+	int sim_overflow;			// 1 if SIM refused req because of bus queue overflow
 
 	uchar path_id;				// SCSI path id
 	uint32 max_target_count;	// maximum count of target_ids on the bus
@@ -149,7 +149,7 @@ typedef struct scsi_device_info {
 
 	int lock_count;				// sum of blocked[0..1] and sim_overflow
 	int blocked[2];				// depth of nested locks by bus manager (0) and SIM (1)
-	int sim_overflow;			// 1, if SIM returned a request because of device queue overflow
+	int sim_overflow;			// 1 if SIM returned a request because of device queue overflow
 	int left_slots;				// left command queuing slots for device
 	int total_slots;			// total number of command queuing slots for device
 
@@ -157,7 +157,7 @@ typedef struct scsi_device_info {
 								// (scsi_insert_new_request depends on circular)
 
 	int64 last_sort;			// last sort value (for elevator sort)
-	int32 valid;				// access must be atomic!
+	int32 valid;				// device validity flag, use atomic access
 
 	scsi_bus_info *bus;
 	uchar target_id;
@@ -213,6 +213,20 @@ enum {
 	SCSI_STATE_SENT = 3,
 	SCSI_STATE_FINISHED = 5,
 };
+
+
+// atomic access to device->valid for cross-CPU visibility on ARM64/RISC-V
+static inline bool
+scsi_device_is_valid(scsi_device_info *device)
+{
+	return atomic_get(&device->valid) != 0;
+}
+
+static inline void
+scsi_device_set_valid(scsi_device_info *device, bool valid)
+{
+	atomic_set(&device->valid, valid ? 1 : 0);
+}
 
 
 extern device_manager_info *pnp;

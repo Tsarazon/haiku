@@ -44,25 +44,24 @@ scsi_controller_added(device_node *parent)
 		return B_ERROR;
 	}
 
-	{
-		device_attr attrs[] = {
-			{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-				{ .string = "SCSI Controller" }},
-
-			// remember who we are
-			// (could use the controller name, but probably some software would choke)
-			// TODO create_id() generates a 32 bit ranged integer but we need only 8 bits
-			{ SCSI_BUS_PATH_ID_ITEM, B_UINT8_TYPE, { .ui8 = (uint8)pathID }},
-
-			// tell PnP manager to clean up ID
-//			{ PNP_MANAGER_ID_GENERATOR, B_STRING_TYPE, { .string = SCSI_PATHID_GENERATOR }},
-//			{ PNP_MANAGER_AUTO_ID, B_UINT32_TYPE, { .ui32 = path_id }},
-			{}
-		};
-
-		return pnp->register_node(parent, SCSI_BUS_MODULE_NAME, attrs, NULL,
-			NULL);
+	if (pathID > MAX_PATH_ID) {
+		dprintf("scsi: Cannot register SCSI controller %s - path ID %"
+			B_PRId32 " exceeds maximum %d\n", controller_name, pathID,
+			MAX_PATH_ID);
+		pnp->free_id(SCSI_PATHID_GENERATOR, pathID);
+		return B_ERROR;
 	}
+
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{ .string = "SCSI Controller" }},
+
+		{ SCSI_BUS_PATH_ID_ITEM, B_UINT8_TYPE, { .ui8 = (uint8)pathID }},
+		{}
+	};
+
+	return pnp->register_node(parent, SCSI_BUS_MODULE_NAME, attrs, NULL,
+		NULL);
 }
 
 
@@ -78,28 +77,13 @@ static status_t
 scsi_controller_register_raw_device(void *_cookie)
 {
 	device_node *node = (device_node *)_cookie;
-	uint32 channel;
 	uint8 pathID;
-	char *name;
 
-#if 1
-// TODO: this seems to cause a crash in some configurations, and needs to be investigated!
-//		see bug #389 and #393.
-// TODO: check if the above is still true
-	if (pnp->get_attr_uint32(node, "ide/channel_id", &channel, true) == B_OK) {
-		// this is actually an IDE device, we don't need to publish
-		// a bus device for those
-		return B_OK;
-	}
-#endif
-	pnp->get_attr_uint8(node, SCSI_BUS_PATH_ID_ITEM, &pathID, false);
+	if (pnp->get_attr_uint8(node, SCSI_BUS_PATH_ID_ITEM, &pathID, false) != B_OK)
+		return B_ERROR;
 
-	// put that on heap to not overflow the limited kernel stack
-	name = (char*)malloc(PATH_MAX + 1);
-	if (name == NULL)
-		return B_NO_MEMORY;
-
-	snprintf(name, PATH_MAX + 1, "bus/scsi/%d/bus_raw", pathID);
+	char name[64];
+	snprintf(name, sizeof(name), "bus/scsi/%d/bus_raw", pathID);
 
 	return pnp->publish_device(node, name, SCSI_BUS_RAW_MODULE_NAME);
 }

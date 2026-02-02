@@ -173,7 +173,7 @@ scsi_create_device(device_node *node, scsi_bus_info *bus,
 	device->bus = bus;
 	device->target_id = target_id;
 	device->target_lun = target_lun;
-	device->valid = true;
+	scsi_device_set_valid(device, true);
 	device->node = node;
 
 	scsi_dma_buffer_init(&device->dma_buffer);
@@ -382,8 +382,8 @@ scsi_device_removed(scsi_device_info *device)
 	if (device == NULL)
 		return;
 
-	// this must be atomic as no lock is used
-	device->valid = false;
+	// atomically mark device as invalid for cross-CPU visibility
+	scsi_device_set_valid(device, false);
 }
 
 

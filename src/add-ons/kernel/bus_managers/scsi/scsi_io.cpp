@@ -141,8 +141,6 @@ submit_autosense(scsi_ccb *request)
 {
 	scsi_device_info *device = request->device;
 
-	//snooze(1000000);
-
 	SHOW_FLOW0(3, "sending autosense");
 	// we cannot use scsi_scsi_io but must insert it brute-force
 
@@ -392,10 +390,6 @@ scsi_async_io(scsi_ccb *request)
 {
 	scsi_bus_info *bus = request->bus;
 
-	//SHOW_FLOW( 0, "path_id=%d", bus->path_id );
-
-	//snooze( 1000000 );
-
 	// do some sanity tests first
 	if (request->state != SCSI_STATE_FINISHED) {
 		panic("Passed ccb to scsi_action that isn't ready (state = %d)\n",
@@ -410,7 +404,7 @@ scsi_async_io(scsi_ccb *request)
 		goto err;
 	}
 
-	if (!request->device->valid) {
+	if (!scsi_device_is_valid(request->device)) {
 		SHOW_ERROR0( 3, "device got removed" );
 
 		// device got removed meanwhile
@@ -597,8 +591,6 @@ scsi_check_exec_service(scsi_bus_info *bus)
 		scsi_device_info *device;
 
 		SHOW_FLOW0(3, "servicing bus");
-
-		//snooze( 1000000 );
 
 		// handle devices in round-robin-style
 		device = bus->waiting_devices;
