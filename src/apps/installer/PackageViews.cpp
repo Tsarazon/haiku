@@ -24,7 +24,7 @@
 #include <View.h>
 #include <Window.h>
 
-#include "InstallerApp.h"
+#include "InstallerDefs.h"
 #include "StringForSize.h"
 
 
