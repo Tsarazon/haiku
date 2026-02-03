@@ -86,8 +86,6 @@ typedef BOpenHashTable<ImageHashDefinition> ImageHash;
 } // namespace
 
 
-#ifndef ELF32_COMPAT
-
 static ImageHash *sImagesHash;
 
 static struct elf_image_info *sKernelImage = NULL;
@@ -259,9 +257,6 @@ find_image_by_vnode(void *vnode)
 }
 
 
-#endif // ELF32_COMPAT
-
-
 static struct elf_image_info *
 create_image_struct()
 {
@@ -331,9 +326,6 @@ get_symbol_bind_string(elf_sym *symbol)
 			return "----";
 	}
 }
-
-
-#ifndef ELF32_COMPAT
 
 
 /*!	Searches a symbol (pattern) in all kernel images */
@@ -570,26 +562,6 @@ dump_image(int argc, char **argv)
 }
 
 
-// Currently unused
-/*static
-void dump_symbol(struct elf_image_info *image, elf_sym *sym)
-{
-
-	kprintf("symbol at %p, in image %p\n", sym, image);
-
-	kprintf(" name index %d, '%s'\n", sym->st_name, SYMNAME(image, sym));
-	kprintf(" st_value 0x%x\n", sym->st_value);
-	kprintf(" st_size %d\n", sym->st_size);
-	kprintf(" st_info 0x%x\n", sym->st_info);
-	kprintf(" st_other 0x%x\n", sym->st_other);
-	kprintf(" st_shndx %d\n", sym->st_shndx);
-}
-*/
-
-
-#endif // ELF32_COMPAT
-
-
 static uint32
 elf_hash(const char* _name)
 {
@@ -816,9 +788,6 @@ elf_parse_dynamic_section(struct elf_image_info *image)
 }
 
 
-#ifndef ELF32_COMPAT
-
-
 static status_t
 assert_defined_image_version(elf_image_info* dependentImage,
 	elf_image_info* image, const elf_version_info& neededVersion, bool weak)
@@ -993,9 +962,6 @@ check_needed_image_versions(elf_image_info* image)
 }
 
 
-#endif // ELF32_COMPAT
-
-
 /*!	Resolves the \a symbol by linking against \a sharedImage if necessary.
 	Returns the resolved symbol's address in \a _symbolAddress.
 */
@@ -1138,9 +1104,6 @@ verify_eheader(elf_ehdr *elfHeader)
 
 	return 0;
 }
-
-
-#ifndef ELF32_COMPAT
 
 
 static void
@@ -1345,7 +1308,7 @@ error1:
 }
 
 
-//	#pragma mark - userland symbol lookup
+// #pragma mark - userland symbol lookup
 
 
 class UserSymbolLookup {
@@ -1528,7 +1491,6 @@ public:
 	}
 
 	template<typename T> bool _Read(const T* address, T& data);
-		// gcc 2.95.3 doesn't like it defined in-place
 
 private:
 	Team*						fTeam;
@@ -1555,7 +1517,7 @@ UserSymbolLookup UserSymbolLookup::sLookup;
 	// doesn't need construction, but has an Init() method
 
 
-//	#pragma mark - public kernel API
+// #pragma mark - public kernel API
 
 
 status_t
@@ -1596,7 +1558,7 @@ done:
 }
 
 
-//	#pragma mark - kernel private API
+// #pragma mark - kernel private API
 
 
 /*!	Looks up a symbol by address in all images loaded in kernel space.
@@ -1803,9 +1765,6 @@ elf_lookup_kernel_symbol(const char* name, elf_symbol_info* info)
 	info->size = foundSymbol->st_size;
 	return B_OK;
 }
-
-
-#endif // ELF32_COMPAT
 
 
 status_t
@@ -2093,8 +2052,6 @@ elf_load_user_image(const char *path, Team *team, uint32 flags, addr_t *entry)
 	return B_OK;
 }
 
-
-#ifndef ELF32_COMPAT
 
 image_id
 load_kernel_add_on(const char *path)
@@ -2739,7 +2696,7 @@ elf_init(kernel_args* args)
 }
 
 
-// #pragma mark -
+// #pragma mark - syscalls
 
 
 /*!	Reads the symbol and string table for the kernel image with the given ID.
@@ -2760,6 +2717,3 @@ _user_read_kernel_image_symbols(image_id id, elf_sym* symbolTable,
 	return elf_read_kernel_image_symbols(id, symbolTable, _symbolCount,
 		stringTable, _stringTableSize, _imageDelta, false);
 }
-
-#endif // ELF32_COMPAT
-

@@ -24,6 +24,15 @@ using namespace SchedulerTracing;
 using namespace SchedulingAnalysisTracing;
 #endif
 
+
+static inline uint32
+HashPointer(const void* ptr)
+{
+	addr_t addr = (addr_t)ptr;
+	return (uint32)(addr ^ (addr >> 32));
+}
+
+
 struct ThreadWaitObject;
 
 struct HashObjectKey {
@@ -129,7 +138,7 @@ struct WaitObjectKey : HashObjectKey {
 
 	virtual uint32 HashKey() const
 	{
-		return type ^ (uint32)(addr_t)object;
+		return type ^ HashPointer(object);
 	}
 };
 
@@ -145,7 +154,7 @@ struct WaitObject : HashObject, scheduling_analysis_wait_object {
 
 	virtual uint32 HashKey() const
 	{
-		return type ^ (uint32)(addr_t)object;
+		return type ^ HashPointer(object);
 	}
 
 	virtual bool Equals(const HashObjectKey* _key) const
@@ -173,7 +182,7 @@ struct ThreadWaitObjectKey : HashObjectKey {
 
 	virtual uint32 HashKey() const
 	{
-		return thread ^ type ^ (uint32)(addr_t)object;
+		return thread ^ type ^ HashPointer(object);
 	}
 };
 
@@ -190,7 +199,7 @@ struct ThreadWaitObject : HashObject, scheduling_analysis_thread_wait_object {
 
 	virtual uint32 HashKey() const
 	{
-		return thread ^ wait_object->type ^ (uint32)(addr_t)wait_object->object;
+		return thread ^ wait_object->type ^ HashPointer(wait_object->object);
 	}
 
 	virtual bool Equals(const HashObjectKey* _key) const
@@ -381,7 +390,7 @@ public:
 		strlcpy(waitObject->name, name, sizeof(waitObject->name));
 		waitObject->referenced_object = referencedObject;
 
-		return B_OK;
+		return true;
 	}
 
 	status_t AddThreadWaitObject(Thread* thread, uint32 type, void* object)
@@ -464,7 +473,9 @@ public:
 		}
 
 		fAnalysis.threads = threads;
-dprintf("scheduling analysis: free bytes: %lu/%lu\n", fRemainingBytes, fSize);
+#ifdef SCHEDULING_ANALYSIS_DEBUG
+		dprintf("scheduling analysis: free bytes: %lu/%lu\n", fRemainingBytes, fSize);
+#endif
 		return B_OK;
 	}
 
@@ -774,7 +785,7 @@ analyze_scheduling(bigtime_t from, bigtime_t until,
 
 			bigtime_t diffTime = entry->Time() - thread->lastTime;
 			if (thread->state == RUNNING) {
-				// This should never happen.
+				// Unexpected state - thread removed while running
 				thread->runs++;
 				thread->total_run_time += diffTime;
 				if (thread->min_run_time < 0 || diffTime < thread->min_run_time)
@@ -782,8 +793,8 @@ analyze_scheduling(bigtime_t from, bigtime_t until,
 				if (diffTime > thread->max_run_time)
 					thread->max_run_time = diffTime;
 			} else if (thread->state == READY || thread->state == PREEMPTED) {
-				// Not really correct, but the case is rare and we keep it
-				// simple.
+				// Thread removed from run queue while ready/preempted,
+				// typically due to priority change. Account as wait time.
 				thread->unspecified_wait_time += diffTime;
 			}
 
