@@ -1,32 +1,45 @@
---[[
+----[[
     MainBuildRules.lua - Core build rules for Haiku OS
 
     xmake equivalent of build/jam/MainBuildRules
 
     Rules defined:
-    - AddSharedObjectGlueCode
+    - AddSharedObjectGlueCode (function)
     - Application
     - StdBinCommands
     - Addon
     - Translator
     - ScreenSaver
     - StaticLibrary
+    - StaticLibraryFromObjects
     - SharedLibrary
+    - SharedLibraryFromObjects
     - MergeObject
-    - LinkAgainst
-    - AddResources
-    - SetVersionScript
+    - MergeObjectFromObjects
+    - LinkAgainst (function)
+    - AddResources (function)
+    - SetVersionScript (function)
     - Ld
     - AssembleNasm
-    - BuildPlatform* variants
+    - CreateAsmStructOffsetsHeader (function)
+    - BuildPlatformMain
+    - BuildPlatformSharedLibrary
+    - BuildPlatformStaticLibrary
+    - BuildPlatformStaticLibraryPIC
+    - BuildPlatformMergeObject
+    - BuildPlatformMergeObjectPIC
+    - BootstrapStage0PlatformObjects
 ]]
 
 -- ============================================================================
--- Configuration and Platform Detection
+-- Platform and Architecture Helpers
 -- ============================================================================
 
--- Get target platform (haiku, host, etc.)
-function get_platform()
+function get_platform(target)
+    if target then
+        local plat = target:get("plat")
+        if plat then return plat end
+    end
     local plat = get_config("plat")
     if plat == "haiku" then
         return "haiku"
@@ -34,96 +47,93 @@ function get_platform()
     return "host"
 end
 
--- Get target architecture
 function get_target_arch()
     return get_config("arch") or "x86_64"
 end
 
--- Check if platform is supported for target
 function is_platform_supported(target)
-    local supported = target:get("supported_platforms")
-    if not supported then
-        return true  -- default: all platforms supported
+    local supported = target:values("supported_platforms")
+    if not supported or #supported == 0 then
+        return true
     end
-    local platform = get_platform()
-    if type(supported) == "table" then
-        for _, p in ipairs(supported) do
-            if p == platform then
-                return true
-            end
+    local platform = get_platform(target)
+    for _, p in ipairs(supported) do
+        if p == platform then
+            return true
         end
-        return false
     end
-    return supported == platform
+    return false
 end
 
 -- ============================================================================
--- Glue Code Support
+-- AddSharedObjectGlueCode
 -- ============================================================================
 
 --[[
     AddSharedObjectGlueCode(target, is_executable)
 
-    Adds Haiku-specific glue code for shared objects.
-    Links with -nostdlib and adds required libs manually.
+    Links with -nostdlib and adds required libs manually when building for Haiku.
+    Sets up glue code (crti.o/crtn.o or start_dyn.o/init_term_dyn.o).
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule AddSharedObjectGlueCode { }
 ]]
 function AddSharedObjectGlueCode(target, is_executable)
-    local platform = get_platform()
+    local platform = get_platform(target)
     local arch = get_target_arch()
 
     if platform == "haiku" then
         local target_type = is_executable and "EXECUTABLE" or "LIBRARY"
 
-        -- Add glue code objects
-        local begin_glue = path.join("$(HAIKU_OUTPUT_DIR)",
-            "objects", arch, "system", "glue",
-            target_type == "EXECUTABLE" and "crti.o" or "crti.o")
-        local end_glue = path.join("$(HAIKU_OUTPUT_DIR)",
-            "objects", arch, "system", "glue",
-            target_type == "EXECUTABLE" and "crtn.o" or "crtn.o")
+        -- Get glue code paths from config (set by ArchitectureSetup)
+        local begin_glue = get_config("HAIKU_" .. target_type .. "_BEGIN_GLUE_CODE_" .. arch)
+        local end_glue = get_config("HAIKU_" .. target_type .. "_END_GLUE_CODE_" .. arch)
+
+        -- Store for use in linking
+        if begin_glue then
+            target:values_set("link_begin_glue", {begin_glue})
+        end
+        if end_glue then
+            target:values_set("link_end_glue", {end_glue})
+        end
 
         target:add("ldflags", "-nostdlib", {force = true})
         target:add("ldflags", "-Xlinker", "--no-undefined", {force = true})
 
         -- Standard libs (unless DONT_LINK_AGAINST_LIBROOT is set)
-        if not target:get("dont_link_against_libroot") then
-            target:add("deps", "libroot")
-            target:add("links", "gcc")
+        if not target:values("dont_link_against_libroot") then
+            target:add("syslinks", "root")
+            -- Add libgcc via TargetLibgcc equivalent
+            target:add("syslinks", "gcc")
         end
-
-        -- Add glue code files
-        target:add("linkobjects", begin_glue, end_glue)
     end
 
     -- Link against compatibility libraries if needed
-    local compat_libs = target:get("haiku_compatibility_libs")
-    if platform ~= "host" and compat_libs then
-        for _, lib in ipairs(compat_libs) do
-            target:add("links", lib)
+    if platform ~= "host" then
+        local compat_libs = get_config("TARGET_HAIKU_COMPATIBILITY_LIBS")
+        if compat_libs then
+            for _, lib in ipairs(compat_libs) do
+                target:add("syslinks", lib)
+            end
         end
     end
 end
 
 -- ============================================================================
--- Application Build Rules
+-- Application
 -- ============================================================================
 
 --[[
-    Application(name, sources, libraries, resources)
+    Application rule
 
     Creates a Haiku application executable.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule Application { }
-
-    Usage:
-        Application("MyApp", {"main.cpp", "window.cpp"}, {"be", "tracker"}, {"app.rdef"})
+        # Application <name> : <sources> : <libraries> : <res> ;
 ]]
 rule("Application")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         if not is_platform_supported(target) then
@@ -133,63 +143,40 @@ rule("Application")
 
         target:set("kind", "binary")
 
-        -- Haiku-specific: set soname to _APP_
+        -- Set soname to _APP_
         target:add("ldflags", "-Xlinker", "-soname=_APP_", {force = true})
     end)
 
     on_config(function (target)
-        -- Add shared object glue code
         AddSharedObjectGlueCode(target, true)
     end)
 
-    -- Handle resources after build
-    after_build(function (target)
-        local resfiles = target:get("resources")
-        if resfiles then
-            -- Process resources (calls ResComp and XRes)
-            import("ResourceRules", {alias = "res"})
-            res.AddResources(target, resfiles)
-        end
-    end)
+    -- Resources are processed via AddResources function, called from xmake.lua
+
+-- ============================================================================
+-- StdBinCommands
+-- ============================================================================
 
 --[[
-    StdBinCommands(sources, libraries, resources)
+    StdBinCommands rule
 
-    Creates multiple executables from individual source files.
-    Each source file becomes a separate executable.
+    For building multiple executables from individual source files.
+    Each source becomes a separate executable.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule StdBinCommands { }
+        # StdBinCommands <sources> : <libs> : <res> ;
 
     Usage in xmake.lua:
-        for _, src in ipairs({"cat.cpp", "ls.cpp", "mkdir.cpp"}) do
+        for _, src in ipairs(sources) do
             target(path.basename(src))
                 add_rules("StdBinCommands")
                 add_files(src)
-                add_deps("be")
+                add_links(...)
         end
 ]]
 rule("StdBinCommands")
-    add_deps("Application")
-
-    on_load(function (target)
-        -- Inherits everything from Application rule
-    end)
-
--- ============================================================================
--- Addon/Plugin Build Rules
--- ============================================================================
-
---[[
-    Addon(target, sources, libraries, is_executable)
-
-    Creates a Haiku add-on (shared library that can optionally be executable).
-
-    Equivalent to Jam rule:
-        rule Addon { }
-]]
-rule("Addon")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         if not is_platform_supported(target) then
@@ -197,67 +184,150 @@ rule("Addon")
             return
         end
 
-        local is_executable = target:get("is_executable")
+        target:set("kind", "binary")
+        target:add("ldflags", "-Xlinker", "-soname=_APP_", {force = true})
+    end)
 
-        -- Determine kind based on is_executable flag
-        if is_executable then
+    on_config(function (target)
+        AddSharedObjectGlueCode(target, true)
+    end)
+
+-- ============================================================================
+-- Addon
+-- ============================================================================
+
+--[[
+    Addon rule
+
+    Creates a Haiku add-on (shared library that can optionally be executable).
+
+    Jam equivalent:
+        rule Addon { }
+        # Addon <target> : <sources> : <libraries> : <isExecutable> ;
+]]
+rule("Addon")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
+
+    on_load(function (target)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
+        end
+
+        local is_executable = target:values("is_executable")
+        is_executable = is_executable and is_executable[1]
+
+        if is_executable == true or is_executable == "true" then
             target:set("kind", "binary")
         else
             target:set("kind", "shared")
             target:add("ldflags", "-shared", {force = true})
         end
 
-        -- Set soname
+        -- Set soname to target name
         local soname = target:basename()
         target:add("ldflags", "-Xlinker", format('-soname="%s"', soname), {force = true})
     end)
 
     on_config(function (target)
-        local is_executable = target:get("is_executable") or false
-        AddSharedObjectGlueCode(target, is_executable)
+        local is_executable = target:values("is_executable")
+        is_executable = is_executable and is_executable[1]
+        local is_exec = (is_executable == true or is_executable == "true")
+        AddSharedObjectGlueCode(target, is_exec)
     end)
 
---[[
-    Translator(target, sources, libraries, is_executable)
+-- ============================================================================
+-- Translator
+-- ============================================================================
 
-    Creates a Haiku translator (format converter add-on).
+--[[
+    Translator rule
+
+    Creates a Haiku translator add-on.
     Wrapper around Addon rule.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule Translator { }
+        # Translator <target> : <sources> : <libraries> : <isExecutable> ;
 ]]
 rule("Translator")
-    add_deps("Addon")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
+
+    on_load(function (target)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
+        end
+
+        local is_executable = target:values("is_executable")
+        is_executable = is_executable and is_executable[1]
+
+        if is_executable == true or is_executable == "true" then
+            target:set("kind", "binary")
+        else
+            target:set("kind", "shared")
+            target:add("ldflags", "-shared", {force = true})
+        end
+
+        local soname = target:basename()
+        target:add("ldflags", "-Xlinker", format('-soname="%s"', soname), {force = true})
+    end)
+
+    on_config(function (target)
+        local is_executable = target:values("is_executable")
+        is_executable = is_executable and is_executable[1]
+        local is_exec = (is_executable == true or is_executable == "true")
+        AddSharedObjectGlueCode(target, is_exec)
+    end)
+
+-- ============================================================================
+-- ScreenSaver
+-- ============================================================================
 
 --[[
-    ScreenSaver(target, sources, libraries)
+    ScreenSaver rule
 
     Creates a Haiku screen saver (non-executable add-on).
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule ScreenSaver { }
+        # ScreenSaver <target> : <sources> : <libraries> ;
 ]]
 rule("ScreenSaver")
-    add_deps("Addon")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
-        target:set("is_executable", false)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
+        end
+
+        target:set("kind", "shared")
+        target:add("ldflags", "-shared", {force = true})
+
+        local soname = target:basename()
+        target:add("ldflags", "-Xlinker", format('-soname="%s"', soname), {force = true})
+    end)
+
+    on_config(function (target)
+        AddSharedObjectGlueCode(target, false)
     end)
 
 -- ============================================================================
--- Library Build Rules
+-- StaticLibrary
 -- ============================================================================
 
 --[[
-    StaticLibrary(name, sources, other_objects)
+    StaticLibrary rule
 
     Creates a static library from sources.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule StaticLibrary { }
+        # StaticLibrary <lib> : <sources> : <otherObjects> ;
 ]]
 rule("StaticLibrary")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         if not is_platform_supported(target) then
@@ -268,21 +338,49 @@ rule("StaticLibrary")
         target:set("kind", "static")
 
         -- Add hidden visibility unless NO_HIDDEN_VISIBILITY is set
-        if not target:get("no_hidden_visibility") then
-            target:add("cxflags", "-fvisibility=hidden", {force = true})
+        local no_hidden = target:values("no_hidden_visibility")
+        if not no_hidden or not no_hidden[1] then
+            target:add("cxflags", "-fvisibility=hidden")
         end
     end)
 
+-- ============================================================================
+-- StaticLibraryFromObjects
+-- ============================================================================
+
 --[[
-    SharedLibrary(name, sources, libraries, abi_version)
+    StaticLibraryFromObjects rule
+
+    Creates a static library from pre-compiled object files.
+
+    Jam equivalent:
+        rule StaticLibraryFromObjects { }
+]]
+rule("StaticLibraryFromObjects")
+    on_load(function (target)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
+        end
+
+        target:set("kind", "static")
+    end)
+
+-- ============================================================================
+-- SharedLibrary
+-- ============================================================================
+
+--[[
+    SharedLibrary rule
 
     Creates a shared library with optional ABI versioning.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule SharedLibrary { }
+        # SharedLibrary <lib> : <sources> : <libraries> : <abiVersion> ;
 ]]
 rule("SharedLibrary")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         if not is_platform_supported(target) then
@@ -292,13 +390,17 @@ rule("SharedLibrary")
 
         target:set("kind", "shared")
 
-        -- Handle ABI version
-        local abi_version = target:get("abi_version")
+        -- Handle ABI version for soname
+        local abi_version = target:values("abi_version")
+        abi_version = abi_version and abi_version[1]
+        
         local basename = target:basename()
         local soname = basename
 
         if abi_version then
             soname = format("%s.%s", basename, abi_version)
+            target:values_set("haiku_soname", {soname})
+            target:values_set("haiku_lib_abi_version", {abi_version})
         end
 
         target:add("ldflags", "-shared", {force = true})
@@ -310,19 +412,53 @@ rule("SharedLibrary")
     end)
 
 -- ============================================================================
--- Object Merge Rules
+-- SharedLibraryFromObjects
 -- ============================================================================
 
 --[[
-    MergeObject(name, sources, other_objects)
+    SharedLibraryFromObjects rule
+
+    Creates a shared library from pre-compiled object files.
+
+    Jam equivalent:
+        rule SharedLibraryFromObjects { }
+        # SharedLibraryFromObjects <lib> : <objects> : <libraries> ;
+]]
+rule("SharedLibraryFromObjects")
+    on_load(function (target)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
+        end
+
+        target:set("kind", "shared")
+
+        local soname = target:values("haiku_soname")
+        soname = soname and soname[1] or target:basename()
+
+        target:add("ldflags", "-shared", {force = true})
+        target:add("ldflags", "-Xlinker", format('-soname="%s"', soname), {force = true})
+    end)
+
+    on_config(function (target)
+        AddSharedObjectGlueCode(target, false)
+    end)
+
+-- ============================================================================
+-- MergeObject
+-- ============================================================================
+
+--[[
+    MergeObject rule
 
     Compiles sources and merges object files into a single relocatable object.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule MergeObject { }
+        # MergeObject <name> : <sources> : <other objects> ;
 ]]
 rule("MergeObject")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         if not is_platform_supported(target) then
@@ -334,21 +470,20 @@ rule("MergeObject")
     end)
 
     after_build(function (target)
-        local platform = get_platform()
+        local platform = get_platform(target)
         local ld
 
         if platform == "host" then
-            ld = "ld"
+            ld = os.getenv("LD") or "ld"
         else
             local arch = get_target_arch()
-            ld = format("%s-ld", arch)
+            ld = get_config("TARGET_LD_" .. arch) or "ld"
         end
 
-        -- Merge all object files into one
         local objectfiles = target:objectfiles()
-        local other_objects = target:get("other_objects") or {}
+        local other_objects = target:values("other_objects") or {}
 
-        -- Combine object files
+        -- Combine all objects
         local all_objects = {}
         for _, obj in ipairs(objectfiles) do
             table.insert(all_objects, obj)
@@ -359,183 +494,156 @@ rule("MergeObject")
 
         if #all_objects > 0 then
             local targetfile = target:targetfile()
+            os.mkdir(path.directory(targetfile))
+
             local args = {"-r", "-o", targetfile}
             for _, obj in ipairs(all_objects) do
                 table.insert(args, obj)
             end
+
             os.execv(ld, args)
         end
     end)
 
 -- ============================================================================
--- Linking Rules
+-- MergeObjectFromObjects
 -- ============================================================================
 
 --[[
-    LinkAgainst(target, libs)
+    MergeObjectFromObjects rule
 
-    Links target against specified libraries.
-    Handles library name mapping for Haiku platform.
+    Merges pre-compiled object files into a single relocatable object.
 
-    Equivalent to Jam rule:
-        rule LinkAgainst { }
+    Jam equivalent:
+        rule MergeObjectFromObjects { }
+        # MergeObjectFromObjects <name> : <objects> : <other objects> ;
 ]]
-function LinkAgainst(target, libs)
-    if type(libs) ~= "table" then
-        libs = {libs}
-    end
-
-    local platform = get_platform()
-
-    -- Library name mapping for Haiku platform
-    local lib_map = {
-        be = "libbe.so",
-        root = "libroot.so",
-        network = "libnetwork.so",
-        bnetapi = "libbnetapi.so",
-        tracker = "libtracker.so",
-        translation = "libtranslation.so",
-        locale = "liblocale.so",
-        media = "libmedia.so",
-        game = "libgame.so",
-        device = "libdevice.so",
-        textencoding = "libtextencoding.so",
-        mail = "libmail.so",
-        package = "libpackage.so",
-        shared = "libshared.a",
-    }
-
-    for _, lib in ipairs(libs) do
-        local mapped = lib
-
-        -- Map library names on Haiku platform
-        if platform == "haiku" and lib_map[lib] then
-            mapped = lib_map[lib]
+rule("MergeObjectFromObjects")
+    on_load(function (target)
+        if not is_platform_supported(target) then
+            target:set("enabled", false)
+            return
         end
 
-        -- Determine if it's a file path or library name
-        local dirname = path.directory(mapped)
-        local is_file = dirname ~= "" or mapped:match("^lib") or
-                        mapped:match("%.so$") or mapped:match("%.a$")
+        target:set("kind", "object")
+    end)
 
-        if is_file then
-            -- Add as direct dependency
-            if mapped:match("%.a$") then
-                target:add("links", mapped, {public = true})
-            else
-                target:add("links", mapped)
-            end
+    on_build(function (target)
+        local platform = get_platform(target)
+        local ld
+
+        if platform == "host" then
+            ld = os.getenv("LD") or "ld"
         else
-            -- Add as -l flag
-            target:add("links", lib)
+            local arch = get_target_arch()
+            ld = get_config("TARGET_LD_" .. arch) or "ld"
         end
-    end
-end
+
+        local objects = target:values("objects") or {}
+        local other_objects = target:values("other_objects") or {}
+
+        local all_objects = {}
+        for _, obj in ipairs(objects) do
+            table.insert(all_objects, obj)
+        end
+        for _, obj in ipairs(other_objects) do
+            table.insert(all_objects, obj)
+        end
+
+        if #all_objects > 0 then
+            local targetfile = target:targetfile()
+            os.mkdir(path.directory(targetfile))
+
+            local args = {"-r", "-o", targetfile}
+            for _, obj in ipairs(all_objects) do
+                table.insert(args, obj)
+            end
+
+            os.execv(ld, args)
+        end
+    end)
+
+-- ============================================================================
+-- Ld
+-- ============================================================================
 
 --[[
-    Ld(target, objects, linker_script, flags)
+    Ld rule
 
-    Links objects with a custom linker script.
+    Links objects with optional linker script.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule Ld { }
+        # Ld <name> : <objs> : <linkerscript> : <flags> ;
 ]]
 rule("Ld")
     on_load(function (target)
         target:set("kind", "binary")
+    end)
 
-        local linker_script = target:get("linker_script")
-        if linker_script then
-            target:add("ldflags", format("--script=%s", linker_script), {force = true})
+    on_config(function (target)
+        local platform = get_platform(target)
+        local arch = get_target_arch()
+
+        if platform == "host" then
+            target:set("toolset", "ld", os.getenv("LD") or "ld")
+        else
+            local ld = get_config("TARGET_LD_" .. arch) or "ld"
+            target:set("toolset", "ld", ld)
         end
 
-        local platform = get_platform()
-        if platform == "host" then
-            -- Use host linker
-        else
-            local arch = get_target_arch()
-            target:set("ld", format("%s-ld", arch))
+        -- Handle linker script
+        local linker_script = target:values("linker_script")
+        if linker_script and linker_script[1] then
+            target:add("ldflags", "--script=" .. linker_script[1], {force = true})
         end
     end)
 
     after_build(function (target)
-        -- Apply resources and MIME type if not disabled
-        if not target:get("dont_use_beos_rules") then
-            import("ResourceRules", {alias = "res", try = true})
-            if res then
-                res.SetType(target)
-                res.MimeSet(target)
-                res.SetVersion(target)
+        -- XRes, SetType, MimeSet, SetVersion are handled by BeOSRules
+        -- Called only if DONT_USE_BEOS_RULES is not set
+        local dont_use = target:values("dont_use_beos_rules")
+        if not dont_use or not dont_use[1] then
+            -- Import and call BeOS rules if available
+            local ok, beos = pcall(import, "BeOSRules")
+            if ok and beos then
+                local resfiles = target:values("resfiles")
+                if resfiles and #resfiles > 0 then
+                    beos.XRes(target, resfiles)
+                end
+                beos.SetType(target)
+                beos.MimeSet(target)
+                beos.SetVersion(target)
             end
         end
     end)
 
---[[
-    SetVersionScript(target, version_script)
-
-    Sets the version script for symbol versioning.
-
-    Equivalent to Jam rule:
-        rule SetVersionScript { }
-]]
-function SetVersionScript(target, version_script)
-    target:add("ldflags", format("--version-script=%s", version_script), {force = true})
-    target:add("deps", version_script)
-end
-
 -- ============================================================================
--- Resource Rules
+-- AssembleNasm
 -- ============================================================================
 
 --[[
-    AddResources(target, resource_files)
+    AssembleNasm rule
 
-    Adds resource files (.rdef or .rsrc) to a target.
+    Assembles NASM source files.
 
-    Equivalent to Jam rule:
-        rule AddResources { }
-]]
-function AddResources(target, resource_files)
-    if type(resource_files) ~= "table" then
-        resource_files = {resource_files}
-    end
-
-    local rsrc_files = {}
-
-    for _, file in ipairs(resource_files) do
-        if file:match("%.rdef$") then
-            -- Compile .rdef to .rsrc
-            local rsrc = file:gsub("%.rdef$", ".rsrc")
-            -- ResComp will be called during build
-            target:add("files", file, {rule = "ResComp"})
-            table.insert(rsrc_files, rsrc)
-        else
-            table.insert(rsrc_files, file)
-        end
-    end
-
-    target:set("rsrc_files", rsrc_files)
-end
-
--- ============================================================================
--- Assembly Rules
--- ============================================================================
-
---[[
-    AssembleNasm(target, source)
-
-    Assembles a NASM source file.
-
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule AssembleNasm { }
+        actions AssembleNasm { $(HAIKU_NASM) $(NASMFLAGS) -I$(2:D)/ -o $(1) $(2) }
 ]]
 rule("AssembleNasm")
     set_extensions(".asm", ".nasm")
 
-    on_build_file(function (target, sourcefile, opt)
+    on_buildcmd_file(function (target, batchcmds, sourcefile, opt)
         local objectfile = target:objectfile(sourcefile)
-        local nasmflags = target:get("nasmflags") or {"-f", "elf64"}
-        local asflags = target:get("asflags") or {}
+
+        -- Default to elf32 as in Jam
+        local nasmflags = target:values("nasmflags")
+        if not nasmflags or #nasmflags == 0 then
+            nasmflags = {"-f", "elf32"}
+        end
+
+        local asflags = target:values("asflags") or {}
 
         local args = {}
 
@@ -551,52 +659,275 @@ rule("AssembleNasm")
         end
 
         -- Add include directory
-        table.insert(args, format("-I%s/", path.directory(sourcefile)))
+        table.insert(args, "-I" .. path.directory(sourcefile) .. "/")
 
         -- Output and input
         table.insert(args, "-o")
         table.insert(args, objectfile)
         table.insert(args, sourcefile)
 
-        os.mkdir(path.directory(objectfile))
-        os.execv("nasm", args)
+        batchcmds:mkdir(path.directory(objectfile))
+        batchcmds:show_progress(opt.progress, "assembling.nasm %s", sourcefile)
+        batchcmds:vrunv(get_config("HAIKU_NASM") or "nasm", args)
+        batchcmds:add_depfiles(sourcefile)
+        batchcmds:set_depmtime(os.mtime(objectfile))
+        batchcmds:set_depcache(target:dependfile(objectfile))
     end)
 
 -- ============================================================================
--- Build Platform Rules (Host Tools)
+-- LinkAgainst (function)
 -- ============================================================================
 
 --[[
-    BuildPlatformMain(target, sources, libraries)
+    LinkAgainst(target, libs, map_libs)
+
+    Links target against specified libraries.
+    Handles library name mapping for Haiku platform.
+
+    Jam equivalent:
+        rule LinkAgainst { }
+        # LinkAgainst <name> : <libs> [ : <mapLibs> ] ;
+]]
+function LinkAgainst(target, libs, map_libs)
+    if type(libs) ~= "table" then
+        libs = {libs}
+    end
+
+    if map_libs == nil then
+        map_libs = true
+    end
+
+    local platform = get_platform(target)
+    local arch = get_target_arch()
+
+    -- Get library name map
+    local lib_map = nil
+    if platform ~= "host" and map_libs then
+        lib_map = get_config("TARGET_LIBRARY_NAME_MAP_" .. arch)
+    end
+
+    local needlibs = {}
+    local linklibs = {}
+
+    for _, lib in ipairs(libs) do
+        local mapped = lib
+
+        -- Map library name if map exists
+        if lib_map and lib_map[lib] then
+            mapped = lib_map[lib]
+        end
+
+        -- Determine if it's a file or a -l flag
+        local is_file = false
+        local dirname = path.directory(mapped)
+        local grist = nil  -- xmake doesn't have grist concept
+
+        if dirname and dirname ~= "" and dirname ~= "." then
+            is_file = true
+        else
+            local basename = path.basename(mapped)
+            if basename:match("^lib") then
+                is_file = true
+            elseif basename == "_APP_" or basename == "_KERNEL_" then
+                is_file = true
+            end
+
+            local ext = path.extension(mapped)
+            if ext == ".so" or ext == ".a" then
+                is_file = true
+            end
+        end
+
+        if is_file then
+            table.insert(needlibs, mapped)
+        else
+            table.insert(linklibs, mapped)
+        end
+    end
+
+    -- For static libraries, copy their dependencies
+    for _, lib in ipairs(needlibs) do
+        if path.extension(lib) == ".a" then
+            -- In xmake, static library dependencies are handled automatically
+            -- through add_deps, but we note this for compatibility
+        end
+    end
+
+    -- Add to target
+    for _, lib in ipairs(needlibs) do
+        if path.extension(lib) == ".a" then
+            target:add("links", lib, {public = true})
+        else
+            target:add("links", lib)
+        end
+    end
+
+    for _, lib in ipairs(linklibs) do
+        target:add("links", lib)
+    end
+end
+
+-- ============================================================================
+-- AddResources (function)
+-- ============================================================================
+
+--[[
+    AddResources(target, resource_files)
+
+    Adds resource files (.rdef or .rsrc) to a target.
+
+    Jam equivalent:
+        rule AddResources { }
+        # AddResources <name> : <resourcefiles> ;
+]]
+function AddResources(target, resource_files)
+    if type(resource_files) ~= "table" then
+        resource_files = {resource_files}
+    end
+
+    local resfiles = target:values("resfiles") or {}
+
+    for _, file in ipairs(resource_files) do
+        if path.extension(file) == ".rdef" then
+            -- .rdef needs to be compiled to .rsrc via ResComp
+            -- Add as file with ResComp rule
+            target:add("files", file, {rule = "ResComp"})
+            -- The compiled .rsrc will be added later
+            local rsrc = file:gsub("%.rdef$", ".rsrc")
+            table.insert(resfiles, rsrc)
+        else
+            table.insert(resfiles, file)
+        end
+    end
+
+    target:values_set("resfiles", resfiles)
+end
+
+-- ============================================================================
+-- SetVersionScript (function)
+-- ============================================================================
+
+--[[
+    SetVersionScript(target, version_script)
+
+    Sets the version script for symbol versioning.
+
+    Jam equivalent:
+        rule SetVersionScript { }
+        # SetVersionScript <target> : <versionScript>
+]]
+function SetVersionScript(target, version_script)
+    target:values_set("version_script", {version_script})
+    target:add("ldflags", "-Wl,--version-script," .. version_script, {force = true})
+    target:add("deps", version_script)
+end
+
+-- ============================================================================
+-- CreateAsmStructOffsetsHeader (function)
+-- ============================================================================
+
+--[[
+    CreateAsmStructOffsetsHeader(header, source, architecture)
+
+    Creates assembly header with structure offsets.
+    Compiles source with -S and extracts #define lines.
+
+    Jam equivalent:
+        rule CreateAsmStructOffsetsHeader { }
+        actions CreateAsmStructOffsetsHeader1 {
+            $(C++) -S "$(2)" $(C++FLAGS) $(CCDEFS) $(CCHDRS) -o - \
+                | $(SED) 's/@define/#define/g' | grep "#define" \
+                | $(SED) -e 's/[\$\#]\([0-9]\)/\1/' > "$(1)"
+        }
+]]
+function CreateAsmStructOffsetsHeader(header, source, architecture)
+    architecture = architecture or get_target_arch()
+
+    local cxx = get_config("TARGET_C++_" .. architecture) or "g++"
+
+    -- Build include paths
+    local includes = {"-I" .. path.directory(source)}
+
+    -- Add config headers, etc. would need to be passed in
+
+    local flags = {"-Wno-invalid-offsetof"}
+
+    os.mkdir(path.directory(header))
+
+    -- Build command
+    local cmd = format(
+        '%s -S %s %s %s -o - | sed "s/@define/#define/g" | grep "#define" | sed -e "s/[\\$\\#]\\([0-9]\\)/\\1/" > "%s"',
+        cxx,
+        table.concat(flags, " "),
+        table.concat(includes, " "),
+        source,
+        header
+    )
+
+    os.exec(cmd)
+
+    -- Verify output contains defines
+    local content = io.readfile(header)
+    if not content or not content:find("#define") then
+        os.raise("CreateAsmStructOffsetsHeader: no #define found in output")
+    end
+end
+
+-- ============================================================================
+-- BuildPlatformMain
+-- ============================================================================
+
+--[[
+    BuildPlatformMain rule
 
     Builds an executable for the host platform (build tools).
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule BuildPlatformMain { }
+        # BuildPlatformMain <target> : <sources> : <libraries> ;
 ]]
 rule("BuildPlatformMain")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         target:set("kind", "binary")
-        target:set("platform", "host")
-        target:set("supported_platforms", {"host"})
-        target:set("dont_use_beos_rules", true)
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
+        target:values_set("dont_use_beos_rules", {true})
     end)
 
+    on_config(function (target)
+        local uses_be_api = target:values("uses_be_api")
+        if uses_be_api and uses_be_api[1] then
+            -- Add build libroot
+            local host_libroot = get_config("HOST_LIBROOT")
+            if host_libroot then
+                target:add("links", host_libroot)
+            end
+        end
+    end)
+
+-- ============================================================================
+-- BuildPlatformSharedLibrary
+-- ============================================================================
+
 --[[
-    BuildPlatformSharedLibrary(target, sources, libraries)
+    BuildPlatformSharedLibrary rule
 
     Builds a shared library for the host platform.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule BuildPlatformSharedLibrary { }
+        # BuildPlatformSharedLibrary <target> : <sources> : <libraries> ;
 ]]
 rule("BuildPlatformSharedLibrary")
-    add_deps("BuildPlatformMain")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         target:set("kind", "shared")
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
+        target:values_set("dont_use_beos_rules", {true})
 
         -- Platform-specific flags
         if is_host("macosx") then
@@ -609,105 +940,196 @@ rule("BuildPlatformSharedLibrary")
         end
 
         -- Position independent code
-        target:add("cxflags", "-fPIC", {force = true})
+        target:add("cxflags", "-fPIC")
     end)
 
+    on_config(function (target)
+        local uses_be_api = target:values("uses_be_api")
+        if uses_be_api and uses_be_api[1] then
+            local host_libroot = get_config("HOST_LIBROOT")
+            if host_libroot then
+                target:add("links", host_libroot)
+            end
+        end
+    end)
+
+-- ============================================================================
+-- BuildPlatformStaticLibrary
+-- ============================================================================
+
 --[[
-    BuildPlatformStaticLibrary(target, sources, other_objects)
+    BuildPlatformStaticLibrary rule
 
     Builds a static library for the host platform.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule BuildPlatformStaticLibrary { }
+        # BuildPlatformStaticLibrary <lib> : <sources> : <otherObjects> ;
 ]]
 rule("BuildPlatformStaticLibrary")
-    set_extensions(".cpp", ".c", ".S", ".s")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
         target:set("kind", "static")
-        target:set("platform", "host")
-        target:set("supported_platforms", {"host"})
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
     end)
 
---[[
-    BuildPlatformMergeObject(target, sources, other_objects)
-
-    Builds a merged object file for the host platform.
-
-    Equivalent to Jam rule:
-        rule BuildPlatformMergeObject { }
-]]
-rule("BuildPlatformMergeObject")
-    add_deps("MergeObject")
-
-    on_load(function (target)
-        target:set("platform", "host")
-        target:set("supported_platforms", {"host"})
+    on_config(function (target)
+        local uses_be_api = target:values("uses_be_api")
+        if uses_be_api and uses_be_api[1] then
+            -- Propagate to objects - handled by xmake automatically
+        end
     end)
 
---[[
-    BuildPlatformMergeObjectPIC(target, sources, other_objects)
-
-    Builds a position-independent merged object for the host platform.
-
-    Equivalent to Jam rule:
-        rule BuildPlatformMergeObjectPIC { }
-]]
-rule("BuildPlatformMergeObjectPIC")
-    add_deps("BuildPlatformMergeObject")
-
-    on_load(function (target)
-        target:add("cxflags", "-fPIC", {force = true})
-    end)
+-- ============================================================================
+-- BuildPlatformStaticLibraryPIC
+-- ============================================================================
 
 --[[
-    BuildPlatformStaticLibraryPIC(target, sources, other_objects)
+    BuildPlatformStaticLibraryPIC rule
 
-    Builds a position-independent static library for the host platform.
+    Like BuildPlatformStaticLibrary, but producing position independent code.
 
-    Equivalent to Jam rule:
+    Jam equivalent:
         rule BuildPlatformStaticLibraryPIC { }
 ]]
 rule("BuildPlatformStaticLibraryPIC")
-    add_deps("BuildPlatformStaticLibrary")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
     on_load(function (target)
-        target:add("cxflags", "-fPIC", {force = true})
+        target:set("kind", "static")
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
+
+        -- Add PIC flags
+        target:add("cxflags", "-fPIC")
     end)
 
 -- ============================================================================
--- Utility Functions
+-- BuildPlatformMergeObject
 -- ============================================================================
 
 --[[
-    CreateAsmStructOffsetsHeader(header, source, architecture)
+    BuildPlatformMergeObject rule
 
-    Creates assembly header with structure offsets.
+    Builds a merged object file for the host platform.
 
-    Equivalent to Jam rule:
-        rule CreateAsmStructOffsetsHeader { }
+    Jam equivalent:
+        rule BuildPlatformMergeObject { }
+        # BuildPlatformMergeObject <name> : <sources> : <other objects> ;
 ]]
-function CreateAsmStructOffsetsHeader(header, source, architecture)
-    -- This is a complex rule that generates assembly headers
-    -- from C++ source by extracting #define lines from compiler output
+rule("BuildPlatformMergeObject")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
 
-    local arch = architecture or get_target_arch()
-    local cxx = format("%s-g++", arch)
+    on_load(function (target)
+        target:set("kind", "object")
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
+    end)
 
-    local includes = {}
-    -- Add standard headers
-    table.insert(includes, format("-I%s", path.directory(source)))
+    after_build(function (target)
+        local ld = os.getenv("LD") or "ld"
 
-    local defines = {"-Wno-invalid-offsetof"}
+        local objectfiles = target:objectfiles()
+        local other_objects = target:values("other_objects") or {}
 
-    -- Generate assembly and extract defines
-    local cmd = format(
-        "%s -S %s %s -o - | sed 's/@define/#define/g' | grep '#define' | sed -e 's/[$#]\\([0-9]\\)/\\1/' > %s",
-        cxx,
-        table.concat(includes, " "),
-        source,
-        header
-    )
+        local all_objects = {}
+        for _, obj in ipairs(objectfiles) do
+            table.insert(all_objects, obj)
+        end
+        for _, obj in ipairs(other_objects) do
+            table.insert(all_objects, obj)
+        end
 
-    os.exec(cmd)
+        if #all_objects > 0 then
+            local targetfile = target:targetfile()
+            os.mkdir(path.directory(targetfile))
+
+            local args = {"-r", "-o", targetfile}
+            for _, obj in ipairs(all_objects) do
+                table.insert(args, obj)
+            end
+
+            os.execv(ld, args)
+        end
+    end)
+
+-- ============================================================================
+-- BuildPlatformMergeObjectPIC
+-- ============================================================================
+
+--[[
+    BuildPlatformMergeObjectPIC rule
+
+    Builds a position-independent merged object for the host platform.
+
+    Jam equivalent:
+        rule BuildPlatformMergeObjectPIC { }
+]]
+rule("BuildPlatformMergeObjectPIC")
+    set_extensions(".cpp", ".c", ".cc", ".cxx", ".S", ".s")
+
+    on_load(function (target)
+        target:set("kind", "object")
+        target:set("plat", "host")
+        target:values_set("supported_platforms", {"host"})
+
+        -- Add PIC flags
+        target:add("cxflags", "-fPIC")
+    end)
+
+    after_build(function (target)
+        local ld = os.getenv("LD") or "ld"
+
+        local objectfiles = target:objectfiles()
+        local other_objects = target:values("other_objects") or {}
+
+        local all_objects = {}
+        for _, obj in ipairs(objectfiles) do
+            table.insert(all_objects, obj)
+        end
+        for _, obj in ipairs(other_objects) do
+            table.insert(all_objects, obj)
+        end
+
+        if #all_objects > 0 then
+            local targetfile = target:targetfile()
+            os.mkdir(path.directory(targetfile))
+
+            local args = {"-r", "-o", targetfile}
+            for _, obj in ipairs(all_objects) do
+                table.insert(args, obj)
+            end
+
+            os.execv(ld, args)
+        end
+    end)
+
+-- ============================================================================
+-- BootstrapStage0PlatformObjects (function)
+-- ============================================================================
+
+--[[
+    BootstrapStage0PlatformObjects(target, sources, separate_from_standard_siblings)
+
+    Builds objects for stage0 of the bootstrap process.
+
+    Jam equivalent:
+        rule BootstrapStage0PlatformObjects { }
+        # BootstrapStage0PlatformObjects <sources> : <separateFromStandardSiblings>
+]]
+function BootstrapStage0PlatformObjects(target, sources, separate_from_standard_siblings)
+    target:set("plat", "bootstrap_stage0")
+    target:values_set("supported_platforms", {"bootstrap_stage0"})
+
+    if separate_from_standard_siblings then
+        -- Set separate object directory
+        local objdir = path.join(target:objectdir(), "bootstrap")
+        target:set("objectdir", objdir)
+    end
+
+    for _, source in ipairs(sources) do
+        target:add("files", source)
+    end
 end

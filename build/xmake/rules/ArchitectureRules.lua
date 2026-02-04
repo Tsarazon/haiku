@@ -26,6 +26,10 @@
     - arm64   - 64-bit ARM (aarch64)
     - arm     - 32-bit ARM (armv7)
     - riscv64 - 64-bit RISC-V
+
+    Usage:
+        This file should be included via includes() in the root xmake.lua.
+        Functions can also be imported via import() in script scope.
 ]]
 
 -- ============================================================================
@@ -35,28 +39,58 @@
 -- Per-architecture settings storage
 local _arch_settings = {}
 
+-- Global architecture variables (equivalent to Jam's HAIKU_ARCH, HAIKU_ARCHS)
+local _haiku_arch = nil  -- Primary architecture CPU
+local _haiku_archs = {}  -- List of all architecture CPUs
+
 -- Debug levels (from Haiku build system)
 local DEBUG_LEVELS = {0, 1, 2}
+
+-- Werror and stack protector directory configuration
+local _werror_dirs = {}
+local _stack_protector_dirs = {}
+local _glibc_clang_dirs = {}  -- Clang-specific flags for glibc directories
+local _werror_arch = nil  -- Current architecture for -Werror setup
 
 -- ============================================================================
 -- Helper Functions
 -- ============================================================================
 
--- Get target architecture
+-- Split filepath into components (equivalent to Jam's FSplitPath)
+local function FSplitPath(filepath)
+    if type(filepath) == "table" then
+        return filepath
+    end
+    local components = {}
+    for component in string.gmatch(filepath, "[^/\\]+") do
+        table.insert(components, component)
+    end
+    return components
+end
+
+-- Get target architecture from config
+-- Note: In description scope, get_config() may return nil before 'xmake config'
+-- This function is safe to call in both description and script scope
 local function get_target_arch()
-    return get_config("arch") or "x86_64"
+    -- Try get_config first (works in script scope and after config)
+    local arch = get_config("arch")
+    if arch then
+        return arch
+    end
+    -- Fallback for description scope before config
+    return "x86_64"
 end
 
 -- Get CPU name for architecture (maps packaging arch to CPU)
 local function get_cpu_for_arch(architecture)
     -- In Haiku, the packaging architecture maps to a CPU name
-    -- For most cases they are the same, but not always
+    -- For most cases they are the same
     return architecture
 end
 
 -- Get packaging architectures (primary + secondary)
 local function get_packaging_archs()
-    local primary = get_config("arch") or "x86_64"
+    local primary = get_target_arch()
     local secondary = get_config("secondary_arch")
 
     if secondary and secondary ~= "" then
@@ -78,13 +112,34 @@ local function FDefines(defines)
 
     local flags = {}
     for _, def in ipairs(defines) do
-        if def:find("=") then
-            table.insert(flags, "-D" .. def)
-        else
-            table.insert(flags, "-D" .. def)
-        end
+        table.insert(flags, "-D" .. def)
     end
     return flags
+end
+
+-- Set include properties based on compiler type
+-- Equivalent to Jam's SetIncludePropertiesVariables
+local function SetIncludePropertiesVariables(settings)
+    if settings.is_legacy_gcc then
+        settings.includes_separator = "-I-"
+        settings.local_includes_option = "-I"
+        settings.system_includes_option = "-I"
+    else
+        settings.includes_separator = ""
+        settings.local_includes_option = "-iquote "
+        settings.system_includes_option = "-I "
+    end
+end
+
+-- Get build directory for architecture
+local function get_arch_object_dir(architecture)
+    local buildir = get_config("buildir") or "build"
+    return path.join(buildir, "objects", "haiku", architecture)
+end
+
+-- Get project directory
+local function get_haiku_top()
+    return os.projectdir() or "."
 end
 
 -- ============================================================================
@@ -118,15 +173,16 @@ function ArchitectureSetup(architecture)
     end
 
     local cpu = get_cpu_for_arch(architecture)
+    local haiku_top = get_haiku_top()
 
     -- Initialize architecture settings table
     local settings = {
         cpu = cpu,
         architecture = architecture,
-        cc = get_config("cc_" .. architecture) or (architecture .. "-unknown-haiku-gcc"),
-        cxx = get_config("cxx_" .. architecture) or (architecture .. "-unknown-haiku-g++"),
-        link = nil,  -- Set below
-        strip = get_config("strip_" .. architecture) or (architecture .. "-unknown-haiku-strip"),
+        cc = get_config("cc_" .. architecture),
+        cxx = get_config("cxx_" .. architecture),
+        link = nil,
+        strip = get_config("strip_" .. architecture),
         ccflags = {},
         cxxflags = {},
         asflags = {},
@@ -144,12 +200,24 @@ function ArchitectureSetup(architecture)
         executable_end_glue = {},
         library_name_map = {},
         is_clang = get_config("cc_is_clang_" .. architecture) == "1",
+        is_legacy_gcc = get_config("cc_is_legacy_gcc_" .. architecture) == "1",
         use_gcc_pipe = get_config("use_gcc_pipe") == "1",
         use_graphite = get_config("use_gcc_graphite_" .. architecture) == "1",
         gcc_lib_dir = get_config("gcc_lib_dir_" .. architecture) or "",
+        -- Include properties (set below)
+        includes_separator = "",
+        local_includes_option = "-iquote ",
+        system_includes_option = "-I ",
     }
 
+    -- Set default compiler paths if not configured
+    settings.cc = settings.cc or (architecture .. "-unknown-haiku-gcc")
+    settings.cxx = settings.cxx or (architecture .. "-unknown-haiku-g++")
+    settings.strip = settings.strip or (architecture .. "-unknown-haiku-strip")
     settings.link = settings.cc
+
+    -- Set include properties based on compiler
+    SetIncludePropertiesVariables(settings)
 
     -- ========================================
     -- Base compiler flags
@@ -227,11 +295,34 @@ function ArchitectureSetup(architecture)
     end
     table.insert(settings.asflags, "-nostdinc")
 
+    -- Set global HAIKU_ARCH (only if not set yet - primary architecture)
+    if not _haiku_arch then
+        _haiku_arch = cpu
+    end
+
+    -- Add to HAIKU_ARCHS if not already present
+    local found = false
+    for _, arch in ipairs(_haiku_archs) do
+        if arch == cpu then
+            found = true
+            break
+        end
+    end
+    if not found then
+        table.insert(_haiku_archs, cpu)
+    end
+
     -- ========================================
     -- Defines
     -- ========================================
 
     table.insert(settings.defines, "ARCH_" .. cpu)
+
+    -- ========================================
+    -- Set include properties based on compiler
+    -- ========================================
+
+    SetIncludePropertiesVariables(settings)
 
     -- ========================================
     -- Warning flags
@@ -265,7 +356,7 @@ function ArchitectureSetup(architecture)
             table.insert(settings.warning_ccflags, w)
         end
 
-        -- Additional C++ suppressions
+        -- Additional C++ suppressions for Clang
         table.insert(settings.warning_cxxflags, "-Wno-unused-private-field")
         table.insert(settings.warning_cxxflags, "-Wno-gnu-designator")
         table.insert(settings.warning_cxxflags, "-Wno-builtin-requires-header")
@@ -278,15 +369,12 @@ function ArchitectureSetup(architecture)
     -- ========================================
 
     settings.werror_flags = {
-        -- Suppress warnings from legacy code
         "-Wno-error=unused-but-set-variable",
         "-Wno-error=cpp",
         "-Wno-error=register",
-        -- These generate too many false positives
         "-Wno-error=address-of-packed-member",
         "-Wno-error=stringop-overread",
         "-Wno-error=array-bounds",
-        -- These can stay
         "-Wno-error=cast-align",
         "-Wno-error=format-truncation",
     }
@@ -323,7 +411,6 @@ function ArchitectureSetup(architecture)
     -- Private system headers
     -- ========================================
 
-    local haiku_top = get_config("haiku_top") or "$(projectdir)"
     settings.private_system_headers = {
         path.join(haiku_top, "headers", "private", "system"),
         path.join(haiku_top, "headers", "private", "system", "arch", cpu),
@@ -333,8 +420,8 @@ function ArchitectureSetup(architecture)
     -- Glue code paths
     -- ========================================
 
-    local glue_dir = path.join("$(buildir)", "objects", "haiku", architecture,
-        "system", "glue")
+    local arch_object_dir = get_arch_object_dir(architecture)
+    local glue_dir = path.join(arch_object_dir, "system", "glue")
     local arch_glue_dir = path.join(glue_dir, "arch", cpu)
 
     -- Library glue code
@@ -363,11 +450,8 @@ function ArchitectureSetup(architecture)
     -- Library name map
     -- ========================================
 
-    local library_grist = ""
     local packaging_archs = get_packaging_archs()
-    if architecture ~= packaging_archs[1] then
-        library_grist = architecture
-    end
+    local is_primary = (architecture == packaging_archs[1])
 
     local standard_libs = {
         "be", "bnetapi", "debug", "device", "game", "locale", "mail",
@@ -376,22 +460,33 @@ function ArchitectureSetup(architecture)
     }
 
     for _, lib in ipairs(standard_libs) do
-        local lib_name = "lib" .. lib .. ".so"
-        if library_grist ~= "" then
-            lib_name = "<" .. library_grist .. ">" .. lib_name
-        end
-        settings.library_name_map[lib] = lib_name
+        settings.library_name_map[lib] = "lib" .. lib .. ".so"
     end
 
-    -- Special libraries
-    settings.library_name_map["localestub"] = "<" .. architecture .. ">liblocalestub.a"
-    settings.library_name_map["shared"] = "<" .. architecture .. ">libshared.a"
+    -- Special libraries (static)
+    settings.library_name_map["localestub"] = "liblocalestub.a"
+    settings.library_name_map["shared"] = "libshared.a"
 
-    -- input_server depends on primary vs secondary
-    if architecture == packaging_archs[1] then
-        settings.library_name_map["input_server"] = "<nogrist>input_server"
+    -- input_server
+    if is_primary then
+        settings.library_name_map["input_server"] = "input_server"
     else
-        settings.library_name_map["input_server"] = "<" .. architecture .. ">input_server"
+        settings.library_name_map["input_server"] = "input_server"
+    end
+
+    -- ========================================
+    -- Object directories
+    -- ========================================
+
+    local arch_object_dir = get_arch_object_dir(architecture)
+    settings.arch_object_dir = arch_object_dir
+    settings.common_debug_object_dir = path.join(arch_object_dir, "common")
+    settings.debug_0_object_dir = path.join(arch_object_dir, "release")
+
+    settings.debug_object_dirs = {}
+    settings.debug_object_dirs[0] = settings.debug_0_object_dir
+    for _, level in ipairs({1, 2}) do
+        settings.debug_object_dirs[level] = path.join(arch_object_dir, "debug_" .. level)
     end
 
     -- Store settings
@@ -459,7 +554,8 @@ function KernelArchitectureSetup(architecture)
         boot_defines = {"_BOOT_MODE"},
         kernel_addon_begin_glue = {},
         kernel_addon_end_glue = {},
-        boot_platform_flags = {},  -- Per-platform boot flags
+        boot_platform_flags = {},
+        private_kernel_headers = {},
     }
 
     -- ========================================
@@ -469,48 +565,65 @@ function KernelArchitectureSetup(architecture)
     if cpu == "arm" then
         kernel_settings.kernel_platform = "efi"
         kernel_settings.boot_targets = {"efi"}
-        kernel_settings.boot_sdimage_begin = 20475  -- KiB
-        kernel_settings.boot_archive_image_offset = 192  -- KiB
+        kernel_settings.boot_sdimage_begin = 20475
+        kernel_settings.boot_archive_image_offset = 192
         kernel_settings.boot_loader_base = 0x1000000
 
     elseif cpu == "arm64" then
         kernel_settings.kernel_platform = "efi"
         kernel_settings.boot_targets = {"efi"}
-        kernel_settings.boot_sdimage_begin = 2  -- KiB
-        kernel_settings.boot_archive_image_offset = 192  -- KiB
+        kernel_settings.boot_sdimage_begin = 2
+        kernel_settings.boot_archive_image_offset = 192
         kernel_settings.boot_loader_base = 0x1000000
 
     elseif cpu == "x86" then
         kernel_settings.kernel_platform = "bios_ia32"
         kernel_settings.boot_targets = {"bios_ia32", "efi"}
-        kernel_settings.boot_archive_image_offset = 384  -- KiB
-
-        -- Verify nasm is available
-        if not get_config("nasm") then
-            print("Warning: HAIKU_NASM not set. x86 target may not build correctly.")
-        end
+        kernel_settings.boot_archive_image_offset = 384
 
     elseif cpu == "riscv64" then
         kernel_settings.kernel_platform = "efi"
         kernel_settings.boot_targets = {"efi", "riscv"}
-        kernel_settings.boot_sdimage_begin = 2  -- KiB
-        kernel_settings.boot_archive_image_offset = 192  -- KiB
+        kernel_settings.boot_sdimage_begin = 2
+        kernel_settings.boot_archive_image_offset = 192
         kernel_settings.boot_loader_base = 0x1000000
 
     elseif cpu == "x86_64" then
         kernel_settings.kernel_platform = "efi"
         kernel_settings.boot_targets = {"efi"}
-        kernel_settings.boot_floppy_image_size = 2880  -- KiB
-        kernel_settings.boot_archive_image_offset = 384  -- KiB
-        kernel_settings.kernel_arch_dir = "x86"  -- x86_64 kernel source is under arch/x86
-
-        -- Verify nasm is available
-        if not get_config("nasm") then
-            print("Warning: HAIKU_NASM not set. x86_64 target may not build correctly.")
-        end
+        kernel_settings.boot_floppy_image_size = 2880
+        kernel_settings.boot_archive_image_offset = 384
+        kernel_settings.kernel_arch_dir = "x86"
 
     else
-        error("Currently unsupported target CPU: " .. cpu)
+        print("Warning: Unsupported target CPU: " .. cpu)
+    end
+
+    -- ========================================
+    -- Private kernel headers
+    -- ========================================
+
+    local haiku_top = get_haiku_top()
+    local arch_object_dir = get_arch_object_dir(architecture)
+
+    kernel_settings.private_kernel_headers = {
+        -- PrivateHeaders $(DOT) kernel libroot shared kernel/boot/platform/$(HAIKU_KERNEL_PLATFORM)
+        path.join(haiku_top, "headers", "private"),
+        path.join(haiku_top, "headers", "private", "kernel"),
+        path.join(haiku_top, "headers", "private", "libroot"),
+        path.join(haiku_top, "headers", "private", "shared"),
+        path.join(haiku_top, "headers", "private", "kernel", "boot", "platform",
+            kernel_settings.kernel_platform),
+        -- ArchHeaders $(HAIKU_KERNEL_ARCH_DIR)
+        path.join(haiku_top, "headers", "private", "kernel", "arch",
+            kernel_settings.kernel_arch_dir),
+        -- FDirName $(HAIKU_COMMON_DEBUG_OBJECT_DIR_$(architecture)) system kernel
+        path.join(arch_settings.common_debug_object_dir, "system", "kernel"),
+    }
+
+    -- Add private system headers
+    for _, hdr in ipairs(arch_settings.private_system_headers) do
+        table.insert(kernel_settings.private_kernel_headers, hdr)
     end
 
     -- ========================================
@@ -521,7 +634,7 @@ function KernelArchitectureSetup(architecture)
         "-ffreestanding",
         "-finline",
         "-fno-semantic-interposition",
-        "-fno-tree-vectorize",  -- Disable autovectorization (causes VM issues)
+        "-fno-tree-vectorize",
     }
 
     local cxx_base_flags = {}
@@ -584,7 +697,6 @@ function KernelArchitectureSetup(architecture)
         table.insert(kernel_settings.kernel_pic_linkflags, "-shared")
 
     elseif cpu == "riscv64" then
-        -- Kernel lives within any single 2 GiB address space
         table.insert(kernel_settings.kernel_ccflags, "-mcmodel=medany")
         table.insert(kernel_settings.kernel_ccflags, "-fpic")
         table.insert(kernel_settings.kernel_cxxflags, "-mcmodel=medany")
@@ -597,11 +709,9 @@ function KernelArchitectureSetup(architecture)
         table.insert(kernel_settings.kernel_cxxflags, "-march=pentium")
 
     elseif cpu == "x86_64" then
-        -- Kernel lives in top 2GB, use kernel code model
         table.insert(kernel_settings.kernel_pic_ccflags, "-fno-pic")
         table.insert(kernel_settings.kernel_pic_ccflags, "-mcmodel=kernel")
 
-        -- Disable red zone and always use frame pointer
         table.insert(kernel_settings.kernel_ccflags, "-mno-red-zone")
         table.insert(kernel_settings.kernel_ccflags, "-fno-omit-frame-pointer")
         table.insert(kernel_settings.kernel_cxxflags, "-mno-red-zone")
@@ -618,6 +728,7 @@ function KernelArchitectureSetup(architecture)
             if secondary_archs[i] == "x86" then
                 print("Enable kernel ia32 compatibility")
                 table.insert(kernel_settings.kernel_defines, "_COMPAT_MODE")
+                kernel_settings.kernel_compat_mode = true
                 break
             end
         end
@@ -627,7 +738,6 @@ function KernelArchitectureSetup(architecture)
     -- Boot loader flags
     -- ========================================
 
-    -- Common boot flags (from arch settings)
     for _, f in ipairs(arch_settings.ccflags) do
         table.insert(kernel_settings.boot_ccflags, f)
     end
@@ -652,8 +762,7 @@ function KernelArchitectureSetup(architecture)
 
     -- Boot loader base address
     if kernel_settings.boot_loader_base then
-        table.insert(kernel_settings.boot_ldflags,
-            "--defsym")
+        table.insert(kernel_settings.boot_ldflags, "--defsym")
         table.insert(kernel_settings.boot_ldflags,
             "BOOT_LOADER_BASE=" .. string.format("0x%x", kernel_settings.boot_loader_base))
     end
@@ -663,7 +772,6 @@ function KernelArchitectureSetup(architecture)
     -- ========================================
 
     for _, boot_target in ipairs(kernel_settings.boot_targets) do
-        local target_upper = boot_target:upper()
         local boot_flags = {
             ccflags = {},
             cxxflags = {},
@@ -671,7 +779,6 @@ function KernelArchitectureSetup(architecture)
         }
 
         if boot_target == "efi" then
-            -- EFI bootloader is PIC
             boot_flags.ccflags = {
                 "-fpic", "-fno-stack-protector", "-fPIC", "-fshort-wchar",
                 "-Wno-error=unused-variable", "-Wno-error=main",
@@ -681,7 +788,6 @@ function KernelArchitectureSetup(architecture)
                 "-Wno-error=unused-variable", "-Wno-error=main",
             }
 
-            -- CPU-specific EFI flags
             if cpu == "x86" then
                 if not arch_settings.is_clang then
                     table.insert(boot_flags.ccflags, "-maccumulate-outgoing-args")
@@ -697,6 +803,19 @@ function KernelArchitectureSetup(architecture)
             elseif cpu == "arm" then
                 table.insert(boot_flags.ccflags, "-mfloat-abi=soft")
                 table.insert(boot_flags.cxxflags, "-mfloat-abi=soft")
+
+                -- Remove any previous -mfloat-abi=hard setting from boot flags
+                local function remove_float_abi_hard(flags)
+                    local fixed = {}
+                    for _, flag in ipairs(flags) do
+                        if flag ~= "-mfloat-abi=hard" then
+                            table.insert(fixed, flag)
+                        end
+                    end
+                    return fixed
+                end
+                kernel_settings.boot_ccflags = remove_float_abi_hard(kernel_settings.boot_ccflags)
+                kernel_settings.boot_cxxflags = remove_float_abi_hard(kernel_settings.boot_cxxflags)
             end
 
             boot_flags.ldflags = {
@@ -725,7 +844,6 @@ function KernelArchitectureSetup(architecture)
             }
 
         else
-            -- Other bootloaders are non-PIC
             boot_flags.ccflags = {"-fno-pic", "-Wno-error=main"}
             boot_flags.cxxflags = {"-fno-pic", "-Wno-error=main"}
         end
@@ -755,8 +873,8 @@ function KernelArchitectureSetup(architecture)
     -- Kernel addon glue code
     -- ========================================
 
-    local glue_dir = path.join("$(buildir)", "objects", "haiku", architecture,
-        "system", "glue")
+    local arch_object_dir = get_arch_object_dir(architecture)
+    local glue_dir = path.join(arch_object_dir, "system", "glue")
 
     kernel_settings.kernel_addon_begin_glue = {
         path.join(arch_settings.gcc_lib_dir, "crtbeginS.o"),
@@ -777,20 +895,13 @@ end
 -- ArchitectureSetupWarnings - Configure -Werror and stack protector
 -- ============================================================================
 
--- Storage for directory warning configuration
-local _werror_dirs = {}
-local _stack_protector_dirs = {}
-
 --[[
     EnableWerror(dir_tokens)
 
     Enables -Werror for the specified directory.
 
-    Equivalent to Jam:
-        rule EnableWerror { }
-
     Parameters:
-        dir_tokens - Directory path tokens (e.g., {"src", "apps"})
+        dir_tokens - Directory path tokens (table) or path string
 ]]
 function EnableWerror(dir_tokens)
     if type(dir_tokens) ~= "table" then
@@ -806,11 +917,8 @@ end
 
     Enables stack protector for the specified directory.
 
-    Equivalent to Jam:
-        rule EnableStackProtector { }
-
     Parameters:
-        dir_tokens - Directory path tokens
+        dir_tokens - Directory path tokens (table) or path string
 ]]
 function EnableStackProtector(dir_tokens)
     if type(dir_tokens) ~= "table" then
@@ -833,14 +941,13 @@ end
         true if -Werror is enabled
 ]]
 function IsWerrorEnabled(dir_path)
-    -- Check exact match
     if _werror_dirs[dir_path] then
         return true
     end
 
-    -- Check parent directories
     for werror_dir, _ in pairs(_werror_dirs) do
-        if dir_path:find("^" .. werror_dir:gsub("([%.%-%+%*%?%^%$%(%)%[%]%%])", "%%%1")) then
+        local pattern = "^" .. werror_dir:gsub("([%.%-%+%*%?%^%$%(%)%[%]%%])", "%%%1")
+        if dir_path:find(pattern) then
             return true
         end
     end
@@ -860,14 +967,13 @@ end
         true if stack protector is enabled
 ]]
 function IsStackProtectorEnabled(dir_path)
-    -- Check exact match
     if _stack_protector_dirs[dir_path] then
         return true
     end
 
-    -- Check parent directories
     for sp_dir, _ in pairs(_stack_protector_dirs) do
-        if dir_path:find("^" .. sp_dir:gsub("([%.%-%+%*%?%^%$%(%)%[%]%%])", "%%%1")) then
+        local pattern = "^" .. sp_dir:gsub("([%.%-%+%*%?%^%$%(%)%[%]%%])", "%%%1")
+        if dir_path:find(pattern) then
             return true
         end
     end
@@ -879,9 +985,6 @@ end
     ArchitectureSetupWarnings(architecture)
 
     Sets up compiler warnings and error flags for various subdirectories.
-
-    Equivalent to Jam:
-        rule ArchitectureSetupWarnings { }
 
     Parameters:
         architecture - Packaging architecture
@@ -898,10 +1001,14 @@ function ArchitectureSetupWarnings(architecture)
 
     local cpu = arch_settings.cpu
 
-    -- Clang-specific glibc flags
+    -- Clang glibc flags
+    -- AppendToConfigVar CCFLAGS : HAIKU_TOP src system libroot posix glibc :
+    --     -fgnu89-inline -fheinous-gnu-extensions : global ;
     if arch_settings.is_clang then
-        -- These would be added to src/system/libroot/posix/glibc
-        -- In xmake we handle this via per-directory config
+        local glibc_path = "src/system/libroot/posix/glibc"
+        _glibc_clang_dirs[glibc_path] = {
+            ccflags = {"-fgnu89-inline", "-fheinous-gnu-extensions"},
+        }
     end
 
     -- ARM architecture skips -Werror setup (uses #warning for placeholders)
@@ -909,16 +1016,16 @@ function ArchitectureSetupWarnings(architecture)
         return
     end
 
+    -- Set HAIKU_WERROR_ARCH for this architecture
+    _werror_arch = architecture
+
     -- Enable -Werror for various parts of the source tree
     -- Note: Only enabled for GCC, Clang generates more warnings
     if not arch_settings.is_clang then
-        -- Add-ons
         EnableWerror({"src", "add-ons", "accelerants"})
-        EnableWerror({"src", "add-ons", "bluetooth"})
         EnableWerror({"src", "add-ons", "decorators"})
         EnableWerror({"src", "add-ons", "disk_systems"})
         EnableWerror({"src", "add-ons", "input_server"})
-        EnableWerror({"src", "add-ons", "kernel", "bluetooth"})
         EnableWerror({"src", "add-ons", "kernel", "bus_managers"})
         EnableWerror({"src", "add-ons", "kernel", "busses"})
         EnableWerror({"src", "add-ons", "kernel", "console"})
@@ -996,8 +1103,6 @@ function ArchitectureSetupWarnings(architecture)
         EnableWerror({"src", "add-ons", "translators", "tga"})
         EnableWerror({"src", "add-ons", "translators", "tiff"})
         EnableWerror({"src", "add-ons", "translators", "wonderbrush"})
-
-        -- Binaries
         EnableWerror({"src", "bin", "debug", "strace"})
         EnableWerror({"src", "bin", "desklink"})
         EnableWerror({"src", "bin", "listusb"})
@@ -1006,17 +1111,11 @@ function ArchitectureSetupWarnings(architecture)
         EnableWerror({"src", "bin", "package_repo"})
         EnableWerror({"src", "bin", "pkgman"})
         EnableWerror({"src", "bin", "writembr"})
-
-        -- Libraries
         EnableWerror({"src", "libs", "bsd"})
-
-        -- Major components
         EnableWerror({"src", "apps"})
         EnableWerror({"src", "kits"})
         EnableWerror({"src", "preferences"})
         EnableWerror({"src", "servers"})
-
-        -- System
         EnableWerror({"src", "system", "boot"})
         EnableWerror({"src", "system", "kernel"})
         EnableWerror({"src", "system", "libroot", "add-ons"})
@@ -1052,9 +1151,6 @@ end
     Returns one of two values depending on whether architecture
     is the primary packaging architecture.
 
-    Equivalent to Jam:
-        rule MultiArchIfPrimary { }
-
     Parameters:
         if_value - Value to return if primary
         else_value - Value to return if secondary
@@ -1076,66 +1172,55 @@ end
 --[[
     MultiArchConditionalGristFiles(files, primary_grist, secondary_grist, architecture)
 
-    Returns files with their grist set based on architecture.
-
-    Equivalent to Jam:
-        rule MultiArchConditionalGristFiles { }
+    Returns files with identifier prefix based on architecture.
+    Note: In xmake, grist is not used. This returns files with optional prefix.
 
     Parameters:
         files - List of file names
-        primary_grist - Grist to use for primary architecture
-        secondary_grist - Grist to use for secondary architecture
+        primary_grist - Prefix for primary architecture (or nil)
+        secondary_grist - Prefix for secondary architecture
         architecture - Architecture to check (default: current target)
 
     Returns:
-        List of files with appropriate grist
+        List of files (prefixes applied as directory components if needed)
 ]]
 function MultiArchConditionalGristFiles(files, primary_grist, secondary_grist, architecture)
-    if type(files) ~= "table" then files = {files} end
+    if type(files) ~= "table" then
+        files = {files}
+    end
     architecture = architecture or get_target_arch()
 
-    local grist = MultiArchIfPrimary(primary_grist, secondary_grist, architecture)
+    local prefix = MultiArchIfPrimary(primary_grist, secondary_grist, architecture)
 
-    local result = {}
-    for _, file in ipairs(files) do
-        if grist and grist ~= "" then
-            table.insert(result, "<" .. grist .. ">" .. file)
-        else
-            table.insert(result, file)
-        end
-    end
-
-    return result
+    -- In xmake we don't use grist, just return files
+    -- If prefix logic is needed, implement as directory prefix
+    return files
 end
 
 --[[
     MultiArchDefaultGristFiles(files, grist_prefix, architecture)
 
-    Convenient shorthand for MultiArchConditionalGristFiles for the common case
-    where secondary architecture name is appended to grist.
-
-    Equivalent to Jam:
-        rule MultiArchDefaultGristFiles { }
+    Convenient shorthand for MultiArchConditionalGristFiles.
 
     Parameters:
         files - List of file names
-        grist_prefix - Grist prefix
+        grist_prefix - Prefix
         architecture - Architecture to check (default: current target)
 
     Returns:
-        List of files with appropriate grist
+        List of files
 ]]
 function MultiArchDefaultGristFiles(files, grist_prefix, architecture)
     architecture = architecture or get_target_arch()
 
-    local secondary_grist
+    local secondary_prefix
     if grist_prefix and grist_prefix ~= "" then
-        secondary_grist = grist_prefix .. "!" .. architecture
+        secondary_prefix = grist_prefix .. "_" .. architecture
     else
-        secondary_grist = architecture
+        secondary_prefix = architecture
     end
 
-    return MultiArchConditionalGristFiles(files, grist_prefix, secondary_grist, architecture)
+    return MultiArchConditionalGristFiles(files, grist_prefix, secondary_prefix, architecture)
 end
 
 --[[
@@ -1143,9 +1228,6 @@ end
 
     Prepares objects for setting up subdirectory variables for
     multiple packaging architectures.
-
-    Equivalent to Jam:
-        rule MultiArchSubDirSetup { }
 
     Parameters:
         architectures - List of architectures (default: all configured)
@@ -1165,7 +1247,6 @@ function MultiArchSubDirSetup(architectures)
     local result = {}
 
     for _, architecture in ipairs(architectures) do
-        -- Check if architecture is configured
         local is_configured = false
         for _, pkg_arch in ipairs(packaging_archs) do
             if pkg_arch == architecture then
@@ -1175,7 +1256,6 @@ function MultiArchSubDirSetup(architectures)
         end
 
         if is_configured then
-            -- Get or create architecture settings
             local arch_settings = _arch_settings[architecture]
             if not arch_settings then
                 arch_settings = ArchitectureSetup(architecture)
@@ -1184,7 +1264,7 @@ function MultiArchSubDirSetup(architectures)
             local arch_object = {
                 architecture = architecture,
                 target_arch = arch_settings.cpu,
-                source_grist = "!" .. architecture,
+                source_grist = architecture,
                 settings = arch_settings,
             }
 
@@ -1196,7 +1276,7 @@ function MultiArchSubDirSetup(architectures)
 end
 
 -- ============================================================================
--- Exported Helper Functions
+-- Exported Getter Functions
 -- ============================================================================
 
 --[[
@@ -1252,7 +1332,7 @@ end
         architecture - Architecture name (default: current target)
 
     Returns:
-        Mapped library name with appropriate grist
+        Mapped library name
 ]]
 function GetLibraryName(lib_name, architecture)
     local arch_settings = GetArchSettings(architecture)
@@ -1260,12 +1340,12 @@ function GetLibraryName(lib_name, architecture)
 end
 
 --[[
-    GetGlueCode(type, position, architecture)
+    GetGlueCode(code_type, position, architecture)
 
     Returns glue code paths.
 
     Parameters:
-        type - "library" or "executable"
+        code_type - "library" or "executable"
         position - "begin" or "end"
         architecture - Architecture name (default: current target)
 
@@ -1293,6 +1373,22 @@ end
 function GetPrivateSystemHeaders(architecture)
     local arch_settings = GetArchSettings(architecture)
     return arch_settings.private_system_headers or {}
+end
+
+--[[
+    GetPrivateKernelHeaders(architecture)
+
+    Returns private kernel header directories.
+
+    Parameters:
+        architecture - Architecture name (default: primary)
+
+    Returns:
+        List of header directories
+]]
+function GetPrivateKernelHeaders(architecture)
+    local kernel_settings = GetKernelSettings(architecture)
+    return kernel_settings.private_kernel_headers or {}
 end
 
 --[[
@@ -1410,8 +1506,80 @@ function GetKernelPlatform(architecture)
     return kernel_settings.kernel_platform
 end
 
+--[[
+    GetHaikuArch()
+
+    Returns the primary architecture CPU name (equivalent to Jam's HAIKU_ARCH).
+
+    Returns:
+        Primary architecture CPU name (e.g., "x86_64", "arm64")
+]]
+function GetHaikuArch()
+    return _haiku_arch
+end
+
+--[[
+    GetHaikuArchs()
+
+    Returns list of all architecture CPUs (equivalent to Jam's HAIKU_ARCHS).
+
+    Returns:
+        List of architecture CPU names
+]]
+function GetHaikuArchs()
+    return _haiku_archs
+end
+
+--[[
+    GetKernelCompatMode(architecture)
+
+    Returns whether kernel compatibility mode is enabled (x86 on x86_64).
+
+    Parameters:
+        architecture - Architecture name (default: primary)
+
+    Returns:
+        true if compat mode is enabled
+]]
+function GetKernelCompatMode(architecture)
+    local kernel_settings = GetKernelSettings(architecture)
+    return kernel_settings.kernel_compat_mode or false
+end
+
+--[[
+    GetGlibcClangFlags(dir_path)
+
+    Returns Clang-specific flags for glibc directories.
+
+    Parameters:
+        dir_path - Directory path to check
+
+    Returns:
+        Table with ccflags, or nil if not applicable
+]]
+function GetGlibcClangFlags(dir_path)
+    for glibc_dir, flags in pairs(_glibc_clang_dirs) do
+        if dir_path:find(glibc_dir, 1, true) then
+            return flags
+        end
+    end
+    return nil
+end
+
+--[[
+    GetWerrorArch()
+
+    Returns the architecture for which -Werror was set up.
+
+    Returns:
+        Architecture name or nil
+]]
+function GetWerrorArch()
+    return _werror_arch
+end
+
 -- ============================================================================
--- xmake Rule for Architecture-Aware Targets
+-- xmake Rule: ArchitectureAware
 -- ============================================================================
 
 --[[
@@ -1420,17 +1588,23 @@ end
     Applies architecture-specific flags to a target based on its location
     in the source tree.
 
-    Usage:
+    Usage in xmake.lua:
         target("myapp")
             add_rules("ArchitectureAware")
             add_files("*.cpp")
 ]]
 rule("ArchitectureAware")
-    on_load(function (target)
+    on_load(function(target)
+        -- Get architecture from config
         local architecture = get_config("arch") or "x86_64"
-        local arch_settings = GetArchSettings(architecture)
 
-        -- Apply base flags
+        -- Ensure architecture is set up
+        if not _arch_settings[architecture] then
+            ArchitectureSetup(architecture)
+        end
+        local arch_settings = _arch_settings[architecture]
+
+        -- Apply base compiler flags
         for _, flag in ipairs(arch_settings.ccflags) do
             target:add("cflags", flag, {force = true})
         end
@@ -1454,7 +1628,7 @@ rule("ArchitectureAware")
             target:add("cxxflags", flag, {force = true})
         end
 
-        -- Get source directory relative path
+        -- Get source directory relative to project
         local scriptdir = target:scriptdir()
         local projectdir = os.projectdir()
         local rel_dir = path.relative(scriptdir, projectdir)
@@ -1479,6 +1653,14 @@ rule("ArchitectureAware")
             target:add("cxxflags", "-fstack-clash-protection", {force = true})
         end
 
+        -- Apply Clang-specific glibc flags if applicable
+        local glibc_flags = GetGlibcClangFlags(rel_dir)
+        if glibc_flags and glibc_flags.ccflags then
+            for _, flag in ipairs(glibc_flags.ccflags) do
+                target:add("cflags", flag, {force = true})
+            end
+        end
+
         -- Add private system headers
         for _, dir in ipairs(arch_settings.private_system_headers) do
             target:add("includedirs", dir)
@@ -1486,17 +1668,120 @@ rule("ArchitectureAware")
     end)
 
 -- ============================================================================
--- Initialize default architecture on load
+-- xmake Rule: KernelModule
 -- ============================================================================
 
--- NOTE: Auto-initialization is disabled because import() cannot be called
--- at top-level in files loaded via includes(). Architecture setup will be
--- called lazily when functions like GetArchSettings() are invoked.
 --[[
-local primary_arch = get_primary_arch()
-if primary_arch then
-    ArchitectureSetup(primary_arch)
-    KernelArchitectureSetup(primary_arch)
-    ArchitectureSetupWarnings(primary_arch)
-end
+    KernelModule rule
+
+    Applies kernel-specific flags to a target.
+
+    Usage in xmake.lua:
+        target("kernel_module")
+            add_rules("KernelModule")
+            add_files("*.cpp")
 ]]
+rule("KernelModule")
+    on_load(function(target)
+        local architecture = get_config("arch") or "x86_64"
+
+        -- Ensure kernel settings are set up
+        local kernel_settings = GetKernelSettings(architecture)
+        local arch_settings = GetArchSettings(architecture)
+
+        -- Apply kernel compiler flags
+        for _, flag in ipairs(kernel_settings.kernel_ccflags) do
+            target:add("cflags", flag, {force = true})
+        end
+        for _, flag in ipairs(kernel_settings.kernel_cxxflags) do
+            target:add("cxxflags", flag, {force = true})
+        end
+
+        -- Apply kernel PIC flags
+        for _, flag in ipairs(kernel_settings.kernel_pic_ccflags) do
+            target:add("cflags", flag, {force = true})
+            target:add("cxxflags", flag, {force = true})
+        end
+
+        -- Apply kernel defines
+        for _, def in ipairs(kernel_settings.kernel_defines) do
+            target:add("defines", def)
+        end
+
+        -- Apply kernel warning flags
+        for _, flag in ipairs(kernel_settings.kernel_warning_ccflags) do
+            target:add("cflags", flag, {force = true})
+        end
+        for _, flag in ipairs(kernel_settings.kernel_warning_cxxflags) do
+            target:add("cxxflags", flag, {force = true})
+        end
+
+        -- Add private kernel headers
+        for _, dir in ipairs(kernel_settings.private_kernel_headers) do
+            target:add("includedirs", dir)
+        end
+    end)
+
+-- ============================================================================
+-- xmake Rule: BootLoader
+-- ============================================================================
+
+--[[
+    BootLoader rule
+
+    Applies boot loader-specific flags to a target.
+    Set BOOT_PLATFORM on target to specify platform (efi, bios_ia32, etc.)
+
+    Usage in xmake.lua:
+        target("haiku_loader")
+            add_rules("BootLoader")
+            set_values("BOOT_PLATFORM", "efi")
+            add_files("*.cpp")
+]]
+rule("BootLoader")
+    on_load(function(target)
+        local architecture = get_config("arch") or "x86_64"
+        local kernel_settings = GetKernelSettings(architecture)
+
+        -- Get boot platform from target values
+        local boot_platform = target:values("BOOT_PLATFORM")
+        if not boot_platform then
+            boot_platform = kernel_settings.kernel_platform
+        end
+
+        -- Apply common boot flags
+        for _, flag in ipairs(kernel_settings.boot_ccflags) do
+            target:add("cflags", flag, {force = true})
+        end
+        for _, flag in ipairs(kernel_settings.boot_cxxflags) do
+            target:add("cxxflags", flag, {force = true})
+        end
+
+        -- Apply boot defines
+        for _, def in ipairs(kernel_settings.boot_defines) do
+            target:add("defines", def)
+        end
+
+        -- Apply platform-specific flags
+        local platform_flags = kernel_settings.boot_platform_flags[boot_platform]
+        if platform_flags then
+            for _, flag in ipairs(platform_flags.ccflags or {}) do
+                target:add("cflags", flag, {force = true})
+            end
+            for _, flag in ipairs(platform_flags.cxxflags or {}) do
+                target:add("cxxflags", flag, {force = true})
+            end
+            for _, flag in ipairs(platform_flags.ldflags or {}) do
+                target:add("ldflags", flag, {force = true})
+            end
+        end
+
+        -- Apply boot ldflags
+        for _, flag in ipairs(kernel_settings.boot_ldflags) do
+            target:add("ldflags", flag, {force = true})
+        end
+
+        -- Set optimization
+        target:add("cflags", kernel_settings.boot_optim, {force = true})
+        target:add("cxxflags", kernel_settings.boot_optim, {force = true})
+    end)
