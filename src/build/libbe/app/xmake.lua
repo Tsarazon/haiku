@@ -10,13 +10,12 @@ local obj_output = path.join(output_dir, "objects", "libbe_build")
 -- Source directory
 local kits_app = path.join(haiku_top, "src", "kits", "app")
 
--- Headers
-local build_headers = path.join(haiku_top, "headers", "build")
-local private_headers = path.join(haiku_top, "headers", "private")
-
 target("app_kit_build")
     set_kind("object")
     set_targetdir(obj_output)
+
+    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
+    add_rules("HostBeAPI")
 
     add_files(path.join(kits_app, "Application.cpp"))
     add_files(path.join(kits_app, "AppMisc.cpp"))
@@ -27,16 +26,11 @@ target("app_kit_build")
     add_files(path.join(kits_app, "MessageUtils.cpp"))
     add_files(path.join(kits_app, "TypeConstants.cpp"))
 
-    add_includedirs(
-        build_headers,
-        path.join(build_headers, "os"),
-        path.join(build_headers, "os", "app"),
-        path.join(build_headers, "os", "kernel"),
-        path.join(build_headers, "os", "support"),
-        path.join(private_headers, "app"),
-        path.join(private_headers, "kernel"),
-        path.join(private_headers, "shared")
-    )
+    -- Use HeadersRules for include paths (mirrors Jamfile)
+    on_load(function(target)
+        import("rules.HeadersRules")
 
-    add_cxxflags("-fPIC")
+        -- UsePrivateBuildHeaders app kernel shared (from Jamfile line 3)
+        HeadersRules.UsePrivateBuildHeaders(target, {"app", "kernel", "shared"})
+    end)
 target_end()

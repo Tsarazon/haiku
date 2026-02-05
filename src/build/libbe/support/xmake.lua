@@ -10,13 +10,12 @@ local obj_output = path.join(output_dir, "objects", "libbe_build")
 -- Source directory
 local kits_support = path.join(haiku_top, "src", "kits", "support")
 
--- Headers
-local build_headers = path.join(haiku_top, "headers", "build")
-local private_headers = path.join(haiku_top, "headers", "private")
-
 target("support_kit_build")
     set_kind("object")
     set_targetdir(obj_output)
+
+    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
+    add_rules("HostBeAPI")
 
     add_files(path.join(kits_support, "Archivable.cpp"))
     add_files(path.join(kits_support, "BlockCache.cpp"))
@@ -38,19 +37,20 @@ target("support_kit_build")
     add_files(path.join(kits_support, "ZlibCompressionAlgorithm.cpp"))
     add_files(path.join(kits_support, "ZstdCompressionAlgorithm.cpp"))
 
-    add_includedirs(
-        build_headers,
-        path.join(build_headers, "os"),
-        path.join(build_headers, "os", "app"),
-        path.join(build_headers, "os", "interface"),
-        path.join(build_headers, "os", "support"),
-        path.join(private_headers, "app"),
-        path.join(private_headers, "interface"),
-        path.join(private_headers, "shared"),
-        path.join(private_headers, "support"),
-        path.join(private_headers, "locale")  -- for Url.cpp
-    )
-
     add_defines("ZSTD_ENABLED")
-    add_cxxflags("-fPIC")
+
+    -- Use HeadersRules for include paths (mirrors Jamfile)
+    on_load(function(target)
+        import("rules.HeadersRules")
+
+        -- UsePrivateBuildHeaders app interface shared support (from Jamfile line 3)
+        HeadersRules.UsePrivateBuildHeaders(target, {"app", "interface", "shared", "support"})
+
+        -- UsePrivateObjectHeaders Url.cpp : locale (from Jamfile line 4)
+        -- Add locale headers for all files (simpler than per-file)
+        HeadersRules.UsePrivateBuildHeaders(target, {"locale"})
+
+        -- binary_compatibility/Support.h is in headers/private/
+        HeadersRules.UsePrivateHeaders(target, {""})  -- adds headers/private root
+    end)
 target_end()

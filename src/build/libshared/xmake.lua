@@ -19,20 +19,17 @@ target("libshared_build")
     set_targetdir(lib_output)
     set_basename("shared_build")
 
+    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
+    add_rules("HostBeAPI")
+
     add_files(path.join(kits_shared, "Keymap.cpp"))
     add_files(path.join(kits_shared, "NaturalCompare.cpp"))
     add_files(path.join(kits_shared, "RegExp.cpp"))
     add_files(path.join(kits_shared, "StringForSize.cpp"))
 
+    -- Kit-specific private headers (HostBeAPI provides build_headers/*)
     add_includedirs(
-        build_headers,
-        path.join(build_headers, "os"),
-        path.join(build_headers, "os", "interface"),
-        path.join(build_headers, "os", "support"),
         path.join(private_headers, "interface"),
         path.join(private_headers, "shared")
     )
-
-    -- PIC for shared library linking
-    add_cxxflags("-fPIC")
 target_end()

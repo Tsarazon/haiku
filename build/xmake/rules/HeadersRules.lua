@@ -8,6 +8,7 @@
     - PrivateHeaders(groups)         - headers/private/<group> dirs
     - PrivateBuildHeaders(groups)    - headers/build/private/<group> dirs
     - LibraryHeaders(groups)         - headers/libs/<group> dirs
+    - BuildHeaders()                 - headers/build/* dirs (for host BeAPI)
     - ArchHeaders(arch)              - headers/private/kernel/arch/<arch>
     - FStandardOSHeaders()           - All standard public OS header dirs
     - FStandardHeaders(arch, lang)   - All standard headers for an architecture
@@ -26,10 +27,16 @@
     - UsePrivateSystemHeaders(target)
     - UseBuildFeatureHeaders(target, feature, attribute)
 
+    Rules:
+    - HostBeAPI - rule for host tools using BeAPI (adds build headers + -include)
+
     Usage:
         import("rules.HeadersRules")
         local dirs = HeadersRules.PublicHeaders({"app", "interface", "support"})
         target:add("sysincludedirs", table.unpack(dirs))
+
+        -- Or use the rule:
+        add_rules("HostBeAPI")
 ]]
 
 -- Haiku top directory (set once, used everywhere)
@@ -85,6 +92,28 @@ function LibraryHeaders(groups)
         table.insert(dirs, path.join(top, "headers", "libs", group))
     end
     return dirs
+end
+
+-- BuildHeaders: returns all headers/build/* paths for host BeAPI
+-- Equivalent to HOST_BE_API_HEADERS in Jam
+function BuildHeaders()
+    local top = _get_haiku_top()
+    local build_headers = path.join(top, "headers", "build")
+
+    return {
+        build_headers,
+        path.join(build_headers, "os"),
+        path.join(build_headers, "os", "add-ons", "registrar"),
+        path.join(build_headers, "os", "app"),
+        path.join(build_headers, "os", "bluetooth"),
+        path.join(build_headers, "os", "drivers"),
+        path.join(build_headers, "os", "kernel"),
+        path.join(build_headers, "os", "interface"),
+        path.join(build_headers, "os", "locale"),
+        path.join(build_headers, "os", "storage"),
+        path.join(build_headers, "os", "support"),
+        path.join(build_headers, "private"),
+    }
 end
 
 -- ArchHeaders: returns path for architecture-specific kernel headers
@@ -164,6 +193,10 @@ function FStandardHeaders(architecture, language)
 
     return headers
 end
+
+-- ============================================================================
+-- Functions that apply headers to targets
+-- ============================================================================
 
 -- UseHeaders: add include directories to a target
 -- If system is true, adds as system include dirs (-isystem),
@@ -273,3 +306,41 @@ function UseBuildFeatureHeaders(target, feature, attribute)
         end
     end
 end
+
+-- ============================================================================
+-- HostBeAPI Rule - for host tools using BeAPI
+-- Equivalent to Jam's USES_BE_API = true + HOST_BE_API_HEADERS/CCFLAGS
+-- ============================================================================
+
+rule("HostBeAPI")
+    on_load(function (target)
+        local top = os.projectdir()
+        local build_headers = path.join(top, "headers", "build")
+
+        -- Add BeAPI headers from headers/build/
+        local headers = {
+            build_headers,
+            path.join(build_headers, "os"),
+            path.join(build_headers, "os", "add-ons", "registrar"),
+            path.join(build_headers, "os", "app"),
+            path.join(build_headers, "os", "bluetooth"),
+            path.join(build_headers, "os", "drivers"),
+            path.join(build_headers, "os", "kernel"),
+            path.join(build_headers, "os", "interface"),
+            path.join(build_headers, "os", "locale"),
+            path.join(build_headers, "os", "storage"),
+            path.join(build_headers, "os", "support"),
+            path.join(build_headers, "private"),
+        }
+        for _, header in ipairs(headers) do
+            target:add("includedirs", header, {public = false})
+        end
+
+        -- Add -include flag for compatibility header
+        local compat_header = path.join(top, "headers", "build", "BeOSBuildCompatibility.h")
+        target:add("cxflags", "-include", compat_header, {force = true})
+
+        -- PIC for potential shared library linking
+        target:add("cxflags", "-fPIC")
+    end)
+rule_end()

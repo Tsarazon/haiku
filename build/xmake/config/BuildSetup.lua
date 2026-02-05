@@ -370,9 +370,10 @@ end
     GetBeAPIHeaders()
 
     Returns the list of Be API header directories for host builds.
+    Equivalent to HOST_BE_API_HEADERS in Jam.
 ]]
 function GetBeAPIHeaders()
-    local haiku_top = get_config("haiku_top") or os.getenv("HAIKU_TOP") or "."
+    local haiku_top = get_config("haiku_top") or os.getenv("HAIKU_TOP") or HAIKU_TOP or "."
 
     return {
         path.join(haiku_top, "headers/build"),
@@ -389,6 +390,28 @@ function GetBeAPIHeaders()
         path.join(haiku_top, "headers/build/private"),
     }
 end
+
+--[[
+    GetBeAPICFlags()
+
+    Returns compiler flags for host builds with BeAPI compatibility.
+    Equivalent to HOST_BE_API_CCFLAGS in Jam.
+
+    The key flag is -include BeOSBuildCompatibility.h which provides
+    compatibility shims for building BeAPI code on non-Haiku hosts.
+]]
+function GetBeAPICFlags()
+    local haiku_top = get_config("haiku_top") or os.getenv("HAIKU_TOP") or HAIKU_TOP or "."
+    local compat_header = path.join(haiku_top, "headers/build/BeOSBuildCompatibility.h")
+
+    return {
+        "-include", compat_header,
+    }
+end
+
+-- Note: HostBeAPI rule is defined in rules/HostBeAPI.lua
+-- Use: add_rules("HostBeAPI") in target definition
+-- Adds BeAPI compatibility headers, -include flag, and -fPIC
 
 -- ============================================================================
 -- Configuration Header Directories

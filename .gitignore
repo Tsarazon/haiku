@@ -90,8 +90,3 @@ Migration_docs/
 bluetooth_driver_analysis.md
 haiku_bluetooth_fixes.md
 docs/BeOS_R5_Compatibility.md
-
-# Lua build experiments (except xmake build files)
-*.lua
-!xmake.lua
-!**/xmake.lua

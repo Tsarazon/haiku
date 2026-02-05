@@ -13,6 +13,9 @@ local haiku_top = HAIKU_TOP or path.directory(path.directory(os.scriptdir()))
 local output_dir = HAIKU_OUTPUT_DIR or path.join(haiku_top, "spawned")
 local lib_output = path.join(output_dir, "lib")
 
+-- Include rules from build/xmake/rules/
+includes(path.join(haiku_top, "build", "xmake", "rules", "HeadersRules.lua"))
+
 -- Include subdirectories
 includes("libshared")
 includes("libbe")

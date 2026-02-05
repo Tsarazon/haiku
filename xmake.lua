@@ -46,6 +46,11 @@ includes("build/xmake/xmake.lua")
 -- Include source subdirectories (similar to Jam's SubInclude)
 -- These will be enabled as xmake.lua files are added to src/
 
+-- Build libraries (host platform) - libbe_build.so, libshared_build.a
+if os.isfile("src/build/xmake.lua") then
+    includes("src/build/xmake.lua")
+end
+
 -- Build tools (host platform) - required for image creation
 if os.isfile("src/tools/xmake.lua") then
     includes("src/tools/xmake.lua")
