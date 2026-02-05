@@ -557,6 +557,7 @@ function CreateContainerMakeDirectoriesScript(container_name, script_path)
 
         io.writefile(script_path, table.concat(lines, "\n") .. "\n")
     end, {
+        files = {},
         dependfile = script_path .. ".d"
     })
 end
@@ -624,6 +625,7 @@ function CreateContainerCopyFilesScript(container_name, script_path)
 
         io.writefile(script_path, table.concat(lines, "\n") .. "\n")
     end, {
+        files = {},
         dependfile = script_path .. ".d"
     })
 end
@@ -652,6 +654,7 @@ function CreateContainerExtractFilesScript(container_name, script_path)
 
         io.writefile(script_path, table.concat(lines, "\n") .. "\n")
     end, {
+        files = {},
         dependfile = script_path .. ".d"
     })
 end
@@ -958,6 +961,7 @@ function BuildHaikuImagePackageList(target_path)
 
         io.writefile(target_path, table.concat(unique, "\n") .. "\n")
     end, {
+        files = {},  -- No source files to track, but required by depend.on_changed
         dependfile = target_path .. ".d"
     })
 end
@@ -1048,12 +1052,13 @@ function BuildHaikuImage(image_path, scripts, is_image, is_vmware_image)
 
     local haiku_top = config.get("haiku_top") or os.projectdir()
     local output_dir = config.get("haiku_output_dir")
-        or path.join(haiku_top, "generated")
+        or config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local main_script = path.join(haiku_top, "build", "scripts", "build_haiku_image")
 
     local depfiles = {main_script}
     for _, s in ipairs(scripts or {}) do
-        local abs = path.join(output_dir, s)
+        -- Scripts may already be absolute paths, don't join again
+        local abs = path.is_absolute(s) and s or path.join(output_dir, s)
         table.insert(depfiles, abs)
     end
 
@@ -1062,7 +1067,9 @@ function BuildHaikuImage(image_path, scripts, is_image, is_vmware_image)
 
         local args = {}
         for _, s in ipairs(scripts or {}) do
-            table.insert(args, path.join(output_dir, s))
+            -- Scripts may already be absolute paths, don't join again
+            local abs = path.is_absolute(s) and s or path.join(output_dir, s)
+            table.insert(args, abs)
         end
 
         local envs = {
@@ -1148,14 +1155,15 @@ function BuildNetBootArchive(archive_path, scripts)
     import("core.project.config")
     import("core.project.depend")
 
-    local haiku_top = config.get("haiku_top") or os.projectdir()
-    local output_dir = config.get("haiku_output_dir")
-        or path.join(haiku_top, "generated")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local main_script = path.join(haiku_top, "build", "scripts", "build_archive")
 
     local depfiles = {main_script}
     for _, s in ipairs(scripts or {}) do
-        table.insert(depfiles, path.join(output_dir, s))
+        -- Scripts may already be absolute paths, don't join again
+        local abs = path.is_absolute(s) and s or path.join(output_dir, s)
+        table.insert(depfiles, abs)
     end
 
     depend.on_changed(function()
@@ -1163,13 +1171,54 @@ function BuildNetBootArchive(archive_path, scripts)
 
         local args = {archive_path}
         for _, s in ipairs(scripts or {}) do
-            table.insert(args, path.join(output_dir, s))
+            -- Scripts may already be absolute paths, don't join again
+            local abs = path.is_absolute(s) and s or path.join(output_dir, s)
+            table.insert(args, abs)
         end
 
         os.vrunv(main_script, args)
     end, {
         files = depfiles,
         dependfile = archive_path .. ".d"
+    })
+end
+
+
+-- BuildHaikuCD: build the Haiku CD image using build_haiku_image script
+-- Similar to BuildHaikuImage but with CD-specific environment variables
+function BuildHaikuCD(cd_image_path, boot_file, scripts)
+    import("core.project.config")
+    import("core.project.depend")
+
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
+    local main_script = path.join(haiku_top, "build", "scripts", "build_haiku_image")
+
+    local depfiles = {main_script}
+    for _, s in ipairs(scripts or {}) do
+        local abs = path.is_absolute(s) and s or path.join(output_dir, s)
+        table.insert(depfiles, abs)
+    end
+
+    depend.on_changed(function()
+        os.mkdir(path.directory(cd_image_path))
+
+        local args = {}
+        for _, s in ipairs(scripts or {}) do
+            local abs = path.is_absolute(s) and s or path.join(output_dir, s)
+            table.insert(args, abs)
+        end
+
+        local envs = {
+            cdImagePath = cd_image_path,
+            cdBootFloppy = boot_file or "",
+            isCD = "1",
+        }
+
+        os.execv(main_script, args, {envs = envs})
+    end, {
+        files = depfiles,
+        dependfile = cd_image_path .. ".d"
     })
 end
 

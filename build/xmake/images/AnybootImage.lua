@@ -12,11 +12,23 @@
 -- Configuration
 -- ============================================================================
 
+-- Helper to get config value in both description and script scope
+local function _get_config(key)
+    if get_config then
+        return get_config(key)
+    end
+    local config = import("core.project.config", {try = true})
+    return config and config.get(key) or nil
+end
+
 local function get_anyboot_defaults()
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     return {
-        name = get_config("anyboot_name") or get_config("default_anyboot_name") or "haiku-anyboot.iso",
-        dir = get_config("anyboot_dir") or get_config("default_anyboot_dir") or path.join(os.projectdir(), "generated"),
-        label = get_config("anyboot_label") or get_config("default_anyboot_label") or "Haiku",
+        name = _get_config("anyboot_name") or _get_config("default_anyboot_name") or "haiku-anyboot.iso",
+        dir = _get_config("anyboot_dir") or _get_config("default_anyboot_dir") or output_dir,
+        label = _get_config("anyboot_label") or _get_config("default_anyboot_label") or "Haiku",
     }
 end
 
@@ -30,8 +42,9 @@ end
     Builds the base MBR from source assembly.
 ]]
 local function build_mbr(mbr_target, mbr_source)
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- The MBR source is in src/bin/writembr/mbr.S
     if not mbr_source then
@@ -66,8 +79,10 @@ end
     - UEFI (uses EFI partition)
 ]]
 local function build_anyboot_image_efi(anyboot_image, mbr_part, efi_part, iso_part, image_file)
-    local haiku_top = os.projectdir()
-    local anyboot_tool = path.join(haiku_top, "generated", "tools", "anyboot")
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
+    local anyboot_tool = path.join(output_dir, "tools", "anyboot")
 
     -- Build command: anyboot -b mbr -e efi iso image output
     local build_info = {
@@ -103,8 +118,12 @@ end
 -- ============================================================================
 
 function BuildAnybootImageTarget()
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    -- Import ImageRules for EFI system partition building
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
+
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Get configuration
     local defaults = get_anyboot_defaults()
@@ -116,13 +135,13 @@ function BuildAnybootImageTarget()
     build_mbr(base_mbr, mbr_source)
 
     -- Get boot platform configuration
-    local boot_platform = get_config("boot_platform") or "efi"
+    local boot_platform = _get_config("boot_platform") or "efi"
 
     -- CD boot image (built by CDBootImage)
     local cd_boot_image = path.join(output_dir, "haiku-boot-cd.iso")
 
     -- Haiku disk image (built by HaikuImage)
-    local haiku_image_name = get_config("image_name") or "haiku.image"
+    local haiku_image_name = _get_config("image_name") or "haiku.image"
     local haiku_image = path.join(output_dir, haiku_image_name)
 
     -- Currently the Anyboot image is available only for EFI+BIOS or BIOS-only
@@ -136,7 +155,7 @@ function BuildAnybootImageTarget()
         local efi_partition = path.join(output_dir, "esp.image")
 
         -- Build EFI System Partition
-        BuildEfiSystemPartition(efi_partition, efi_loader)
+        ImageRules.BuildEfiSystemPartition(efi_partition, efi_loader)
 
         -- Build Anyboot image with EFI
         build_anyboot_image_efi(anyboot_image, base_mbr, efi_partition, cd_boot_image, haiku_image)
@@ -161,7 +180,9 @@ end
     Note: base_mbr.bin seems to cause build failures on alternate runs (caching?)
 ]]
 local function get_temp_files()
-    local output_dir = path.join(os.projectdir(), "generated")
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     return {
         path.join(output_dir, "haiku-boot-cd.iso"),
         -- path.join(output_dir, "base_mbr.bin"),  -- Causes issues
@@ -172,19 +193,24 @@ end
 -- xmake Target
 -- ============================================================================
 
+if target then
+
 target("haiku-anyboot-image")
     set_kind("phony")
     add_deps("haiku-image", "haiku-boot-cd")
 
     on_build(function (target)
+        import("images.AnybootImage")
         print("Building Anyboot image...")
-        local anyboot = BuildAnybootImageTarget()
+        local anyboot = AnybootImage.BuildAnybootImageTarget()
         if anyboot then
             print("Anyboot image built: " .. anyboot)
         else
             print("Anyboot image build skipped (not supported for this platform)")
         end
     end)
+
+end -- if target
 
 -- ============================================================================
 -- Module Exports

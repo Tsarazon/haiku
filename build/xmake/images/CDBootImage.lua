@@ -5,6 +5,15 @@
 -- rules building the image.
 
 -- ============================================================================
+-- Private helper (global with _ prefix = private, not exported but accessible)
+-- ============================================================================
+
+function _get_config(key)
+    local config = import("core.project.config", {try = true})
+    return config and config.get(key) or nil
+end
+
+-- ============================================================================
 -- Configuration
 -- ============================================================================
 
@@ -22,7 +31,8 @@ end
 
 -- Common extra files to put on the boot ISO
 local function get_extra_files()
-    local haiku_top = os.projectdir()
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
     local extras_dir = path.join(haiku_top, "data", "boot", "extras")
 
     return {
@@ -42,7 +52,8 @@ end
     - MBR for legacy BIOS compatibility
 ]]
 local function build_cd_boot_image_efi(cd_image, boot_mbr, efi_partition, extras)
-    return BuildCDBootImageEFI(cd_image, boot_mbr, efi_partition, extras)
+    local ImageRules = import("rules.ImageRules")
+    return ImageRules.BuildCDBootImageEFI(cd_image, boot_mbr, efi_partition, extras)
 end
 
 --[[
@@ -53,7 +64,8 @@ end
     - BIOS bootloader
 ]]
 local function build_cd_boot_image_bios(cd_image, boot_mbr, bios_loader, extras)
-    return BuildCDBootImageBIOS(cd_image, boot_mbr, bios_loader, extras)
+    local ImageRules = import("rules.ImageRules")
+    return ImageRules.BuildCDBootImageBIOS(cd_image, boot_mbr, bios_loader, extras)
 end
 
 -- ============================================================================
@@ -69,7 +81,8 @@ end
     - KEYS/* - UEFI signing keys
 ]]
 local function build_efi_system_partition_for_cd(efi_partition, efi_loader)
-    return BuildEfiSystemPartition(efi_partition, efi_loader)
+    local ImageRules = import("rules.ImageRules")
+    return ImageRules.BuildEfiSystemPartition(efi_partition, efi_loader)
 end
 
 -- ============================================================================
@@ -77,8 +90,9 @@ end
 -- ============================================================================
 
 function BuildCDBootImageTarget()
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- CD boot image target
     local cd_boot_image = path.join(output_dir, get_cd_boot_image_name())
@@ -87,8 +101,8 @@ function BuildCDBootImageTarget()
     local extras = get_extra_files()
 
     -- Get boot platform configuration
-    local boot_platform = get_config("boot_platform") or "efi"
-    local target_arch = get_config("arch") or "x86_64"
+    local boot_platform = _get_config("boot_platform") or "efi"
+    local target_arch = _get_config("arch") or "x86_64"
 
     -- Base MBR for boot
     local boot_mbr = path.join(output_dir, "base_mbr.bin")
@@ -125,7 +139,7 @@ end
     Haiku supports multiple boot platforms simultaneously on some architectures.
 ]]
 function SetupMultiBootCDImage()
-    local boot_platforms = get_config("boot_platforms") or {"efi"}
+    local boot_platforms = _get_config("boot_platforms") or {"efi"}
 
     for _, platform in ipairs(boot_platforms) do
         -- Each platform may need its own configuration
@@ -137,15 +151,19 @@ end
 -- xmake Target
 -- ============================================================================
 
+if target then
+
 target("haiku-boot-cd")
     set_kind("phony")
-    add_rules("CDBootImage")
 
     on_build(function (target)
+        import("images.CDBootImage")
         print("Building CD boot image...")
-        local cd_image = BuildCDBootImageTarget()
-        print("CD boot image built: " .. cd_image)
+        local cd_image = CDBootImage.BuildCDBootImageTarget()
+        print("CD boot image built: " .. (cd_image or "unknown"))
     end)
+
+end -- if target
 
 -- ============================================================================
 -- Module Exports

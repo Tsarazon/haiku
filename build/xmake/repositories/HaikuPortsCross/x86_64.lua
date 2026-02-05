@@ -1,7 +1,7 @@
 -- HaikuPortsCross bootstrap repository for x86_64 architecture
 -- Ported from build/jam/repositories/HaikuPortsCross/x86_64
 
-import("rules.RepositoryRules")
+-- NOTE: import() must be inside functions when module is used via import()
 
 -- Repository configuration
 ARCHITECTURE = "x86_64"
@@ -180,6 +180,8 @@ end
 
 -- Main function to initialize repository
 function main()
+    local RepositoryRules = import("rules.RepositoryRules")
+
     local include_secondary = get_config("secondary_arch") == "x86"
     local arch_packages = get_all_arch_packages(include_secondary)
     local source_lookup = build_source_lookup()

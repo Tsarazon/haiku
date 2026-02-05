@@ -4,7 +4,7 @@
     xmake equivalent of build/jam/repositories/HaikuPorts/arm
 ]]
 
-import("rules.RepositoryRules")
+-- NOTE: import() must be inside functions when module is used via import()
 
 -- ============================================================================
 -- Repository Configuration
@@ -88,6 +88,8 @@ DEBUGINFO_PACKAGES = {}
 -- ============================================================================
 
 function main()
+    local RepositoryRules = import("rules.RepositoryRules")
+
     local source_lookup = {}
     for _, pkg in ipairs(SOURCE_PACKAGES) do
         source_lookup[pkg] = true

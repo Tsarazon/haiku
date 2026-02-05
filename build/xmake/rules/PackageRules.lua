@@ -87,7 +87,7 @@ function PreprocessPackageOrRepositoryInfo(target_path, source_path, architectur
         -- Determine revision
         local haiku_top = config.get("haiku_top") or os.projectdir()
         local revision_file = path.join(
-            config.get("build_output_dir") or path.join(haiku_top, "generated"),
+            config.get("build_output_dir") or config.get("haiku_output_dir") or path.join(haiku_top, "spawned"),
             "haiku-revision")
         local revision = "0"
         if os.isfile(revision_file) then

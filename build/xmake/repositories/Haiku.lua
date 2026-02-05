@@ -6,20 +6,22 @@
     Builds the Haiku packages repository from locally built packages.
 ]]
 
-import("rules.RepositoryRules")
+-- NOTE: import() must be inside functions when module is used via import()
 
 -- ============================================================================
 -- Haiku Repository Definition
 -- ============================================================================
 
 function main()
+    local RepositoryRules = import("rules.RepositoryRules")
+    local config = import("core.project.config")
     local architecture = get_config("arch") or "x86_64"
     local secondary_archs = get_config("secondary_archs") or {}
     local is_bootstrap = get_config("is_bootstrap")
     local build_type = get_config("build_type") or "regular"
 
     -- Repository info template
-    local haiku_top = os.projectdir()
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
     local repo_info = path.join(haiku_top, "src", "data", "repository_infos", "haiku")
 
     -- Base packages (always included)

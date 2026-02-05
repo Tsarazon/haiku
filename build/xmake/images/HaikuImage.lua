@@ -54,6 +54,8 @@ end
 -- ============================================================================
 
 function AddSystemPackages()
+    local ImageRules = import("rules.ImageRules")
+
     -- Add haiku system packages
     local packages = {
         "haiku_loader.hpkg",
@@ -67,7 +69,7 @@ function AddSystemPackages()
         table.insert(packages, string.format("haiku_%s.hpkg", arch))
     end
 
-    AddPackageFilesToHaikuImage(
+    ImageRules.AddPackageFilesToHaikuImage(
         {"system", "packages"},
         packages,
         {nameFromMetaInfo = true}
@@ -127,7 +129,9 @@ end
 
 function BuildPackageListTarget()
     local common_tail = import("images.definitions.common-tail")
-    local output_dir = path.join(os.projectdir(), "generated")
+    local config = import("core.project.config")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local list_file = path.join(output_dir, "haiku-packages.txt")
 
     return common_tail.BuildPackageList(list_file)
@@ -137,27 +141,31 @@ end
 -- xmake Targets
 -- ============================================================================
 
+-- Guard: only define targets when included via includes() (description scope)
+-- When imported via import() (script scope), target() is not available
+if target then
+
 -- Main Haiku image target
 target("haiku-image")
     set_kind("phony")
-    add_rules("HaikuImage")
 
     on_build(function (target)
+        import("images.HaikuImage")
         print("Building Haiku disk image...")
-        local image = BuildHaikuImageTarget()
-        print("Haiku image built: " .. image)
+        local image = HaikuImage.BuildHaikuImageTarget()
+        print("Haiku image built: " .. (image or "unknown"))
     end)
 
 -- VMware image target
 target("haiku-vmware-image")
     set_kind("phony")
-    add_rules("VMWareImage")
     add_deps("haiku-image")
 
     on_build(function (target)
+        import("images.HaikuImage")
         print("Building VMware image...")
-        local image = BuildVMwareImageTarget()
-        print("VMware image built: " .. image)
+        local image = HaikuImage.BuildVMwareImageTarget()
+        print("VMware image built: " .. (image or "unknown"))
     end)
 
 -- Install to directory target
@@ -165,8 +173,9 @@ target("install-haiku")
     set_kind("phony")
 
     on_build(function (target)
+        import("images.HaikuImage")
         print("Installing Haiku to directory...")
-        InstallHaikuTarget()
+        HaikuImage.InstallHaikuTarget()
         print("Haiku installed.")
     end)
 
@@ -175,21 +184,16 @@ target("haiku-package-list")
     set_kind("phony")
 
     on_build(function (target)
+        import("images.HaikuImage")
         print("Generating package list...")
-        BuildPackageListTarget()
+        HaikuImage.BuildPackageListTarget()
         print("Package list generated.")
     end)
 
--- ============================================================================
--- Module Exports
--- ============================================================================
+end -- if target
 
-return {
-    SetupHaikuImage = SetupHaikuImage,
-    AddSystemPackages = AddSystemPackages,
-    BuildHaikuImageTarget = BuildHaikuImageTarget,
-    BuildVMwareImageTarget = BuildVMwareImageTarget,
-    InstallHaikuTarget = InstallHaikuTarget,
-    BuildPackageListTarget = BuildPackageListTarget,
-    get_image_definition = get_image_definition,
-}
+-- ============================================================================
+-- Module Exports (xmake exports global functions automatically)
+-- ============================================================================
+-- All functions above are global and automatically exported by xmake.
+-- No return statement needed.

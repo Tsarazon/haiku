@@ -3,48 +3,17 @@
 --
 -- This file defines the content of the bootstrap Haiku image.
 -- It imports everything from minimum and adds bootstrap-specific content.
+--
+-- NOTE: xmake only exports FUNCTIONS from modules, not variables.
+-- Bootstrap simply delegates to minimum's getter functions.
 
-import("rules.ImageRules")
-import("rules.BuildFeatureRules")
+local ImageRules = import("rules.ImageRules")
+local BuildFeatureRules = import("rules.BuildFeatureRules")
+local HelperRules = import("rules.HelperRules")
+local SystemLibraryRules = import("rules.SystemLibraryRules")
 
 -- Import minimum image definitions (bootstrap is based on minimum)
 local minimum = import("images.definitions.minimum")
-
--- ============================================================================
--- Inherit everything from Minimum
--- ============================================================================
-
-SYSTEM_BIN = minimum.SYSTEM_BIN
-SYSTEM_APPS = minimum.SYSTEM_APPS
-DESKBAR_APPLICATIONS = minimum.DESKBAR_APPLICATIONS
-DESKBAR_DESKTOP_APPLETS = minimum.DESKBAR_DESKTOP_APPLETS
-SYSTEM_PREFERENCES = minimum.SYSTEM_PREFERENCES
-SYSTEM_DEMOS = minimum.SYSTEM_DEMOS
-SYSTEM_SERVERS = minimum.SYSTEM_SERVERS
-SYSTEM_NETWORK_DEVICES = minimum.SYSTEM_NETWORK_DEVICES
-SYSTEM_NETWORK_DATALINK_PROTOCOLS = minimum.SYSTEM_NETWORK_DATALINK_PROTOCOLS
-SYSTEM_NETWORK_PROTOCOLS = minimum.SYSTEM_NETWORK_PROTOCOLS
-SYSTEM_ADD_ONS_ACCELERANTS = minimum.SYSTEM_ADD_ONS_ACCELERANTS
-SYSTEM_ADD_ONS_TRANSLATORS = minimum.SYSTEM_ADD_ONS_TRANSLATORS
-SYSTEM_ADD_ONS_LOCALE_CATALOGS = minimum.SYSTEM_ADD_ONS_LOCALE_CATALOGS
-SYSTEM_ADD_ONS_MEDIA = minimum.SYSTEM_ADD_ONS_MEDIA
-SYSTEM_ADD_ONS_MEDIA_PLUGINS = minimum.SYSTEM_ADD_ONS_MEDIA_PLUGINS
-SYSTEM_ADD_ONS_PRINT = minimum.SYSTEM_ADD_ONS_PRINT
-SYSTEM_ADD_ONS_PRINT_TRANSPORT = minimum.SYSTEM_ADD_ONS_PRINT_TRANSPORT
-SYSTEM_ADD_ONS_SCREENSAVERS = minimum.SYSTEM_ADD_ONS_SCREENSAVERS
-SYSTEM_ADD_ONS_DRIVERS_AUDIO = minimum.SYSTEM_ADD_ONS_DRIVERS_AUDIO
-SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD = minimum.SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD
-SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = minimum.SYSTEM_ADD_ONS_DRIVERS_GRAPHICS
-SYSTEM_ADD_ONS_DRIVERS_MIDI = minimum.SYSTEM_ADD_ONS_DRIVERS_MIDI
-SYSTEM_ADD_ONS_DRIVERS_NET = minimum.SYSTEM_ADD_ONS_DRIVERS_NET
-SYSTEM_ADD_ONS_DRIVERS_POWER = minimum.SYSTEM_ADD_ONS_DRIVERS_POWER
-SYSTEM_ADD_ONS_DRIVERS_SENSOR = minimum.SYSTEM_ADD_ONS_DRIVERS_SENSOR
-SYSTEM_ADD_ONS_BUS_MANAGERS = minimum.SYSTEM_ADD_ONS_BUS_MANAGERS
-SYSTEM_ADD_ONS_FILE_SYSTEMS = minimum.SYSTEM_ADD_ONS_FILE_SYSTEMS
-
--- Use minimum's library functions
-HaikuImageGetSystemLibs = minimum.HaikuImageGetSystemLibs
-HaikuImageGetPrivateSystemLibs = minimum.HaikuImageGetPrivateSystemLibs
 
 -- ============================================================================
 -- Bootstrap-Specific Functions
@@ -86,12 +55,13 @@ function SetupBootstrapImageContent()
     -- First setup minimum content
     minimum.SetupMinimumImageContent()
 
-    local haiku_top = os.projectdir()
+    local config = import("core.project.config")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
 
     -- Build and add the source package directory and a haikuports.config file
     local source_pkg_dir = BuildHaikuPortsSourcePackageDirectory()
     if source_pkg_dir then
-        CopyDirectoryToHaikuImage(
+        ImageRules.CopyDirectoryToHaikuImage(
             {"home", "haikuports"},
             source_pkg_dir,
             "input-source-packages",
@@ -112,14 +82,14 @@ function SetupBootstrapImageContent()
     if haiku_ports then
         local formatVersionsFile = path.join(haiku_ports, "FormatVersions")
         if os.isfile(formatVersionsFile) then
-            AddFilesToHaikuImage({"home", "haikuports"}, {formatVersionsFile}, "FormatVersions")
+            ImageRules.AddFilesToHaikuImage({"home", "haikuports"}, {formatVersionsFile}, "FormatVersions")
         end
     end
 
     -- Bootstrap daemon
     local bootstrapDaemon = path.join(haiku_top, "build", "scripts", "bootstrap_daemon.py")
     if os.isfile(bootstrapDaemon) then
-        AddFilesToHaikuImage(
+        ImageRules.AddFilesToHaikuImage(
             {"home", "config", "settings", "boot", "launch"},
             {bootstrapDaemon},
             "bootstrap_daemon.py"
@@ -128,40 +98,35 @@ function SetupBootstrapImageContent()
 end
 
 -- ============================================================================
--- Module Exports
+-- Getter Functions - Delegate to minimum (xmake only exports functions)
 -- ============================================================================
 
-return {
-    SYSTEM_BIN = SYSTEM_BIN,
-    SYSTEM_APPS = SYSTEM_APPS,
-    DESKBAR_APPLICATIONS = DESKBAR_APPLICATIONS,
-    DESKBAR_DESKTOP_APPLETS = DESKBAR_DESKTOP_APPLETS,
-    SYSTEM_PREFERENCES = SYSTEM_PREFERENCES,
-    SYSTEM_DEMOS = SYSTEM_DEMOS,
-    SYSTEM_SERVERS = SYSTEM_SERVERS,
-    SYSTEM_NETWORK_DEVICES = SYSTEM_NETWORK_DEVICES,
-    SYSTEM_NETWORK_DATALINK_PROTOCOLS = SYSTEM_NETWORK_DATALINK_PROTOCOLS,
-    SYSTEM_NETWORK_PROTOCOLS = SYSTEM_NETWORK_PROTOCOLS,
-    SYSTEM_ADD_ONS_ACCELERANTS = SYSTEM_ADD_ONS_ACCELERANTS,
-    SYSTEM_ADD_ONS_TRANSLATORS = SYSTEM_ADD_ONS_TRANSLATORS,
-    SYSTEM_ADD_ONS_LOCALE_CATALOGS = SYSTEM_ADD_ONS_LOCALE_CATALOGS,
-    SYSTEM_ADD_ONS_MEDIA = SYSTEM_ADD_ONS_MEDIA,
-    SYSTEM_ADD_ONS_MEDIA_PLUGINS = SYSTEM_ADD_ONS_MEDIA_PLUGINS,
-    SYSTEM_ADD_ONS_PRINT = SYSTEM_ADD_ONS_PRINT,
-    SYSTEM_ADD_ONS_PRINT_TRANSPORT = SYSTEM_ADD_ONS_PRINT_TRANSPORT,
-    SYSTEM_ADD_ONS_SCREENSAVERS = SYSTEM_ADD_ONS_SCREENSAVERS,
-    SYSTEM_ADD_ONS_DRIVERS_AUDIO = SYSTEM_ADD_ONS_DRIVERS_AUDIO,
-    SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD = SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD,
-    SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = SYSTEM_ADD_ONS_DRIVERS_GRAPHICS,
-    SYSTEM_ADD_ONS_DRIVERS_MIDI = SYSTEM_ADD_ONS_DRIVERS_MIDI,
-    SYSTEM_ADD_ONS_DRIVERS_NET = SYSTEM_ADD_ONS_DRIVERS_NET,
-    SYSTEM_ADD_ONS_DRIVERS_POWER = SYSTEM_ADD_ONS_DRIVERS_POWER,
-    SYSTEM_ADD_ONS_DRIVERS_SENSOR = SYSTEM_ADD_ONS_DRIVERS_SENSOR,
-    SYSTEM_ADD_ONS_BUS_MANAGERS = SYSTEM_ADD_ONS_BUS_MANAGERS,
-    SYSTEM_ADD_ONS_FILE_SYSTEMS = SYSTEM_ADD_ONS_FILE_SYSTEMS,
-    HaikuImageGetSystemLibs = HaikuImageGetSystemLibs,
-    HaikuImageGetPrivateSystemLibs = HaikuImageGetPrivateSystemLibs,
-    SetupBootstrapImageContent = SetupBootstrapImageContent,
-    BuildHaikuPortsSourcePackageDirectory = BuildHaikuPortsSourcePackageDirectory,
-    BuildHaikuPortsRepositoryConfig = BuildHaikuPortsRepositoryConfig,
-}
+function SYSTEM_BIN() return minimum.SYSTEM_BIN() end
+function SYSTEM_APPS() return minimum.SYSTEM_APPS() end
+function DESKBAR_APPLICATIONS() return minimum.DESKBAR_APPLICATIONS() end
+function DESKBAR_DESKTOP_APPLETS() return minimum.DESKBAR_DESKTOP_APPLETS() end
+function SYSTEM_PREFERENCES() return minimum.SYSTEM_PREFERENCES() end
+function SYSTEM_DEMOS() return minimum.SYSTEM_DEMOS() end
+function SYSTEM_SERVERS() return minimum.SYSTEM_SERVERS() end
+function SYSTEM_NETWORK_DEVICES() return minimum.SYSTEM_NETWORK_DEVICES() end
+function SYSTEM_NETWORK_DATALINK_PROTOCOLS() return minimum.SYSTEM_NETWORK_DATALINK_PROTOCOLS() end
+function SYSTEM_NETWORK_PROTOCOLS() return minimum.SYSTEM_NETWORK_PROTOCOLS() end
+function SYSTEM_ADD_ONS_ACCELERANTS() return minimum.SYSTEM_ADD_ONS_ACCELERANTS() end
+function SYSTEM_ADD_ONS_TRANSLATORS() return minimum.SYSTEM_ADD_ONS_TRANSLATORS() end
+function SYSTEM_ADD_ONS_LOCALE_CATALOGS() return minimum.SYSTEM_ADD_ONS_LOCALE_CATALOGS() end
+function SYSTEM_ADD_ONS_MEDIA() return minimum.SYSTEM_ADD_ONS_MEDIA() end
+function SYSTEM_ADD_ONS_MEDIA_PLUGINS() return minimum.SYSTEM_ADD_ONS_MEDIA_PLUGINS() end
+function SYSTEM_ADD_ONS_PRINT() return minimum.SYSTEM_ADD_ONS_PRINT() end
+function SYSTEM_ADD_ONS_PRINT_TRANSPORT() return minimum.SYSTEM_ADD_ONS_PRINT_TRANSPORT() end
+function SYSTEM_ADD_ONS_SCREENSAVERS() return minimum.SYSTEM_ADD_ONS_SCREENSAVERS() end
+function SYSTEM_ADD_ONS_DRIVERS_AUDIO() return minimum.SYSTEM_ADD_ONS_DRIVERS_AUDIO() end
+function SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD() return minimum.SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD() end
+function SYSTEM_ADD_ONS_DRIVERS_GRAPHICS() return minimum.SYSTEM_ADD_ONS_DRIVERS_GRAPHICS() end
+function SYSTEM_ADD_ONS_DRIVERS_MIDI() return minimum.SYSTEM_ADD_ONS_DRIVERS_MIDI() end
+function SYSTEM_ADD_ONS_DRIVERS_NET() return minimum.SYSTEM_ADD_ONS_DRIVERS_NET() end
+function SYSTEM_ADD_ONS_DRIVERS_POWER() return minimum.SYSTEM_ADD_ONS_DRIVERS_POWER() end
+function SYSTEM_ADD_ONS_DRIVERS_SENSOR() return minimum.SYSTEM_ADD_ONS_DRIVERS_SENSOR() end
+function SYSTEM_ADD_ONS_BUS_MANAGERS() return minimum.SYSTEM_ADD_ONS_BUS_MANAGERS() end
+function SYSTEM_ADD_ONS_FILE_SYSTEMS() return minimum.SYSTEM_ADD_ONS_FILE_SYSTEMS() end
+function HaikuImageGetSystemLibs() return minimum.HaikuImageGetSystemLibs() end
+function HaikuImageGetPrivateSystemLibs() return minimum.HaikuImageGetPrivateSystemLibs() end

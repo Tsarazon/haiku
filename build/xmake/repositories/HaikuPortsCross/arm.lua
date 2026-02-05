@@ -1,7 +1,7 @@
 -- HaikuPortsCross bootstrap repository for arm architecture
 -- Ported from build/jam/repositories/HaikuPortsCross/arm
 
-import("rules.RepositoryRules")
+-- NOTE: import() must be inside functions when module is used via import()
 
 -- Repository configuration
 ARCHITECTURE = "arm"
@@ -149,6 +149,8 @@ end
 
 -- Main function to initialize repository
 function main()
+    local RepositoryRules = import("rules.RepositoryRules")
+
     local arch_packages = get_all_arch_packages()
     local source_lookup = build_source_lookup()
 

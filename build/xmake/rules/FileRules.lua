@@ -53,6 +53,7 @@ function SymLink(target_path, link_contents)
         end
         os.ln(link_contents, target_path)
     end, {
+        files = {},
         dependfile = target_path .. ".symlink.d"
     })
 end
@@ -182,7 +183,7 @@ function DetermineHaikuRevision()
 
     local haiku_top = config.get("haiku_top") or os.projectdir()
     local output_dir = config.get("build_output_dir") or
-        path.join(haiku_top, "generated")
+        config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local revision_file = path.join(output_dir, "haiku-revision")
 
     -- Check if pre-set revision
@@ -285,6 +286,7 @@ function DownloadFile(target_path, url, no_downloads)
 
         os.vrunv("wget", args)
     end, {
+        files = {},
         dependfile = target_path .. ".download.d"
     })
 

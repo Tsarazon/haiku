@@ -19,9 +19,54 @@ set_project("haiku")
 set_version("1.0.0")
 set_languages("c11", "c++17")
 
--- Output directory setup - use "spawned" instead of default "build"
--- to keep xmake output separate from Jam's "generated"
-set_config("buildir", "$(projectdir)/spawned")
+-- ============================================================================
+-- Path Configuration
+-- ============================================================================
+-- os.projectdir() returns /home/ruslan/haiku/build/xmake (where xmake.lua is)
+-- We need HAIKU_TOP to be /home/ruslan/haiku (2 levels up)
+
+-- HAIKU_TOP: Root of the Haiku source tree
+-- This is the parent of build/xmake, equivalent to $(HAIKU_TOP) in Jam
+HAIKU_TOP = path.directory(path.directory(os.projectdir()))
+
+-- HAIKU_OUTPUT_DIR: Build output directory for xmake
+-- Uses "spawned" to keep separate from Jam's "generated"
+HAIKU_OUTPUT_DIR = path.join(HAIKU_TOP, "spawned")
+
+-- Set these as xmake config values so rule files can use config.get()
+-- This allows rules to use: config.get("haiku_top") instead of os.projectdir()
+set_config("haiku_top", HAIKU_TOP)
+set_config("haiku_output_dir", HAIKU_OUTPUT_DIR)
+set_config("build_output_dir", HAIKU_OUTPUT_DIR)  -- alias used by some rules
+set_config("buildir", HAIKU_OUTPUT_DIR)
+
+-- Module search paths for import() in script scope
+add_moduledirs(".")
+
+-- ============================================================================
+-- Path Helper Functions
+-- ============================================================================
+-- These functions provide access to the path variables for imported modules
+
+-- Get the Haiku source tree root directory
+function get_haiku_top()
+    return HAIKU_TOP
+end
+
+-- Get the xmake build output directory (spawned/)
+function get_haiku_output_dir()
+    return HAIKU_OUTPUT_DIR
+end
+
+-- Get the tools directory within the output directory
+function get_haiku_tools_dir()
+    return path.join(HAIKU_OUTPUT_DIR, "tools")
+end
+
+-- Get the objects directory within the output directory
+function get_haiku_objects_dir()
+    return path.join(HAIKU_OUTPUT_DIR, "objects")
+end
 
 -- ============================================================================
 -- Rule Includes
@@ -60,6 +105,12 @@ includes("config/HaikuPackages.lua")        -- System package definitions
 includes("config/OptionalPackages.lua")     -- Optional package definitions
 includes("config/CommandLineArguments.lua") -- Command line processing, build profiles
 includes("config/CrossToolsConfig.lua")     -- Cross-compiler toolchain configuration
+
+-- User-specific build configuration (optional, not in version control)
+-- $(projectdir) is already /home/ruslan/haiku/build/xmake
+if os.isfile(path.join(os.projectdir(), "config", "UserBuildConfig.lua")) then
+    includes("config/UserBuildConfig.lua")
+end
 
 -- ============================================================================
 -- Image Build Targets
@@ -101,48 +152,17 @@ includes("images/NetBootArchive.lua")  -- Network boot archive (PXE/TFTP)
 -- ============================================================================
 
 -- Haiku platform definition
+-- Note: Architecture-specific flags, defines, and includes are handled by
+-- ArchitectureRules.lua via the ArchitectureAware rule. Targets should use
+-- add_rules("ArchitectureAware") to get proper architecture configuration.
 if is_plat("haiku") then
 
-    -- Target architecture setup
-    local target_arch = get_config("arch") or "x86_64"
-
-    -- Toolchain prefix
-    local toolchain_prefix = target_arch .. "-unknown-haiku-"
-
-    -- Set toolchain
+    -- Set toolchain for Haiku target
     set_toolchains("gcc")
 
-    -- Global compilation flags for Haiku target
+    -- Basic Haiku platform defines (arch-specific defines come from ArchitectureAware rule)
     add_cxflags("-D_GNU_SOURCE")
     add_cxflags("-D__HAIKU__")
-
-    -- Architecture-specific defines
-    if target_arch == "x86_64" then
-        add_defines("__x86_64__")
-        add_defines("__HAIKU_ARCH_64_BIT")
-    elseif target_arch == "x86" then
-        add_defines("__i386__")
-        add_defines("__HAIKU_ARCH_32_BIT")
-    elseif target_arch == "arm64" then
-        add_defines("__aarch64__")
-        add_defines("__HAIKU_ARCH_64_BIT")
-    elseif target_arch == "riscv64" then
-        add_defines("__riscv")
-        add_defines("__riscv_xlen=64")
-        add_defines("__HAIKU_ARCH_64_BIT")
-    end
-
-    -- Standard include paths
-    add_includedirs(
-        "$(projectdir)/headers/os",
-        "$(projectdir)/headers/os/app",
-        "$(projectdir)/headers/os/interface",
-        "$(projectdir)/headers/os/storage",
-        "$(projectdir)/headers/os/support",
-        "$(projectdir)/headers/os/kernel",
-        "$(projectdir)/headers/posix",
-        "$(projectdir)/headers/private"
-    )
 
 elseif is_plat("host") or is_host("linux", "macosx", "bsd") then
 
@@ -173,18 +193,21 @@ option("target_arch")
     set_showmenu(true)
     set_description("Target architecture (x86_64, x86, arm64, riscv64)")
     set_values("x86_64", "x86", "arm64", "riscv64")
+option_end()
 
 -- Packaging architecture (for hybrid builds)
 option("packaging_arch")
     set_default("")
     set_showmenu(true)
     set_description("Packaging architecture for hybrid builds")
+option_end()
 
 -- Secondary architecture
 option("secondary_arch")
     set_default("")
     set_showmenu(true)
     set_description("Secondary architecture (e.g., x86 on x86_64)")
+option_end()
 
 -- Debug level
 option("debug_level")
@@ -192,6 +215,7 @@ option("debug_level")
     set_showmenu(true)
     set_description("Debug level (0=release, 1=debug)")
     set_values("0", "1")
+option_end()
 
 -- Warnings level
 option("warnings")
@@ -199,13 +223,23 @@ option("warnings")
     set_showmenu(true)
     set_description("Warning level (0=off, 1=on, 2=treat as errors)")
     set_values("0", "1", "2")
+option_end()
 
 -- ============================================================================
 -- Output Directories
 -- ============================================================================
 
--- Note: buildir is set at the top of the file via set_config("buildir", ...)
--- Individual targets can use set_objectdir/set_targetdir to customize their output paths
+-- Path variables defined at the top of this file:
+--   HAIKU_TOP        = /home/ruslan/haiku (source root)
+--   HAIKU_OUTPUT_DIR = /home/ruslan/haiku/spawned (build output)
+--
+-- Helper functions for imported modules:
+--   get_haiku_top()        - returns HAIKU_TOP
+--   get_haiku_output_dir() - returns HAIKU_OUTPUT_DIR
+--   get_haiku_tools_dir()  - returns HAIKU_OUTPUT_DIR/tools
+--   get_haiku_objects_dir() - returns HAIKU_OUTPUT_DIR/objects
+--
+-- Individual targets can use set_objectdir/set_targetdir to customize paths
 
 -- ============================================================================
 -- Helper Functions for Jamfile Translation
@@ -226,6 +260,7 @@ function haiku_application(name, config)
         if config.resources then
             set_values("resources", config.resources)
         end
+    target_end()
 end
 
 function haiku_addon(name, config)
@@ -242,6 +277,7 @@ function haiku_addon(name, config)
         if config.is_executable then
             set_values("is_executable", config.is_executable)
         end
+    target_end()
 end
 
 function haiku_translator(name, config)
@@ -255,6 +291,7 @@ function haiku_translator(name, config)
                 add_deps(lib)
             end
         end
+    target_end()
 end
 
 function haiku_screensaver(name, config)
@@ -268,6 +305,7 @@ function haiku_screensaver(name, config)
                 add_deps(lib)
             end
         end
+    target_end()
 end
 
 function haiku_static_library(name, config)
@@ -276,6 +314,7 @@ function haiku_static_library(name, config)
         if config.sources then
             add_files(config.sources)
         end
+    target_end()
 end
 
 function haiku_shared_library(name, config)
@@ -292,6 +331,7 @@ function haiku_shared_library(name, config)
         if config.abi_version then
             set_values("abi_version", config.abi_version)
         end
+    target_end()
 end
 
 function haiku_merge_object(name, config)
@@ -303,6 +343,25 @@ function haiku_merge_object(name, config)
         if config.other_objects then
             set_values("other_objects", config.other_objects)
         end
+    target_end()
+end
+
+-- Custom linker target helper
+function haiku_ld(name, config)
+    target(name)
+        add_rules("Ld")
+        if config.objects then
+            set_values("objects", config.objects)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+        if config.ldflags then
+            add_ldflags(config.ldflags)
+        end
+    target_end()
 end
 
 -- Build platform (host) helpers
@@ -317,6 +376,7 @@ function build_platform_main(name, config)
                 add_deps(lib)
             end
         end
+    target_end()
 end
 
 function build_platform_static_library(name, config)
@@ -325,6 +385,7 @@ function build_platform_static_library(name, config)
         if config.sources then
             add_files(config.sources)
         end
+    target_end()
 end
 
 function build_platform_shared_library(name, config)
@@ -338,4 +399,163 @@ function build_platform_shared_library(name, config)
                 add_deps(lib)
             end
         end
+    target_end()
+end
+
+-- ============================================================================
+-- Kernel Build Helpers (from KernelRules.lua)
+-- ============================================================================
+
+function kernel_addon(name, config)
+    target(name)
+        add_rules("KernelAddon")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+    target_end()
+end
+
+function kernel_ld(name, config)
+    target(name)
+        add_rules("KernelLd")
+        if config.objects then
+            set_values("objects", config.objects)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+        if config.ldflags then
+            add_ldflags(config.ldflags)
+        end
+    target_end()
+end
+
+function kernel_merge_object(name, config)
+    target(name)
+        add_rules("KernelMergeObject")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.other_objects then
+            set_values("other_objects", config.other_objects)
+        end
+    target_end()
+end
+
+function kernel_static_library(name, config)
+    target(name)
+        add_rules("KernelStaticLibrary")
+        if config.sources then
+            add_files(config.sources)
+        end
+    target_end()
+end
+
+-- ============================================================================
+-- Boot Loader Helpers (from BootRules.lua)
+-- ============================================================================
+
+function boot_ld(name, config)
+    target(name)
+        add_rules("BootLd")
+        if config.objects then
+            set_values("objects", config.objects)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+        if config.ldflags then
+            add_ldflags(config.ldflags)
+        end
+    target_end()
+end
+
+function boot_merge_object(name, config)
+    target(name)
+        add_rules("BootMergeObject")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.other_objects then
+            set_values("other_objects", config.other_objects)
+        end
+    target_end()
+end
+
+function boot_static_library(name, config)
+    target(name)
+        add_rules("BootStaticLibrary")
+        if config.sources then
+            add_files(config.sources)
+        end
+    target_end()
+end
+
+-- ============================================================================
+-- Test Helpers (from TestsRules.lua)
+-- ============================================================================
+
+function unit_test_lib(name, config)
+    target(name)
+        add_rules("UnitTestLib")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+    target_end()
+end
+
+function unit_test(name, config)
+    target(name)
+        add_rules("UnitTest")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+    target_end()
+end
+
+function simple_test(name, config)
+    target(name)
+        add_rules("SimpleTest")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+    target_end()
+end
+
+function build_platform_test(name, config)
+    target(name)
+        add_rules("BuildPlatformTest")
+        if config.sources then
+            add_files(config.sources)
+        end
+        if config.libraries then
+            for _, lib in ipairs(config.libraries) do
+                add_deps(lib)
+            end
+        end
+    target_end()
 end

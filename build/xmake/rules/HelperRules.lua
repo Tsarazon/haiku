@@ -328,3 +328,46 @@ end
 function GetSubDirAsFlags()
     return _subdir_asflags
 end
+
+-- TableCopy: shallow copy of a table
+function TableCopy(src)
+    if type(src) ~= "table" then
+        return src
+    end
+    local result = {}
+    for k, v in pairs(src) do
+        result[k] = v
+    end
+    return result
+end
+
+-- TableMerge: merge multiple tables (arrays) into one
+function TableMerge(...)
+    local result = {}
+    for _, t in ipairs({...}) do
+        if type(t) == "table" then
+            for _, v in ipairs(t) do
+                table.insert(result, v)
+            end
+        else
+            table.insert(result, t)
+        end
+    end
+    return result
+end
+
+-- MultiArchDefaultGristFiles: apply default grist to files for multi-architecture
+function MultiArchDefaultGristFiles(files, grist)
+    if type(files) ~= "table" then
+        files = {files}
+    end
+    local result = {}
+    for _, file in ipairs(files) do
+        if grist then
+            table.insert(result, string.format("<%s>%s", grist, file))
+        else
+            table.insert(result, file)
+        end
+    end
+    return result
+end

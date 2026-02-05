@@ -8,21 +8,32 @@
 -- over the network via PXE/TFTP for diskless booting.
 
 -- ============================================================================
+-- Container Configuration
+-- ============================================================================
+
+-- Container name for net boot archive (equivalent to HAIKU_NET_BOOT_ARCHIVE_CONTAINER_NAME in Jam)
+local HAIKU_NET_BOOT_ARCHIVE_CONTAINER_NAME = "haiku-net-boot-archive"
+
+local function get_net_boot_archive_container_name()
+    return HAIKU_NET_BOOT_ARCHIVE_CONTAINER_NAME
+end
+
+-- ============================================================================
 -- Network Configuration
 -- ============================================================================
 
-SYSTEM_NETWORK_DEVICES = {
+local _SYSTEM_NETWORK_DEVICES = {
     "ethernet",
     "loopback",
 }
 
-SYSTEM_NETWORK_DATALINK_PROTOCOLS = {
+local _SYSTEM_NETWORK_DATALINK_PROTOCOLS = {
     "ethernet_frame",
     "<module>arp",
     "loopback_frame",
 }
 
-SYSTEM_NETWORK_PROTOCOLS = {
+local _SYSTEM_NETWORK_PROTOCOLS = {
     "ipv4",
     "tcp",
     "udp",
@@ -35,7 +46,7 @@ SYSTEM_NETWORK_PROTOCOLS = {
 -- ============================================================================
 
 -- NOTE: Raw data - FFilterByBuildFeatures will be called lazily when GetNetDrivers() is invoked
-local _NET_DRIVERS_RAW = {
+local _SYSTEM_ADD_ONS_DRIVERS_NET = {
     -- x86, x86_64 specific
     "atheros813x@x86,x86_64",
     "atheros81xx@x86,x86_64",
@@ -54,14 +65,13 @@ local _NET_DRIVERS_RAW = {
     "usb_ecm",
     "wb840",
 }
-SYSTEM_ADD_ONS_DRIVERS_NET = _NET_DRIVERS_RAW
 
 -- ============================================================================
 -- Bus Managers
 -- ============================================================================
 
 -- NOTE: Raw data - FFilterByBuildFeatures will be called lazily when needed
-local _BUS_MANAGERS_RAW = {
+local _SYSTEM_ADD_ONS_BUS_MANAGERS = {
     "pci",
     "<pci>x86@x86,x86_64",
     "isa@x86",
@@ -72,13 +82,12 @@ local _BUS_MANAGERS_RAW = {
     "dpc",
     "acpi",
 }
-SYSTEM_ADD_ONS_BUS_MANAGERS = _BUS_MANAGERS_RAW
 
 -- ============================================================================
 -- File Systems (minimal for netboot)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_FILE_SYSTEMS = {
+local _SYSTEM_ADD_ONS_FILE_SYSTEMS = {
     "bfs",
     "packagefs",
 }
@@ -88,62 +97,66 @@ SYSTEM_ADD_ONS_FILE_SYSTEMS = {
 -- ============================================================================
 
 function SetupNetBootArchiveContent()
-    local haiku_top = os.projectdir()
+    -- Import ImageRules for container functions
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
+
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
     local target_arch = get_config("arch") or "x86_64"
 
     -- Modules: Bus managers
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "bus_managers"},
-        SYSTEM_ADD_ONS_BUS_MANAGERS
+        _SYSTEM_ADD_ONS_BUS_MANAGERS
     )
 
     -- AGP gart busses
     if target_arch == "x86" or target_arch == "x86_64" then
-        AddFilesToNetBootArchive(
+        ImageRules.AddFilesToNetBootArchive(
             {"system", "add-ons", "kernel", "busses", "agp_gart"},
             {"<agp_gart>intel"}
         )
     end
 
     -- IDE busses
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "busses", "ide"},
         {"generic_ide_pci"}
     )
 
     -- SCSI busses
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "busses", "scsi"},
         {"ahci"}
     )
 
     -- Console
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "console"},
         {"vga_text"}
     )
 
     -- File systems
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "file_systems"},
-        SYSTEM_ADD_ONS_FILE_SYSTEMS
+        _SYSTEM_ADD_ONS_FILE_SYSTEMS
     )
 
     -- Generic kernel modules
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "generic"},
         {"ata_adapter", "scsi_periph"}
     )
 
     -- Partitioning systems
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "partitioning_systems"},
         {"intel", "session"}
     )
 
     -- Interrupt controllers (PPC only)
     if target_arch == "ppc" then
-        AddFilesToNetBootArchive(
+        ImageRules.AddFilesToNetBootArchive(
             {"system", "add-ons", "kernel", "interrupt_controllers"},
             {"openpic"}
         )
@@ -151,81 +164,81 @@ function SetupNetBootArchiveContent()
 
     -- CPU modules
     if target_arch == "x86" or target_arch == "x86_64" then
-        AddFilesToNetBootArchive(
+        ImageRules.AddFilesToNetBootArchive(
             {"system", "add-ons", "kernel", "cpu"},
             {"generic_x86"}
         )
     end
 
     -- Drivers: disk/scsi
-    AddNewDriversToNetBootArchive(
+    ImageRules.AddNewDriversToNetBootArchive(
         {"disk", "scsi"},
         {"scsi_cd", "scsi_disk"}
     )
 
     -- Drivers: disk/virtual
-    AddDriversToNetBootArchive(
+    ImageRules.AddDriversToNetBootArchive(
         {"disk", "virtual"},
         {"remote_disk"}  -- nbd could be added here
     )
 
     -- Drivers: network
-    AddDriversToNetBootArchive(
+    ImageRules.AddDriversToNetBootArchive(
         {"net"},
-        SYSTEM_ADD_ONS_DRIVERS_NET
+        _SYSTEM_ADD_ONS_DRIVERS_NET
     )
 
     -- Kernel
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system"},
         {string.format("<revisioned>kernel_%s", target_arch)}
     )
 
     -- Driver settings
     local driver_settings = path.join(haiku_top, "data", "settings", "kernel", "drivers", "kernel")
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"home", "config", "settings", "kernel", "drivers"},
         {driver_settings},
         "kernel"
     )
 
     -- Network stack
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "network"},
         {"stack"}
     )
 
     -- Network devices
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "network", "devices"},
-        SYSTEM_NETWORK_DEVICES
+        _SYSTEM_NETWORK_DEVICES
     )
 
     -- Network datalink protocols
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "network", "datalink_protocols"},
-        SYSTEM_NETWORK_DATALINK_PROTOCOLS
+        _SYSTEM_NETWORK_DATALINK_PROTOCOLS
     )
 
     -- Network protocols
-    AddFilesToNetBootArchive(
+    ImageRules.AddFilesToNetBootArchive(
         {"system", "add-ons", "kernel", "network", "protocols"},
-        SYSTEM_NETWORK_PROTOCOLS
+        _SYSTEM_NETWORK_PROTOCOLS
     )
 
     -- Boot module symlinks
     local boot_modules = TableMerge(
-        SYSTEM_ADD_ONS_BUS_MANAGERS,
+        _SYSTEM_ADD_ONS_BUS_MANAGERS,
         {"ahci", "generic_ide_pci"},
-        SYSTEM_ADD_ONS_FILE_SYSTEMS,
+        _SYSTEM_ADD_ONS_FILE_SYSTEMS,
         {"ata_adapter", "scsi_periph"},
         {"intel", "session"},
         {"remote_disk"},
-        SYSTEM_ADD_ONS_DRIVERS_NET,
+        _SYSTEM_ADD_ONS_DRIVERS_NET,
         {"stack"},
-        SYSTEM_NETWORK_DEVICES,
-        SYSTEM_NETWORK_DATALINK_PROTOCOLS,
-        SYSTEM_NETWORK_PROTOCOLS
+        _SYSTEM_NETWORK_DEVICES,
+        _SYSTEM_NETWORK_DATALINK_PROTOCOLS,
+        _SYSTEM_NETWORK_PROTOCOLS
     )
 
     -- Add arch-specific boot modules
@@ -236,16 +249,21 @@ function SetupNetBootArchiveContent()
         table.insert(boot_modules, "generic_x86")
     end
 
-    AddBootModuleSymlinksToNetBootArchive(boot_modules)
+    ImageRules.AddBootModuleSymlinksToNetBootArchive(boot_modules)
 end
 
 -- ============================================================================
 -- Archive Building
 -- ============================================================================
 
-local function BuildNetBootArchiveTarget()
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+function BuildNetBootArchiveTarget()
+    -- Import ImageRules for build functions
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
+
+    -- haiku_top is the source root
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Archive target
     local archive_name = "haiku-netboot.tgz"
@@ -266,7 +284,7 @@ local function BuildNetBootArchiveTarget()
         "# Auto-generated netboot archive initialization script",
         "",
         string.format('tmpDir="%s"', tmp_dir),
-        string.format('copyattr="%s/generated/tools/copyattr"', haiku_top),
+        string.format('copyattr="%s/tools/copyattr"', output_dir),
         "",
     }
     io.writefile(init_script, table.concat(init_content, "\n"))
@@ -275,8 +293,8 @@ local function BuildNetBootArchiveTarget()
     local make_dirs_script = path.join(output_dir, "haiku-netboot-make-dirs")
     local copy_files_script = path.join(output_dir, "haiku-netboot-copy-files")
 
-    CreateNetBootArchiveMakeDirectoriesScript(make_dirs_script)
-    CreateNetBootArchiveCopyFilesScript(copy_files_script)
+    ImageRules.CreateNetBootArchiveMakeDirectoriesScript(make_dirs_script)
+    ImageRules.CreateNetBootArchiveCopyFilesScript(copy_files_script)
 
     -- Build the archive
     local scripts = {
@@ -285,7 +303,7 @@ local function BuildNetBootArchiveTarget()
         copy_files_script,
     }
 
-    BuildNetBootArchive(archive_path, scripts)
+    ImageRules.BuildNetBootArchive(archive_path, scripts)
 
     return archive_path
 end
@@ -294,13 +312,18 @@ end
 -- xmake Target
 -- ============================================================================
 
+if target then
+
 target("haiku-netboot-archive")
     set_kind("phony")
     on_build(function (target)
+        import("images.NetBootArchive")
         print("Building network boot archive...")
-        local archive = BuildNetBootArchiveTarget()
+        local archive = NetBootArchive.BuildNetBootArchiveTarget()
         print("Network boot archive built: " .. (archive or "unknown"))
     end)
+
+end -- if target
 
 -- ============================================================================
 -- Helper Functions
@@ -322,17 +345,18 @@ function TableMerge(...)
 end
 
 -- ============================================================================
--- Module Exports
+-- Getter Functions (xmake only exports functions, not variables)
 -- ============================================================================
 
-return {
-    SYSTEM_NETWORK_DEVICES = SYSTEM_NETWORK_DEVICES,
-    SYSTEM_NETWORK_DATALINK_PROTOCOLS = SYSTEM_NETWORK_DATALINK_PROTOCOLS,
-    SYSTEM_NETWORK_PROTOCOLS = SYSTEM_NETWORK_PROTOCOLS,
-    SYSTEM_ADD_ONS_DRIVERS_NET = SYSTEM_ADD_ONS_DRIVERS_NET,
-    SYSTEM_ADD_ONS_BUS_MANAGERS = SYSTEM_ADD_ONS_BUS_MANAGERS,
-    SYSTEM_ADD_ONS_FILE_SYSTEMS = SYSTEM_ADD_ONS_FILE_SYSTEMS,
-    SetupNetBootArchiveContent = SetupNetBootArchiveContent,
-    BuildNetBootArchiveTarget = BuildNetBootArchiveTarget,
-    TableMerge = TableMerge,
-}
+function SYSTEM_NETWORK_DEVICES() return _SYSTEM_NETWORK_DEVICES end
+function SYSTEM_NETWORK_DATALINK_PROTOCOLS() return _SYSTEM_NETWORK_DATALINK_PROTOCOLS end
+function SYSTEM_NETWORK_PROTOCOLS() return _SYSTEM_NETWORK_PROTOCOLS end
+function SYSTEM_ADD_ONS_DRIVERS_NET() return _SYSTEM_ADD_ONS_DRIVERS_NET end
+function SYSTEM_ADD_ONS_BUS_MANAGERS() return _SYSTEM_ADD_ONS_BUS_MANAGERS end
+function SYSTEM_ADD_ONS_FILE_SYSTEMS() return _SYSTEM_ADD_ONS_FILE_SYSTEMS end
+
+-- ============================================================================
+-- Module Exports (xmake exports global functions automatically)
+-- ============================================================================
+-- All functions above are global and automatically exported by xmake.
+-- No return statement needed.

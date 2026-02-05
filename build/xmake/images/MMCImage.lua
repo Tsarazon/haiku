@@ -9,9 +9,12 @@
 -- ============================================================================
 
 local function get_mmc_defaults()
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     return {
         name = get_config("mmc_name") or get_config("default_mmc_name") or "haiku-mmc.image",
-        dir = get_config("mmc_dir") or get_config("default_mmc_dir") or path.join(os.projectdir(), "generated"),
+        dir = get_config("mmc_dir") or get_config("default_mmc_dir") or output_dir,
         label = get_config("mmc_label") or get_config("default_mmc_label") or "Haiku",
     }
 end
@@ -52,8 +55,9 @@ end
     - fdt/ - Device tree files directory
 ]]
 local function build_uboot_sd_image(image, files)
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     local mbrtool = path.join(output_dir, "tools", "mbrtool")
     local fatshell = path.join(output_dir, "tools", "fat_shell")
@@ -114,8 +118,9 @@ end
     - fdt/ - Device tree files directory (optional)
 ]]
 local function build_efi_sd_image(image, files)
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config", {try = true})
+    local haiku_top = config and config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config and config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     local mbrtool = path.join(output_dir, "tools", "mbrtool")
     local fatshell = path.join(output_dir, "tools", "fat_shell")
@@ -166,8 +171,9 @@ end
 -- ============================================================================
 
 function BuildMMCImageTarget()
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Get configuration
     local defaults = get_mmc_defaults()
@@ -215,17 +221,22 @@ end
 -- xmake Target
 -- ============================================================================
 
+if target then
+
 target("haiku-mmc-image")
     set_kind("phony")
     add_deps("haiku-image")
 
     on_build(function (target)
+        import("images.MMCImage")
         print("Building MMC/SD card image...")
-        local mmc = BuildMMCImageTarget()
+        local mmc = MMCImage.BuildMMCImageTarget()
         if mmc then
             print("MMC image built: " .. mmc.output)
         end
     end)
+
+end -- if target
 
 -- ============================================================================
 -- Module Exports

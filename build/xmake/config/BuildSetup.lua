@@ -481,7 +481,7 @@ option("continuous_integration")
 ]]
 function InitializeBuildSetup()
     local haiku_top = get_config("haiku_top") or os.getenv("HAIKU_TOP") or "."
-    local haiku_output_dir = get_config("haiku_output") or path.join(haiku_top, "generated")
+    local haiku_output_dir = get_config("haiku_output") or config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Set directory defaults
     HAIKU_DEFAULT_IMAGE_DIR = haiku_output_dir

@@ -4,72 +4,75 @@
 -- This file adds content common to all images, it needs to be included after
 -- all the other definitions.
 
-import("rules.ImageRules")
-import("rules.PackageRules")
+-- NOTE: xmake only exports FUNCTIONS from modules.
+-- Module-level imports (local or global) are NOT accessible when functions
+-- are called via import() from other modules.
+-- Each function must import its dependencies internally.
 
 -- ============================================================================
 -- Directory Structure
 -- ============================================================================
 
 function SetupCommonDirectories()
+    local ImageRules = import("rules.ImageRules")
     -- Create directories that may remain empty
 
     -- Home directories
-    AddDirectoryToHaikuImage({"home"}, "home.rdef")
-    AddDirectoryToHaikuImage({"home", "Desktop"}, "home-desktop.rdef")
-    AddDirectoryToHaikuImage({"home", "mail"})
-    AddDirectoryToHaikuImage({"home", "config"}, "home-config.rdef")
-    AddDirectoryToHaikuImage({"home", "config", "cache"})
-    AddDirectoryToHaikuImage({"home", "config", "packages"})
-    AddDirectoryToHaikuImage({"home", "config", "settings"})
-    AddDirectoryToHaikuImage({"home", "config", "var"})
+    ImageRules.AddDirectoryToHaikuImage({"home"}, "home.rdef")
+    ImageRules.AddDirectoryToHaikuImage({"home", "Desktop"}, "home-desktop.rdef")
+    ImageRules.AddDirectoryToHaikuImage({"home", "mail"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config"}, "home-config.rdef")
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "cache"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "packages"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "settings"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "var"})
 
     -- Home non-packaged directories
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "bin"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "data", "fonts"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "lib"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "control_look"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "decorators"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "opengl"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "kernel", "drivers", "bin"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "kernel", "drivers", "dev"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "devices"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "filters"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "methods"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "media", "plugins"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Tracker"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Print"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Screen Savers"})
-    AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Translators"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "bin"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "data", "fonts"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "lib"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "control_look"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "decorators"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "opengl"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "kernel", "drivers", "bin"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "kernel", "drivers", "dev"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "devices"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "filters"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "input_server", "methods"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "media", "plugins"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Tracker"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Print"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Screen Savers"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "non-packaged", "add-ons", "Translators"})
 
     -- System directories
-    AddDirectoryToHaikuImage({"system"}, "system.rdef")
-    AddDirectoryToHaikuImage({"system", "cache", "tmp"})
+    ImageRules.AddDirectoryToHaikuImage({"system"}, "system.rdef")
+    ImageRules.AddDirectoryToHaikuImage({"system", "cache", "tmp"})
 
     -- System non-packaged directories
-    AddDirectoryToHaikuImage({"system", "non-packaged", "bin"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "data", "fonts"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "lib"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "control_look"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "decorators"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "opengl"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "kernel", "drivers", "bin"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "kernel", "drivers", "dev"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "devices"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "filters"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "methods"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "media", "plugins"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Tracker"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Print"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Screen Savers"})
-    AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Translators"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "bin"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "data", "fonts"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "lib"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "control_look"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "decorators"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "opengl"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "kernel", "drivers", "bin"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "kernel", "drivers", "dev"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "devices"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "filters"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "input_server", "methods"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "media", "plugins"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Tracker"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Print"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Screen Savers"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "non-packaged", "add-ons", "Translators"})
 
     -- System var directories
-    AddDirectoryToHaikuImage({"system", "var", "empty"})
-    AddDirectoryToHaikuImage({"system", "var", "log"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "var", "empty"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "var", "log"})
 
     -- Trash
-    AddDirectoryToHaikuImage({"trash"}, "trash.rdef")
+    ImageRules.AddDirectoryToHaikuImage({"trash"}, "trash.rdef")
 end
 
 -- ============================================================================
@@ -79,8 +82,9 @@ end
 function IncludeOptionalPackages()
     -- Import OptionalPackages configuration
     -- This would include the contents of OptionalPackages
-    local ok, optional = pcall(import, "OptionalPackages")
-    if ok and optional then
+    -- Use {try = true} instead of pcall - xmake pattern
+    local optional = import("OptionalPackages", {try = true})
+    if optional then
         -- Optional packages are included
     end
 end
@@ -90,13 +94,14 @@ end
 -- ============================================================================
 
 function SetupUsersAndGroups()
+    local ImageRules = import("rules.ImageRules")
     -- Add the root user and the root and users groups
     local root_user_name = get_config("root_user_name") or "baron"
     local root_user_real_name = get_config("root_user_real_name") or "Root User"
 
-    AddUserToHaikuImage(root_user_name, 0, 0, "/boot/home", "/bin/bash", root_user_real_name)
-    AddGroupToHaikuImage("root", 0, {})
-    AddGroupToHaikuImage("users", 100, {})
+    ImageRules.AddUserToHaikuImage(root_user_name, 0, 0, "/boot/home", "/bin/bash", root_user_real_name)
+    ImageRules.AddGroupToHaikuImage("root", 0, {})
+    ImageRules.AddGroupToHaikuImage("users", 100, {})
 end
 
 -- ============================================================================
@@ -104,17 +109,20 @@ end
 -- ============================================================================
 
 function SetupHostname()
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
     local hostname = get_config("image_host_name")
     if hostname then
         -- Build hostname file
-        local output_dir = path.join(os.projectdir(), "generated", "objects")
-        local hostname_file = path.join(output_dir, "hostname")
+        local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+        local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
+        local hostname_file = path.join(output_dir, "objects", "hostname")
 
         -- Create the hostname file
         io.writefile(hostname_file, hostname .. "\n")
 
         -- Add to image
-        AddFilesToHaikuImage({"system", "settings", "network"}, {hostname_file}, "hostname")
+        ImageRules.AddFilesToHaikuImage({"system", "settings", "network"}, {hostname_file}, "hostname")
     end
 end
 
@@ -142,8 +150,11 @@ end
 -- ============================================================================
 
 function CreateImageInitScript(script_path)
-    local haiku_top = os.projectdir()
-    local output_dir = path.join(haiku_top, "generated")
+    local config = import("core.project.config")
+    -- haiku_top is the source root (/home/ruslan/haiku)
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    -- output_dir is the build output (/home/ruslan/haiku/spawned)
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local tmp_dir = path.join(output_dir, "tmp")
     local install_dir = get_config("install_dir") or ""
     local image_defaults = GetImageDefaults()
@@ -159,17 +170,17 @@ function CreateImageInitScript(script_path)
         string.format('imageSize="%d"', image_defaults.size),
         string.format('imageLabel="%s"', image_defaults.label),
         "",
-        "# Build tools",
-        string.format('addattr="%s/build/tools/addattr"', haiku_top),
-        string.format('bfsShell="%s/generated/tools/bfs_shell"', haiku_top),
-        string.format('fsShellCommand="%s/generated/tools/fs_shell_command"', haiku_top),
-        string.format('copyattr="%s/build/tools/copyattr"', haiku_top),
-        string.format('createImage="%s/generated/tools/create_image"', haiku_top),
-        string.format('makebootable="%s/generated/tools/makebootable"', haiku_top),
-        string.format('rc="%s/generated/tools/rc"', haiku_top),
-        string.format('resattr="%s/generated/tools/resattr"', haiku_top),
+        "# Build tools (built tools are in output_dir/tools)",
+        string.format('addattr="%s/tools/addattr"', output_dir),
+        string.format('bfsShell="%s/tools/bfs_shell"', output_dir),
+        string.format('fsShellCommand="%s/tools/fs_shell_command"', output_dir),
+        string.format('copyattr="%s/tools/copyattr"', output_dir),
+        string.format('createImage="%s/tools/create_image"', output_dir),
+        string.format('makebootable="%s/tools/makebootable"', output_dir),
+        string.format('rc="%s/tools/rc"', output_dir),
+        string.format('resattr="%s/tools/resattr"', output_dir),
         string.format('unzip="unzip"'),
-        string.format('vmdkimage="%s/generated/tools/vmdkimage"', haiku_top),
+        string.format('vmdkimage="%s/tools/vmdkimage"', output_dir),
         'rmAttrs="rm"',
         "",
     }
@@ -182,12 +193,16 @@ end
 -- ============================================================================
 
 function BuildImage(image_type)
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
+
     -- Execute pre-image user config rules
     UserBuildConfigRulePreImage()
 
     -- Get image configuration
     local defaults = GetImageDefaults()
-    local output_dir = path.join(os.projectdir(), "generated")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Haiku image target
     local haiku_image = path.join(output_dir, defaults.name)
@@ -198,9 +213,9 @@ function BuildImage(image_type)
     io.writefile(init_script, script_content)
 
     -- Create directory/file scripts
-    CreateHaikuImageMakeDirectoriesScript(path.join(output_dir, "haiku.image-make-dirs"))
-    CreateHaikuImageCopyFilesScript(path.join(output_dir, "haiku.image-copy-files"))
-    CreateHaikuImageExtractFilesScript(path.join(output_dir, "haiku.image-extract-files"))
+    ImageRules.CreateHaikuImageMakeDirectoriesScript(path.join(output_dir, "haiku.image-make-dirs"))
+    ImageRules.CreateHaikuImageCopyFilesScript(path.join(output_dir, "haiku.image-copy-files"))
+    ImageRules.CreateHaikuImageExtractFilesScript(path.join(output_dir, "haiku.image-extract-files"))
 
     -- Build the image
     local scripts = {
@@ -210,7 +225,7 @@ function BuildImage(image_type)
         path.join(output_dir, "haiku.image-extract-files"),
     }
 
-    BuildHaikuImage(haiku_image, scripts, true, false)
+    ImageRules.BuildHaikuImage(haiku_image, scripts, true, false)
 
     -- Execute post-image user config rules
     UserBuildConfigRulePostImage()
@@ -219,8 +234,12 @@ function BuildImage(image_type)
 end
 
 function BuildVMwareImage()
+    local ImageRules = import("rules.ImageRules")
+    local config = import("core.project.config")
+
     -- VMware image target
-    local output_dir = path.join(os.projectdir(), "generated")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
+    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
     local vmware_name = get_config("vmware_image_name") or "haiku.vmdk"
     local vmware_image = path.join(output_dir, vmware_name)
 
@@ -228,7 +247,7 @@ function BuildVMwareImage()
     local defaults = GetImageDefaults()
     local haiku_image = path.join(output_dir, defaults.name)
 
-    BuildHaikuImage(vmware_image, {}, true, true)
+    ImageRules.BuildHaikuImage(vmware_image, {}, true, true)
 
     return vmware_image
 end
@@ -238,8 +257,9 @@ end
 -- ============================================================================
 
 function BuildPackageList(target_file)
+    local ImageRules = import("rules.ImageRules")
     -- Generate list of packages in the image
-    BuildHaikuImagePackageList(target_file)
+    ImageRules.BuildHaikuImagePackageList(target_file)
 end
 
 -- ============================================================================
@@ -281,20 +301,7 @@ function SetupCommonTail()
 end
 
 -- ============================================================================
--- Module Exports
+-- Module Exports (xmake exports global functions automatically)
 -- ============================================================================
-
-return {
-    SetupCommonDirectories = SetupCommonDirectories,
-    IncludeOptionalPackages = IncludeOptionalPackages,
-    SetupUsersAndGroups = SetupUsersAndGroups,
-    SetupHostname = SetupHostname,
-    GetImageDefaults = GetImageDefaults,
-    CreateImageInitScript = CreateImageInitScript,
-    BuildImage = BuildImage,
-    BuildVMwareImage = BuildVMwareImage,
-    BuildPackageList = BuildPackageList,
-    UserBuildConfigRulePreImage = UserBuildConfigRulePreImage,
-    UserBuildConfigRulePostImage = UserBuildConfigRulePostImage,
-    SetupCommonTail = SetupCommonTail,
-}
+-- All functions above are global and automatically exported by xmake.
+-- No return statement needed.

@@ -51,7 +51,7 @@ function SetupObjectsDir(subdir_tokens)
     import("core.project.config")
 
     local haiku_top = config.get("haiku_top") or os.projectdir()
-    local output_dir = config.get("build_output_dir") or path.join(haiku_top, "generated")
+    local output_dir = config.get("build_output_dir") or config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- Compute relative path from subdir tokens
     local rel_path = ""
@@ -239,7 +239,7 @@ function DefineBuildProfile(name, profile_type, profile_path)
     local target_name = profile_path and path.filename(profile_path) or nil
 
     target_dir = target_dir or config.get("haiku_image_dir")
-        or path.join(haiku_top, "generated")
+        or config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
     -- "disk" is "image" with no-clear
     local dont_clear = false

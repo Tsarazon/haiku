@@ -2,15 +2,20 @@
 -- Ported from build/jam/images/definitions/minimum
 --
 -- This file defines the content of the minimum Haiku image.
+--
+-- NOTE: xmake only exports FUNCTIONS from modules, not variables.
+-- All data is stored in local tables and accessed via getter functions.
 
-import("rules.ImageRules")
-import("rules.BuildFeatureRules")
+local ImageRules = import("rules.ImageRules")
+local BuildFeatureRules = import("rules.BuildFeatureRules")
+local HelperRules = import("rules.HelperRules")
+local SystemLibraryRules = import("rules.SystemLibraryRules")
 
 -- ============================================================================
 -- System Binaries
 -- ============================================================================
 
-SYSTEM_BIN = FFilterByBuildFeatures({
+local _SYSTEM_BIN = BuildFeatureRules.FFilterByBuildFeatures({
     "addattr",
     "alert",
     "arp",
@@ -136,7 +141,7 @@ SYSTEM_BIN = FFilterByBuildFeatures({
 -- System Applications
 -- ============================================================================
 
-SYSTEM_APPS = FFilterByBuildFeatures({
+local _SYSTEM_APPS = BuildFeatureRules.FFilterByBuildFeatures({
     "AboutSystem",
     "BootManager@x86,x86_64",
     "CharacterMap",
@@ -161,7 +166,7 @@ SYSTEM_APPS = FFilterByBuildFeatures({
 -- Deskbar Configuration
 -- ============================================================================
 
-DESKBAR_APPLICATIONS = {
+local _DESKBAR_APPLICATIONS = {
     "CharacterMap",
     "DeskCalc",
     "Devices",
@@ -174,7 +179,7 @@ DESKBAR_APPLICATIONS = {
     "Terminal",
 }
 
-DESKBAR_DESKTOP_APPLETS = {
+local _DESKBAR_DESKTOP_APPLETS = {
     "NetworkStatus",
     "ProcessController",
     "Workspaces",
@@ -184,7 +189,7 @@ DESKBAR_DESKTOP_APPLETS = {
 -- System Preferences
 -- ============================================================================
 
-SYSTEM_PREFERENCES = FFilterByBuildFeatures({
+local _SYSTEM_PREFERENCES = BuildFeatureRules.FFilterByBuildFeatures({
     "Appearance",
     "Backgrounds",
     "<preference>Deskbar",
@@ -205,48 +210,13 @@ SYSTEM_PREFERENCES = FFilterByBuildFeatures({
 -- System Demos (empty for minimum)
 -- ============================================================================
 
-SYSTEM_DEMOS = {}
-
--- ============================================================================
--- System Libraries
--- ============================================================================
-
-function HaikuImageGetSystemLibs()
-    return TableMerge(
-        -- libs with special grist
-        MultiArchDefaultGristFiles({"libroot.so"}, "revisioned"),
-        Libstdc++ForImage(),
-        -- libs with standard grist
-        MultiArchDefaultGristFiles(FFilterByBuildFeatures({
-            "libbe.so",
-            "libbsd.so",
-            "libbnetapi.so",
-            "libdebug.so",
-            "libdebugger.so@primary",
-            "libdevice.so",
-            "libgnu.so",
-            "libnetwork.so",
-            "libpackage.so",
-            "libtextencoding.so",
-            "libtracker.so",
-            "libtranslation.so",
-        }))
-    )
-end
-
-function HaikuImageGetPrivateSystemLibs()
-    return MultiArchDefaultGristFiles(FFilterByBuildFeatures({
-        "libalm.so",
-        "libpackage-add-on-libsolv.so",
-        "libroot-addon-icu.so",
-    }))
-end
+local _SYSTEM_DEMOS = {}
 
 -- ============================================================================
 -- System Servers
 -- ============================================================================
 
-SYSTEM_SERVERS = FFilterByBuildFeatures({
+local _SYSTEM_SERVERS = BuildFeatureRules.FFilterByBuildFeatures({
     "app_server",
     "debug_server",
     "dns_resolver_server",
@@ -266,13 +236,13 @@ SYSTEM_SERVERS = FFilterByBuildFeatures({
 -- Network Configuration
 -- ============================================================================
 
-SYSTEM_NETWORK_DEVICES = {
+local _SYSTEM_NETWORK_DEVICES = {
     "ethernet",
     "loopback",
     "tunnel",
 }
 
-SYSTEM_NETWORK_DATALINK_PROTOCOLS = {
+local _SYSTEM_NETWORK_DATALINK_PROTOCOLS = {
     "<module>arp",
     "ethernet_frame",
     "ipv6_datagram",
@@ -281,7 +251,7 @@ SYSTEM_NETWORK_DATALINK_PROTOCOLS = {
 
 -- SYSTEM_NETWORK_PPP = { "ipcp", "modem", "pap", "pppoe", "KPPPManager" }
 
-SYSTEM_NETWORK_PROTOCOLS = {
+local _SYSTEM_NETWORK_PROTOCOLS = {
     "icmp",
     "icmp6",
     "ipv4",
@@ -295,7 +265,7 @@ SYSTEM_NETWORK_PROTOCOLS = {
 -- Add-ons: Accelerants
 -- ============================================================================
 
-SYSTEM_ADD_ONS_ACCELERANTS = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_ACCELERANTS = BuildFeatureRules.FFilterByBuildFeatures({
     "framebuffer.accelerant",
     "vesa.accelerant@x86,x86_64",
     -- riscv64: ati for qemu, radeon_hd for unmatched
@@ -307,7 +277,7 @@ SYSTEM_ADD_ONS_ACCELERANTS = FFilterByBuildFeatures({
 -- Add-ons: Translators
 -- ============================================================================
 
-SYSTEM_ADD_ONS_TRANSLATORS = {
+local _SYSTEM_ADD_ONS_TRANSLATORS = {
     "STXTTranslator",
 }
 
@@ -315,7 +285,7 @@ SYSTEM_ADD_ONS_TRANSLATORS = {
 -- Add-ons: Locale Catalogs
 -- ============================================================================
 
-SYSTEM_ADD_ONS_LOCALE_CATALOGS = {
+local _SYSTEM_ADD_ONS_LOCALE_CATALOGS = {
     "<catalog-addon>plaintext",
 }
 
@@ -323,34 +293,34 @@ SYSTEM_ADD_ONS_LOCALE_CATALOGS = {
 -- Add-ons: Media (empty for minimum)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_MEDIA = {}
-SYSTEM_ADD_ONS_MEDIA_PLUGINS = {}
+local _SYSTEM_ADD_ONS_MEDIA = {}
+local _SYSTEM_ADD_ONS_MEDIA_PLUGINS = {}
 
 -- ============================================================================
 -- Add-ons: Print (empty for minimum)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_PRINT = {}
-SYSTEM_ADD_ONS_PRINT_TRANSPORT = {}
+local _SYSTEM_ADD_ONS_PRINT = {}
+local _SYSTEM_ADD_ONS_PRINT_TRANSPORT = {}
 
 -- ============================================================================
 -- Add-ons: Screensavers (empty for minimum)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_SCREENSAVERS = {}
+local _SYSTEM_ADD_ONS_SCREENSAVERS = {}
 
 -- ============================================================================
 -- Add-ons: Drivers - Audio (empty for minimum)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_AUDIO = {}
-SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD = {}
+local _SYSTEM_ADD_ONS_DRIVERS_AUDIO = {}
+local _SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD = {}
 
 -- ============================================================================
 -- Add-ons: Drivers - Graphics
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = BuildFeatureRules.FFilterByBuildFeatures({
     "framebuffer",
     "vesa@x86,x86_64",
     -- riscv64: ati for qemu, radeon_hd for unmatched
@@ -362,13 +332,13 @@ SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = FFilterByBuildFeatures({
 -- Add-ons: Drivers - MIDI (empty for minimum)
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_MIDI = {}
+local _SYSTEM_ADD_ONS_DRIVERS_MIDI = {}
 
 -- ============================================================================
 -- Add-ons: Drivers - Network
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_NET = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_DRIVERS_NET = BuildFeatureRules.FFilterByBuildFeatures({
     -- x86, x86_64, riscv64 specific
     "atheros813x@x86,x86_64,riscv64",
     "atheros81xx@x86,x86_64,riscv64",
@@ -403,7 +373,7 @@ SYSTEM_ADD_ONS_DRIVERS_NET = FFilterByBuildFeatures({
 -- Add-ons: Drivers - Power
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_POWER = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_DRIVERS_POWER = BuildFeatureRules.FFilterByBuildFeatures({
     "acpi_button@x86,x86_64",
     "acpi_thermal@x86,x86_64",
     "amd_thermal@x86,x86_64",
@@ -414,7 +384,7 @@ SYSTEM_ADD_ONS_DRIVERS_POWER = FFilterByBuildFeatures({
 -- Add-ons: Drivers - Sensor
 -- ============================================================================
 
-SYSTEM_ADD_ONS_DRIVERS_SENSOR = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_DRIVERS_SENSOR = BuildFeatureRules.FFilterByBuildFeatures({
     "acpi_als@x86,x86_64",
 })
 
@@ -422,7 +392,7 @@ SYSTEM_ADD_ONS_DRIVERS_SENSOR = FFilterByBuildFeatures({
 -- Add-ons: Bus Managers
 -- ============================================================================
 
-SYSTEM_ADD_ONS_BUS_MANAGERS = FFilterByBuildFeatures({
+local _SYSTEM_ADD_ONS_BUS_MANAGERS = BuildFeatureRules.FFilterByBuildFeatures({
     "acpi@x86,x86_64,arm64",
     "agp_gart@x86,x86_64",
     "ata",
@@ -442,7 +412,7 @@ SYSTEM_ADD_ONS_BUS_MANAGERS = FFilterByBuildFeatures({
 -- Add-ons: File Systems
 -- ============================================================================
 
-SYSTEM_ADD_ONS_FILE_SYSTEMS = {
+local _SYSTEM_ADD_ONS_FILE_SYSTEMS = {
     "attribute_overlay",
     "bfs",
     "bindfs",
@@ -460,49 +430,85 @@ SYSTEM_ADD_ONS_FILE_SYSTEMS = {
 }
 
 -- ============================================================================
+-- System Libraries
+-- ============================================================================
+
+function HaikuImageGetSystemLibs()
+    return HelperRules.TableMerge(
+        -- libs with special grist
+        HelperRules.MultiArchDefaultGristFiles({"libroot.so"}, "revisioned"),
+        SystemLibraryRules.Libstdc_ForImage(),
+        -- libs with standard grist
+        HelperRules.MultiArchDefaultGristFiles(BuildFeatureRules.FFilterByBuildFeatures({
+            "libbe.so",
+            "libbsd.so",
+            "libbnetapi.so",
+            "libdebug.so",
+            "libdebugger.so@primary",
+            "libdevice.so",
+            "libgnu.so",
+            "libnetwork.so",
+            "libpackage.so",
+            "libtextencoding.so",
+            "libtracker.so",
+            "libtranslation.so",
+        }))
+    )
+end
+
+function HaikuImageGetPrivateSystemLibs()
+    return HelperRules.MultiArchDefaultGristFiles(BuildFeatureRules.FFilterByBuildFeatures({
+        "libalm.so",
+        "libpackage-add-on-libsolv.so",
+        "libroot-addon-icu.so",
+    }))
+end
+
+-- ============================================================================
 -- Image Content Setup
 -- ============================================================================
 
 function SetupMinimumImageContent()
     -- symlink to home on desktop
-    AddSymlinkToHaikuImage({"home", "Desktop"}, "/boot/home", "Home")
+    ImageRules.AddSymlinkToHaikuImage({"home", "Desktop"}, "/boot/home", "Home")
 
     -- global settings when a package is installed in ~/config
-    AddDirectoryToHaikuImage({"home", "config", "settings", "global"})
+    ImageRules.AddDirectoryToHaikuImage({"home", "config", "settings", "global"})
 
     -- user scripts and data files
     local userBootScripts = {"UserBootscript", "UserSetupEnvironment.sample"}
-    local haiku_top = os.projectdir()
+    local config = import("core.project.config")
+    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
     for _, script in ipairs(userBootScripts) do
         local search_path = path.join(haiku_top, "data", "config", "boot", script)
-        AddFilesToHaikuImage({"home", "config", "settings", "boot"}, {search_path})
+        ImageRules.AddFilesToHaikuImage({"home", "config", "settings", "boot"}, {search_path})
     end
 
     -- first login script
     local first_login = path.join(haiku_top, "data", "settings", "first_login")
-    AddFilesToHaikuImage({"home", "config", "settings"}, {first_login}, "first_login")
+    ImageRules.AddFilesToHaikuImage({"home", "config", "settings"}, {first_login}, "first_login")
 
     -- etc files
     local etcDir = path.join(haiku_top, "data", "etc")
     local etcFiles = {"inputrc", "profile"}
     for _, file in ipairs(etcFiles) do
         local file_path = path.join(etcDir, file)
-        AddFilesToHaikuImage({"system", "settings", "etc"}, {file_path})
+        ImageRules.AddFilesToHaikuImage({"system", "settings", "etc"}, {file_path})
     end
 
     -- profile.d directory
-    AddDirectoryToHaikuImage({"system", "settings", "etc", "profile.d"})
+    ImageRules.AddDirectoryToHaikuImage({"system", "settings", "etc", "profile.d"})
     -- Add .sh files from profile.d would go here
 
     -- driver settings
     local driverSettingsFile = path.join(haiku_top, "data", "settings", "kernel", "drivers", "kernel")
-    AddFilesToHaikuImage({"home", "config", "settings", "kernel", "drivers"}, {driverSettingsFile}, "kernel")
+    ImageRules.AddFilesToHaikuImage({"home", "config", "settings", "kernel", "drivers"}, {driverSettingsFile}, "kernel")
 
     -- network settings
     local networkSettingsDir = path.join(haiku_top, "data", "settings", "network")
-    AddFilesToHaikuImage({"system", "settings", "network"},
+    ImageRules.AddFilesToHaikuImage({"system", "settings", "network"},
         {path.join(networkSettingsDir, "services")}, "services")
-    AddFilesToHaikuImage({"system", "settings", "network"},
+    ImageRules.AddFilesToHaikuImage({"system", "settings", "network"},
         {path.join(networkSettingsDir, "hosts")}, "hosts")
 
     -- repository config and cache files would be added here
@@ -510,38 +516,33 @@ function SetupMinimumImageContent()
 end
 
 -- ============================================================================
--- Module Exports
+-- Getter Functions (xmake only exports functions, not variables)
 -- ============================================================================
 
-return {
-    SYSTEM_BIN = SYSTEM_BIN,
-    SYSTEM_APPS = SYSTEM_APPS,
-    DESKBAR_APPLICATIONS = DESKBAR_APPLICATIONS,
-    DESKBAR_DESKTOP_APPLETS = DESKBAR_DESKTOP_APPLETS,
-    SYSTEM_PREFERENCES = SYSTEM_PREFERENCES,
-    SYSTEM_DEMOS = SYSTEM_DEMOS,
-    SYSTEM_SERVERS = SYSTEM_SERVERS,
-    SYSTEM_NETWORK_DEVICES = SYSTEM_NETWORK_DEVICES,
-    SYSTEM_NETWORK_DATALINK_PROTOCOLS = SYSTEM_NETWORK_DATALINK_PROTOCOLS,
-    SYSTEM_NETWORK_PROTOCOLS = SYSTEM_NETWORK_PROTOCOLS,
-    SYSTEM_ADD_ONS_ACCELERANTS = SYSTEM_ADD_ONS_ACCELERANTS,
-    SYSTEM_ADD_ONS_TRANSLATORS = SYSTEM_ADD_ONS_TRANSLATORS,
-    SYSTEM_ADD_ONS_LOCALE_CATALOGS = SYSTEM_ADD_ONS_LOCALE_CATALOGS,
-    SYSTEM_ADD_ONS_MEDIA = SYSTEM_ADD_ONS_MEDIA,
-    SYSTEM_ADD_ONS_MEDIA_PLUGINS = SYSTEM_ADD_ONS_MEDIA_PLUGINS,
-    SYSTEM_ADD_ONS_PRINT = SYSTEM_ADD_ONS_PRINT,
-    SYSTEM_ADD_ONS_PRINT_TRANSPORT = SYSTEM_ADD_ONS_PRINT_TRANSPORT,
-    SYSTEM_ADD_ONS_SCREENSAVERS = SYSTEM_ADD_ONS_SCREENSAVERS,
-    SYSTEM_ADD_ONS_DRIVERS_AUDIO = SYSTEM_ADD_ONS_DRIVERS_AUDIO,
-    SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD = SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD,
-    SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = SYSTEM_ADD_ONS_DRIVERS_GRAPHICS,
-    SYSTEM_ADD_ONS_DRIVERS_MIDI = SYSTEM_ADD_ONS_DRIVERS_MIDI,
-    SYSTEM_ADD_ONS_DRIVERS_NET = SYSTEM_ADD_ONS_DRIVERS_NET,
-    SYSTEM_ADD_ONS_DRIVERS_POWER = SYSTEM_ADD_ONS_DRIVERS_POWER,
-    SYSTEM_ADD_ONS_DRIVERS_SENSOR = SYSTEM_ADD_ONS_DRIVERS_SENSOR,
-    SYSTEM_ADD_ONS_BUS_MANAGERS = SYSTEM_ADD_ONS_BUS_MANAGERS,
-    SYSTEM_ADD_ONS_FILE_SYSTEMS = SYSTEM_ADD_ONS_FILE_SYSTEMS,
-    HaikuImageGetSystemLibs = HaikuImageGetSystemLibs,
-    HaikuImageGetPrivateSystemLibs = HaikuImageGetPrivateSystemLibs,
-    SetupMinimumImageContent = SetupMinimumImageContent,
-}
+function SYSTEM_BIN() return _SYSTEM_BIN end
+function SYSTEM_APPS() return _SYSTEM_APPS end
+function DESKBAR_APPLICATIONS() return _DESKBAR_APPLICATIONS end
+function DESKBAR_DESKTOP_APPLETS() return _DESKBAR_DESKTOP_APPLETS end
+function SYSTEM_PREFERENCES() return _SYSTEM_PREFERENCES end
+function SYSTEM_DEMOS() return _SYSTEM_DEMOS end
+function SYSTEM_SERVERS() return _SYSTEM_SERVERS end
+function SYSTEM_NETWORK_DEVICES() return _SYSTEM_NETWORK_DEVICES end
+function SYSTEM_NETWORK_DATALINK_PROTOCOLS() return _SYSTEM_NETWORK_DATALINK_PROTOCOLS end
+function SYSTEM_NETWORK_PROTOCOLS() return _SYSTEM_NETWORK_PROTOCOLS end
+function SYSTEM_ADD_ONS_ACCELERANTS() return _SYSTEM_ADD_ONS_ACCELERANTS end
+function SYSTEM_ADD_ONS_TRANSLATORS() return _SYSTEM_ADD_ONS_TRANSLATORS end
+function SYSTEM_ADD_ONS_LOCALE_CATALOGS() return _SYSTEM_ADD_ONS_LOCALE_CATALOGS end
+function SYSTEM_ADD_ONS_MEDIA() return _SYSTEM_ADD_ONS_MEDIA end
+function SYSTEM_ADD_ONS_MEDIA_PLUGINS() return _SYSTEM_ADD_ONS_MEDIA_PLUGINS end
+function SYSTEM_ADD_ONS_PRINT() return _SYSTEM_ADD_ONS_PRINT end
+function SYSTEM_ADD_ONS_PRINT_TRANSPORT() return _SYSTEM_ADD_ONS_PRINT_TRANSPORT end
+function SYSTEM_ADD_ONS_SCREENSAVERS() return _SYSTEM_ADD_ONS_SCREENSAVERS end
+function SYSTEM_ADD_ONS_DRIVERS_AUDIO() return _SYSTEM_ADD_ONS_DRIVERS_AUDIO end
+function SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD() return _SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD end
+function SYSTEM_ADD_ONS_DRIVERS_GRAPHICS() return _SYSTEM_ADD_ONS_DRIVERS_GRAPHICS end
+function SYSTEM_ADD_ONS_DRIVERS_MIDI() return _SYSTEM_ADD_ONS_DRIVERS_MIDI end
+function SYSTEM_ADD_ONS_DRIVERS_NET() return _SYSTEM_ADD_ONS_DRIVERS_NET end
+function SYSTEM_ADD_ONS_DRIVERS_POWER() return _SYSTEM_ADD_ONS_DRIVERS_POWER end
+function SYSTEM_ADD_ONS_DRIVERS_SENSOR() return _SYSTEM_ADD_ONS_DRIVERS_SENSOR end
+function SYSTEM_ADD_ONS_BUS_MANAGERS() return _SYSTEM_ADD_ONS_BUS_MANAGERS end
+function SYSTEM_ADD_ONS_FILE_SYSTEMS() return _SYSTEM_ADD_ONS_FILE_SYSTEMS end
