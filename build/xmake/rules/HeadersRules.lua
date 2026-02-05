@@ -310,20 +310,38 @@ end
 -- ============================================================================
 -- HostBeAPI Rule - for host tools using BeAPI
 -- Equivalent to Jam's USES_BE_API = true + HOST_BE_API_HEADERS/CCFLAGS
+--
+-- Usage:
+--   add_rules("HostBeAPI", {
+--       private_build_headers = {"app", "kernel", "shared"},  -- headers/build/private/<group>
+--       private_headers = {"app"},                            -- headers/private/<group>
+--       public_headers = {"interface"},                       -- headers/os/<group>
+--       library_headers = {"agg", "icon"},                    -- headers/libs/<group>
+--       source_dirs = {"/path/to/src"}                        -- additional include dirs
+--   })
 -- ============================================================================
 
 rule("HostBeAPI")
     on_load(function (target)
-        local top = os.projectdir()
-        local build_headers = path.join(top, "headers", "build")
+        import("core.project.config")
 
-        -- Add BeAPI headers from headers/build/
-        local headers = {
+        local top = config.get("haiku_top")
+        if not top then
+            raise("haiku_top config must be set before using HostBeAPI rule")
+        end
+
+        local build_headers = path.join(top, "headers", "build")
+        local build_private = path.join(build_headers, "private")
+        local private_headers = path.join(top, "headers", "private")
+        local os_headers = path.join(top, "headers", "os")
+        local libs_headers = path.join(top, "headers", "libs")
+
+        -- Base BeAPI headers from headers/build/
+        local base_headers = {
             build_headers,
             path.join(build_headers, "os"),
             path.join(build_headers, "os", "add-ons", "registrar"),
             path.join(build_headers, "os", "app"),
-            path.join(build_headers, "os", "bluetooth"),
             path.join(build_headers, "os", "drivers"),
             path.join(build_headers, "os", "kernel"),
             path.join(build_headers, "os", "interface"),
@@ -331,14 +349,56 @@ rule("HostBeAPI")
             path.join(build_headers, "os", "storage"),
             path.join(build_headers, "os", "support"),
             path.join(build_headers, "private"),
+            -- Config headers (tracing_config.h, etc.)
+            path.join(top, "build", "config_headers"),
         }
-        for _, header in ipairs(headers) do
-            target:add("includedirs", header, {public = false})
+        for _, h in ipairs(base_headers) do
+            target:add("includedirs", h)
+        end
+
+        -- Kit-specific: private_build_headers -> headers/build/private/<group>
+        local pbh = target:extraconf("rules", "HostBeAPI", "private_build_headers")
+        if pbh then
+            for _, group in ipairs(pbh) do
+                target:add("sysincludedirs", path.join(build_private, group))
+            end
+        end
+
+        -- Kit-specific: private_headers -> headers/private/<group>
+        local ph = target:extraconf("rules", "HostBeAPI", "private_headers")
+        if ph then
+            for _, group in ipairs(ph) do
+                target:add("sysincludedirs", path.join(private_headers, group))
+            end
+        end
+
+        -- Kit-specific: public_headers -> headers/os/<group>
+        local pub = target:extraconf("rules", "HostBeAPI", "public_headers")
+        if pub then
+            for _, group in ipairs(pub) do
+                target:add("sysincludedirs", path.join(os_headers, group))
+            end
+        end
+
+        -- Kit-specific: library_headers -> headers/libs/<group>
+        local lh = target:extraconf("rules", "HostBeAPI", "library_headers")
+        if lh then
+            for _, group in ipairs(lh) do
+                target:add("sysincludedirs", path.join(libs_headers, group))
+            end
+        end
+
+        -- Kit-specific: source_dirs -> additional include directories
+        local sd = target:extraconf("rules", "HostBeAPI", "source_dirs")
+        if sd then
+            for _, d in ipairs(sd) do
+                target:add("includedirs", d)
+            end
         end
 
         -- Add -include flag for compatibility header
-        local compat_header = path.join(top, "headers", "build", "BeOSBuildCompatibility.h")
-        target:add("cxflags", "-include", compat_header, {force = true})
+        local compat_header = path.join(build_headers, "BeOSBuildCompatibility.h")
+        target:add("forceincludes", compat_header)
 
         -- PIC for potential shared library linking
         target:add("cxflags", "-fPIC")

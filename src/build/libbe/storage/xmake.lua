@@ -83,11 +83,17 @@ target("storage_kit_build")
     add_files(path.join(kits_storage_sniffer, "RPatternList.cpp"))
     add_files(path.join(kits_storage_sniffer, "Rule.cpp"))
 
-    -- Use HeadersRules for include paths (mirrors Jamfile)
+    -- Headers (mirrors Jamfile: UsePrivateBuildHeaders app kernel shared storage)
     on_load(function(target)
-        import("rules.HeadersRules")
+        import("core.project.config")
+        local top = config.get("haiku_top")
+        local build_private = path.join(top, "headers", "build", "private")
 
-        -- UsePrivateBuildHeaders app kernel shared storage (from Jamfile line 3)
-        HeadersRules.UsePrivateBuildHeaders(target, {"app", "kernel", "shared", "storage"})
+        target:add("sysincludedirs",
+            path.join(build_private, "app"),
+            path.join(build_private, "kernel"),
+            path.join(build_private, "shared"),
+            path.join(build_private, "storage")
+        )
     end)
 target_end()

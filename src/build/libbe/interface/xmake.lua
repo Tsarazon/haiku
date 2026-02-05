@@ -34,14 +34,29 @@ target("interface_kit_build")
     -- SystemPalette.cpp is local to src/build/libbe/interface/
     add_files(path.join(local_interface, "SystemPalette.cpp"))
 
-    -- Use HeadersRules for include paths (mirrors Jamfile)
+    -- Headers (mirrors Jamfile: UsePrivateBuildHeaders app interface shared)
     on_load(function(target)
-        import("rules.HeadersRules")
+        import("core.project.config")
+        local top = config.get("haiku_top")
+        local build_private = path.join(top, "headers", "build", "private")
+        local private_headers = path.join(top, "headers", "private")
+        local os_headers = path.join(top, "headers", "os")
 
-        -- UsePrivateBuildHeaders app interface shared (from Jamfile line 3)
-        HeadersRules.UsePrivateBuildHeaders(target, {"app", "interface", "shared"})
+        -- Build private headers
+        target:add("sysincludedirs",
+            path.join(build_private, "app"),
+            path.join(build_private, "interface"),
+            path.join(build_private, "shared")
+        )
+
+        -- Regular private headers (ApplicationPrivate.h, etc.)
+        target:add("sysincludedirs",
+            path.join(private_headers, "app"),
+            path.join(private_headers, "interface"),
+            path.join(private_headers, "shared")
+        )
 
         -- AffineTransform.h is in headers/os/interface/ but not in headers/build/os/interface/
-        HeadersRules.UsePublicHeaders(target, {"interface"})
+        target:add("sysincludedirs", path.join(os_headers, "interface"))
     end)
 target_end()

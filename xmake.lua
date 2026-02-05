@@ -31,6 +31,10 @@ HAIKU_TOP = os.projectdir()
 -- Uses "spawned" to keep separate from Jam's "generated"
 HAIKU_OUTPUT_DIR = path.join(HAIKU_TOP, "spawned")
 
+-- Set buildir EARLY - before any includes - to ensure xmake uses spawned/
+-- for all cache, dependencies, and build artifacts
+set_config("buildir", HAIKU_OUTPUT_DIR)
+
 -- ============================================================================
 -- Include Main Build System
 -- ============================================================================

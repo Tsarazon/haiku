@@ -94,7 +94,7 @@ includes("rules/MiscRules.lua")         -- Miscellaneous build utilities
 includes("rules/RepositoryRules.lua")   -- Package repository management
 includes("rules/TestsRules.lua")        -- Unit test build rules
 includes("rules/SystemLibraryRules.lua") -- System library management (libstdc++, libgcc)
-includes("rules/HostBeAPI.lua")         -- Host BeAPI compatibility (HOST_BE_API_* equivalent)
+-- HostBeAPI rule is now in HeadersRules.lua
 
 -- ============================================================================
 -- Configuration Includes

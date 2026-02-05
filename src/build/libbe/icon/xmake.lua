@@ -85,19 +85,24 @@ target("icon_kit_build")
     add_files(path.join(libs_agg, "agg_vpgen_clip_polyline.cpp"))
     add_files(path.join(libs_agg, "agg_vpgen_segmentator.cpp"))
 
-    -- Use HeadersRules for include paths (mirrors Jamfile)
+    -- Headers (mirrors Jamfile)
     on_load(function(target)
-        import("rules.HeadersRules")
+        import("core.project.config")
+        local top = config.get("haiku_top")
+        local build_private = path.join(top, "headers", "build", "private")
+        local libs_headers = path.join(top, "headers", "libs")
+        local libs_icon = path.join(top, "src", "libs", "icon")
 
-        -- UseLibraryHeaders agg icon (from Jamfile line 23)
-        HeadersRules.UseLibraryHeaders(target, {"agg", "icon"})
+        -- UseLibraryHeaders agg icon
+        target:add("sysincludedirs",
+            path.join(libs_headers, "agg"),
+            path.join(libs_headers, "icon")
+        )
 
-        -- UsePrivateBuildHeaders shared (from Jamfile line 25)
-        HeadersRules.UsePrivateBuildHeaders(target, {"shared"})
+        -- UsePrivateBuildHeaders shared
+        target:add("sysincludedirs", path.join(build_private, "shared"))
 
         -- Source directories for local includes (matches SEARCH_SOURCE in Jamfile)
-        -- These are local source dirs, not system headers
-        local libs_icon = path.join(os.projectdir(), "src", "libs", "icon")
         target:add("includedirs",
             libs_icon,
             path.join(libs_icon, "flat_icon"),

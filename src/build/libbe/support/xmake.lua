@@ -7,15 +7,16 @@ local haiku_top = HAIKU_TOP or path.directory(path.directory(path.directory(path
 local output_dir = HAIKU_OUTPUT_DIR or path.join(haiku_top, "spawned")
 local obj_output = path.join(output_dir, "objects", "libbe_build")
 
--- Source directory
 local kits_support = path.join(haiku_top, "src", "kits", "support")
 
 target("support_kit_build")
     set_kind("object")
     set_targetdir(obj_output)
 
-    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
-    add_rules("HostBeAPI")
+    add_rules("HostBeAPI", {
+        private_build_headers = {"app", "interface", "shared", "support", "locale"},
+        private_headers = {""}  -- for binary_compatibility/Support.h
+    })
 
     add_files(path.join(kits_support, "Archivable.cpp"))
     add_files(path.join(kits_support, "BlockCache.cpp"))
@@ -38,19 +39,4 @@ target("support_kit_build")
     add_files(path.join(kits_support, "ZstdCompressionAlgorithm.cpp"))
 
     add_defines("ZSTD_ENABLED")
-
-    -- Use HeadersRules for include paths (mirrors Jamfile)
-    on_load(function(target)
-        import("rules.HeadersRules")
-
-        -- UsePrivateBuildHeaders app interface shared support (from Jamfile line 3)
-        HeadersRules.UsePrivateBuildHeaders(target, {"app", "interface", "shared", "support"})
-
-        -- UsePrivateObjectHeaders Url.cpp : locale (from Jamfile line 4)
-        -- Add locale headers for all files (simpler than per-file)
-        HeadersRules.UsePrivateBuildHeaders(target, {"locale"})
-
-        -- binary_compatibility/Support.h is in headers/private/
-        HeadersRules.UsePrivateHeaders(target, {""})  -- adds headers/private root
-    end)
 target_end()
