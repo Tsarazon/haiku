@@ -25,36 +25,14 @@ end
 -- ============================================================================
 
 local function create_cd_init_script(script_path)
-    local config = import("core.project.config")
-    -- haiku_top is the source root
-    local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
-    -- output_dir is the build output
-    local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
-    local tmp_dir = path.join(output_dir, "tmp")
+    -- Use common-tail's CreateImageInitScript with CD options
+    local common_tail = import("images.definitions.common-tail")
     local cd_defaults = get_cd_defaults()
 
-    local lines = {
-        "#!/bin/sh",
-        "# Auto-generated CD image initialization script",
-        "",
-        string.format('sourceDir="%s"', haiku_top),
-        string.format('outputDir="%s"', output_dir),
-        string.format('tmpDir="%s"', tmp_dir),
-        'isCD=1',
-        string.format('cdLabel="%s"', cd_defaults.label),
-        "",
-        "# Build tools (in output directory)",
-        string.format('addattr="%s/tools/addattr"', output_dir),
-        string.format('copyattr="%s/tools/copyattr"', output_dir),
-        string.format('rc="%s/tools/rc"', output_dir),
-        string.format('resattr="%s/tools/resattr"', output_dir),
-        'unzip="unzip"',
-        string.format('generate_attribute_stores="%s/tools/generate_attribute_stores"', output_dir),
-        'rmAttrs="rm"',
-        "",
-    }
-
-    return table.concat(lines, "\n")
+    return common_tail.CreateImageInitScript(script_path, {
+        is_cd = true,
+        cd_label = cd_defaults.label,
+    })
 end
 
 -- ============================================================================
@@ -69,20 +47,27 @@ end
 ]]
 local function _BuildHaikuCD(haiku_cd, boot_file)
     local config = import("core.project.config")
+    local ImageRules = import("rules.ImageRules")
+
     local haiku_top = config.get("haiku_top") or path.directory(path.directory(os.projectdir()))
     local output_dir = config.get("haiku_output_dir") or path.join(haiku_top, "spawned")
 
-    -- Prepare scripts
+    -- Ensure output directory exists
+    os.mkdir(output_dir)
+
+    -- Prepare init script with base variables
     local init_script = path.join(output_dir, "haiku.cd-init-vars")
     local script_content = create_cd_init_script(init_script)
     io.writefile(init_script, script_content)
 
-    local make_dirs_script = path.join(output_dir, "haiku.image-make-dirs")
-    local copy_files_script = path.join(output_dir, "haiku.image-copy-files")
-    local extract_files_script = path.join(output_dir, "haiku.image-extract-files")
+    -- Add package and repository variables
+    ImageRules.AddPackagesAndRepositoryVariablesToContainerScript(init_script, "haiku-image")
+
+    local make_dirs_script = path.join(output_dir, "haiku.cd-make-dirs")
+    local copy_files_script = path.join(output_dir, "haiku.cd-copy-files")
+    local extract_files_script = path.join(output_dir, "haiku.cd-extract-files")
 
     -- Create scripts
-    local ImageRules = import("rules.ImageRules")
     ImageRules.CreateHaikuImageMakeDirectoriesScript(make_dirs_script)
     ImageRules.CreateHaikuImageCopyFilesScript(copy_files_script)
     ImageRules.CreateHaikuImageExtractFilesScript(extract_files_script)

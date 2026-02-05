@@ -661,46 +661,47 @@ end
 
 
 -- AddPackagesAndRepositoryVariablesToContainerScript:
--- add download dir, package tool, repository variables to container script
+-- add package lists and repository variables to container script
+-- NOTE: downloadDir, package tool paths, and flags are already in init script
+-- This function only adds the dynamic package/repository lists
 function AddPackagesAndRepositoryVariablesToContainerScript(script_path, container_name)
     import("core.project.config")
 
     local container = _containers[container_name]
     if not container then return end
 
-    local download_dir = config.get("haiku_download_dir")
-        or path.join(config.get("haiku_top") or os.projectdir(), "download")
-    local package_tool = config.get("build_package") or "package"
-    local get_deps_tool = config.get("build_get_package_dependencies")
-        or "get_package_dependencies"
-
-    AddVariableToScript(script_path, "downloadDir", download_dir)
-    AddTargetVariableToScript(script_path, {package_tool}, "package")
-    AddTargetVariableToScript(script_path, {get_deps_tool}, "getPackageDependencies")
-
-    -- Resolve package dependencies flag
-    local update_only = container.update_only
-    local update_all = config.get("haiku_update_all_packages")
-    local build_type = config.get("haiku_build_type") or ""
-    local resolve = ""
-    if (not update_only or update_all) and build_type ~= "bootstrap" then
-        resolve = "1"
+    -- Helper function to deduplicate a list while preserving order
+    local function deduplicate(list)
+        local seen = {}
+        local result = {}
+        for _, item in ipairs(list) do
+            if not seen[item] then
+                seen[item] = true
+                table.insert(result, item)
+            end
+        end
+        return result
     end
-    AddVariableToScript(script_path, "resolvePackageDependencies", resolve)
-    AddVariableToScript(script_path, "noDownloads",
-        config.get("haiku_no_downloads") and "1" or "")
-    AddVariableToScript(script_path, "updateAllPackages",
-        update_all and "1" or "")
 
-    -- System packages
-    AddTargetVariableToScript(script_path, container.system_packages,
-        "systemPackages")
+    -- System packages (files to copy to system/packages) - deduplicated
+    local system_packages = deduplicate(container.system_packages)
+    if #system_packages > 0 then
+        AddTargetVariableToScript(script_path, system_packages,
+            "systemPackages")
+    else
+        AddVariableToScript(script_path, "systemPackages", "")
+    end
 
-    -- Other packages
-    AddTargetVariableToScript(script_path, container.other_packages,
-        "otherPackages")
+    -- Other packages (optional/disabled packages in other locations) - deduplicated
+    local other_packages = deduplicate(container.other_packages)
+    if #other_packages > 0 then
+        AddTargetVariableToScript(script_path, other_packages,
+            "otherPackages")
+    else
+        AddVariableToScript(script_path, "otherPackages", "")
+    end
 
-    -- Repository files
+    -- Repository files for dependency resolution
     import("rules.RepositoryRules")
     local repos = RepositoryRules.GetAllRepositories()
     local repo_files = {}
@@ -711,6 +712,8 @@ function AddPackagesAndRepositoryVariablesToContainerScript(script_path, contain
     end
     if #repo_files > 0 then
         AddTargetVariableToScript(script_path, repo_files, "repositories")
+    else
+        AddVariableToScript(script_path, "repositories", "")
     end
 end
 
@@ -810,15 +813,27 @@ function AddPackageFilesToHaikuImage(location, packages, flags)
 
     local container = _get_container(_haiku_image_container)
 
-    -- Track as system or other packages
+    -- Helper to check if package already exists in list
+    local function contains(list, item)
+        for _, v in ipairs(list) do
+            if v == item then return true end
+        end
+        return false
+    end
+
+    -- Track as system or other packages (avoid duplicates)
     if #location >= 2 and location[1] == "system" and location[2] == "packages"
             and not location[3] then
         for _, pkg in ipairs(packages) do
-            table.insert(container.system_packages, pkg)
+            if not contains(container.system_packages, pkg) then
+                table.insert(container.system_packages, pkg)
+            end
         end
     else
         for _, pkg in ipairs(packages) do
-            table.insert(container.other_packages, pkg)
+            if not contains(container.other_packages, pkg) then
+                table.insert(container.other_packages, pkg)
+            end
         end
     end
 

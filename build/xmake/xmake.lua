@@ -22,16 +22,18 @@ set_languages("c11", "c++17")
 -- ============================================================================
 -- Path Configuration
 -- ============================================================================
--- os.projectdir() returns /home/ruslan/haiku/build/xmake (where xmake.lua is)
--- We need HAIKU_TOP to be /home/ruslan/haiku (2 levels up)
+-- HAIKU_TOP and HAIKU_OUTPUT_DIR are defined in root xmake.lua
+-- If not defined (standalone mode), compute them from this file's location
 
--- HAIKU_TOP: Root of the Haiku source tree
--- This is the parent of build/xmake, equivalent to $(HAIKU_TOP) in Jam
-HAIKU_TOP = path.directory(path.directory(os.projectdir()))
+if not HAIKU_TOP then
+    -- Standalone mode: this file is the entry point
+    -- os.scriptdir() returns build/xmake, go 2 levels up
+    HAIKU_TOP = path.directory(path.directory(os.scriptdir()))
+end
 
--- HAIKU_OUTPUT_DIR: Build output directory for xmake
--- Uses "spawned" to keep separate from Jam's "generated"
-HAIKU_OUTPUT_DIR = path.join(HAIKU_TOP, "spawned")
+if not HAIKU_OUTPUT_DIR then
+    HAIKU_OUTPUT_DIR = path.join(HAIKU_TOP, "spawned")
+end
 
 -- Set these as xmake config values so rule files can use config.get()
 -- This allows rules to use: config.get("haiku_top") instead of os.projectdir()
