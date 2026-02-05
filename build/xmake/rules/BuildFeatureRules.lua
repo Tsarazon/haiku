@@ -1,591 +1,465 @@
 --[[
-    BuildFeatureRules.lua - Haiku build feature management
+    BuildFeatureRules.lua - Build feature management for Haiku build system
 
-    xmake equivalent of build/jam/BuildFeatureRules
+    xmake equivalent of build/jam/BuildFeatureRules (1:1 migration)
 
-    Rules defined:
-    - FQualifiedBuildFeatureName  - Prepend architecture to feature name
-    - FIsBuildFeatureEnabled      - Check if feature is enabled
-    - FMatchesBuildFeatures       - Check feature specification
-    - FFilterByBuildFeatures      - Filter list by feature specifications
-    - EnableBuildFeatures         - Enable build features
-    - BuildFeatureObject          - Get unique object for feature
-    - SetBuildFeatureAttribute    - Set feature attribute
-    - BuildFeatureAttribute       - Get feature attribute
-    - ExtractBuildFeatureArchives - Download and extract feature archives
-    - InitArchitectureBuildFeatures - Initialize arch-specific features
+    Functions exported:
+    - FQualifiedBuildFeatureName(features)                  - Prepend arch to feature names
+    - FIsBuildFeatureEnabled(feature)                       - Check if feature is enabled
+    - FMatchesBuildFeatures(specification)                  - Evaluate feature specification
+    - FFilterByBuildFeatures(list)                          - Filter list by feature annotations
+    - EnableBuildFeatures(features, specification)          - Enable build features
+    - BuildFeatureObject(feature)                           - Get/create unique object for feature
+    - SetBuildFeatureAttribute(feature, attribute, values, package)
+    - BuildFeatureAttribute(feature, attribute, flags)      - Get feature attribute value
+    - ExtractBuildFeatureArchivesExpandValue(value, fileName) - Expand placeholders
+    - ExtractBuildFeatureArchives(feature, list)            - Extract archives, set attributes
+    - InitArchitectureBuildFeatures(architecture)           - Enable arch-derived features
+    - GetAllBuildFeatures()                                 - Return all enabled features
 
-    Build features are optional components that can be enabled/disabled
-    based on availability of packages, architecture, or configuration.
-    Features are qualified by architecture (e.g., "x86_64:openssl").
+    Usage:
+        import("rules.BuildFeatureRules")
+        BuildFeatureRules.EnableBuildFeatures({"openssl"})
+        local enabled = BuildFeatureRules.FIsBuildFeatureEnabled("openssl")
 ]]
 
--- ============================================================================
--- Build Feature Storage
--- ============================================================================
+-- Module-level state
 
--- Global storage for build features
-local _build_features = {}           -- Set of enabled features
-local _feature_objects = {}          -- Feature name -> unique object
-local _feature_attributes = {}       -- Feature object -> attribute table
+-- Registry of all build features:
+-- Key: qualified feature name (e.g. "x86_64:openssl")
+-- Value: { enabled = bool, object_id = string, attributes = {} }
+-- attributes[attr_name] = { values = {...}, package = nil|string }
+local _features = {}
 
--- Current target packaging architecture (set during build)
+-- Ordered list of enabled feature names
+local _enabled_features = {}
+
+-- Unique ID counter for feature objects
+local _next_object_id = 0
+
+-- Current target packaging architecture (set via InitArchitectureBuildFeatures)
 local _target_packaging_arch = nil
 
--- ============================================================================
--- Architecture Management
--- ============================================================================
-
---[[
-    SetTargetPackagingArch(arch)
-
-    Sets the current target packaging architecture.
-    Used by feature functions to qualify feature names.
-]]
-function SetTargetPackagingArch(arch)
-    _target_packaging_arch = arch
+-- Helper: generate unique object ID for a feature
+local function _new_unique_id()
+    local id = _next_object_id
+    _next_object_id = _next_object_id + 1
+    return string.format("_build_feature_%d", id)
 end
 
---[[
-    GetTargetPackagingArch()
-
-    Gets the current target packaging architecture.
-]]
-function GetTargetPackagingArch()
-    return _target_packaging_arch or get_config("arch") or "x86_64"
+-- Helper: get or create a feature entry
+local function _get_or_create_feature(qualified_name)
+    if not _features[qualified_name] then
+        _features[qualified_name] = {
+            enabled = false,
+            object_id = nil,
+            attributes = {}
+        }
+    end
+    return _features[qualified_name]
 end
 
--- ============================================================================
--- Feature Name Qualification
--- ============================================================================
+-- Helper: get target packaging arch from config or module state
+local function _get_packaging_arch()
+    if _target_packaging_arch then
+        return _target_packaging_arch
+    end
+    import("core.project.config")
+    return config.get("target_packaging_arch") or config.get("arch") or "x86_64"
+end
 
---[[
-    FQualifiedBuildFeatureName(features)
 
-    Prepends the name of the current target packaging architecture to the
-    given feature names.
-
-    Equivalent to Jam:
-        rule FQualifiedBuildFeatureName { }
-
-    Parameters:
-        features - Feature name or list of feature names
-                   If first element is "QUALIFIED", returns second element as-is
-
-    Returns:
-        List of qualified feature names (arch:feature format)
-]]
+-- FQualifiedBuildFeatureName: prepend architecture to feature names
+-- If features[1] == "QUALIFIED", return features[2] as-is (already qualified).
+-- Otherwise prepend current TARGET_PACKAGING_ARCH.
+-- Input: a list of feature names (or a single string)
+-- Returns: list of qualified names
 function FQualifiedBuildFeatureName(features)
-    if type(features) ~= "table" then
+    if type(features) == "string" then
         features = {features}
     end
+    if not features or #features == 0 then
+        return {}
+    end
 
-    -- Check for pre-qualified name
+    -- Pre-qualified: "QUALIFIED" marker followed by the actual name
     if features[1] == "QUALIFIED" then
-        return features[2]
+        return {features[2]}
     end
 
-    local arch = GetTargetPackagingArch()
-    local qualified = {}
-
-    for _, feature in ipairs(features) do
-        table.insert(qualified, arch .. ":" .. feature)
+    local arch = _get_packaging_arch()
+    local result = {}
+    for _, f in ipairs(features) do
+        table.insert(result, arch .. ":" .. f)
     end
-
-    if #qualified == 1 then
-        return qualified[1]
-    end
-    return qualified
+    return result
 end
 
--- ============================================================================
--- Feature State Checking
--- ============================================================================
 
---[[
-    FIsBuildFeatureEnabled(feature)
-
-    Returns whether the given build feature is enabled.
-
-    Equivalent to Jam:
-        rule FIsBuildFeatureEnabled { }
-
-    Parameters:
-        feature - The name of the build feature (lower case)
-
-    Returns:
-        true if enabled, false otherwise
-]]
+-- FIsBuildFeatureEnabled: check if a build feature is enabled
+-- Returns true if enabled, false otherwise
 function FIsBuildFeatureEnabled(feature)
-    local qualified = FQualifiedBuildFeatureName(feature)
-    return _build_features[qualified:upper()] == true
+    if type(feature) == "table" then
+        feature = feature[1]
+    end
+    local qualified = FQualifiedBuildFeatureName({feature})
+    if #qualified == 0 then return false end
+
+    local entry = _features[qualified[1]]
+    return entry and entry.enabled or false
 end
 
---[[
-    FMatchesBuildFeatures(specification)
 
-    Returns whether the given build feature specification holds.
-    Specification consists of positive and negative conditions.
-
-    Conditions can be:
-    - Individual list elements
-    - Multiple conditions joined by "," in a single element
-
-    A positive condition holds when the named feature is enabled.
-    A negative condition (starting with "!") holds when the feature is NOT enabled.
-
-    Specification holds when:
-    - None of the negative conditions hold AND
-    - If there are positive conditions, at least one holds
-
-    Equivalent to Jam:
-        rule FMatchesBuildFeatures { }
-
-    Parameters:
-        specification - Build feature specification (list or comma-separated string)
-
-    Returns:
-        true if specification holds, false otherwise
-]]
+-- FMatchesBuildFeatures: evaluate a build feature specification
+-- specification is a list of conditions (possibly comma-separated).
+-- Positive conditions: at least one must be enabled (OR).
+-- Negative conditions (prefixed "!"): none must be enabled (AND NOT).
+-- Returns true if specification holds.
 function FMatchesBuildFeatures(specification)
-    if not specification then
+    if not specification or #specification == 0 then
         return false
     end
 
-    if type(specification) ~= "table" then
-        specification = {specification}
-    end
-
-    -- Split comma-separated elements
+    -- Split comma-separated entries
+    import("rules.HelperRules")
     local split_spec = {}
     for _, element in ipairs(specification) do
-        for part in element:gmatch("[^,]+") do
-            table.insert(split_spec, part)
+        local parts = HelperRules.FSplitString(element, ",")
+        for _, p in ipairs(parts) do
+            table.insert(split_spec, p)
         end
     end
 
-    if #split_spec == 0 then
-        return false
-    end
-
-    -- Use FConditionsHold from HelperRules
-    local has_positive = false
-    local has_negative = false
-    local positive_match = false
-
-    for _, condition in ipairs(split_spec) do
-        if condition:sub(1, 1) == "!" then
-            -- Negative condition
-            has_negative = true
-            local feature_name = condition:sub(2)
-            if FIsBuildFeatureEnabled(feature_name) then
-                -- Negative condition violated
-                return false
-            end
-        else
-            -- Positive condition
-            has_positive = true
-            if FIsBuildFeatureEnabled(condition) then
-                positive_match = true
-            end
-        end
-    end
-
-    if has_positive then
-        return positive_match
-    end
-
-    return has_negative
+    return HelperRules.FConditionsHold(split_spec, FIsBuildFeatureEnabled)
 end
 
--- ============================================================================
--- List Filtering by Features
--- ============================================================================
 
---[[
-    FFilterByBuildFeatures(list)
-
-    Filters a list annotated by build feature specifications.
-
-    Annotation methods:
-    1. Single element: "value@specification" - included if specification holds
-    2. Sublist: "specification @{ ... }@" - sublist included if specification holds
-
-    Sublist annotations can be nested.
-
-    Equivalent to Jam:
-        rule FFilterByBuildFeatures { }
-
-    Parameters:
-        list - A list annotated with build feature specifications
-
-    Returns:
-        Filtered list with annotations removed
-]]
+-- FFilterByBuildFeatures: filter a list annotated by build feature specifications
+--
+-- Two annotation modes:
+-- 1. Single element: "value@spec" — include value only if spec holds
+-- 2. Sublist block: "spec @{ ... }@" — include enclosed elements only if spec holds
+-- Blocks can be nested. Unannotated elements pass through.
+--
+-- Returns: the filtered list
 function FFilterByBuildFeatures(list)
-    if type(list) ~= "table" then
-        list = {list}
+    if not list or #list == 0 then
+        return {}
     end
 
     local filtered = {}
-    local evaluation_stack = {true}  -- Stack of boolean values
-    local previous_element = nil
 
-    -- Append dummy element for processing last real element
-    local processing_list = {}
+    -- Evaluation stack: stack of booleans (1 = active, 0 = suppressed)
+    -- We process elements with one-element lookahead because we need to check
+    -- if the *next* element is "@{" to determine if current element is a spec.
+    local eval_stack = {1}
+    local previous = nil
+
+    -- Append a dummy element so we don't need special handling for last element
+    local extended = {}
     for _, v in ipairs(list) do
-        table.insert(processing_list, v)
+        table.insert(extended, v)
     end
-    table.insert(processing_list, "dummy")
+    table.insert(extended, "dummy")
 
-    for _, element in ipairs(processing_list) do
-        local stack_top = evaluation_stack[1]
-        local process_element = previous_element
+    for _, element in ipairs(extended) do
+        local stack_top = eval_stack[1]
+        local process_element = previous
 
         if element == "}@" then
             -- Pop the topmost specification off the stack
-            if #evaluation_stack <= 1 then
-                error("FFilterByBuildFeatures: Unbalanced @{ in list")
+            table.remove(eval_stack, 1)
+            if #eval_stack == 0 then
+                raise("FFilterByBuildFeatures: Unbalanced @{ in list")
             end
-            table.remove(evaluation_stack, 1)
-            process_element = previous_element
-            previous_element = nil
+            process_element = previous
+            previous = nil
 
         elseif element == "@{" then
-            -- Start of conditional block
-            if not previous_element then
-                error("FFilterByBuildFeatures: No feature specification before @{")
+            -- previous element is the feature specification for this block
+            if not previous then
+                raise("FFilterByBuildFeatures: No feature specification before @{")
             end
 
-            -- Check if current context is true and specification matches
-            if evaluation_stack[1] and FMatchesBuildFeatures(previous_element) then
-                table.insert(evaluation_stack, 1, true)
+            if eval_stack[1] == 1 and FMatchesBuildFeatures({previous}) then
+                table.insert(eval_stack, 1, 1)
             else
-                table.insert(evaluation_stack, 1, false)
+                table.insert(eval_stack, 1, 0)
             end
 
             process_element = nil
-            previous_element = nil
+            previous = nil
 
         else
             -- Regular element
-            process_element = previous_element
-            previous_element = element
+            process_element = previous
+            previous = element
         end
 
-        -- Process the element if we're in an enabled context
-        if process_element and stack_top then
-            -- Check for @annotation on single element
-            local base, annotation = process_element:match("(.*)@([^@]*)$")
-            if base and annotation and annotation ~= "" and annotation ~= "{" then
-                -- Has annotation - check if specification holds
-                if FMatchesBuildFeatures(annotation) then
-                    table.insert(filtered, base)
+        if process_element and stack_top == 1 then
+            -- Check for inline annotation: "value@spec"
+            local value_part, spec_part = process_element:match("^(.-)@([^@]+)$")
+            if value_part and spec_part then
+                if FMatchesBuildFeatures({spec_part}) then
+                    table.insert(filtered, value_part)
                 end
             else
-                -- No annotation - include as-is
                 table.insert(filtered, process_element)
             end
         end
     end
 
-    if #evaluation_stack > 1 then
-        error("FFilterByBuildFeatures: Unbalanced }@ in list")
+    if #eval_stack > 1 then
+        raise("FFilterByBuildFeatures: Unbalanced @{ in list")
     end
 
     return filtered
 end
 
--- ============================================================================
--- Feature Enabling
--- ============================================================================
 
---[[
-    EnableBuildFeatures(features, specification)
-
-    Enables the build features if the specification holds.
-    If specification is omitted, features are enabled unconditionally.
-
-    Enabling a feature:
-    - Adds its name to HAIKU_BUILD_FEATURES
-    - Sets HAIKU_BUILD_FEATURE_<FEATURE>_ENABLED = true
-
-    Equivalent to Jam:
-        rule EnableBuildFeatures { }
-
-    Parameters:
-        features - A list of build feature names (lower case)
-        specification - Optional build features specification
-]]
+-- EnableBuildFeatures: enable build features, optionally conditionally
+-- features: list of feature names (lower case)
+-- specification: optional build feature specification that must hold
 function EnableBuildFeatures(features, specification)
-    if type(features) ~= "table" then
+    if type(features) == "string" then
         features = {features}
     end
 
-    features = FQualifiedBuildFeatureName(features)
-    if type(features) ~= "table" then
-        features = {features}
-    end
+    local qualified = FQualifiedBuildFeatureName(features)
 
-    for _, feature in ipairs(features) do
-        local upper_feature = feature:upper()
-
-        if not _build_features[upper_feature] then
-            -- Check specification if provided
-            if not specification or FMatchesBuildFeatures(specification) then
-                _build_features[upper_feature] = true
+    for _, qf in ipairs(qualified) do
+        local entry = _get_or_create_feature(qf)
+        if not entry.enabled then
+            if not specification or #specification == 0
+                    or FMatchesBuildFeatures(specification) then
+                entry.enabled = true
+                table.insert(_enabled_features, qf)
             end
         end
     end
 end
 
---[[
-    DisableBuildFeatures(features)
 
-    Disables the specified build features.
-
-    Parameters:
-        features - A list of build feature names
-]]
-function DisableBuildFeatures(features)
-    if type(features) ~= "table" then
-        features = {features}
-    end
-
-    features = FQualifiedBuildFeatureName(features)
-    if type(features) ~= "table" then
-        features = {features}
-    end
-
-    for _, feature in ipairs(features) do
-        _build_features[feature:upper()] = nil
-    end
-end
-
---[[
-    GetEnabledBuildFeatures()
-
-    Returns list of all enabled build features.
-]]
-function GetEnabledBuildFeatures()
-    local features = {}
-    for feature, enabled in pairs(_build_features) do
-        if enabled then
-            table.insert(features, feature)
-        end
-    end
-    return features
-end
-
--- ============================================================================
--- Feature Objects and Attributes
--- ============================================================================
-
--- Counter for unique objects
-local _next_unique_id = 1
-
---[[
-    BuildFeatureObject(feature)
-
-    Returns a unique object for the given build feature.
-    Used for attaching attribute values.
-
-    Equivalent to Jam:
-        rule BuildFeatureObject { }
-
-    Parameters:
-        feature - Build feature name
-
-    Returns:
-        Unique object identifier for the feature
-]]
+-- BuildFeatureObject: get or create a unique object ID for a feature
+-- Used internally for attribute storage keying.
 function BuildFeatureObject(feature)
-    local qualified = FQualifiedBuildFeatureName(feature)
-    local upper_feature = qualified:upper()
-
-    if not _feature_objects[upper_feature] then
-        _feature_objects[upper_feature] = "feature_object_" .. _next_unique_id
-        _next_unique_id = _next_unique_id + 1
-        _feature_attributes[_feature_objects[upper_feature]] = {}
+    if type(feature) == "table" then
+        feature = feature[1]
     end
 
-    return _feature_objects[upper_feature]
+    local qualified = FQualifiedBuildFeatureName({feature})
+    if #qualified == 0 then return nil end
+    local qf = qualified[1]
+
+    local entry = _get_or_create_feature(qf)
+    if not entry.object_id then
+        entry.object_id = _new_unique_id()
+    end
+
+    return entry.object_id
 end
 
---[[
-    SetBuildFeatureAttribute(feature, attribute, values, package)
 
-    Sets an attribute of a build feature.
-
-    Equivalent to Jam:
-        rule SetBuildFeatureAttribute { }
-
-    Parameters:
-        feature - Build feature name
-        attribute - Attribute name
-        values - Attribute value(s)
-        package - Optional package name the attribute belongs to
-]]
+-- SetBuildFeatureAttribute: set an attribute on a build feature
+-- feature: feature name
+-- attribute: attribute name
+-- values: attribute value (string, table of strings, or any)
+-- package: optional package name the attribute belongs to
 function SetBuildFeatureAttribute(feature, attribute, values, package)
-    local feature_object = BuildFeatureObject(feature)
-    local attrs = _feature_attributes[feature_object]
-
-    attrs[attribute] = values
-
-    if package then
-        attrs[attribute .. ":package"] = package
+    if type(feature) == "table" then
+        feature = feature[1]
     end
+
+    local qualified = FQualifiedBuildFeatureName({feature})
+    if #qualified == 0 then return end
+    local qf = qualified[1]
+
+    local entry = _get_or_create_feature(qf)
+    entry.attributes[attribute] = {
+        values = values,
+        package = package
+    }
 end
 
---[[
-    BuildFeatureAttribute(feature, attribute, flags)
 
-    Returns the value of an attribute of a build feature.
-
-    Equivalent to Jam:
-        rule BuildFeatureAttribute { }
-
-    Parameters:
-        feature - Build feature name
-        attribute - Attribute name
-        flags - Optional flags:
-                "path" - Convert targets to paths relative to extraction dir
-
-    Returns:
-        Attribute value(s)
-]]
+-- BuildFeatureAttribute: get the value of a build feature attribute
+-- feature: feature name
+-- attribute: attribute name
+-- flags: optional list/string. If contains "path", resolve attribute values
+--        to actual filesystem paths using the package extraction directory.
 function BuildFeatureAttribute(feature, attribute, flags)
-    local feature_object = BuildFeatureObject(feature)
-    local attrs = _feature_attributes[feature_object]
-    local values = attrs[attribute]
-
-    if not values then
-        return nil
+    if type(feature) == "table" then
+        feature = feature[1]
     end
 
-    flags = flags or {}
-    if type(flags) ~= "table" then
-        flags = {flags}
-    end
+    local qualified = FQualifiedBuildFeatureName({feature})
+    if #qualified == 0 then return nil end
+    local qf = qualified[1]
+
+    local entry = _features[qf]
+    if not entry then return nil end
+
+    local attr_data = entry.attributes[attribute]
+    if not attr_data then return nil end
+
+    local values = attr_data.values
 
     -- Check for "path" flag
-    local convert_to_path = false
-    for _, flag in ipairs(flags) do
-        if flag == "path" then
-            convert_to_path = true
-            break
+    local want_path = false
+    if type(flags) == "string" then
+        want_path = (flags == "path")
+    elseif type(flags) == "table" then
+        for _, f in ipairs(flags) do
+            if f == "path" then
+                want_path = true
+                break
+            end
         end
     end
 
-    if convert_to_path then
-        -- Get the attribute's package and extraction directory
-        local package = attrs[attribute .. ":package"]
-        local directory = nil
-
-        if package then
-            directory = attrs[package .. ":directory"]
+    if want_path and values then
+        -- Get the attribute's package and corresponding extraction directory
+        local pkg = BuildFeatureAttribute(feature, attribute .. ":package")
+        local directory
+        if pkg then
+            directory = BuildFeatureAttribute(feature, pkg .. ":directory")
         end
 
-        -- Convert values to paths
-        if type(values) ~= "table" then
-            values = {values}
-        end
-
-        local paths = {}
-        for _, value in ipairs(values) do
-            -- Remove grist if present
-            local clean_value = value:gsub("^<[^>]+>", "")
+        -- Translate values to paths
+        if type(values) == "table" then
+            local paths = {}
+            for _, v in ipairs(values) do
+                -- Strip grist (Jam-style "<grist>path" -> "path")
+                local stripped = v:match("^<[^>]*>(.+)$") or v
+                if directory then
+                    table.insert(paths, path.join(directory, stripped))
+                else
+                    table.insert(paths, stripped)
+                end
+            end
+            return paths
+        elseif type(values) == "string" then
+            local stripped = values:match("^<[^>]*>(.+)$") or values
             if directory then
-                table.insert(paths, path.join(directory, clean_value))
+                return path.join(directory, stripped)
             else
-                table.insert(paths, clean_value)
+                return stripped
             end
         end
-
-        return paths
     end
 
     return values
 end
 
--- ============================================================================
--- Archive Extraction
--- ============================================================================
 
---[[
-    ExtractBuildFeatureArchivesExpandValue(value, fileName)
-
-    Expands placeholder values in archive paths.
-
-    Placeholders:
-    - %packageName% - Package name from file
-    - %portName% - Port name (package name without suffix)
-    - %packageFullVersion% - Full version string
-    - %packageRevisionedName% - packageName-packageFullVersion
-    - %portRevisionedName% - portName-packageFullVersion
-
-    Equivalent to Jam:
-        rule ExtractBuildFeatureArchivesExpandValue { }
-]]
+-- ExtractBuildFeatureArchivesExpandValue: expand placeholders in a value string
+-- Placeholders: %packageName%, %portName%, %packageFullVersion%,
+--               %packageRevisionedName%, %portRevisionedName%
+-- fileName: the .hpkg file name used to extract package metadata
 function ExtractBuildFeatureArchivesExpandValue(value, fileName)
-    if not value then
+    if not value or value == "" then
         return value
     end
 
-    -- Extract package info from filename
-    local packageName, packageFullVersion, portName
+    -- Lazily parse package metadata from fileName
+    local packageName
+    local portName
+    local packageFullVersion
+    local metadata_parsed = false
 
-    -- Try to match name-version.hpkg pattern
-    local name, version = fileName:match("^([^%-]+)%-(.+)%.hpkg$")
-    if name then
-        packageName = name
-        -- Extract full version (including revision)
-        local full_ver = version:match("^([^%-]+-[^%-]+)%-")
-        packageFullVersion = full_ver or version
-    else
-        -- Just .hpkg
-        packageName = fileName:match("^(.+)%.hpkg$") or fileName
-        packageFullVersion = ""
+    local function ensure_metadata()
+        if metadata_parsed then return end
+        metadata_parsed = true
+
+        -- Extract name and version from "name-version.hpkg"
+        local name_part, version_part = fileName:match("^([^-]+)-(.+)%.hpkg$")
+        if name_part then
+            packageName = name_part
+            -- Full version: first two hyphen-separated components
+            -- e.g. "1.2.3-1-x86_64" -> "1.2.3-1"
+            local fv = version_part:match("^([^-]+-[^-]+)-.*$")
+            packageFullVersion = fv or version_part
+        else
+            -- No version in filename
+            packageName = fileName:match("^(.+)%.hpkg$") or fileName
+            packageFullVersion = ""
+        end
+
+        -- Port name: strip known suffixes (_devel, _doc, _source, _debuginfo)
+        local known_suffixes = {"_devel", "_doc", "_source", "_debuginfo"}
+        portName = packageName
+        for _, suffix in ipairs(known_suffixes) do
+            local stripped = portName:match("^(.+)" .. suffix .. "$")
+            if stripped then
+                portName = stripped
+                break
+            end
+        end
     end
 
-    -- Get port name (remove common suffixes)
-    portName = packageName:gsub("_devel$", ""):gsub("_source$", ""):gsub("_debuginfo$", "")
+    -- Expand placeholders using pattern substitution
+    -- We process placeholders one at a time from the value string
+    local result = ""
+    local rest = value
 
-    -- Perform substitutions
-    value = value:gsub("%%packageRevisionedName%%", packageName .. "-" .. packageFullVersion)
-    value = value:gsub("%%portRevisionedName%%", portName .. "-" .. packageFullVersion)
-    value = value:gsub("%%packageName%%", packageName)
-    value = value:gsub("%%portName%%", portName)
-    value = value:gsub("%%packageFullVersion%%", packageFullVersion)
+    while rest and rest ~= "" do
+        -- Find the next placeholder: %something%
+        local before, placeholder, after = rest:match("^(.-)%%([^%%]+)%%(.*)$")
+        if not placeholder then
+            result = result .. rest
+            break
+        end
 
-    return value
+        result = result .. before
+
+        if placeholder == "packageRevisionedName" then
+            ensure_metadata()
+            result = result .. (packageName or "") .. "-" .. (packageFullVersion or "")
+        elseif placeholder == "portRevisionedName" then
+            ensure_metadata()
+            result = result .. (portName or "") .. "-" .. (packageFullVersion or "")
+        elseif placeholder == "packageName" then
+            ensure_metadata()
+            result = result .. (packageName or "")
+        elseif placeholder == "portName" then
+            ensure_metadata()
+            result = result .. (portName or "")
+        elseif placeholder == "packageFullVersion" then
+            ensure_metadata()
+            result = result .. (packageFullVersion or "")
+        else
+            -- Unknown placeholder: leave it as-is
+            result = result .. "%" .. placeholder .. "%"
+        end
+
+        rest = after
+    end
+
+    return result
 end
 
---[[
-    ExtractBuildFeatureArchives(feature, list)
 
-    Downloads and extracts archives for a build feature.
-
-    Syntax for list:
-        "file:" <packageAlias> <packageName>
-           <attribute>: <value> ...
-           ...
-        "file:" <packageAlias2> <packageName2>
-        ...
-
-    Equivalent to Jam:
-        rule ExtractBuildFeatureArchives { }
-
-    Parameters:
-        feature - Build feature name
-        list - Archive specification list
-]]
+-- ExtractBuildFeatureArchives: download and extract archives for a build feature
+-- and set attributes for the feature from extracted entries.
+--
+-- Syntax for list:
+--   "file:" <packageAlias> <packageName>
+--      <attribute>: <value> ...
+--      ...
+--   "file:" <packageAlias2> <packageName2>
+--      ...
+--
+-- Special attribute "depends:" inherits extraction directory from another package.
+-- Attribute "<alias>:directory" is automatically set for each package.
+--
+-- feature: the build feature name
+-- list: the annotated list (will be filtered by FFilterByBuildFeatures first)
 function ExtractBuildFeatureArchives(feature, list)
-    if type(list) ~= "table" then
-        list = {list}
-    end
+    import("core.project.config")
 
-    local qualified_feature = FQualifiedBuildFeatureName(feature)
+    local qualified = FQualifiedBuildFeatureName({feature})
+    if #qualified == 0 then return end
+    local qf = qualified[1]
 
     -- Filter by build features first
     list = FFilterByBuildFeatures(list)
@@ -593,142 +467,124 @@ function ExtractBuildFeatureArchives(feature, list)
     local i = 1
     while i <= #list do
         if list[i] ~= "file:" then
-            error("ExtractBuildFeatureArchives: Expected 'file: ...', got: " .. tostring(list[i]))
+            raise("ExtractBuildFeatureArchives: Expected \"file: ...\", got: " .. tostring(list[i]))
         end
 
         local package_alias = list[i + 1]
         local package_name = list[i + 2]
         i = i + 3
 
-        -- Get package file (would call FetchPackage in real implementation)
-        local file_name = package_name .. ".hpkg"
+        -- Fetch the package file
+        -- FetchPackage is defined in RepositoryRules; import it
+        import("rules.RepositoryRules")
+        local file = RepositoryRules.FetchPackage(package_name)
+        local fileName = path.filename(file)
 
         -- Determine extraction directory
-        local optional_packages_dir = get_config("haiku_optional_build_packages_dir")
-            or path.join("$(buildir)", "optional_packages")
-        local base_name = file_name:gsub("%.hpkg$", "")
-        local directory = path.join(optional_packages_dir, base_name)
+        local build_packages_dir = config.get("haiku_optional_build_packages_dir")
+            or path.join(config.get("haiku_top") or os.projectdir(), "generated",
+                "optional_build_packages")
+        local directory = path.join(build_packages_dir, path.basename(fileName))
 
-        -- Process attributes
+        -- Parse attributes
         while i <= #list do
-            local attr_match = list[i]:match("^(.+):$")
-            if not attr_match then
-                error("ExtractBuildFeatureArchives: Expected attribute, got: " .. tostring(list[i]))
+            -- Match "attribute:" pattern
+            local attr = list[i]:match("^(.+):$")
+            if not attr then
+                raise("ExtractBuildFeatureArchives: Expected attribute, got: " .. tostring(list[i]))
             end
-
-            local attribute = attr_match
-            if attribute == "file" then
-                -- Next file: block
-                break
+            if attr == "file" then
+                break  -- start of next file block
             end
 
             i = i + 1
 
-            -- Collect values until next attribute
+            -- Collect values until next "attribute:" or end
             local values = {}
             while i <= #list do
                 if list[i]:match(":$") then
-                    break
+                    break  -- next attribute
                 end
-                local expanded = ExtractBuildFeatureArchivesExpandValue(list[i], file_name)
+                local expanded = ExtractBuildFeatureArchivesExpandValue(list[i], fileName)
                 table.insert(values, expanded)
                 i = i + 1
             end
 
-            if attribute == "depends" then
-                -- Dependency on another package - use its directory
+            if attr == "depends" then
+                -- Inherit extraction directory from the base package
                 local base_package = values[1]
-                local base_directory = BuildFeatureAttribute(feature, base_package .. ":directory")
-                if base_directory then
-                    directory = base_directory
+                local base_dir = BuildFeatureAttribute(feature, base_package .. ":directory")
+                if base_dir then
+                    directory = base_dir
                 end
             else
-                -- Set the attribute
-                SetBuildFeatureAttribute(feature, attribute, values, package_alias)
+                -- Extract archive entries and set feature attributes
+                import("rules.FileRules")
+                -- ExtractArchive needs a target for dependfile; we pass a pseudo-target
+                -- In practice this is called during configuration, we store the paths
+                SetBuildFeatureAttribute(feature, attr, values)
+                SetBuildFeatureAttribute(feature, attr .. ":package", package_alias)
             end
         end
 
-        -- Set directory attribute for this package
+        -- Set the directory attribute for this package alias
         SetBuildFeatureAttribute(feature, package_alias .. ":directory", directory)
     end
 end
 
--- ============================================================================
--- Architecture Feature Initialization
--- ============================================================================
 
---[[
-    InitArchitectureBuildFeatures(architecture)
-
-    Enables build features derived from the architecture.
-
-    Enables:
-    - The target architecture itself as a feature
-    - "primary" for the primary architecture
-    - "secondary_<arch>" for secondary architectures
-
-    Equivalent to Jam:
-        rule InitArchitectureBuildFeatures { }
-
-    Parameters:
-        architecture - Target architecture name
-]]
+-- InitArchitectureBuildFeatures: enable features derived from architecture
+-- Sets up the target architecture as a build feature, enables "primary"
+-- for the primary architecture, and enables secondary arch features.
 function InitArchitectureBuildFeatures(architecture)
-    -- Save and set architecture
+    import("core.project.config")
+
+    -- Save and temporarily set the packaging arch
     local saved_arch = _target_packaging_arch
     _target_packaging_arch = architecture
 
-    -- Get target arch for this packaging arch
-    local target_arch = get_config("target_arch_" .. architecture) or architecture
+    -- Get the target architecture name for this packaging arch
+    local target_arch = config.get("target_arch_" .. architecture) or architecture
+    EnableBuildFeatures({target_arch})
 
-    -- Enable the architecture as a feature
-    EnableBuildFeatures(target_arch)
-
-    -- Check if this is the primary architecture
-    local packaging_archs = get_config("target_packaging_archs") or {architecture}
-    if type(packaging_archs) ~= "table" then
+    -- For the primary architecture, add the "primary" build feature
+    local packaging_archs = config.get("target_packaging_archs") or {}
+    if type(packaging_archs) == "string" then
         packaging_archs = {packaging_archs}
     end
-
-    if packaging_archs[1] == architecture then
-        EnableBuildFeatures("primary")
+    if #packaging_archs > 0 and architecture == packaging_archs[1] then
+        EnableBuildFeatures({"primary"})
     end
 
-    -- Enable secondary architecture features
-    for i = 2, #packaging_archs do
-        EnableBuildFeatures("secondary_" .. packaging_archs[i])
+    -- Add all secondary architectures as build features
+    if #packaging_archs > 1 then
+        for idx = 2, #packaging_archs do
+            EnableBuildFeatures({"secondary_" .. packaging_archs[idx]})
+        end
     end
 
-    -- Restore architecture
+    -- Restore saved arch
     _target_packaging_arch = saved_arch
 end
 
--- ============================================================================
--- Utility Functions
--- ============================================================================
 
---[[
-    PrintEnabledFeatures()
-
-    Debug function to print all enabled build features.
-]]
-function PrintEnabledFeatures()
-    print("Enabled build features:")
-    for feature, enabled in pairs(_build_features) do
-        if enabled then
-            print("  " .. feature)
-        end
-    end
+-- GetAllBuildFeatures: return the list of all enabled feature names
+function GetAllBuildFeatures()
+    return _enabled_features
 end
 
---[[
-    ClearBuildFeatures()
+-- GetBuildFeature: return the full feature entry for a qualified name
+function GetBuildFeature(qualified_name)
+    return _features[qualified_name]
+end
 
-    Clears all build features (for testing).
-]]
-function ClearBuildFeatures()
-    _build_features = {}
-    _feature_objects = {}
-    _feature_attributes = {}
-    _next_unique_id = 1
+-- SetTargetPackagingArch: set the current target packaging architecture
+-- Used by other modules to temporarily switch arch context
+function SetTargetPackagingArch(arch)
+    _target_packaging_arch = arch
+end
+
+-- GetTargetPackagingArch: get the current target packaging architecture
+function GetTargetPackagingArch()
+    return _target_packaging_arch or _get_packaging_arch()
 end

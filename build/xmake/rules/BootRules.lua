@@ -1,765 +1,410 @@
 --[[
-    Haiku OS Build System - Boot Loader Build Rules
+    BootRules.lua - Haiku bootloader build rules
 
-    xmake equivalent of build/jam/BootRules
+    xmake equivalent of build/jam/BootRules (1:1 migration)
 
-    These rules are used to build the boot loader components for various
-    platforms (BIOS, EFI, U-Boot, etc.). Boot loader code has specific
-    requirements similar to kernel code but with platform-specific variations.
+    Rules defined:
+    - SetupBoot          - Configure boot-specific compiler/linker flags on a target
+    - BootObjects        - Compile objects with boot flags (rule)
+    - BootLd             - Link bootloader binary with special LD flags (rule)
+    - BootMergeObject    - Merge boot objects into single .o (rule)
+    - BootStaticLibrary  - Build boot static library (rule)
+    - BootStaticLibraryObjects - Build static library from pre-compiled boot objects (rule)
+    - BuildMBR           - Build MBR binary with raw binary output (rule)
 
-    Boot Platforms:
-    - bios_ia32: Legacy BIOS boot for x86
-    - efi: UEFI boot for x86_64, arm64
-    - u-boot: U-Boot for ARM, RISC-V
-    - riscv: RISC-V OpenSBI
+    Utility functions:
+    - MultiBootSubDirSetup(boot_targets) - Create per-boot-platform build contexts
+    - MultiBootGristFiles(files, platform) - Add boot platform prefix to file names
 
-    Rules provided:
-    - BootObjects: Compile sources with boot loader flags
-    - BootLd: Link boot loader binary
-    - BootMergeObject: Merge multiple objects for boot
-    - BootStaticLibrary: Create static library for boot
-    - BootStaticLibraryObjects: Create library from pre-compiled objects
-    - BuildMBR: Build Master Boot Record (BIOS)
-
-    Helper functions:
-    - MultiBootSubDirSetup: Setup for multiple boot targets
-    - MultiBootGristFiles: Grist files for boot target
-    - SetupBoot: Configure boot compilation settings
+    Boot code uses special compiler flags (no standard libs, freestanding environment)
+    and links with custom linker scripts.
 ]]
 
--- ============================================================================
--- Configuration Variables
--- ============================================================================
+-- Boot settings per platform, populated by ArchitectureRules/BuildSetup
+local _boot_settings = {}
 
--- Boot targets (platforms)
-local HAIKU_BOOT_TARGETS = {
-    "bios_ia32",
-    "efi",
-    "pxe_ia32",
-    "u-boot",
-    "riscv",
-}
-
--- Current boot platform context (set per-target)
-local _boot_platform_context = {}
-
--- ============================================================================
--- Helper Functions
--- ============================================================================
-
--- Get Haiku source tree root
-local function get_haiku_top()
-    return os.projectdir()
+-- SetBootSettings: store boot settings for a platform
+function SetBootSettings(platform, settings)
+    _boot_settings[platform] = settings
 end
 
--- Get kernel architecture (boot uses same arch as kernel)
-local function get_kernel_arch()
-    local arch = get_config("arch") or "x86_64"
-    -- Map packaging arch to kernel arch
-    local arch_map = {
-        ["x86_64"] = "x86_64",
-        ["x86"] = "x86",
-        ["arm64"] = "arm64",
-        ["arm"] = "arm",
-        ["riscv64"] = "riscv64",
-    }
-    return arch_map[arch] or arch
+-- GetBootSettings: retrieve boot settings
+function GetBootSettings(platform)
+    return _boot_settings[platform] or {}
 end
 
--- Get current boot platform from context or default
-local function get_boot_platform()
-    if _boot_platform_context.platform then
-        return _boot_platform_context.platform
-    end
-    -- Default based on architecture
-    local arch = get_kernel_arch()
-    if arch == "x86_64" or arch == "x86" then
-        return "bios_ia32"  -- or "efi" for UEFI
-    elseif arch == "arm64" then
-        return "efi"
-    elseif arch == "arm" then
-        return "u-boot"
-    elseif arch == "riscv64" then
-        return "riscv"
-    end
-    return "efi"
-end
-
--- Set boot platform context
-local function set_boot_platform(platform)
-    _boot_platform_context.platform = platform
-end
-
--- Get base boot CCFLAGS (common for all platforms)
-local function get_boot_ccflags()
-    local arch = get_kernel_arch()
-    local flags = {
-        "-ffreestanding",
-        "-fno-builtin",
-        "-fno-exceptions",
-        "-fno-asynchronous-unwind-tables",
-        "-fno-rtti",
-    }
-
-    -- Architecture-specific flags
-    if arch == "x86_64" then
-        table.insert(flags, "-mno-red-zone")
-        table.insert(flags, "-mno-mmx")
-        table.insert(flags, "-mno-sse")
-        table.insert(flags, "-mno-sse2")
-    elseif arch == "x86" then
-        table.insert(flags, "-march=pentium")
-    elseif arch == "arm64" then
-        table.insert(flags, "-mgeneral-regs-only")
-    elseif arch == "arm" then
-        table.insert(flags, "-mfloat-abi=soft")
-    elseif arch == "riscv64" then
-        table.insert(flags, "-mno-relax")
-        table.insert(flags, "-mcmodel=medany")
-    end
-
-    return flags
-end
-
--- Get platform-specific boot CCFLAGS
-local function get_boot_platform_ccflags(platform)
-    platform = platform or get_boot_platform()
-    local flags = {}
-
-    if platform == "bios_ia32" then
-        -- 32-bit BIOS boot loader
-        table.insert(flags, "-m32")
-        table.insert(flags, "-march=pentium")
-    elseif platform == "efi" then
-        -- EFI boot loader
-        local arch = get_kernel_arch()
-        if arch == "x86_64" then
-            table.insert(flags, "-DEFI_FUNCTION_WRAPPER")
-            table.insert(flags, "-mno-red-zone")
-        elseif arch == "arm64" then
-            table.insert(flags, "-fpie")
-        end
-    elseif platform == "pxe_ia32" then
-        -- PXE boot (32-bit)
-        table.insert(flags, "-m32")
-        table.insert(flags, "-march=pentium")
-    elseif platform == "u-boot" then
-        -- U-Boot for ARM
-        table.insert(flags, "-fpic")
-    elseif platform == "riscv" then
-        -- RISC-V boot
-        table.insert(flags, "-fpic")
-    end
-
-    return flags
-end
-
--- Get boot C++ flags
-local function get_boot_cxxflags()
-    local flags = get_boot_ccflags()
-    -- Additional C++ specific flags
-    table.insert(flags, "-fno-exceptions")
-    table.insert(flags, "-fno-rtti")
-    return flags
-end
-
--- Get boot defines
-local function get_boot_defines()
-    local defines = {
-        "_BOOT_MODE",
-        "_LOADER_MODE",
-    }
-
-    local platform = get_boot_platform()
-    if platform == "bios_ia32" or platform == "pxe_ia32" then
-        table.insert(defines, "_BOOT_PLATFORM_BIOS")
-    elseif platform == "efi" then
-        table.insert(defines, "_BOOT_PLATFORM_EFI")
-    elseif platform == "u-boot" then
-        table.insert(defines, "_BOOT_PLATFORM_U_BOOT")
-    elseif platform == "riscv" then
-        table.insert(defines, "_BOOT_PLATFORM_RISCV")
-    end
-
-    -- Add kernel defines too
-    local arch = get_kernel_arch()
-    table.insert(defines, "_KERNEL_MODE")
-    if arch == "x86_64" then
-        table.insert(defines, "__x86_64__")
-    elseif arch == "x86" then
-        table.insert(defines, "__i386__")
-    elseif arch == "arm64" then
-        table.insert(defines, "__aarch64__")
-    elseif arch == "arm" then
-        table.insert(defines, "__arm__")
-    elseif arch == "riscv64" then
-        table.insert(defines, "__riscv")
-        table.insert(defines, "__riscv_xlen=64")
-    end
-
-    return defines
-end
-
--- Get boot linker flags
-local function get_boot_ldflags(platform)
-    platform = platform or get_boot_platform()
-    local flags = {
-        "-nostdlib",
-    }
-
-    if platform == "bios_ia32" then
-        table.insert(flags, "-m32")
-        -- Note: Actual linking uses linker script
-    elseif platform == "efi" then
-        local arch = get_kernel_arch()
-        table.insert(flags, "-shared")
-        table.insert(flags, "-Bsymbolic")
-        if arch == "x86_64" then
-            table.insert(flags, "-znocombreloc")
-        end
-    elseif platform == "pxe_ia32" then
-        table.insert(flags, "-m32")
-    elseif platform == "u-boot" or platform == "riscv" then
-        -- Position independent
-    end
-
-    return flags
-end
-
--- Get private kernel headers for boot
-local function get_private_kernel_headers()
-    local haiku_top = get_haiku_top()
-    local arch = get_kernel_arch()
-
-    return {
-        path.join(haiku_top, "headers", "private", "kernel"),
-        path.join(haiku_top, "headers", "private", "kernel", "arch", arch),
-        path.join(haiku_top, "headers", "private", "kernel", "boot"),
-        path.join(haiku_top, "headers", "private", "kernel", "boot", "platform"),
-        path.join(haiku_top, "headers", "private", "system"),
-        path.join(haiku_top, "headers", "private", "system", "arch", arch),
-        path.join(haiku_top, "headers", "private"),
-    }
-end
-
--- Get boot platform-specific headers
-local function get_boot_platform_headers(platform)
-    platform = platform or get_boot_platform()
-    local haiku_top = get_haiku_top()
-
-    local headers = {}
-
-    if platform == "bios_ia32" then
-        table.insert(headers, path.join(haiku_top, "headers", "private", "kernel", "boot", "platform", "bios_ia32"))
-    elseif platform == "efi" then
-        table.insert(headers, path.join(haiku_top, "headers", "private", "kernel", "boot", "platform", "efi"))
-        -- EFI headers
-        table.insert(headers, path.join(haiku_top, "headers", "private", "kernel", "boot", "platform", "efi", "protocol"))
-    elseif platform == "u-boot" then
-        table.insert(headers, path.join(haiku_top, "headers", "private", "kernel", "boot", "platform", "u-boot"))
-    elseif platform == "riscv" then
-        table.insert(headers, path.join(haiku_top, "headers", "private", "kernel", "boot", "platform", "riscv"))
-    end
-
-    return headers
-end
-
--- Get boot libgcc path
-local function get_boot_libgcc()
-    -- This would need to be determined from cross-compiler
-    local arch = get_kernel_arch()
-    -- Placeholder - actual path depends on toolchain
-    return "libgcc.a"
-end
-
--- Get boot libsupc++ path
-local function get_boot_libsupc()
-    -- Placeholder - actual path depends on toolchain
-    return "libsupc++.a"
-end
-
--- ============================================================================
--- MultiBootSubDirSetup - Setup for multiple boot targets
--- ============================================================================
-
--- Jam equivalent: MultiBootSubDirSetup bootTargets
--- Returns list of boot target context objects for iteration
+-- MultiBootSubDirSetup: create build context objects for each boot platform
+-- Returns a list of context tables, each containing boot target configuration
 function MultiBootSubDirSetup(boot_targets)
-    boot_targets = boot_targets or HAIKU_BOOT_TARGETS
-
-    local result = {}
+    local results = {}
     for _, boot_target in ipairs(boot_targets) do
-        local target_context = {
+        local ctx = {
             platform = boot_target,
-            grist = boot_target,
+            source_grist = boot_target,
+            hdr_grist = boot_target,
         }
-        table.insert(result, target_context)
+        table.insert(results, ctx)
     end
-
-    return result
+    return results
 end
 
--- ============================================================================
--- MultiBootGristFiles - Add boot target grist to files
--- ============================================================================
-
--- Jam equivalent: MultiBootGristFiles files
+-- MultiBootGristFiles: prefix file names with boot platform
 function MultiBootGristFiles(files, platform)
-    platform = platform or get_boot_platform()
-
-    if type(files) ~= "table" then
-        files = {files}
-    end
-
-    -- In xmake, we return files with platform prefix for organization
     local result = {}
-    for _, file in ipairs(files) do
-        -- Add platform context to file path
-        table.insert(result, file)
+    for _, f in ipairs(files) do
+        table.insert(result, platform .. "_" .. f)
     end
-
     return result
 end
 
--- ============================================================================
--- SetupBoot - Configure boot compilation settings
--- ============================================================================
+-- SetupBootTarget: apply boot compiler/linker flags to an xmake target
+-- This is the core function called from on_load callbacks
+function SetupBootTarget(target, extra_ccflags, include_private_headers)
+    import("core.project.config")
 
--- Apply boot setup to a target
-local function ApplyBootSetup(target, extra_flags, include_private_headers, platform)
-    platform = platform or get_boot_platform()
+    local arch = config.get("target_kernel_arch") or config.get("arch") or "x86_64"
+    local platform = target:values("boot.platform")
+    local platform_upper = platform and platform:upper() or ""
 
-    -- Get flags
-    local ccflags = get_boot_ccflags()
-    local platform_ccflags = get_boot_platform_ccflags(platform)
-    local cxxflags = get_boot_cxxflags()
-    local defines = get_boot_defines()
+    -- Boot compiler flags
+    local boot_ccflags = config.get("boot_ccflags") or {}
+    local boot_cxxflags = config.get("boot_cxxflags") or {}
+    local boot_defines = config.get("target_kernel_defines") or {}
+    local boot_platform_ccflags = _boot_settings[platform] and _boot_settings[platform].ccflags or {}
+    local boot_platform_cxxflags = _boot_settings[platform] and _boot_settings[platform].cxxflags or {}
+    local boot_target_defines = config.get("target_boot_defines") or {}
 
-    -- Apply base boot flags
-    for _, flag in ipairs(ccflags) do
-        target:add("cxflags", flag, {force = true})
+    -- Apply flags
+    if type(boot_ccflags) == "table" then
+        target:add("cflags", table.unpack(boot_ccflags))
+    end
+    if type(boot_platform_ccflags) == "table" then
+        target:add("cflags", table.unpack(boot_platform_ccflags))
+    end
+    if type(boot_cxxflags) == "table" then
+        target:add("cxxflags", table.unpack(boot_cxxflags))
+    end
+    if type(boot_platform_cxxflags) == "table" then
+        target:add("cxxflags", table.unpack(boot_platform_cxxflags))
     end
 
-    -- Apply platform-specific flags
-    for _, flag in ipairs(platform_ccflags) do
-        target:add("cxflags", flag, {force = true})
-    end
-
-    -- Extra flags from parameter
-    if extra_flags then
-        if type(extra_flags) == "string" then
-            target:add("cxflags", extra_flags, {force = true})
-        elseif type(extra_flags) == "table" then
-            for _, flag in ipairs(extra_flags) do
-                target:add("cxflags", flag, {force = true})
-            end
+    -- Extra caller-provided flags
+    if extra_ccflags then
+        if type(extra_ccflags) == "table" then
+            target:add("cflags", table.unpack(extra_ccflags))
+            target:add("cxxflags", table.unpack(extra_ccflags))
+        else
+            target:add("cflags", extra_ccflags)
+            target:add("cxxflags", extra_ccflags)
         end
     end
 
     -- Defines
-    for _, define in ipairs(defines) do
-        target:add("defines", define)
+    if type(boot_defines) == "table" then
+        target:add("defines", table.unpack(boot_defines))
+    end
+    if type(boot_target_defines) == "table" then
+        target:add("defines", table.unpack(boot_target_defines))
     end
 
-    -- Headers
+    -- Private kernel headers (opt-out with include_private_headers=false)
     if include_private_headers ~= false then
-        local headers = get_private_kernel_headers()
-        for _, header in ipairs(headers) do
-            target:add("includedirs", header, {public = false})
+        local private_headers = config.get("private_kernel_headers")
+        if private_headers then
+            if type(private_headers) == "table" then
+                target:add("includedirs", table.unpack(private_headers))
+            else
+                target:add("includedirs", private_headers)
+            end
         end
     end
 
-    -- Platform-specific headers
-    local platform_headers = get_boot_platform_headers(platform)
-    for _, header in ipairs(platform_headers) do
-        target:add("includedirs", header, {public = false})
+    -- Boot C++ headers
+    local boot_cxx_headers = config.get("boot_cxx_headers_dir_" .. arch)
+    if boot_cxx_headers then
+        target:add("includedirs", boot_cxx_headers)
     end
 
-    -- Optimization for boot loader
-    target:set("optimize", "smallest")  -- -Os equivalent
+    -- Override optimization
+    local boot_optim = config.get("boot_optim")
+    if boot_optim then
+        target:add("cflags", boot_optim)
+        target:add("cxxflags", boot_optim)
+    end
+
+    -- Set kernel arch as packaging arch
+    target:data_set("haiku.packaging_arch", arch)
 end
 
--- ============================================================================
--- BootObjects Rule - Compile sources with boot loader flags
--- ============================================================================
+-- Dual-load guard
+if rule then
 
--- Jam equivalent: BootObjects <sources> : <extra_cc_flags>
+-- BootObjects: compile objects with boot flags
 rule("BootObjects")
-    set_extensions(".c", ".cpp", ".S", ".s", ".asm")
 
-    on_load(function (target)
-        -- Get boot platform from target values
-        local platform = target:values("boot_platform") or get_boot_platform()
-        set_boot_platform(platform)
-
-        -- Get extra flags
-        local extra_flags = target:values("extra_ccflags")
-        local include_private_headers = target:values("include_private_headers")
-
-        ApplyBootSetup(target, extra_flags, include_private_headers, platform)
+    on_load(function(target)
+        target:set("kind", "object")
+        local extra = target:values("boot.extra_ccflags")
+        SetupBootTarget(target, extra)
     end)
 
-    -- Use standard compilation
-    on_build_file(function (target, sourcefile, opt)
-        import("core.tool.compiler")
-        local objectfile = target:objectfile(sourcefile)
-        os.mkdir(path.directory(objectfile))
-        compiler.compile(sourcefile, objectfile, {target = target})
-    end)
+rule_end()
 
--- ============================================================================
--- BootLd Rule - Link boot loader binary
--- ============================================================================
 
--- Jam equivalent: BootLd <name> : <objs> : <linkerscript> : <args>
+-- BootLd: link bootloader binary with LD
 rule("BootLd")
-    on_load(function (target)
-        -- Set as binary output
+
+    on_load(function(target)
+        import("core.project.config")
+
         target:set("kind", "binary")
 
-        -- Get boot platform
-        local platform = target:values("boot_platform") or get_boot_platform()
-        set_boot_platform(platform)
+        local arch = config.get("target_kernel_arch") or config.get("arch") or "x86_64"
+        local platform = target:values("boot.platform") or ""
+        local platform_upper = platform and platform:upper() or ""
 
-        -- Apply boot setup
-        ApplyBootSetup(target, nil, true, platform)
+        -- Use LD instead of CC for linking
+        local ld = config.get("target_ld_" .. arch)
+        if ld then
+            target:data_set("haiku.linker", ld)
+        end
 
-        -- Get linker script
-        local linker_script = target:values("linker_script")
+        -- Boot LD flags
+        local ldflags = _boot_settings[platform] and _boot_settings[platform].ldflags or {}
+        if type(ldflags) == "table" then
+            target:add("ldflags", table.unpack(ldflags))
+        end
+
+        -- Linker script
+        local linker_script = target:values("boot.linker_script")
         if linker_script then
-            target:add("ldflags", "-T" .. linker_script, {force = true})
+            target:add("ldflags", "--script=" .. linker_script)
         end
 
-        -- Apply boot ldflags
-        local ldflags = get_boot_ldflags(platform)
-        for _, flag in ipairs(ldflags) do
-            target:add("ldflags", flag, {force = true})
-        end
-
-        -- Additional linker args
-        local extra_ldflags = target:values("extra_ldflags")
+        -- Extra linker args
+        local extra_ldflags = target:values("boot.extra_ldflags")
         if extra_ldflags then
             if type(extra_ldflags) == "table" then
-                for _, flag in ipairs(extra_ldflags) do
-                    target:add("ldflags", flag, {force = true})
-                end
+                target:add("ldflags", table.unpack(extra_ldflags))
             else
-                target:add("ldflags", extra_ldflags, {force = true})
+                target:add("ldflags", extra_ldflags)
             end
         end
 
-        -- Version script
-        local version_script = target:values("version_script")
-        if version_script then
-            target:add("ldflags", "--version-script=" .. version_script, {force = true})
+        -- Link against libgcc; optionally libsupc++
+        local no_libsupcxx = target:values("boot.no_libsupc++")
+        if not no_libsupcxx then
+            local libsupcxx = config.get("boot_libsupc++_" .. arch)
+            if libsupcxx then
+                target:add("ldflags", libsupcxx)
+            end
+        end
+        local libgcc = config.get("boot_libgcc_" .. arch)
+        if libgcc then
+            target:add("ldflags", libgcc)
         end
 
-        -- Link against libgcc (always)
-        target:add("links", get_boot_libgcc())
-
-        -- Link against libsupc++ unless disabled
-        if not target:values("no_libsupc") then
-            target:add("links", get_boot_libsupc())
-        end
+        -- Apply boot compilation flags to objects
+        local extra = target:values("boot.extra_ccflags")
+        SetupBootTarget(target, extra)
     end)
 
-    on_link(function (target)
-        import("core.tool.linker")
+    on_link(function(target)
+        import("core.project.depend")
+
+        local ld = target:data("haiku.linker") or "ld"
+        local objects = target:objectfiles()
         local targetfile = target:targetfile()
-        local objectfiles = target:objectfiles()
-        os.mkdir(path.directory(targetfile))
-        linker.link("binary", objectfiles, targetfile, {target = target})
+        local ldflags = target:get("ldflags") or {}
+        local linklibs = target:get("linklibs") or {}
+
+        depend.on_changed(function()
+            local args = {}
+            for _, flag in ipairs(ldflags) do
+                table.insert(args, flag)
+            end
+            table.insert(args, "-o")
+            table.insert(args, targetfile)
+            for _, obj in ipairs(objects) do
+                table.insert(args, obj)
+            end
+            for _, lib in ipairs(linklibs) do
+                table.insert(args, lib)
+            end
+
+            -- Version script if set
+            local version_script = target:values("boot.version_script")
+            if version_script then
+                table.insert(args, "--version-script=" .. version_script)
+            end
+
+            os.mkdir(path.directory(targetfile))
+            os.vrunv(ld, args)
+        end, {
+            files = objects,
+            dependfile = target:dependfile(targetfile)
+        })
     end)
 
--- ============================================================================
--- BootMergeObject Rule - Merge multiple objects for boot
--- ============================================================================
+rule_end()
 
--- Jam equivalent: BootMergeObject <name> : <sources> : <extra CFLAGS> : <other objects>
+
+-- BootMergeObject: merge boot objects into a single relocatable object
 rule("BootMergeObject")
-    on_load(function (target)
-        -- Set as object output (merged)
+
+    on_load(function(target)
+        import("core.project.config")
+
         target:set("kind", "object")
 
-        -- Get boot platform
-        local platform = target:values("boot_platform") or get_boot_platform()
-        set_boot_platform(platform)
+        local arch = config.get("target_kernel_arch") or config.get("arch") or "x86_64"
+        target:data_set("haiku.packaging_arch", arch)
 
-        -- Get extra flags
-        local extra_flags = target:values("extra_ccflags")
+        local extra = target:values("boot.extra_ccflags")
+        SetupBootTarget(target, extra)
 
-        ApplyBootSetup(target, extra_flags, true, platform)
-
-        -- Add ldflags for merged object
-        local ldflags = get_boot_ldflags(platform)
-        for _, flag in ipairs(ldflags) do
-            target:add("ldflags", flag, {force = true})
+        -- Add boot platform LDFLAGS for merge
+        local platform = target:values("boot.platform") or ""
+        local ldflags = _boot_settings[platform] and _boot_settings[platform].ldflags or {}
+        if type(ldflags) == "table" then
+            target:add("ldflags", table.unpack(ldflags))
         end
     end)
 
-    on_link(function (target)
-        -- Merge objects using ld -r
-        local targetfile = target:targetfile()
-        local objectfiles = target:objectfiles()
+rule_end()
 
-        -- Get other objects to merge
-        local other_objects = target:values("other_objects") or {}
-        if type(other_objects) == "string" then
-            other_objects = {other_objects}
-        end
 
-        -- Combine all objects
-        local all_objects = {}
-        for _, obj in ipairs(objectfiles) do
-            table.insert(all_objects, obj)
-        end
-        for _, obj in ipairs(other_objects) do
-            table.insert(all_objects, obj)
-        end
-
-        os.mkdir(path.directory(targetfile))
-
-        -- Use ld -r to create relocatable object
-        local arch = get_kernel_arch()
-        local ld = "ld"
-        if arch ~= os.arch() then
-            ld = arch .. "-unknown-haiku-ld"
-        end
-
-        local args = {"-r", "-o", targetfile}
-        for _, obj in ipairs(all_objects) do
-            table.insert(args, obj)
-        end
-
-        os.runv(ld, args)
-    end)
-
--- ============================================================================
--- BootStaticLibrary Rule - Create static library for boot
--- ============================================================================
-
--- Jam equivalent: BootStaticLibrary <name> : <sources> : <extra cc flags>
+-- BootStaticLibrary: build static library from boot-compiled sources
 rule("BootStaticLibrary")
-    on_load(function (target)
-        -- Set as static library
+
+    on_load(function(target)
+        import("core.project.config")
+
         target:set("kind", "static")
 
-        -- Get boot platform
-        local platform = target:values("boot_platform") or get_boot_platform()
-        set_boot_platform(platform)
+        local arch = config.get("target_kernel_arch") or config.get("arch") or "x86_64"
+        target:data_set("haiku.packaging_arch", arch)
 
-        -- Get extra flags
-        local extra_flags = target:values("extra_ccflags") or {}
-        if type(extra_flags) == "string" then
-            extra_flags = {extra_flags}
-        end
+        local extra_flags = target:values("boot.extra_ccflags") or {}
+        if type(extra_flags) == "string" then extra_flags = {extra_flags} end
 
-        -- Add -fvisibility=hidden unless disabled
-        if not target:values("no_hidden_visibility") then
+        -- Add -fvisibility=hidden unless opted out
+        local no_hidden = target:values("boot.no_hidden_visibility")
+        if not no_hidden then
             table.insert(extra_flags, "-fvisibility=hidden")
         end
 
-        ApplyBootSetup(target, extra_flags, false, platform)
+        SetupBootTarget(target, extra_flags, false)
     end)
 
--- ============================================================================
--- BootStaticLibraryObjects Rule - Create library from pre-compiled objects
--- ============================================================================
+rule_end()
 
--- Jam equivalent: BootStaticLibraryObjects <name> : <objects>
+
+-- BootStaticLibraryObjects: build static library from pre-compiled objects
 rule("BootStaticLibraryObjects")
-    on_load(function (target)
-        -- Set as static library
+
+    on_load(function(target)
+        import("core.project.config")
+
         target:set("kind", "static")
 
-        -- Get boot platform
-        local platform = target:values("boot_platform") or get_boot_platform()
-        set_boot_platform(platform)
+        local arch = config.get("target_kernel_arch") or config.get("arch") or "x86_64"
+        target:data_set("haiku.packaging_arch", arch)
 
-        ApplyBootSetup(target, nil, true, platform)
+        SetupBootTarget(target)
     end)
 
-    on_link(function (target)
+    -- Force recreation of archive to avoid stale deps
+    before_link(function(target)
         local targetfile = target:targetfile()
-        local objectfiles = target:objectfiles()
-
-        -- Get pre-compiled objects
-        local precompiled = target:values("precompiled_objects") or {}
-        if type(precompiled) == "string" then
-            precompiled = {precompiled}
+        if os.isfile(targetfile) then
+            os.rm(targetfile)
         end
-
-        -- Combine all objects
-        local all_objects = {}
-        for _, obj in ipairs(objectfiles) do
-            table.insert(all_objects, obj)
-        end
-        for _, obj in ipairs(precompiled) do
-            table.insert(all_objects, obj)
-        end
-
-        os.mkdir(path.directory(targetfile))
-
-        -- Force recreation of archive
-        os.rm(targetfile)
-
-        -- Use ar to create static library
-        local arch = get_kernel_arch()
-        local ar = "ar"
-        if arch ~= os.arch() then
-            ar = arch .. "-unknown-haiku-ar"
-        end
-
-        local args = {"-r", targetfile}
-        for _, obj in ipairs(all_objects) do
-            table.insert(args, obj)
-        end
-
-        os.runv(ar, args)
     end)
 
--- ============================================================================
--- BuildMBR Rule - Build Master Boot Record
--- ============================================================================
+    on_link(function(target)
+        import("core.project.depend")
 
--- Jam equivalent: BuildMBR binary : source
--- MBR is built as raw binary with specific entry point and text address
+        local ar = target:data("haiku.ar") or "ar"
+        local objects = target:objectfiles()
+        local targetfile = target:targetfile()
+
+        depend.on_changed(function()
+            os.mkdir(path.directory(targetfile))
+            os.vrunv(ar, {"-r", targetfile, table.unpack(objects)})
+        end, {
+            files = objects,
+            dependfile = target:dependfile(targetfile)
+        })
+    end)
+
+rule_end()
+
+
+-- BuildMBR: build MBR with raw binary output format
 rule("BuildMBR")
-    set_extensions(".S", ".s", ".asm")
 
-    on_load(function (target)
-        -- MBR is a special binary
+    on_load(function(target)
         target:set("kind", "binary")
-
-        -- MBR-specific flags
-        target:add("cxflags", "-m32", {force = true})
-        target:add("cxflags", "-nostdlib", {force = true})
-
-        -- Linker flags for raw binary output
-        target:add("ldflags", "-nostdlib", {force = true})
-        target:add("ldflags", "-m32", {force = true})
-        target:add("ldflags", "-Wl,--oformat,binary", {force = true})
-        target:add("ldflags", "-Wl,-z,notext", {force = true})
-        target:add("ldflags", "-Xlinker", "-S", {force = true})
-        target:add("ldflags", "-Xlinker", "-N", {force = true})
-        target:add("ldflags", "-Xlinker", "--entry=start", {force = true})
-        target:add("ldflags", "-Xlinker", "-Ttext=0x600", {force = true})
-
-        -- Additional MBR flags from target
-        local mbrflags = target:values("mbrflags")
-        if mbrflags then
-            if type(mbrflags) == "table" then
-                for _, flag in ipairs(mbrflags) do
-                    target:add("ldflags", flag, {force = true})
-                end
-            else
-                target:add("ldflags", mbrflags, {force = true})
-            end
-        end
     end)
 
--- ============================================================================
--- Convenience Functions for Jamfile Translation
--- ============================================================================
+    on_link(function(target)
+        import("core.project.config")
+        import("core.project.depend")
 
--- Create boot objects target
-function boot_objects(name, config)
-    target(name)
-        add_rules("BootObjects")
-        if config.sources then
-            add_files(config.sources)
-        end
-        if config.platform then
-            set_values("boot_platform", config.platform)
-        end
-        if config.extra_ccflags then
-            set_values("extra_ccflags", config.extra_ccflags)
-        end
-end
+        local arch = config.get("arch") or "x86_64"
+        local cc = config.get("haiku_cc_" .. arch) or "gcc"
+        local linkflags = config.get("haiku_linkflags_" .. arch) or ""
+        local mbrflags = target:values("mbr.flags") or {}
+        local sources = target:objectfiles()
+        local targetfile = target:targetfile()
 
--- Create boot ld target
-function boot_ld(name, config)
-    target(name)
-        add_rules("BootLd")
-        if config.sources then
-            add_files(config.sources)
-        end
-        if config.objects then
-            add_deps(config.objects)
-        end
-        if config.platform then
-            set_values("boot_platform", config.platform)
-        end
-        if config.linker_script then
-            set_values("linker_script", config.linker_script)
-        end
-        if config.extra_ldflags then
-            set_values("extra_ldflags", config.extra_ldflags)
-        end
-        if config.version_script then
-            set_values("version_script", config.version_script)
-        end
-        if config.no_libsupc then
-            set_values("no_libsupc", true)
-        end
-end
+        depend.on_changed(function()
+            os.mkdir(path.directory(targetfile))
 
--- Create boot merge object target
-function boot_merge_object(name, config)
-    target(name)
-        add_rules("BootMergeObject")
-        if config.sources then
-            add_files(config.sources)
-        end
-        if config.platform then
-            set_values("boot_platform", config.platform)
-        end
-        if config.extra_ccflags then
-            set_values("extra_ccflags", config.extra_ccflags)
-        end
-        if config.other_objects then
-            set_values("other_objects", config.other_objects)
-        end
-end
+            local args = {}
+            -- Add platform link flags
+            if type(linkflags) == "string" and linkflags ~= "" then
+                table.insert(args, linkflags)
+            elseif type(linkflags) == "table" then
+                for _, f in ipairs(linkflags) do table.insert(args, f) end
+            end
 
--- Create boot static library target
-function boot_static_library(name, config)
-    target(name)
-        add_rules("BootStaticLibrary")
-        if config.sources then
-            add_files(config.sources)
-        end
-        if config.platform then
-            set_values("boot_platform", config.platform)
-        end
-        if config.extra_ccflags then
-            set_values("extra_ccflags", config.extra_ccflags)
-        end
-        if config.no_hidden_visibility then
-            set_values("no_hidden_visibility", true)
-        end
-end
+            -- Add sources
+            for _, src in ipairs(sources) do
+                table.insert(args, src)
+            end
 
--- Create boot static library from objects
-function boot_static_library_objects(name, config)
-    target(name)
-        add_rules("BootStaticLibraryObjects")
-        if config.objects then
-            set_values("precompiled_objects", config.objects)
-        end
-        if config.platform then
-            set_values("boot_platform", config.platform)
-        end
-end
+            -- Output
+            table.insert(args, "-o")
+            table.insert(args, targetfile)
 
--- Create MBR target
-function build_mbr(name, config)
-    target(name)
-        add_rules("BuildMBR")
-        if config.source then
-            add_files(config.source)
-        end
-        if config.mbrflags then
-            set_values("mbrflags", config.mbrflags)
-        end
-end
+            -- MBR-specific flags
+            if type(mbrflags) == "table" then
+                for _, f in ipairs(mbrflags) do table.insert(args, f) end
+            end
+
+            -- Fixed MBR link flags
+            local fixed_flags = {
+                "-nostdlib", "-m32",
+                "-Wl,--oformat,binary",
+                "-Wl,-z,notext",
+                "-Xlinker", "-S",
+                "-Xlinker", "-N",
+                "-Xlinker", "--entry=start",
+                "-Xlinker", "-Ttext=0x600"
+            }
+            for _, f in ipairs(fixed_flags) do
+                table.insert(args, f)
+            end
+
+            os.vrunv(cc, args)
+        end, {
+            files = sources,
+            dependfile = target:dependfile(targetfile)
+        })
+    end)
+
+rule_end()
+
+end -- if rule

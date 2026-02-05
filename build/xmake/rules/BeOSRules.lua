@@ -64,12 +64,31 @@ local function target_data_set(target, key, value)
     end
 end
 
+-- Safe wrappers for description-scope APIs that may not exist in import() sandbox
+local function _get_config(key)
+    if get_config then
+        return get_config(key)
+    end
+    local ok, config = pcall(import, "core.project.config")
+    if ok and config then
+        return config.get(key)
+    end
+    return nil
+end
+
+local function _is_host(name)
+    if is_host then
+        return is_host(name)
+    end
+    return os.host() == name
+end
+
 -- Equivalent to HOST_ADD_BUILD_COMPATIBILITY_LIB_DIR
 local function get_build_tool_env()
     local env = {}
-    local lib_dir = get_config("haiku_build_compatibility_lib_dir")
+    local lib_dir = _get_config("haiku_build_compatibility_lib_dir")
     if lib_dir then
-        if is_host("macosx") then
+        if _is_host("macosx") then
             env.DYLD_LIBRARY_PATH = lib_dir
         else
             env.LD_LIBRARY_PATH = lib_dir
@@ -221,8 +240,8 @@ function SetVersion(target)
     local targetfile = get_targetfile(target)
     local env = get_build_tool_env()
 
-    local build_version = get_config("haiku_build_version") or "1 0 0 a 1"
-    local build_description = get_config("haiku_build_description") or "Developer Build"
+    local build_version = _get_config("haiku_build_version") or "1 0 0 a 1"
+    local build_description = _get_config("haiku_build_description") or "Developer Build"
 
     local args = {targetfile, "-system", build_version, "-short", build_description}
     print("SetVersion: %s", targetfile)
@@ -263,7 +282,7 @@ function MimeSet(target)
     local targetfile = get_targetfile(target)
     local env = get_build_tool_env()
 
-    local mimedb = get_config("haiku_mimedb") or path.join("$(buildir)", "mimedb")
+    local mimedb = _get_config("haiku_mimedb") or path.join("$(buildir)", "mimedb")
 
     local args = {"-f", "--mimedb", mimedb, targetfile}
     print("MimeSet: %s", targetfile)
@@ -290,7 +309,7 @@ function CreateAppMimeDBEntries(target)
 
     -- Jam: $(target:BS)_mimedb
     local app_mimedb = path.join(objectdir, string.format("%s_mimedb", targetname))
-    local mimedb = get_config("haiku_mimedb") or path.join("$(buildir)", "mimedb")
+    local mimedb = _get_config("haiku_mimedb") or path.join("$(buildir)", "mimedb")
 
     os.tryrm(app_mimedb)
     os.mkdir(app_mimedb)
@@ -327,82 +346,87 @@ end
         cat "$(2[2-])" | $(CC) $(CCFLAGS) -E $(CCDEFS) $(HDRS) - \
             | grep -E -v '^#' | $(2[1]) $(RCHDRS) --auto-names -o "$(1)" -
 ]]
-rule("ResComp")
-    set_extensions(".rdef")
+-- rule() is a description-scope API, only available when loaded via includes().
+-- When loaded via import() from script scope (e.g. MainBuildRules after_link),
+-- rule() is not defined. Guard so import() can succeed and return the function table.
+if rule then
+    rule("ResComp")
+        set_extensions(".rdef")
 
-    on_build_file(function (target, sourcefile, opt)
-        import("core.project.depend")
-        import("core.tool.compiler")
-        import("utils.progress")
+        on_build_file(function (target, sourcefile, opt)
+            import("core.project.depend")
+            import("core.tool.compiler")
+            import("utils.progress")
 
-        local objectdir = target:objectdir()
-        local outputfile = path.join(objectdir, 
-            path.filename(sourcefile):gsub("%.rdef$", ".rsrc"))
+            local objectdir = target:objectdir()
+            local outputfile = path.join(objectdir,
+                path.filename(sourcefile):gsub("%.rdef$", ".rsrc"))
 
-        os.mkdir(path.directory(outputfile))
+            os.mkdir(path.directory(outputfile))
 
-        -- Get compiler program via core.tool.compiler module
-        -- This handles host vs target platform automatically based on target configuration
-        local cc
-        local compinst = compiler.load("cc", {target = target})
-        if compinst then
-            cc = compinst:program()
-        end
-        cc = cc or os.getenv("CC") or "cc"
+            -- Get compiler program via core.tool.compiler module
+            -- This handles host vs target platform automatically based on target configuration
+            local cc
+            local compinst = compiler.load("cc", {target = target})
+            if compinst then
+                cc = compinst:program()
+            end
+            cc = cc or os.getenv("CC") or "cc"
 
-        -- HDRS: -I for preprocessor
-        -- RCHDRS: -I for rc (with space: "-I dir")
-        local hdrs = {}
-        local rchdrs = {}
+            -- HDRS: -I for preprocessor
+            -- RCHDRS: -I for rc (with space: "-I dir")
+            local hdrs = {}
+            local rchdrs = {}
 
-        -- SEARCH_SOURCE
-        local srcdir = path.directory(sourcefile)
-        table.insert(hdrs, "-I" .. srcdir)
-        table.insert(rchdrs, "-I " .. srcdir)
+            -- SEARCH_SOURCE
+            local srcdir = path.directory(sourcefile)
+            table.insert(hdrs, "-I" .. srcdir)
+            table.insert(rchdrs, "-I " .. srcdir)
 
-        -- SUBDIRHDRS, HDRS - use values() to get flattened array
-        for _, dir in ipairs(target:get("includedirs") or {}) do
-            table.insert(hdrs, "-I" .. dir)
-            table.insert(rchdrs, "-I " .. dir)
-        end
+            -- SUBDIRHDRS, HDRS - use values() to get flattened array
+            for _, dir in ipairs(target:get("includedirs") or {}) do
+                table.insert(hdrs, "-I" .. dir)
+                table.insert(rchdrs, "-I " .. dir)
+            end
 
-        -- SYSHDRS
-        for _, dir in ipairs(target:get("sysincludedirs") or {}) do
-            table.insert(hdrs, "-I" .. dir)
-            table.insert(rchdrs, "-I " .. dir)
-        end
+            -- SYSHDRS
+            for _, dir in ipairs(target:get("sysincludedirs") or {}) do
+                table.insert(hdrs, "-I" .. dir)
+                table.insert(rchdrs, "-I " .. dir)
+            end
 
-        -- CCDEFS = FDefines $(defines)
-        local defs = {}
-        for _, def in ipairs(target:get("defines") or {}) do
-            table.insert(defs, "-D" .. def)
-        end
+            -- CCDEFS = FDefines $(defines)
+            local defs = {}
+            for _, def in ipairs(target:get("defines") or {}) do
+                table.insert(defs, "-D" .. def)
+            end
 
-        -- CCFLAGS - get from target
-        local ccflags_list = target:get("cflags") or {}
-        local ccflags = table.concat(ccflags_list, " ")
+            -- CCFLAGS - get from target
+            local ccflags_list = target:get("cflags") or {}
+            local ccflags = table.concat(ccflags_list, " ")
 
-        depend.on_changed(function ()
-            local cmd = string.format(
-                'cat "%s" | %s %s -E %s %s - | grep -E -v "^#" | rc %s --auto-names -o "%s" -',
-                sourcefile,
-                cc,
-                ccflags,
-                table.concat(defs, " "),
-                table.concat(hdrs, " "),
-                table.concat(rchdrs, " "),
-                outputfile
-            )
+            depend.on_changed(function ()
+                local cmd = string.format(
+                    'cat "%s" | %s %s -E %s %s - | grep -E -v "^#" | rc %s --auto-names -o "%s" -',
+                    sourcefile,
+                    cc,
+                    ccflags,
+                    table.concat(defs, " "),
+                    table.concat(hdrs, " "),
+                    table.concat(rchdrs, " "),
+                    outputfile
+                )
 
-            os.vrun(cmd)
-            progress.show(opt.progress, "${color.build.object}rescomp %s", sourcefile)
-        end, {files = sourcefile, dependfile = target:dependfile(outputfile)})
+                os.vrun(cmd)
+                progress.show(opt.progress, "${color.build.object}rescomp %s", sourcefile)
+            end, {files = sourcefile, dependfile = target:dependfile(outputfile)})
 
-        -- Store for later use by XRes (called from MainBuildRules)
-        local rsrc_files = target:data("_compiled_rsrc") or {}
-        table.insert(rsrc_files, outputfile)
-        target:data_set("_compiled_rsrc", rsrc_files)
-    end)
+            -- Store for later use by XRes (called from MainBuildRules)
+            local rsrc_files = target:data("_compiled_rsrc") or {}
+            table.insert(rsrc_files, outputfile)
+            target:data_set("_compiled_rsrc", rsrc_files)
+        end)
+end
 
 -- ResAttr
 

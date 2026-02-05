@@ -46,7 +46,6 @@ includes("rules/MathRules.lua")         -- Basic arithmetic operations
 includes("rules/MiscRules.lua")         -- Miscellaneous build utilities
 includes("rules/RepositoryRules.lua")   -- Package repository management
 includes("rules/TestsRules.lua")        -- Unit test build rules
-includes("rules/OverriddenJamRules.lua") -- Core build rules (overridden Jam rules)
 includes("rules/SystemLibraryRules.lua") -- System library management (libstdc++, libgcc)
 
 -- ============================================================================

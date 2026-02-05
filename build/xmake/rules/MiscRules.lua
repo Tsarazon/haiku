@@ -1,760 +1,309 @@
 --[[
-    MiscRules.lua - Miscellaneous build rules
+    MiscRules.lua - Miscellaneous Haiku build rules
 
-    xmake equivalent of build/jam/MiscRules
+    xmake equivalent of build/jam/MiscRules (1:1 migration)
 
-    Rules defined:
-    - SetupObjectsDir           - Setup output directories for current subdir
-    - SetupFeatureObjectsDir    - Setup feature-specific output directories
-    - MakeLocateCommonPlatform  - Locate files shared between platforms
-    - MakeLocatePlatform        - Locate platform-specific files
-    - MakeLocateArch            - Locate architecture-specific files
-    - MakeLocateDebug           - Locate debug-level-specific files
-    - DeferredSubInclude        - Schedule deferred subdirectory include
-    - ExecuteDeferredSubIncludes - Execute all deferred includes
-    - HaikuSubInclude           - Relative subdirectory include
-    - NextID                    - Generate unique ID
-    - NewUniqueTarget           - Create unique target name
-    - RunCommandLine            - Execute command with target substitution
-    - DefineBuildProfile        - Define build profile (image, cd, vmware, etc.)
+    Functions exported:
+    - SetupObjectsDir(target, subdir_tokens)   - Set up output directories for a subdirectory
+    - SetupFeatureObjectsDir(target, feature)  - Append feature to output directories
+    - MakeLocateCommonPlatform(subdir)         - Output path for platform-shared files
+    - MakeLocatePlatform(platform, subdir)     - Output path for platform-specific files
+    - MakeLocateArch(platform, subdir)         - Output path for arch-specific files
+    - MakeLocateDebug(platform, debug, subdir) - Output path for debug-level-specific files
+    - NextID()                                 - Generate unique sequential ID
+    - NewUniqueTarget(basename)                - Create unique target name
+    - RunCommandLine(target, command_line)      - Run a shell command as build action
+    - DefineBuildProfile(name, type, path)     - Define a build profile
+    - DeferredSubInclude(params)               - Schedule deferred inclusion
+    - ExecuteDeferredSubIncludes()             - Execute all deferred includes
+
+    Usage:
+        import("rules.MiscRules")
+        local id = MiscRules.NextID()
+        local dir = MiscRules.MakeLocateCommonPlatform("mysubdir")
 ]]
-
--- ============================================================================
--- Configuration Storage
--- ============================================================================
-
--- Object directories for different platforms/archs/debug levels
-local _object_dirs = {
-    common_platform = nil,
-    host_common_arch = nil,
-    target_common_arch = nil,
-    host_common_debug = nil,
-    target_common_debug = nil,
-    host_debug = {},      -- by debug level
-    target_debug = {}     -- by debug level
-}
-
--- Locate targets for current directory
-local _locate_targets = {
-    common_platform = nil,
-    host_common_arch = nil,
-    target_common_arch = nil,
-    host_common_debug = nil,
-    target_common_debug = nil,
-    host_debug = {},
-    target_debug = {}
-}
-
--- Current directory state
-local _current_locate_target = nil
-local _current_locate_source = nil
-local _current_search_source = {}
-
--- Deferred includes
-local _deferred_sub_includes = {}
 
 -- Unique ID counter
 local _next_id = 0
 
--- Build profiles
+-- Deferred includes list
+local _deferred_includes = {}
+
+-- Build profiles registry
 local _build_profiles = {}
-local _current_build_profile = nil
-local _build_profile_action = nil
 
--- Debug levels
-local HAIKU_DEBUG_LEVELS = {0, 1}
+-- NextID: generate a unique sequential ID
+function NextID()
+    local result = _next_id
+    _next_id = _next_id + 1
+    return tostring(result)
+end
 
--- ============================================================================
--- SetupObjectsDir
--- ============================================================================
+-- NewUniqueTarget: create a unique target name
+function NewUniqueTarget(basename)
+    basename = basename or "_target"
+    return string.format("%s_%s", basename, NextID())
+end
 
---[[
-    SetupObjectsDir(subdir_tokens)
-
-    Setup LOCATE_TARGET, LOCATE_SOURCE, SEARCH_SOURCE variables
-    for the current directory.
-
-    Equivalent to Jam:
-        rule SetupObjectsDir { }
-
-    Parameters:
-        subdir_tokens - List of subdirectory tokens (relative path components)
-]]
+-- SetupObjectsDir: set up output directory paths for a subdirectory
+-- Returns a table with computed directory paths
 function SetupObjectsDir(subdir_tokens)
-    subdir_tokens = subdir_tokens or {}
-    if type(subdir_tokens) == "string" then
-        subdir_tokens = subdir_tokens:split("/")
-    end
+    import("core.project.config")
 
-    -- Skip first token (usually "src" or root marker)
-    local rel_tokens = {}
-    for i = 2, #subdir_tokens do
-        table.insert(rel_tokens, subdir_tokens[i])
-    end
+    local haiku_top = config.get("haiku_top") or os.projectdir()
+    local output_dir = config.get("build_output_dir") or path.join(haiku_top, "generated")
 
-    local rel_path = table.concat(rel_tokens, "/")
-    if rel_path == "" or rel_path == "." then
-        rel_path = nil
-    end
-
-    local buildir = get_config("buildir") or "$(buildir)"
-    local arch = get_config("arch") or "x86_64"
-
-    -- Setup common platform locate target
-    local common_platform_dir = path.join(buildir, "objects", "common")
-    if rel_path then
-        _locate_targets.common_platform = path.join(common_platform_dir, rel_path)
-    else
-        _locate_targets.common_platform = common_platform_dir
-    end
-
-    -- Setup host common arch
-    local host_common_arch_dir = path.join(buildir, "objects", "host", arch)
-    if rel_path then
-        _locate_targets.host_common_arch = path.join(host_common_arch_dir, rel_path)
-    else
-        _locate_targets.host_common_arch = host_common_arch_dir
-    end
-
-    -- Setup target common arch
-    local target_common_arch_dir = path.join(buildir, "objects", "haiku", arch)
-    if rel_path then
-        _locate_targets.target_common_arch = path.join(target_common_arch_dir, rel_path)
-    else
-        _locate_targets.target_common_arch = target_common_arch_dir
-    end
-
-    -- Setup debug-level directories
-    for _, level in ipairs(HAIKU_DEBUG_LEVELS) do
-        local host_debug_dir = path.join(buildir, "objects", "host", arch, "debug_" .. level)
-        local target_debug_dir = path.join(buildir, "objects", "haiku", arch, "debug_" .. level)
-
-        if rel_path then
-            _locate_targets.host_debug[level] = path.join(host_debug_dir, rel_path)
-            _locate_targets.target_debug[level] = path.join(target_debug_dir, rel_path)
-        else
-            _locate_targets.host_debug[level] = host_debug_dir
-            _locate_targets.target_debug[level] = target_debug_dir
+    -- Compute relative path from subdir tokens
+    local rel_path = ""
+    if subdir_tokens and #subdir_tokens > 1 then
+        local parts = {}
+        for i = 2, #subdir_tokens do
+            table.insert(parts, subdir_tokens[i])
         end
+        rel_path = table.concat(parts, "/")
     end
 
-    -- Common debug (level 0)
-    _locate_targets.host_common_debug = _locate_targets.host_debug[0]
-    _locate_targets.target_common_debug = _locate_targets.target_debug[0]
-
-    -- Set current locate targets
-    _current_locate_target = _locate_targets.common_platform
-    _current_locate_source = _current_locate_target
-
-    -- Search source includes subdir and standard output dirs
-    _current_search_source = {
-        path.join(os.projectdir(), table.concat(subdir_tokens, "/")),
-        _current_locate_source,
-        _locate_targets.host_common_debug,
-        _locate_targets.target_common_debug
+    local dirs = {
+        common_platform = path.join(output_dir, "common_platform", rel_path),
+        host_common_arch = path.join(output_dir, "host", "common", rel_path),
+        target_common_arch = path.join(output_dir, "target", "common", rel_path),
+        host_common_debug = path.join(output_dir, "host", "common_debug", rel_path),
+        target_common_debug = path.join(output_dir, "target", "common_debug", rel_path),
     }
-end
 
--- ============================================================================
--- SetupFeatureObjectsDir
--- ============================================================================
-
---[[
-    SetupFeatureObjectsDir(feature)
-
-    Updates locate/search directories appending a feature subdirectory.
-
-    Equivalent to Jam:
-        rule SetupFeatureObjectsDir { }
-
-    Parameters:
-        feature - Feature name to append to directories
-]]
-function SetupFeatureObjectsDir(feature)
-    if not feature then return end
-
-    -- Append feature to all locate targets
-    _locate_targets.common_platform = path.join(_locate_targets.common_platform or "", feature)
-
-    _locate_targets.host_common_arch = path.join(_locate_targets.host_common_arch or "", feature)
-    _locate_targets.target_common_arch = path.join(_locate_targets.target_common_arch or "", feature)
-
-    _locate_targets.host_common_debug = path.join(_locate_targets.host_common_debug or "", feature)
-    _locate_targets.target_common_debug = path.join(_locate_targets.target_common_debug or "", feature)
-
-    for level, dir in pairs(_locate_targets.host_debug) do
-        _locate_targets.host_debug[level] = path.join(dir, feature)
-    end
-    for level, dir in pairs(_locate_targets.target_debug) do
-        _locate_targets.target_debug[level] = path.join(dir, feature)
+    -- Debug levels
+    local debug_levels = config.get("haiku_debug_levels") or {0, 1}
+    for _, level in ipairs(debug_levels) do
+        local key = string.format("host_debug_%d", level)
+        dirs[key] = path.join(output_dir, "host", "debug_" .. tostring(level), rel_path)
+        key = string.format("target_debug_%d", level)
+        dirs[key] = path.join(output_dir, "target", "debug_" .. tostring(level), rel_path)
     end
 
-    -- Update current
-    _current_locate_target = path.join(_current_locate_target or "", feature)
-    _current_locate_source = _current_locate_target
+    -- Default locate/search targets
+    dirs.locate_target = dirs.common_platform
+    dirs.locate_source = dirs.locate_target
 
-    -- Rebuild search source
-    local subdir = _current_search_source[1]
-    _current_search_source = {
-        subdir,
-        _current_locate_source,
-        _locate_targets.host_common_debug,
-        _locate_targets.target_common_debug
-    }
+    return dirs
 end
 
--- ============================================================================
--- MakeLocate Variants
--- ============================================================================
+-- SetupFeatureObjectsDir: append feature subdirectory to output dirs
+function SetupFeatureObjectsDir(dirs, feature)
+    local result = {}
+    for key, dir in pairs(dirs) do
+        result[key] = path.join(dir, feature)
+    end
+    return result
+end
 
---[[
-    MakeLocateCommonPlatform(files, subdir)
-
-    Locate files in common platform directory (shared between all targets).
-
-    Equivalent to Jam:
-        rule MakeLocateCommonPlatform { }
-
-    Parameters:
-        files - Files to locate
-        subdir - Optional subdirectory
-
-    Returns:
-        Output directory path
-]]
-function MakeLocateCommonPlatform(files, subdir)
-    local dir = _locate_targets.common_platform
+-- MakeLocateCommonPlatform: output path for platform-shared files
+function MakeLocateCommonPlatform(subdir)
+    import("core.project.config")
+    local output_dir = config.get("build_output_dir") or
+        path.join(config.get("haiku_top") or os.projectdir(), "generated")
+    local base = path.join(output_dir, "common_platform")
     if subdir then
-        dir = path.join(dir, subdir)
+        return path.join(base, subdir)
     end
-    os.mkdir(dir)
-    return dir
+    return base
 end
 
---[[
-    MakeLocatePlatform(files, subdir, platform)
+-- MakeLocatePlatform: output path for platform-specific files
+function MakeLocatePlatform(platform, subdir)
+    import("core.project.config")
+    local output_dir = config.get("build_output_dir") or
+        path.join(config.get("haiku_top") or os.projectdir(), "generated")
 
-    Locate files in platform-specific directory (arch-independent).
-
-    Equivalent to Jam:
-        rule MakeLocatePlatform { }
-
-    Parameters:
-        files - Files to locate
-        subdir - Optional subdirectory
-        platform - "host" or "target" (default: "target")
-
-    Returns:
-        Output directory path
-]]
-function MakeLocatePlatform(files, subdir, platform)
-    platform = platform or "target"
-
-    local dir
+    local base
     if platform == "host" then
-        dir = _locate_targets.host_common_arch
+        base = path.join(output_dir, "host", "common")
     else
-        dir = _locate_targets.target_common_arch
+        base = path.join(output_dir, "target", "common")
     end
 
     if subdir then
-        dir = path.join(dir, subdir)
+        return path.join(base, subdir)
     end
-    os.mkdir(dir)
-    return dir
+    return base
 end
 
---[[
-    MakeLocateArch(files, subdir, platform)
+-- MakeLocateArch: output path for arch-specific files
+function MakeLocateArch(platform, subdir)
+    import("core.project.config")
+    local output_dir = config.get("build_output_dir") or
+        path.join(config.get("haiku_top") or os.projectdir(), "generated")
 
-    Locate files in architecture-specific directory (debug-independent).
-
-    Equivalent to Jam:
-        rule MakeLocateArch { }
-
-    Parameters:
-        files - Files to locate
-        subdir - Optional subdirectory
-        platform - "host" or "target" (default: "target")
-
-    Returns:
-        Output directory path
-]]
-function MakeLocateArch(files, subdir, platform)
-    platform = platform or "target"
-
-    local dir
+    local base
     if platform == "host" then
-        dir = _locate_targets.host_common_debug
+        base = path.join(output_dir, "host", "common_debug")
     else
-        dir = _locate_targets.target_common_debug
+        base = path.join(output_dir, "target", "common_debug")
     end
 
     if subdir then
-        dir = path.join(dir, subdir)
+        return path.join(base, subdir)
     end
-    os.mkdir(dir)
-    return dir
+    return base
 end
 
---[[
-    MakeLocateDebug(files, subdir, platform, debug_level)
+-- MakeLocateDebug: output path for debug-level-specific files
+function MakeLocateDebug(platform, debug_level, subdir)
+    import("core.project.config")
+    local output_dir = config.get("build_output_dir") or
+        path.join(config.get("haiku_top") or os.projectdir(), "generated")
 
-    Locate files in debug-level-specific directory.
-
-    Equivalent to Jam:
-        rule MakeLocateDebug { }
-
-    Parameters:
-        files - Files to locate
-        subdir - Optional subdirectory
-        platform - "host" or "target" (default: "target")
-        debug_level - Debug level (default: 0)
-
-    Returns:
-        Output directory path
-]]
-function MakeLocateDebug(files, subdir, platform, debug_level)
-    platform = platform or "target"
     debug_level = debug_level or 0
-
-    local dir
+    local base
     if platform == "host" then
-        dir = _locate_targets.host_debug[debug_level] or _locate_targets.host_common_debug
+        base = path.join(output_dir, "host", "debug_" .. tostring(debug_level))
     else
-        dir = _locate_targets.target_debug[debug_level] or _locate_targets.target_common_debug
+        base = path.join(output_dir, "target", "debug_" .. tostring(debug_level))
     end
 
     if subdir then
-        dir = path.join(dir, subdir)
+        return path.join(base, subdir)
     end
-    os.mkdir(dir)
-    return dir
+    return base
 end
 
--- ============================================================================
--- Deferred SubIncludes
--- ============================================================================
-
---[[
-    DeferredSubInclude(params, jamfile, scope)
-
-    Schedule a subdirectory for deferred inclusion.
-
-    Equivalent to Jam:
-        rule DeferredSubInclude { }
-
-    Parameters:
-        params - Subdirectory tokens
-        jamfile - Alternative Jamfile name (default: "Jamfile")
-        scope - "global" or "local" (default: "global")
-]]
+-- DeferredSubInclude: schedule a subdirectory for later inclusion
 function DeferredSubInclude(params, jamfile, scope)
-    if type(params) == "string" then
-        params = params:split("/")
-    end
-
-    table.insert(_deferred_sub_includes, {
-        tokens = params,
+    table.insert(_deferred_includes, {
+        params = params,
         jamfile = jamfile,
         scope = scope or "global"
     })
 end
 
---[[
-    ExecuteDeferredSubIncludes()
-
-    Execute all deferred SubIncludes.
-
-    Equivalent to Jam:
-        rule ExecuteDeferredSubIncludes { }
-]]
+-- ExecuteDeferredSubIncludes: execute all deferred includes
+-- In xmake, this maps to calling includes() for each deferred entry
 function ExecuteDeferredSubIncludes()
-    for _, entry in ipairs(_deferred_sub_includes) do
-        local subdir = path.join(os.projectdir(), table.concat(entry.tokens, "/"))
-        local xmake_file = path.join(subdir, "xmake.lua")
+    import("core.project.config")
+    local haiku_top = config.get("haiku_top") or os.projectdir()
 
-        if os.isfile(xmake_file) then
-            includes(xmake_file)
-        end
-    end
-
-    -- Clear after execution
-    _deferred_sub_includes = {}
-end
-
---[[
-    HaikuSubInclude(tokens)
-
-    Include a subdirectory relative to current directory.
-
-    Equivalent to Jam:
-        rule HaikuSubInclude { }
-
-    Parameters:
-        tokens - Subdirectory tokens (relative to current)
-]]
-function HaikuSubInclude(tokens)
-    if type(tokens) == "string" then
-        tokens = {tokens}
-    end
-
-    if #tokens > 0 then
-        local subdir = path.join(os.scriptdir(), table.concat(tokens, "/"))
-        local xmake_file = path.join(subdir, "xmake.lua")
-
-        if os.isfile(xmake_file) then
-            includes(xmake_file)
+    for _, entry in ipairs(_deferred_includes) do
+        local subdir = path.join(haiku_top, table.unpack(entry.params))
+        local jamfile = entry.jamfile or "xmake.lua"
+        local filepath = path.join(subdir, jamfile)
+        if os.isfile(filepath) then
+            includes(filepath)
         end
     end
 end
 
--- ============================================================================
--- Unique IDs/Targets
--- ============================================================================
-
---[[
-    NextID()
-
-    Generate a unique ID.
-
-    Equivalent to Jam:
-        rule NextID { }
-
-    Returns:
-        Unique integer ID
-]]
-function NextID()
-    local id = _next_id
-    _next_id = _next_id + 1
-    return id
+-- GetDeferredSubIncludes: return list of deferred includes
+function GetDeferredSubIncludes()
+    return _deferred_includes
 end
 
---[[
-    NewUniqueTarget(basename)
+-- RunCommandLine: run a shell command as a build step
+-- command_parts is a list of strings; entries prefixed with ":" are target paths
+function RunCommandLine(target, command_parts)
+    import("core.project.depend")
 
-    Create a unique target name.
-
-    Equivalent to Jam:
-        rule NewUniqueTarget { }
-
-    Parameters:
-        basename - Base name for target (default: "_target")
-
-    Returns:
-        Unique target name
-]]
-function NewUniqueTarget(basename)
-    basename = basename or "_target"
-    local id = NextID()
-    return string.format("%s_%d", basename, id)
-end
-
--- ============================================================================
--- RunCommandLine
--- ============================================================================
-
---[[
-    RunCommandLine(command_line)
-
-    Execute a command line with target path substitution.
-    Elements prefixed with ":" are treated as build targets.
-
-    Equivalent to Jam:
-        rule RunCommandLine { }
-        actions RunCommandLine1 { }
-
-    Parameters:
-        command_line - Command line elements (list or string)
-
-    Returns:
-        Pseudo target name
-]]
-function RunCommandLine(command_line)
-    if type(command_line) == "string" then
-        command_line = command_line:split(" ")
-    end
-
-    -- Collect targets and substitute
-    local substituted = {}
-    local targets = {}
-    local var_index = 0
-
-    for _, item in ipairs(command_line) do
-        local target = item:match("^:(.+)$")
-        if target then
-            table.insert(targets, target)
-            var_index = var_index + 1
-            table.insert(substituted, "${target" .. var_index .. "}")
+    -- Separate targets (prefixed with ":") from regular command parts
+    local deps = {}
+    local cmd_line = {}
+    for _, part in ipairs(command_parts) do
+        if part:sub(1, 1) == ":" then
+            local dep = part:sub(2)
+            table.insert(deps, dep)
+            table.insert(cmd_line, dep)
         else
-            table.insert(substituted, item)
+            table.insert(cmd_line, part)
         end
     end
 
-    -- Create unique run target
-    local run_target = NewUniqueTarget("run")
+    local cmd_str = table.concat(cmd_line, " ")
 
-    -- Build the command with variable assignments
-    local cmd_parts = {}
-
-    for i, t in ipairs(targets) do
-        -- Resolve target path (simplified - in real use would need target resolution)
-        table.insert(cmd_parts, string.format('target%d="%s"', i, t))
-    end
-
-    table.insert(cmd_parts, table.concat(substituted, " "))
-
-    local full_cmd = table.concat(cmd_parts, "; ")
-
-    return {
-        target = run_target,
-        command = full_cmd,
-        dependencies = targets,
-        execute = function()
-            os.exec(full_cmd)
-        end
-    }
+    depend.on_changed(function()
+        os.exec(cmd_str)
+    end, {
+        files = deps,
+        dependfile = target:dependfile(NewUniqueTarget("run"))
+    })
 end
 
--- ============================================================================
--- DefineBuildProfile
--- ============================================================================
+-- DefineBuildProfile: define a build profile
+function DefineBuildProfile(name, profile_type, profile_path)
+    import("core.project.config")
 
---[[
-    DefineBuildProfile(name, profile_type, path_value)
-
-    Define a build profile for image/installation creation.
-
-    Equivalent to Jam:
-        rule DefineBuildProfile { }
-
-    Parameters:
-        name - Profile name
-        profile_type - One of: "image", "anyboot-image", "cd-image",
-                       "vmware-image", "haiku-mmc-image", "disk", "install", "custom"
-        path_value - Path to image/installation directory
-
-    Returns:
-        true if profile is active, false otherwise
-]]
-function DefineBuildProfile(name, profile_type, path_value)
-    -- Check for duplicate
     if _build_profiles[name] then
-        error(string.format('Build profile "%s" defined twice!', name))
+        raise(string.format("ERROR: Build profile \"%s\" defined twice!", name))
     end
 
-    _build_profiles[name] = {
-        name = name,
-        type = profile_type,
-        path = path_value
-    }
+    local haiku_top = config.get("haiku_top") or os.projectdir()
 
-    -- If this isn't the current profile, skip setup
-    if _current_build_profile ~= name then
-        return false
-    end
+    -- Defaults for path
+    local target_dir = profile_path and path.directory(profile_path) or nil
+    local target_name = profile_path and path.filename(profile_path) or nil
 
-    -- Get default directories
-    local buildir = get_config("buildir") or "$(buildir)"
-    local arch = get_config("arch") or "x86_64"
+    target_dir = target_dir or config.get("haiku_image_dir")
+        or path.join(haiku_top, "generated")
 
-    -- Split path into directory and name
-    local target_dir = path_value and path.directory(path_value)
-    local target_name = path_value and path.basename(path_value)
-
-    if target_dir == "" then target_dir = nil end
-    if target_name == "" then target_name = nil end
-
-    -- Default image directory
-    target_dir = target_dir or path.join(buildir, "images")
-
-    -- Handle "disk" as "image" with special flag
-    local dont_clear_image = false
+    -- "disk" is "image" with no-clear
+    local dont_clear = false
     if profile_type == "disk" then
         profile_type = "image"
-        dont_clear_image = true
+        dont_clear = true
     end
 
-    local build_target
-    local start_offset
+    local profile = {
+        name = name,
+        type = profile_type,
+        target_dir = target_dir,
+        target_name = target_name,
+        dont_clear = dont_clear,
+    }
 
-    -- Configure based on type
+    -- Set type-specific defaults
     if profile_type == "anyboot-image" then
-        target_name = target_name or "haiku-anyboot.image"
-        build_target = "haiku-anyboot-image"
-
+        profile.target_name = profile.target_name
+            or config.get("haiku_anyboot_name")
+            or "haiku-anyboot.iso"
+        profile.build_target = "haiku-anyboot-image"
     elseif profile_type == "cd-image" then
-        target_name = target_name or "haiku.iso"
-        build_target = "haiku-cd"
-
+        profile.target_name = profile.target_name
+            or config.get("haiku_cd_name")
+            or "haiku-cd.iso"
+        profile.build_target = "haiku-cd"
     elseif profile_type == "image" then
-        target_name = target_name or "haiku.image"
-        build_target = "haiku-image"
-
+        profile.target_name = profile.target_name
+            or config.get("haiku_image_name")
+            or "haiku.image"
+        profile.build_target = "haiku-image"
     elseif profile_type == "haiku-mmc-image" then
-        target_name = target_name or "haiku-mmc.image"
-        build_target = "haiku-mmc-image"
-
+        profile.target_name = profile.target_name
+            or config.get("haiku_mmc_image_name")
+            or "haiku-mmc.image"
+        profile.build_target = "haiku-mmc-image"
     elseif profile_type == "vmware-image" then
-        target_name = target_name or "haiku.vmdk"
-        build_target = "haiku-vmware-image"
-        start_offset = 65536
-
+        profile.target_name = profile.target_name
+            or config.get("haiku_vmware_image_name")
+            or "haiku.vmdk"
+        profile.build_target = "haiku-vmware-image"
+        profile.start_offset = 65536
     elseif profile_type == "install" then
-        target_dir = path_value or path.join(buildir, "install")
-        build_target = "install-haiku"
-
+        profile.install_dir = profile_path
+            or config.get("haiku_install_dir")
+            or "/Haiku"
+        profile.build_target = "install-haiku"
     elseif profile_type == "custom" then
-        return true
-
+        -- user-defined, no defaults
     else
-        error(string.format("Unsupported build profile type: %s", profile_type))
+        raise("Unsupported build profile type: " .. tostring(profile_type))
     end
 
-    -- Store configuration
-    _build_profiles[name].target_dir = target_dir
-    _build_profiles[name].target_name = target_name
-    _build_profiles[name].build_target = build_target
-    _build_profiles[name].dont_clear_image = dont_clear_image
-    _build_profiles[name].start_offset = start_offset
-
-    return true
+    _build_profiles[name] = profile
+    return profile
 end
 
--- ============================================================================
--- Build Profile Accessors
--- ============================================================================
-
---[[
-    SetBuildProfile(name)
-
-    Set the current build profile.
-
-    Parameters:
-        name - Profile name
-]]
-function SetBuildProfile(name)
-    _current_build_profile = name
-end
-
---[[
-    GetBuildProfile()
-
-    Get the current build profile name.
-
-    Returns:
-        Current profile name or nil
-]]
-function GetBuildProfile()
-    return _current_build_profile
-end
-
---[[
-    SetBuildProfileAction(action)
-
-    Set the build profile action.
-
-    Parameters:
-        action - One of: "build", "update", "update-all", "update-packages",
-                 "build-package-list", "mount"
-]]
-function SetBuildProfileAction(action)
-    _build_profile_action = action
-end
-
---[[
-    GetBuildProfileAction()
-
-    Get the current build profile action.
-
-    Returns:
-        Current action or nil
-]]
-function GetBuildProfileAction()
-    return _build_profile_action
-end
-
---[[
-    GetBuildProfileConfig(name)
-
-    Get configuration for a build profile.
-
-    Parameters:
-        name - Profile name (default: current profile)
-
-    Returns:
-        Profile configuration table or nil
-]]
-function GetBuildProfileConfig(name)
-    name = name or _current_build_profile
+-- GetBuildProfile: retrieve a defined build profile
+function GetBuildProfile(name)
     return _build_profiles[name]
 end
 
--- ============================================================================
--- Accessor Functions for Directories
--- ============================================================================
-
---[[
-    GetLocateTarget()
-
-    Get current LOCATE_TARGET directory.
-]]
-function GetLocateTarget()
-    return _current_locate_target
-end
-
---[[
-    GetLocateSource()
-
-    Get current LOCATE_SOURCE directory.
-]]
-function GetLocateSource()
-    return _current_locate_source
-end
-
---[[
-    GetSearchSource()
-
-    Get current SEARCH_SOURCE directories.
-]]
-function GetSearchSource()
-    return _current_search_source
-end
-
---[[
-    GetLocateTargets()
-
-    Get all locate target directories.
-]]
-function GetLocateTargets()
-    return _locate_targets
-end
-
--- ============================================================================
--- Reset Functions (for testing)
--- ============================================================================
-
---[[
-    ResetMiscRules()
-
-    Reset all state (for testing).
-]]
-function ResetMiscRules()
-    _locate_targets = {
-        common_platform = nil,
-        host_common_arch = nil,
-        target_common_arch = nil,
-        host_common_debug = nil,
-        target_common_debug = nil,
-        host_debug = {},
-        target_debug = {}
-    }
-    _current_locate_target = nil
-    _current_locate_source = nil
-    _current_search_source = {}
-    _deferred_sub_includes = {}
-    _next_id = 0
-    _build_profiles = {}
-    _current_build_profile = nil
-    _build_profile_action = nil
+-- GetBuildProfiles: retrieve all build profiles
+function GetBuildProfiles()
+    return _build_profiles
 end
