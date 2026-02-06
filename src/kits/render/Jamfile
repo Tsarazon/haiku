@@ -22,10 +22,12 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			KosmFont.cpp
 
 			# Backend
-			thorvg/ThorVGBackend.cpp
+			ThorVGBackend.cpp
 
 			:
-			be surface shared thorvg
+			be shared
+			[ MultiArchDefaultGristFiles libsurface.so ]
+			[ MultiArchDefaultGristFiles libthorvg.so ]
 			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
 			;
 	}

@@ -15,7 +15,8 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			KosmAutoLayout.cpp
 
 			:
-			be render shared
+			be shared
+			[ MultiArchDefaultGristFiles librender.so ]
 			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
 			;
 	}
