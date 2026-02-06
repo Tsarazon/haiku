@@ -403,6 +403,14 @@ rule("HostBeAPI")
         local compat_header = path.join(build_headers, "BeOSBuildCompatibility.h")
         target:add("forceincludes", compat_header)
 
+        -- Host tools need all symbols exported (not hidden)
+        -- Override xmake's release mode visibility settings
+        target:add("cxflags", "-fvisibility=default", {force = true})
+        target:add("cxxflags", "-fvisibility=default", {force = true})
+
+        -- Don't strip host tools - they need symbols for linking
+        target:set("strip", "none")
+
         -- PIC for potential shared library linking
         target:add("cxflags", "-fPIC")
     end)
