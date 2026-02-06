@@ -1,6 +1,6 @@
 SubDir HAIKU_TOP src kits surface ;
 
-UsePrivateHeaders surface ;
+UsePrivateHeaders surface shared ;
 UsePublicHeaders surface ;
 
 local architectureObject ;

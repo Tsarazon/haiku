@@ -1599,6 +1599,7 @@ vm_create_anonymous_area(team_id team, const char *name, addr_t size,
 		wiring = B_CONTIGUOUS;
 	}
 
+	physical_address_restrictions stackPhysicalRestrictions;
 	bool doReserveMemory = false;
 	addr_t reservedMemory = 0;
 	switch (wiring) {
@@ -1607,6 +1608,35 @@ vm_create_anonymous_area(team_id team, const char *name, addr_t size,
 		case B_FULL_LOCK:
 		case B_LAZY_LOCK:
 		case B_CONTIGUOUS:
+			doReserveMemory = true;
+			break;
+		case B_LOMEM:
+			stackPhysicalRestrictions = *physicalAddressRestrictions;
+			stackPhysicalRestrictions.high_address = 16 * 1024 * 1024;
+			physicalAddressRestrictions = &stackPhysicalRestrictions;
+			wiring = B_CONTIGUOUS;
+			doReserveMemory = true;
+			break;
+		case B_32_BIT_FULL_LOCK:
+			if (B_HAIKU_PHYSICAL_BITS <= 32
+				|| (uint64)vm_page_max_address() < (uint64)1 << 32) {
+				wiring = B_FULL_LOCK;
+				doReserveMemory = true;
+				break;
+			}
+			// TODO: We don't really support this mode efficiently. Just fall
+			// through for now ...
+			[[fallthrough]];
+		case B_32_BIT_CONTIGUOUS:
+#if B_HAIKU_PHYSICAL_BITS > 32
+			if (vm_page_max_address() >= (phys_addr_t)1 << 32) {
+				stackPhysicalRestrictions = *physicalAddressRestrictions;
+				stackPhysicalRestrictions.high_address
+					= (phys_addr_t)1 << 32;
+				physicalAddressRestrictions = &stackPhysicalRestrictions;
+			}
+#endif
+			wiring = B_CONTIGUOUS;
 			doReserveMemory = true;
 			break;
 		case B_ALREADY_WIRED:

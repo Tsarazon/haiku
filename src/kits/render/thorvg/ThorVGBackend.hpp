@@ -18,12 +18,12 @@ namespace tvg {
 	class RadialGradient;
 	class Fill;
 	class Paint;
-	enum class BlendMethod;
-	enum class StrokeCap;
-	enum class StrokeJoin;
-	enum class FillSpread;
-	enum class TextWrap;
-	enum class MaskMethod;
+	enum class BlendMethod : uint8_t;
+	enum class StrokeCap : uint8_t;
+	enum class StrokeJoin : uint8_t;
+	enum class FillSpread : uint8_t;
+	enum class TextWrap : uint8_t;
+	enum class MaskMethod : uint8_t;
 }
 
 class ThorVGBackend : public RenderBackend {
@@ -34,7 +34,7 @@ public:
 	// Target
 	virtual status_t			SetTarget(void* buffer, uint32 stride,
 									uint32 width, uint32 height,
-									pixel_format format);
+									kosm_pixel_format format);
 	virtual uint32				Width() const { return fWidth; }
 	virtual uint32				Height() const { return fHeight; }
 

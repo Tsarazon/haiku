@@ -131,7 +131,7 @@ ThorVGBackend::~ThorVGBackend()
 
 status_t
 ThorVGBackend::SetTarget(void* buffer, uint32 stride, uint32 width,
-	uint32 height, pixel_format format)
+	uint32 height, kosm_pixel_format format)
 {
 	tvg::ColorSpace cs;
 
@@ -139,17 +139,17 @@ ThorVGBackend::SetTarget(void* buffer, uint32 stride, uint32 width,
 	// ARGB8888 = 0xAARRGGBB (alpha in high bits)
 	//
 	// On little-endian (x86_64, ARM64):
-	// - PIXEL_FORMAT_BGRA8888: memory [B][G][R][A] = uint32 0xAARRGGBB = ARGB8888
-	// - PIXEL_FORMAT_ARGB8888: memory [A][R][G][B] = uint32 0xBBGGRRAA (not supported)
+	// - KOSM_PIXEL_FORMAT_BGRA8888: memory [B][G][R][A] = uint32 0xAARRGGBB = ARGB8888
+	// - KOSM_PIXEL_FORMAT_ARGB8888: memory [A][R][G][B] = uint32 0xBBGGRRAA (not supported)
 	//
 	// Compatible with Haiku B_RGBA32 (memory BGRA = uint32 ARGB)
 
 	switch (format) {
-		case PIXEL_FORMAT_ARGB8888:
+		case KOSM_PIXEL_FORMAT_ARGB8888:
 			// ThorVG native format - uint32 0xAARRGGBB
 			cs = tvg::ColorSpace::ARGB8888;
 			break;
-		case PIXEL_FORMAT_BGRA8888:
+		case KOSM_PIXEL_FORMAT_BGRA8888:
 			// Memory order BGRA = uint32 ARGB on little-endian
 			// This is Haiku-compatible (B_RGBA32)
 			cs = tvg::ColorSpace::ARGB8888;
@@ -203,11 +203,11 @@ ThorVGBackend::FillRect(const KosmRect& rect, const KosmColor& color)
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height);
-	_ApplyFill(shape.get(), color);
-	_ApplyState(shape.get());
+	_ApplyFill(shape, color);
+	_ApplyState(shape);
 
 	if (fCurrentState.hasShadow)
-		_DrawShadow(shape.get());
+		_DrawShadow(shape);
 
 	fScene->add(shape);
 }
@@ -219,11 +219,11 @@ ThorVGBackend::FillRoundRect(const KosmRect& rect, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height, rx, ry);
-	_ApplyFill(shape.get(), color);
-	_ApplyState(shape.get());
+	_ApplyFill(shape, color);
+	_ApplyState(shape);
 
 	if (fCurrentState.hasShadow)
-		_DrawShadow(shape.get());
+		_DrawShadow(shape);
 
 	fScene->add(shape);
 }
@@ -235,11 +235,11 @@ ThorVGBackend::FillCircle(const KosmPoint& center, float radius,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, radius, radius);
-	_ApplyFill(shape.get(), color);
-	_ApplyState(shape.get());
+	_ApplyFill(shape, color);
+	_ApplyState(shape);
 
 	if (fCurrentState.hasShadow)
-		_DrawShadow(shape.get());
+		_DrawShadow(shape);
 
 	fScene->add(shape);
 }
@@ -251,11 +251,11 @@ ThorVGBackend::FillEllipse(const KosmPoint& center, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, rx, ry);
-	_ApplyFill(shape.get(), color);
-	_ApplyState(shape.get());
+	_ApplyFill(shape, color);
+	_ApplyState(shape);
 
 	if (fCurrentState.hasShadow)
-		_DrawShadow(shape.get());
+		_DrawShadow(shape);
 
 	fScene->add(shape);
 }
@@ -270,11 +270,11 @@ ThorVGBackend::FillPath(void* pathHandle, const KosmColor& color)
 	auto original = static_cast<tvg::Shape*>(pathHandle);
 	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
-	_ApplyFill(shape.get(), color);
-	_ApplyState(shape.get());
+	_ApplyFill(shape, color);
+	_ApplyState(shape);
 
 	if (fCurrentState.hasShadow)
-		_DrawShadow(shape.get());
+		_DrawShadow(shape);
 
 	fScene->add(shape);
 }
@@ -289,8 +289,8 @@ ThorVGBackend::FillRectGradient(const KosmRect& rect, void* gradientHandle)
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height);
-	_ApplyGradientFill(shape.get(), gradientHandle);
-	_ApplyState(shape.get());
+	_ApplyGradientFill(shape, gradientHandle);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -301,8 +301,8 @@ ThorVGBackend::FillRoundRectGradient(const KosmRect& rect, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height, rx, ry);
-	_ApplyGradientFill(shape.get(), gradientHandle);
-	_ApplyState(shape.get());
+	_ApplyGradientFill(shape, gradientHandle);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -313,8 +313,8 @@ ThorVGBackend::FillCircleGradient(const KosmPoint& center, float radius,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, radius, radius);
-	_ApplyGradientFill(shape.get(), gradientHandle);
-	_ApplyState(shape.get());
+	_ApplyGradientFill(shape, gradientHandle);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -325,8 +325,8 @@ ThorVGBackend::FillEllipseGradient(const KosmPoint& center, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, rx, ry);
-	_ApplyGradientFill(shape.get(), gradientHandle);
-	_ApplyState(shape.get());
+	_ApplyGradientFill(shape, gradientHandle);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -340,8 +340,8 @@ ThorVGBackend::FillPathGradient(void* pathHandle, void* gradientHandle)
 	auto original = static_cast<tvg::Shape*>(pathHandle);
 	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
-	_ApplyGradientFill(shape.get(), gradientHandle);
-	_ApplyState(shape.get());
+	_ApplyGradientFill(shape, gradientHandle);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -356,8 +356,8 @@ ThorVGBackend::StrokeRect(const KosmRect& rect, const KosmColor& color,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height);
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -368,8 +368,8 @@ ThorVGBackend::StrokeRoundRect(const KosmRect& rect, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendRect(rect.x, rect.y, rect.width, rect.height, rx, ry);
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -380,8 +380,8 @@ ThorVGBackend::StrokeCircle(const KosmPoint& center, float radius,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, radius, radius);
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -392,8 +392,8 @@ ThorVGBackend::StrokeEllipse(const KosmPoint& center, float rx, float ry,
 {
 	auto shape = tvg::Shape::gen();
 	shape->appendCircle(center.x, center.y, rx, ry);
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -405,8 +405,8 @@ ThorVGBackend::StrokeLine(const KosmPoint& from, const KosmPoint& to,
 	auto shape = tvg::Shape::gen();
 	shape->moveTo(from.x, from.y);
 	shape->lineTo(to.x, to.y);
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -421,8 +421,8 @@ ThorVGBackend::StrokePath(void* pathHandle, const KosmColor& color,
 	auto original = static_cast<tvg::Shape*>(pathHandle);
 	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
-	_ApplyStroke(shape.get(), color, style);
-	_ApplyState(shape.get());
+	_ApplyStroke(shape, color, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -437,8 +437,8 @@ ThorVGBackend::StrokePathGradient(void* pathHandle, void* gradientHandle,
 	auto original = static_cast<tvg::Shape*>(pathHandle);
 	auto shape = static_cast<tvg::Shape*>(original->duplicate());
 
-	_ApplyGradientStroke(shape.get(), gradientHandle, style);
-	_ApplyState(shape.get());
+	_ApplyGradientStroke(shape, gradientHandle, style);
+	_ApplyState(shape);
 	fScene->add(shape);
 }
 
@@ -1171,7 +1171,6 @@ ThorVGBackend::PathAddArc(void* path, const KosmPoint& center, float radius,
 
 	// Convert angles to radians
 	float startRad = startAngle * M_PI / 180.0f;
-	float endRad = (startAngle + sweepAngle) * M_PI / 180.0f;
 
 	// Start point
 	float x0 = center.x + radius * cosf(startRad);
@@ -1410,7 +1409,7 @@ ThorVGBackend::ImageLoadData(void* image, const void* data, size_t size,
 
 	auto picture = static_cast<tvg::Picture*>(image);
 	auto result = picture->load(static_cast<const char*>(data),
-		static_cast<uint32_t>(size), mimeType, true);
+		static_cast<uint32_t>(size), mimeType, nullptr, true);
 
 	return (result == tvg::Result::Success) ? B_OK : B_ERROR;
 }

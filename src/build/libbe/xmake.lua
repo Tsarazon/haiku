@@ -25,6 +25,12 @@ target("libbe_build")
     set_targetdir(lib_output)
     set_basename("be_build")
 
+    -- Host tools need symbols exported (not hidden) and not stripped
+    set_strip("none")
+    add_cxflags("-fvisibility=default", {force = true})
+    add_cxxflags("-fvisibility=default", {force = true})
+    add_shflags("-fvisibility=default", {force = true})
+
     -- Link all kit objects
     add_deps("support_kit_build")
     add_deps("storage_kit_build")

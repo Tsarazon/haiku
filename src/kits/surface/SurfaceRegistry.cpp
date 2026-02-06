@@ -5,6 +5,7 @@
 
 #include "SurfaceRegistry.hpp"
 
+#include <new>
 #include <string.h>
 
 

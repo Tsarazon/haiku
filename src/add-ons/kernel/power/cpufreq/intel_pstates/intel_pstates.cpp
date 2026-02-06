@@ -219,7 +219,7 @@ init_pstates()
 	sHWPActive = hwpCapable && hwpEPP;
 
 	if (!sHWPActive) {
-		if (!x86_check_feature(IA32_FEATURE_EST, FEATURE_COMMON))
+		if (!x86_check_feature(IA32_FEATURE_EXT_EST, FEATURE_EXT))
 			return B_ERROR;
 	}
 

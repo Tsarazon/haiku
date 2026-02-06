@@ -405,8 +405,9 @@ rule("HostBeAPI")
 
         -- Host tools need all symbols exported (not hidden)
         -- Override xmake's release mode visibility settings
+        -- Must override both -fvisibility=hidden AND -fvisibility-inlines-hidden
         target:add("cxflags", "-fvisibility=default", {force = true})
-        target:add("cxxflags", "-fvisibility=default", {force = true})
+        target:add("cxxflags", "-fvisibility=default", "-fno-visibility-inlines-hidden", {force = true})
 
         -- Don't strip host tools - they need symbols for linking
         target:set("strip", "none")

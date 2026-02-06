@@ -271,7 +271,7 @@ err:
 }
 
 
-#define SET_BIT(field, bit) field[(bit) >> 3] |= 1 << ((bit) & 7)
+#define SET_EMULATION_BIT(field, bit) field[(bit) >> 3] |= 1 << ((bit) & 7)
 
 static status_t
 scsi_init_device(device_node *node, void **cookie)
@@ -349,11 +349,11 @@ scsi_init_device(device_node *node, void **cookie)
 	memset(device->emulation_map, 0, sizeof(device->emulation_map));
 
 	if (device->is_atapi) {
-		SET_BIT(device->emulation_map, SCSI_OP_READ_6);
-		SET_BIT(device->emulation_map, SCSI_OP_WRITE_6);
-		SET_BIT(device->emulation_map, SCSI_OP_MODE_SENSE_6);
-		SET_BIT(device->emulation_map, SCSI_OP_MODE_SELECT_6);
-		SET_BIT(device->emulation_map, SCSI_OP_INQUIRY);
+		SET_EMULATION_BIT(device->emulation_map, SCSI_OP_READ_6);
+		SET_EMULATION_BIT(device->emulation_map, SCSI_OP_WRITE_6);
+		SET_EMULATION_BIT(device->emulation_map, SCSI_OP_MODE_SENSE_6);
+		SET_EMULATION_BIT(device->emulation_map, SCSI_OP_MODE_SELECT_6);
+		SET_EMULATION_BIT(device->emulation_map, SCSI_OP_INQUIRY);
 	}
 
 	*cookie = device;

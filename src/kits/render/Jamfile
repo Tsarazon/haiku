@@ -2,20 +2,16 @@ SubDir HAIKU_TOP src kits render ;
 
 UsePrivateHeaders render shared ;
 UsePublicHeaders render surface ;
+UseLibraryHeaders thorvg ;
 
 local architectureObject ;
 for architectureObject in [ MultiArchSubDirSetup ] {
 	on $(architectureObject) {
 		local architecture = $(TARGET_PACKAGING_ARCH) ;
 
-		UseBuildFeatureHeaders thorvg ;
-
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) thorvg ] ;
 
 		SubDirC++Flags -DTHORVG_ENABLED ;
-
-		Includes [ FGristFiles ThorVGBackend.cpp ]
-			: [ BuildFeatureAttribute thorvg : headers ] ;
 
 		SharedLibrary [ MultiArchDefaultGristFiles librender.so ] :
 			# Core
@@ -29,8 +25,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			thorvg/ThorVGBackend.cpp
 
 			:
-			be surface shared
-			[ BuildFeatureAttribute thorvg : library ]
+			be surface shared thorvg
 			[ TargetLibsupc++ ] [ TargetLibstdc++ ]
 			;
 	}

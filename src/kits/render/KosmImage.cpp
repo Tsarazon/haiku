@@ -151,7 +151,7 @@ KosmImage::SetPixels(const KosmSurface* surface)
 	if (surface == nullptr)
 		return B_BAD_VALUE;
 
-	const uint32* pixels = reinterpret_cast<const uint32*>(surface->Bits());
+	const uint32* pixels = reinterpret_cast<const uint32*>(surface->BaseAddress());
 	if (pixels == nullptr)
 		return B_BAD_VALUE;
 

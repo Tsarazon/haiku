@@ -194,8 +194,6 @@ LayoutResult Layout(
 		}
 	}
 
-	uint8_t actual_rows = matrix.rows;
-
 	for (uint8_t r = params.row_count; r < matrix.rows; ++r)
 		params.row_tracks[r] = params.auto_row_size;
 	params.row_count = matrix.rows;

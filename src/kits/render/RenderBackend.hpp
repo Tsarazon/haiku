@@ -7,6 +7,7 @@
 
 #include <KosmCanvas.hpp>
 #include <KosmColor.hpp>
+#include <KosmFont.hpp>
 #include <KosmGeometry.hpp>
 #include <KosmGradient.hpp>
 #include <SurfaceTypes.hpp>
@@ -23,7 +24,7 @@ public:
 	// Target
 	virtual status_t			SetTarget(void* buffer, uint32 stride,
 									uint32 width, uint32 height,
-									pixel_format format) = 0;
+									kosm_pixel_format format) = 0;
 	virtual uint32				Width() const = 0;
 	virtual uint32				Height() const = 0;
 
