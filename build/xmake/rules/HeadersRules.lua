@@ -337,10 +337,11 @@ rule("HostBeAPI")
         local libs_headers = path.join(top, "headers", "libs")
 
         -- Base BeAPI headers from headers/build/
+        -- NOTE: os/add-ons/registrar EXCLUDED - its depth causes ../../../private paths
+        -- to resolve incorrectly to headers/build/private/ instead of headers/private/
         local base_headers = {
             build_headers,
             path.join(build_headers, "os"),
-            path.join(build_headers, "os", "add-ons", "registrar"),
             path.join(build_headers, "os", "app"),
             path.join(build_headers, "os", "drivers"),
             path.join(build_headers, "os", "kernel"),
@@ -357,10 +358,12 @@ rule("HostBeAPI")
         end
 
         -- Kit-specific: private_build_headers -> headers/build/private/<group>
+        -- NOTE: These are added AFTER base headers, so relative paths like
+        -- ../../../private/ resolve correctly via headers/build/os first
         local pbh = target:extraconf("rules", "HostBeAPI", "private_build_headers")
         if pbh then
             for _, group in ipairs(pbh) do
-                target:add("sysincludedirs", path.join(build_private, group))
+                target:add("includedirs", path.join(build_private, group))
             end
         end
 

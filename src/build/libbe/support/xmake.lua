@@ -7,6 +7,9 @@ local haiku_top = HAIKU_TOP or path.directory(path.directory(path.directory(path
 local output_dir = HAIKU_OUTPUT_DIR or path.join(haiku_top, "spawned")
 local obj_output = path.join(output_dir, "objects", "libbe_build")
 
+-- Local stubs
+local build_support = os.scriptdir()
+-- Fallback
 local kits_support = path.join(haiku_top, "src", "kits", "support")
 
 target("support_kit_build")
@@ -14,11 +17,16 @@ target("support_kit_build")
     set_targetdir(obj_output)
 
     add_rules("HostBeAPI", {
-        private_build_headers = {"app", "interface", "shared", "support", "locale"},
-        private_headers = {""}  -- for binary_compatibility/Support.h
+        private_build_headers = {"app", "interface", "shared", "support"}
     })
 
-    add_files(path.join(kits_support, "Archivable.cpp"))
+    add_defines("ZSTD_ENABLED")
+
+    -- Local stub files
+    add_files(path.join(build_support, "Archivable.cpp"))
+    add_files(path.join(build_support, "Locker.cpp"))
+
+    -- From src/kits/support/
     add_files(path.join(kits_support, "BlockCache.cpp"))
     add_files(path.join(kits_support, "BufferIO.cpp"))
     add_files(path.join(kits_support, "ByteOrder.cpp"))
@@ -29,14 +37,15 @@ target("support_kit_build")
     add_files(path.join(kits_support, "Job.cpp"))
     add_files(path.join(kits_support, "JobQueue.cpp"))
     add_files(path.join(kits_support, "List.cpp"))
-    add_files(path.join(kits_support, "Locker.cpp"))
     add_files(path.join(kits_support, "PointerList.cpp"))
     add_files(path.join(kits_support, "Referenceable.cpp"))
     add_files(path.join(kits_support, "String.cpp"))
     add_files(path.join(kits_support, "StringList.cpp"))
-    add_files(path.join(kits_support, "Url.cpp"))
     add_files(path.join(kits_support, "ZlibCompressionAlgorithm.cpp"))
     add_files(path.join(kits_support, "ZstdCompressionAlgorithm.cpp"))
 
-    add_defines("ZSTD_ENABLED")
+    -- Url.cpp needs private locale headers
+    add_files(path.join(kits_support, "Url.cpp"), {
+        includedirs = path.join(haiku_top, "headers", "build", "private", "locale")
+    })
 target_end()

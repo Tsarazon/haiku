@@ -37,9 +37,10 @@ i586-*)
 	gdbConfigureArgs="--disable-multilib"
 	;;
 x86_64-*)
-	binutilsConfigureArgs="--enable-multilib"
-	gccConfigureArgs="--enable-multilib"
-	binutilsTargets="$binutilsTargets,i386-efi-pe,x86_64-efi-pe"
+	# Multilib disabled - only 64-bit support (32-bit x86 headers removed)
+	binutilsConfigureArgs="--disable-multilib"
+	gccConfigureArgs="--disable-multilib"
+	binutilsTargets="$binutilsTargets,x86_64-efi-pe"
 	gdbConfigureArgs="--disable-multilib"
 	;;
 m68k-*)
@@ -257,15 +258,12 @@ $MAKE $additionalMakeArgs install || {
 	exit 1
 }
 
-case $haikuMachine in
-x86_64-*)
-	# pick up the 32-bit libraries for the bootloader
-	bootLibgcc=`$installDir/bin/$haikuMachine-gcc -m32 -print-file-name=libgcc.a`
-	$installDir/bin/$haikuMachine-strip --strip-debug $bootLibgcc
-	bootLibsupcxx=`$installDir/bin/$haikuMachine-gcc -m32 -print-file-name=libsupc++.a`
-	$installDir/bin/$haikuMachine-strip --strip-debug $bootLibsupcxx
-	;;
-esac
+# 32-bit bootloader libraries removed - only 64-bit support
+# case $haikuMachine in
+# x86_64-*)
+# 	bootLibgcc=`$installDir/bin/$haikuMachine-gcc -m32 -print-file-name=libgcc.a`
+# 	...
+# esac
 
 # cleanup
 

@@ -1,15 +1,12 @@
 --[[
     icon_kit_build - Icon Kit for host tools
     Mirrors: src/build/libbe/icon/Jamfile
-
-    Includes AGG (Anti-Grain Geometry) library sources.
 ]]
 
 local haiku_top = HAIKU_TOP or path.directory(path.directory(path.directory(path.directory(os.scriptdir()))))
 local output_dir = HAIKU_OUTPUT_DIR or path.join(haiku_top, "spawned")
 local obj_output = path.join(output_dir, "objects", "libbe_build")
 
--- Source directories
 local libs_icon = path.join(haiku_top, "src", "libs", "icon")
 local libs_agg = path.join(haiku_top, "src", "libs", "agg", "src")
 
@@ -17,33 +14,45 @@ target("icon_kit_build")
     set_kind("object")
     set_targetdir(obj_output)
 
-    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
-    add_rules("HostBeAPI")
+    add_rules("HostBeAPI", {
+        private_build_headers = {"shared"},
+        library_headers = {"agg", "icon"},
+        source_dirs = {
+            libs_icon,
+            path.join(libs_icon, "flat_icon"),
+            path.join(libs_icon, "generic"),
+            path.join(libs_icon, "message"),
+            path.join(libs_icon, "shape"),
+            path.join(libs_icon, "style"),
+            path.join(libs_icon, "transformable"),
+            path.join(libs_icon, "transformer")
+        }
+    })
 
-    -- flat_icon sources
+    -- flat_icon
     add_files(path.join(libs_icon, "flat_icon", "FlatIconFormat.cpp"))
     add_files(path.join(libs_icon, "flat_icon", "FlatIconImporter.cpp"))
     add_files(path.join(libs_icon, "flat_icon", "LittleEndianBuffer.cpp"))
     add_files(path.join(libs_icon, "flat_icon", "PathCommandQueue.cpp"))
 
-    -- message sources
+    -- message
     add_files(path.join(libs_icon, "message", "Defines.cpp"))
     add_files(path.join(libs_icon, "message", "MessageImporter.cpp"))
 
-    -- shape sources
+    -- shape
     add_files(path.join(libs_icon, "shape", "PathSourceShape.cpp"))
     add_files(path.join(libs_icon, "shape", "ReferenceImage.cpp"))
     add_files(path.join(libs_icon, "shape", "Shape.cpp"))
     add_files(path.join(libs_icon, "shape", "VectorPath.cpp"))
 
-    -- style sources
+    -- style
     add_files(path.join(libs_icon, "style", "GradientTransformable.cpp"))
     add_files(path.join(libs_icon, "style", "Style.cpp"))
 
-    -- transformable sources
+    -- transformable
     add_files(path.join(libs_icon, "transformable", "Transformable.cpp"))
 
-    -- transformer sources
+    -- transformer
     add_files(path.join(libs_icon, "transformer", "AffineTransformer.cpp"))
     add_files(path.join(libs_icon, "transformer", "CompoundStyleTransformer.cpp"))
     add_files(path.join(libs_icon, "transformer", "ContourTransformer.cpp"))
@@ -53,12 +62,12 @@ target("icon_kit_build")
     add_files(path.join(libs_icon, "transformer", "StyleTransformer.cpp"))
     add_files(path.join(libs_icon, "transformer", "TransformerFactory.cpp"))
 
-    -- Main icon sources
+    -- Main icon
     add_files(path.join(libs_icon, "Icon.cpp"))
     add_files(path.join(libs_icon, "IconRenderer.cpp"))
     add_files(path.join(libs_icon, "IconUtils.cpp"))
 
-    -- AGG sources
+    -- AGG
     add_files(path.join(libs_agg, "agg_arc.cpp"))
     add_files(path.join(libs_agg, "agg_arrowhead.cpp"))
     add_files(path.join(libs_agg, "agg_bezier_arc.cpp"))
@@ -84,34 +93,4 @@ target("icon_kit_build")
     add_files(path.join(libs_agg, "agg_vpgen_clip_polygon.cpp"))
     add_files(path.join(libs_agg, "agg_vpgen_clip_polyline.cpp"))
     add_files(path.join(libs_agg, "agg_vpgen_segmentator.cpp"))
-
-    -- Headers (mirrors Jamfile)
-    on_load(function(target)
-        import("core.project.config")
-        local top = config.get("haiku_top")
-        local build_private = path.join(top, "headers", "build", "private")
-        local libs_headers = path.join(top, "headers", "libs")
-        local libs_icon = path.join(top, "src", "libs", "icon")
-
-        -- UseLibraryHeaders agg icon
-        target:add("sysincludedirs",
-            path.join(libs_headers, "agg"),
-            path.join(libs_headers, "icon")
-        )
-
-        -- UsePrivateBuildHeaders shared
-        target:add("sysincludedirs", path.join(build_private, "shared"))
-
-        -- Source directories for local includes (matches SEARCH_SOURCE in Jamfile)
-        target:add("includedirs",
-            libs_icon,
-            path.join(libs_icon, "flat_icon"),
-            path.join(libs_icon, "generic"),
-            path.join(libs_icon, "message"),
-            path.join(libs_icon, "shape"),
-            path.join(libs_icon, "style"),
-            path.join(libs_icon, "transformable"),
-            path.join(libs_icon, "transformer")
-        )
-    end)
 target_end()

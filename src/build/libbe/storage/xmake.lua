@@ -1,43 +1,42 @@
 --[[
     storage_kit_build - Storage Kit for host tools
     Mirrors: src/build/libbe/storage/Jamfile
-
-    Uses local simplified versions of files when they exist,
-    falls back to src/kits/storage/ for others.
 ]]
 
 local haiku_top = HAIKU_TOP or path.directory(path.directory(path.directory(path.directory(os.scriptdir()))))
 local output_dir = HAIKU_OUTPUT_DIR or path.join(haiku_top, "spawned")
 local obj_output = path.join(output_dir, "objects", "libbe_build")
 
--- Source directories
-local local_storage = os.scriptdir()  -- src/build/libbe/storage (local simplified versions)
+-- Local stubs
+local build_storage = os.scriptdir()
+-- Fallback
 local kits_storage = path.join(haiku_top, "src", "kits", "storage")
-local kits_storage_mime = path.join(kits_storage, "mime")
-local kits_storage_sniffer = path.join(kits_storage, "sniffer")
+local kits_mime = path.join(kits_storage, "mime")
+local kits_sniffer = path.join(kits_storage, "sniffer")
 
 target("storage_kit_build")
     set_kind("object")
     set_targetdir(obj_output)
 
-    -- Use HostBeAPI rule for build headers and -include BeOSBuildCompatibility.h
-    add_rules("HostBeAPI")
+    add_rules("HostBeAPI", {
+        private_build_headers = {"app", "kernel", "shared", "storage"},
+        public_headers = {"add-ons/registrar"}
+    })
 
-    -- LOCAL simplified versions from src/build/libbe/storage/
-    -- These have MimeType calls commented out with #if 0
-    add_files(path.join(local_storage, "AppFileInfo.cpp"))
-    add_files(path.join(local_storage, "Directory.cpp"))
-    add_files(path.join(local_storage, "Entry.cpp"))
-    add_files(path.join(local_storage, "File.cpp"))
-    add_files(path.join(local_storage, "MergedDirectory.cpp"))
-    add_files(path.join(local_storage, "Mime.cpp"))
-    add_files(path.join(local_storage, "MimeType.cpp"))
-    add_files(path.join(local_storage, "Node.cpp"))
-    add_files(path.join(local_storage, "NodeInfo.cpp"))
-    add_files(path.join(local_storage, "Statable.cpp"))
-    add_files(path.join(local_storage, "Volume.cpp"))
+    -- Local stub files
+    add_files(path.join(build_storage, "AppFileInfo.cpp"))
+    add_files(path.join(build_storage, "Directory.cpp"))
+    add_files(path.join(build_storage, "Entry.cpp"))
+    add_files(path.join(build_storage, "File.cpp"))
+    add_files(path.join(build_storage, "MergedDirectory.cpp"))
+    add_files(path.join(build_storage, "Mime.cpp"))
+    add_files(path.join(build_storage, "MimeType.cpp"))
+    add_files(path.join(build_storage, "Node.cpp"))
+    add_files(path.join(build_storage, "NodeInfo.cpp"))
+    add_files(path.join(build_storage, "Statable.cpp"))
+    add_files(path.join(build_storage, "Volume.cpp"))
 
-    -- From src/kits/storage/ (no local version exists)
+    -- From src/kits/storage/
     add_files(path.join(kits_storage, "DriverSettings.cpp"))
     add_files(path.join(kits_storage, "EntryList.cpp"))
     add_files(path.join(kits_storage, "FdIO.cpp"))
@@ -53,47 +52,33 @@ target("storage_kit_build")
     add_files(path.join(kits_storage, "SymLink.cpp"))
     add_files(path.join(kits_storage, "storage_support.cpp"))
 
-    -- MIME sources (from src/kits/storage/mime/)
-    add_files(path.join(kits_storage_mime, "AppMetaMimeCreator.cpp"))
-    add_files(path.join(kits_storage_mime, "AssociatedTypes.cpp"))
-    add_files(path.join(kits_storage_mime, "Database.cpp"))
-    add_files(path.join(kits_storage_mime, "DatabaseDirectory.cpp"))
-    add_files(path.join(kits_storage_mime, "DatabaseLocation.cpp"))
-    add_files(path.join(kits_storage_mime, "database_support.cpp"))
-    add_files(path.join(kits_storage_mime, "InstalledTypes.cpp"))
-    add_files(path.join(kits_storage_mime, "MimeEntryProcessor.cpp"))
-    add_files(path.join(kits_storage_mime, "MimeInfoUpdater.cpp"))
-    add_files(path.join(kits_storage_mime, "MimeSniffer.cpp"))
-    add_files(path.join(kits_storage_mime, "MimeSnifferAddon.cpp"))
-    add_files(path.join(kits_storage_mime, "MimeSnifferAddonManager.cpp"))
-    add_files(path.join(kits_storage_mime, "SnifferRules.cpp"))
-    add_files(path.join(kits_storage_mime, "Supertype.cpp"))
-    add_files(path.join(kits_storage_mime, "SupportingApps.cpp"))
-    add_files(path.join(kits_storage_mime, "TextSnifferAddon.cpp"))
+    -- MIME sources
+    add_files(path.join(kits_mime, "AppMetaMimeCreator.cpp"))
+    add_files(path.join(kits_mime, "AssociatedTypes.cpp"))
+    add_files(path.join(kits_mime, "Database.cpp"))
+    add_files(path.join(kits_mime, "DatabaseDirectory.cpp"))
+    add_files(path.join(kits_mime, "DatabaseLocation.cpp"))
+    add_files(path.join(kits_mime, "database_support.cpp"))
+    add_files(path.join(kits_mime, "InstalledTypes.cpp"))
+    add_files(path.join(kits_mime, "MimeEntryProcessor.cpp"))
+    add_files(path.join(kits_mime, "MimeInfoUpdater.cpp"))
+    add_files(path.join(kits_mime, "MimeSniffer.cpp"))
+    add_files(path.join(kits_mime, "MimeSnifferAddon.cpp"))
+    add_files(path.join(kits_mime, "MimeSnifferAddonManager.cpp"))
+    add_files(path.join(kits_mime, "SnifferRules.cpp"))
+    add_files(path.join(kits_mime, "Supertype.cpp"))
+    add_files(path.join(kits_mime, "SupportingApps.cpp"))
+    add_files(path.join(kits_mime, "TextSnifferAddon.cpp"))
 
-    -- Sniffer sources (from src/kits/storage/sniffer/)
-    add_files(path.join(kits_storage_sniffer, "CharStream.cpp"))
-    add_files(path.join(kits_storage_sniffer, "Err.cpp"))
-    add_files(path.join(kits_storage_sniffer, "DisjList.cpp"))
-    add_files(path.join(kits_storage_sniffer, "Pattern.cpp"))
-    add_files(path.join(kits_storage_sniffer, "PatternList.cpp"))
-    add_files(path.join(kits_storage_sniffer, "Parser.cpp"))
-    add_files(path.join(kits_storage_sniffer, "Range.cpp"))
-    add_files(path.join(kits_storage_sniffer, "RPattern.cpp"))
-    add_files(path.join(kits_storage_sniffer, "RPatternList.cpp"))
-    add_files(path.join(kits_storage_sniffer, "Rule.cpp"))
-
-    -- Headers (mirrors Jamfile: UsePrivateBuildHeaders app kernel shared storage)
-    on_load(function(target)
-        import("core.project.config")
-        local top = config.get("haiku_top")
-        local build_private = path.join(top, "headers", "build", "private")
-
-        target:add("sysincludedirs",
-            path.join(build_private, "app"),
-            path.join(build_private, "kernel"),
-            path.join(build_private, "shared"),
-            path.join(build_private, "storage")
-        )
-    end)
+    -- Sniffer sources
+    add_files(path.join(kits_sniffer, "CharStream.cpp"))
+    add_files(path.join(kits_sniffer, "Err.cpp"))
+    add_files(path.join(kits_sniffer, "DisjList.cpp"))
+    add_files(path.join(kits_sniffer, "Pattern.cpp"))
+    add_files(path.join(kits_sniffer, "PatternList.cpp"))
+    add_files(path.join(kits_sniffer, "Parser.cpp"))
+    add_files(path.join(kits_sniffer, "Range.cpp"))
+    add_files(path.join(kits_sniffer, "RPattern.cpp"))
+    add_files(path.join(kits_sniffer, "RPatternList.cpp"))
+    add_files(path.join(kits_sniffer, "Rule.cpp"))
 target_end()
