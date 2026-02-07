@@ -1,66 +1,36 @@
+// plutovg-utils.hpp - Internal parsing and pixel utilities
+// C++20
+
 #ifndef PLUTOVG_UTILS_HPP
 #define PLUTOVG_UTILS_HPP
 
-#include <cstdint>
-#include <cstdlib>
-#include <cstddef>
-#include <cstring>
+#include <algorithm>
 #include <cfloat>
 #include <cmath>
-#include <algorithm>
-#include <vector>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 
 namespace plutovg {
+
+// -- Character classification --
 
 inline constexpr bool is_num(char c) { return c >= '0' && c <= '9'; }
 inline constexpr bool is_alpha(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
 inline constexpr bool is_alnum(char c) { return is_alpha(c) || is_num(c); }
 inline constexpr bool is_ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
 
-template<typename T>
-constexpr T clamp(T v, T lo, T hi) { return v < lo ? lo : (v > hi ? hi : v); }
+// -- Pixel component access (premultiplied ARGB) --
 
 inline constexpr uint8_t alpha(uint32_t c) { return (c >> 24) & 0xff; }
-inline constexpr uint8_t red(uint32_t c) { return (c >> 16) & 0xff; }
+inline constexpr uint8_t red(uint32_t c)   { return (c >> 16) & 0xff; }
 inline constexpr uint8_t green(uint32_t c) { return (c >> 8) & 0xff; }
-inline constexpr uint8_t blue(uint32_t c) { return c & 0xff; }
+inline constexpr uint8_t blue(uint32_t c)  { return c & 0xff; }
 
-template<typename T>
-struct Array {
-    T* data = nullptr;
-    int size = 0;
-    int capacity = 0;
-
-    void init() { data = nullptr; size = 0; capacity = 0; }
-    void clear() { size = 0; }
-
-    void destroy() {
-        std::free(data);
-        data = nullptr;
-        size = 0;
-        capacity = 0;
-    }
-
-    void ensure(int count) {
-        if (size + count > capacity) {
-            int new_cap = capacity == 0 ? 8 : capacity;
-            while (new_cap < size + count)
-                new_cap *= 2;
-            data = static_cast<T*>(std::realloc(data, new_cap * sizeof(T)));
-            capacity = new_cap;
-        }
-    }
-
-    void append(const T* items, int count) {
-        if (items && count > 0) {
-            ensure(count);
-            std::memcpy(data + size, items, count * sizeof(T));
-            size += count;
-        }
-    }
-
-    void append(const Array& other) { append(other.data, other.size); }
-};
+inline constexpr uint32_t pack_argb(uint8_t a, uint8_t r, uint8_t g, uint8_t b) {
+    return (uint32_t(a) << 24) | (uint32_t(r) << 16) | (uint32_t(g) << 8) | uint32_t(b);
+}
 
 inline uint32_t premultiply_argb(uint32_t color) {
     uint32_t a = alpha(color);
@@ -72,8 +42,70 @@ inline uint32_t premultiply_argb(uint32_t color) {
         g = (g * a) / 255;
         b = (b * a) / 255;
     }
-    return (a << 24) | (r << 16) | (g << 8) | b;
+    return pack_argb(a, r, g, b);
 }
+
+// -- Blend mode pixel operations --
+// All inputs/outputs are in [0, 255] range.
+
+namespace blend_ops {
+
+inline constexpr uint8_t multiply(uint8_t a, uint8_t b) {
+    return static_cast<uint8_t>((uint32_t(a) * b) / 255);
+}
+
+inline constexpr uint8_t screen(uint8_t a, uint8_t b) {
+    return static_cast<uint8_t>(a + b - (uint32_t(a) * b) / 255);
+}
+
+inline constexpr uint8_t overlay(uint8_t a, uint8_t b) {
+    return (a <= 127)
+        ? static_cast<uint8_t>((2u * a * b) / 255)
+        : static_cast<uint8_t>(255 - (2u * (255 - a) * (255 - b)) / 255);
+}
+
+inline constexpr uint8_t darken(uint8_t a, uint8_t b) {
+    return std::min(a, b);
+}
+
+inline constexpr uint8_t lighten(uint8_t a, uint8_t b) {
+    return std::max(a, b);
+}
+
+inline constexpr uint8_t color_dodge(uint8_t a, uint8_t b) {
+    if (b == 255) return 255;
+    return static_cast<uint8_t>(std::min(255u, (uint32_t(a) * 255) / (255 - b)));
+}
+
+inline constexpr uint8_t color_burn(uint8_t a, uint8_t b) {
+    if (b == 0) return 0;
+    return static_cast<uint8_t>(255 - std::min(255u, ((255u - a) * 255) / b));
+}
+
+inline constexpr uint8_t hard_light(uint8_t a, uint8_t b) {
+    return overlay(b, a); // same as overlay with swapped args
+}
+
+inline uint8_t soft_light(uint8_t a, uint8_t b) {
+    float fa = a / 255.0f;
+    float fb = b / 255.0f;
+    float result = (fb <= 0.5f)
+        ? fa - (1.0f - 2.0f * fb) * fa * (1.0f - fa)
+        : fa + (2.0f * fb - 1.0f) * (std::sqrt(fa) - fa);
+    return static_cast<uint8_t>(std::clamp(result * 255.0f + 0.5f, 0.0f, 255.0f));
+}
+
+inline constexpr uint8_t difference(uint8_t a, uint8_t b) {
+    return (a > b) ? (a - b) : (b - a);
+}
+
+inline constexpr uint8_t exclusion(uint8_t a, uint8_t b) {
+    return static_cast<uint8_t>(a + b - (2u * a * b) / 255);
+}
+
+} // namespace blend_ops
+
+// -- SVG / number parsing --
 
 inline bool parse_number(const char*& it, const char* end, float& number) {
     float integer = 0;
@@ -91,6 +123,7 @@ inline bool parse_number(const char*& it, const char* end, float& number) {
 
     if (it >= end || (*it != '.' && !is_num(*it)))
         return false;
+
     if (is_num(*it)) {
         do {
             integer = 10.f * integer + (*it++ - '0');
@@ -127,7 +160,7 @@ inline bool parse_number(const char*& it, const char* end, float& number) {
 
     number = sign * (integer + fraction);
     if (exponent)
-        number *= std::powf(10.f, expsign * exponent);
+        number *= std::pow(10.f, expsign * exponent);
     return number >= -FLT_MAX && number <= FLT_MAX;
 }
 
