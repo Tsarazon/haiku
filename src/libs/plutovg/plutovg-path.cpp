@@ -364,7 +364,7 @@ void Path::add_arc(float cx, float cy, float r, float a0, float a1, bool ccw) {
 }
 
 void Path::add_path(const Path& source, const Matrix* matrix) {
-    if (!source.m_impl)
+    if (!source.m_impl || source.m_impl->elements.empty())
         return;
     auto* impl = detach(m_impl);
 
@@ -413,21 +413,23 @@ void Path::transform(const Matrix& matrix) {
             elems[i + j].point = matrix.map(elems[i + j].point);
         }
     }
+
+    impl->start_point = matrix.map(impl->start_point);
 }
 
 // -- Queries --
 
-Point Path::current_point() const {
+Point Path::current_point() const noexcept {
     if (!m_impl || m_impl->num_points == 0)
         return {};
     return m_impl->elements.back().point;
 }
 
-int Path::element_count() const {
+int Path::element_count() const noexcept {
     return m_impl ? static_cast<int>(m_impl->elements.size()) : 0;
 }
 
-const PathElement* Path::elements() const {
+const PathElement* Path::elements() const noexcept {
     return m_impl ? m_impl->elements.data() : nullptr;
 }
 
@@ -495,22 +497,25 @@ Path Path::clone_dashed(float offset, std::span<const float> dashes) const {
 
 Path Path::from_raw(const PathCommand* cmds, int cmd_count,
                     const Point* pts, int pt_count) {
+    if (!cmds || cmd_count <= 0 || (!pts && pt_count > 0))
+        return {};
+
     Path result;
     int pt_idx = 0;
     for (int i = 0; i < cmd_count; ++i) {
         switch (cmds[i]) {
         case PathCommand::MoveTo:
-            assert(pt_idx < pt_count);
+            if (pt_idx >= pt_count) return {};
             result.move_to(pts[pt_idx].x, pts[pt_idx].y);
             pt_idx += 1;
             break;
         case PathCommand::LineTo:
-            assert(pt_idx < pt_count);
+            if (pt_idx >= pt_count) return {};
             result.line_to(pts[pt_idx].x, pts[pt_idx].y);
             pt_idx += 1;
             break;
         case PathCommand::CubicTo:
-            assert(pt_idx + 2 < pt_count);
+            if (pt_idx + 2 >= pt_count) return {};
             result.cubic_to(pts[pt_idx].x, pts[pt_idx].y,
                             pts[pt_idx + 1].x, pts[pt_idx + 1].y,
                             pts[pt_idx + 2].x, pts[pt_idx + 2].y);
@@ -519,6 +524,8 @@ Path Path::from_raw(const PathCommand* cmds, int cmd_count,
         case PathCommand::Close:
             result.close();
             break;
+        default:
+            return {};
         }
     }
     return result;

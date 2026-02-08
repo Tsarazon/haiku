@@ -1,13 +1,15 @@
 SubDir HAIKU_TOP src apps thorvgdemo ;
 
-UseLibraryHeaders thorvg ;
+UseLibraryHeaders plutovg ;
 UsePrivateHeaders shared ;
+
+SubDirC++Flags -std=c++20 ;
 
 Application ThorVGDemo :
 	ThorVGDemo.cpp
 	:
 	be
-	libthorvg.so
+	libplutovg.so
 	localestub
 	[ TargetLibstdc++ ]
 	:

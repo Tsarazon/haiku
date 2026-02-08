@@ -217,6 +217,7 @@ Canvas::operator bool() const
 
 Surface Canvas::surface() const
 {
+    if (!m_impl) return {};
     return m_impl->surface;
 }
 
@@ -224,11 +225,13 @@ Surface Canvas::surface() const
 
 void Canvas::save()
 {
+    if (!m_impl) return;
     m_impl->states.push();
 }
 
 void Canvas::restore()
 {
+    if (!m_impl) return;
     m_impl->states.pop();
 }
 
@@ -236,11 +239,13 @@ void Canvas::restore()
 
 void Canvas::set_color(const Color& c)
 {
+    if (!m_impl) return;
     set_color(c.r, c.g, c.b, c.a);
 }
 
 void Canvas::set_color(float r, float g, float b, float a)
 {
+    if (!m_impl) return;
     auto& st = m_impl->state();
     st.fill_color = Color(r, g, b, a);
     st.stroke_color = st.fill_color;
@@ -254,6 +259,7 @@ void Canvas::set_linear_gradient(float x1, float y1, float x2, float y2,
                                  std::span<const GradientStop> stops,
                                  const Matrix* matrix)
 {
+    if (!m_impl) return;
     auto paint = Paint::linear_gradient(x1, y1, x2, y2, spread, stops, matrix);
     set_paint(paint);
 }
@@ -264,6 +270,7 @@ void Canvas::set_radial_gradient(float cx, float cy, float cr,
                                  std::span<const GradientStop> stops,
                                  const Matrix* matrix)
 {
+    if (!m_impl) return;
     auto paint = Paint::radial_gradient(cx, cy, cr, fx, fy, fr, spread, stops, matrix);
     set_paint(paint);
 }
@@ -273,6 +280,7 @@ void Canvas::set_conic_gradient(float cx, float cy, float start_angle,
                                 std::span<const GradientStop> stops,
                                 const Matrix* matrix)
 {
+    if (!m_impl) return;
     auto paint = Paint::conic_gradient(cx, cy, start_angle, spread, stops, matrix);
     set_paint(paint);
 }
@@ -280,12 +288,14 @@ void Canvas::set_conic_gradient(float cx, float cy, float start_angle,
 void Canvas::set_texture(const Surface& surface, TextureType type,
                          float opacity, const Matrix* matrix)
 {
+    if (!m_impl) return;
     auto paint = Paint::texture(surface, type, opacity, matrix);
     set_paint(paint);
 }
 
 void Canvas::set_paint(const Paint& paint)
 {
+    if (!m_impl) return;
     auto& st = m_impl->state();
     st.fill_paint = paint;
     st.stroke_paint = paint;
@@ -306,11 +316,13 @@ Paint Canvas::get_paint() const
 
 void Canvas::set_fill_color(const Color& c)
 {
+    if (!m_impl) return;
     set_fill_color(c.r, c.g, c.b, c.a);
 }
 
 void Canvas::set_fill_color(float r, float g, float b, float a)
 {
+    if (!m_impl) return;
     auto& st = m_impl->state();
     st.fill_color = Color(r, g, b, a);
     st.fill_paint = Paint();
@@ -318,16 +330,19 @@ void Canvas::set_fill_color(float r, float g, float b, float a)
 
 void Canvas::set_fill_paint(const Paint& paint)
 {
+    if (!m_impl) return;
     m_impl->state().fill_paint = paint;
 }
 
 void Canvas::set_stroke_color(const Color& c)
 {
+    if (!m_impl) return;
     set_stroke_color(c.r, c.g, c.b, c.a);
 }
 
 void Canvas::set_stroke_color(float r, float g, float b, float a)
 {
+    if (!m_impl) return;
     auto& st = m_impl->state();
     st.stroke_color = Color(r, g, b, a);
     st.stroke_paint = Paint();
@@ -336,6 +351,7 @@ void Canvas::set_stroke_color(float r, float g, float b, float a)
 
 void Canvas::set_stroke_paint(const Paint& paint)
 {
+    if (!m_impl) return;
     auto& st = m_impl->state();
     st.stroke_paint = paint;
     st.stroke_paint_set = true;
@@ -367,16 +383,19 @@ Paint Canvas::get_stroke_paint() const
 
 void Canvas::set_shadow(float offset_x, float offset_y, float blur, const Color& color)
 {
+    if (!m_impl) return;
     m_impl->state().shadow = Shadow(offset_x, offset_y, blur, color);
 }
 
 void Canvas::set_shadow(const Shadow& shadow)
 {
+    if (!m_impl) return;
     m_impl->state().shadow = shadow;
 }
 
 void Canvas::clear_shadow()
 {
+    if (!m_impl) return;
     m_impl->state().shadow = Shadow();
 }
 
@@ -389,6 +408,7 @@ Shadow Canvas::get_shadow() const
 
 void Canvas::set_blend_mode(BlendMode mode)
 {
+    if (!m_impl) return;
     m_impl->state().blend_mode = mode;
 }
 
@@ -401,6 +421,7 @@ BlendMode Canvas::get_blend_mode() const
 
 void Canvas::mask(const Surface& mask_surface, MaskMode mode, int ox, int oy)
 {
+    if (!m_impl) return;
     auto& impl = *m_impl;
     auto& st = impl.state();
 
@@ -442,21 +463,25 @@ void Canvas::mask(const Surface& mask_surface, MaskMode mode, int ox, int oy)
 
 void Canvas::set_color_interpolation(ColorInterpolation ci)
 {
+    if (!m_impl) return;
     m_impl->state().color_interp = ci;
 }
 
 ColorInterpolation Canvas::get_color_interpolation() const
 {
+    if (!m_impl) return ColorInterpolation::SRGB;
     return m_impl->state().color_interp;
 }
 
 void Canvas::set_dithering(bool enabled)
 {
+    if (!m_impl) return;
     m_impl->state().dithering = enabled;
 }
 
 bool Canvas::get_dithering() const
 {
+    if (!m_impl) return false;
     return m_impl->state().dithering;
 }
 
@@ -464,6 +489,7 @@ bool Canvas::get_dithering() const
 
 void Canvas::set_font_face_cache(const FontFaceCache& cache)
 {
+    if (!m_impl) return;
     m_impl->face_cache = cache;
 }
 
@@ -474,6 +500,7 @@ FontFaceCache Canvas::get_font_face_cache() const
 
 void Canvas::add_font_face(std::string_view family, bool bold, bool italic, const FontFace& face)
 {
+    if (!m_impl) return;
     if (!m_impl->face_cache)
         m_impl->face_cache = FontFaceCache();
     m_impl->face_cache.add(family, bold, italic, face);
@@ -482,6 +509,7 @@ void Canvas::add_font_face(std::string_view family, bool bold, bool italic, cons
 bool Canvas::add_font_file(std::string_view family, bool bold, bool italic,
                            const char* filename, int ttcindex)
 {
+    if (!m_impl) return false;
     if (!m_impl->face_cache)
         m_impl->face_cache = FontFaceCache();
     return m_impl->face_cache.add_file(family, bold, italic, filename, ttcindex);
@@ -489,6 +517,7 @@ bool Canvas::add_font_file(std::string_view family, bool bold, bool italic,
 
 bool Canvas::select_font_face(std::string_view family, bool bold, bool italic)
 {
+    if (!m_impl) return false;
     if (!m_impl->face_cache)
         return false;
     auto face = m_impl->face_cache.get(family, bold, italic);
@@ -500,27 +529,32 @@ bool Canvas::select_font_face(std::string_view family, bool bold, bool italic)
 
 void Canvas::set_font(const FontFace& face, float size)
 {
+    if (!m_impl) return;
     set_font_face(face);
     set_font_size(size);
 }
 
 void Canvas::set_font_face(const FontFace& face)
 {
+    if (!m_impl) return;
     m_impl->state().font_face = face;
 }
 
 FontFace Canvas::get_font_face() const
 {
+    if (!m_impl) return {};
     return m_impl->state().font_face;
 }
 
 void Canvas::set_font_size(float size)
 {
+    if (!m_impl) return;
     m_impl->state().font_size = size;
 }
 
 float Canvas::get_font_size() const
 {
+    if (!m_impl) return 0;
     return m_impl->state().font_size;
 }
 
@@ -528,98 +562,117 @@ float Canvas::get_font_size() const
 
 void Canvas::set_fill_rule(FillRule rule)
 {
+    if (!m_impl) return;
     m_impl->state().winding = rule;
 }
 
 FillRule Canvas::get_fill_rule() const
 {
+    if (!m_impl) return FillRule::NonZero;
     return m_impl->state().winding;
 }
 
 void Canvas::set_operator(Operator op)
 {
+    if (!m_impl) return;
     m_impl->state().op = op;
 }
 
 Operator Canvas::get_operator() const
 {
+    if (!m_impl) return Operator::SrcOver;
     return m_impl->state().op;
 }
 
 void Canvas::set_opacity(float opacity)
 {
+    if (!m_impl) return;
     m_impl->state().opacity = std::clamp(opacity, 0.0f, 1.0f);
 }
 
 float Canvas::get_opacity() const
 {
+    if (!m_impl) return 0;
     return m_impl->state().opacity;
 }
 
 void Canvas::set_line_width(float width)
 {
+    if (!m_impl) return;
     m_impl->state().stroke.style.width = width;
 }
 
 float Canvas::get_line_width() const
 {
+    if (!m_impl) return 0;
     return m_impl->state().stroke.style.width;
 }
 
 void Canvas::set_line_cap(LineCap cap)
 {
+    if (!m_impl) return;
     m_impl->state().stroke.style.cap = cap;
 }
 
 LineCap Canvas::get_line_cap() const
 {
+    if (!m_impl) return LineCap::Butt;
     return m_impl->state().stroke.style.cap;
 }
 
 void Canvas::set_line_join(LineJoin join)
 {
+    if (!m_impl) return;
     m_impl->state().stroke.style.join = join;
 }
 
 LineJoin Canvas::get_line_join() const
 {
+    if (!m_impl) return LineJoin::Miter;
     return m_impl->state().stroke.style.join;
 }
 
 void Canvas::set_miter_limit(float limit)
 {
+    if (!m_impl) return;
     m_impl->state().stroke.style.miter_limit = limit;
 }
 
 float Canvas::get_miter_limit() const
 {
+    if (!m_impl) return 0;
     return m_impl->state().stroke.style.miter_limit;
 }
 
 void Canvas::set_dash(float offset, std::span<const float> dashes)
 {
+    if (!m_impl) return;
     set_dash_offset(offset);
     set_dash_array(dashes);
 }
 
 void Canvas::set_dash_offset(float offset)
 {
+    if (!m_impl) return;
     m_impl->state().stroke.dash.offset = offset;
 }
 
 void Canvas::set_dash_array(std::span<const float> dashes)
 {
+    if (!m_impl) return;
     auto& arr = m_impl->state().stroke.dash.array;
     arr.assign(dashes.begin(), dashes.end());
 }
 
 float Canvas::get_dash_offset() const
 {
+    if (!m_impl) return 0;
     return m_impl->state().stroke.dash.offset;
 }
 
 int Canvas::get_dash_array(const float** dashes) const
 {
+    if (!m_impl) return 0;
     const auto& arr = m_impl->state().stroke.dash.array;
     if (dashes)
         *dashes = arr.data();
@@ -630,56 +683,67 @@ int Canvas::get_dash_array(const float** dashes) const
 
 void Canvas::translate(float tx, float ty)
 {
+    if (!m_impl) return;
     m_impl->state().matrix.translate(tx, ty);
 }
 
 void Canvas::scale(float sx, float sy)
 {
+    if (!m_impl) return;
     m_impl->state().matrix.scale(sx, sy);
 }
 
 void Canvas::shear(float shx, float shy)
 {
+    if (!m_impl) return;
     m_impl->state().matrix.shear(shx, shy);
 }
 
 void Canvas::rotate(float radians)
 {
+    if (!m_impl) return;
     m_impl->state().matrix.rotate(radians);
 }
 
 void Canvas::transform(const Matrix& m)
 {
+    if (!m_impl) return;
     m_impl->state().matrix = m * m_impl->state().matrix;
 }
 
 void Canvas::reset_matrix()
 {
+    if (!m_impl) return;
     m_impl->state().matrix = Matrix::identity();
 }
 
 void Canvas::set_matrix(const Matrix& m)
 {
+    if (!m_impl) return;
     m_impl->state().matrix = m;
 }
 
 Matrix Canvas::get_matrix() const
 {
+    if (!m_impl) return {};
     return m_impl->state().matrix;
 }
 
 Point Canvas::map(Point p) const
 {
+    if (!m_impl) return {};
     return m_impl->state().matrix.map(p);
 }
 
 void Canvas::map(float x, float y, float& ox, float& oy) const
 {
+    if (!m_impl) return;
     m_impl->state().matrix.map(x, y, ox, oy);
 }
 
 Rect Canvas::map_rect(const Rect& r) const
 {
+    if (!m_impl) return {};
     return m_impl->state().matrix.map_rect(r);
 }
 
@@ -687,82 +751,98 @@ Rect Canvas::map_rect(const Rect& r) const
 
 void Canvas::move_to(float x, float y)
 {
+    if (!m_impl) return;
     m_impl->path.move_to(x, y);
 }
 
 void Canvas::line_to(float x, float y)
 {
+    if (!m_impl) return;
     m_impl->path.line_to(x, y);
 }
 
 void Canvas::quad_to(float x1, float y1, float x2, float y2)
 {
+    if (!m_impl) return;
     m_impl->path.quad_to(x1, y1, x2, y2);
 }
 
 void Canvas::cubic_to(float x1, float y1, float x2, float y2, float x3, float y3)
 {
+    if (!m_impl) return;
     m_impl->path.cubic_to(x1, y1, x2, y2, x3, y3);
 }
 
 void Canvas::arc_to(float rx, float ry, float angle,
                     bool large_arc_flag, bool sweep_flag, float x, float y)
 {
+    if (!m_impl) return;
     m_impl->path.arc_to(rx, ry, angle, large_arc_flag, sweep_flag, x, y);
 }
 
 void Canvas::rect(float x, float y, float w, float h)
 {
+    if (!m_impl) return;
     m_impl->path.add_rect(x, y, w, h);
 }
 
 void Canvas::round_rect(float x, float y, float w, float h, float rx, float ry)
 {
+    if (!m_impl) return;
     m_impl->path.add_round_rect(x, y, w, h, rx, ry);
 }
 
 void Canvas::round_rect(float x, float y, float w, float h, const CornerRadii& radii)
 {
+    if (!m_impl) return;
     m_impl->path.add_round_rect(x, y, w, h, radii);
 }
 
 void Canvas::ellipse(float cx, float cy, float rx, float ry)
 {
+    if (!m_impl) return;
     m_impl->path.add_ellipse(cx, cy, rx, ry);
 }
 
 void Canvas::circle(float cx, float cy, float r)
 {
+    if (!m_impl) return;
     m_impl->path.add_circle(cx, cy, r);
 }
 
 void Canvas::arc(float cx, float cy, float r, float a0, float a1, bool ccw)
 {
+    if (!m_impl) return;
     m_impl->path.add_arc(cx, cy, r, a0, a1, ccw);
 }
 
 void Canvas::add_path(const Path& path)
 {
+    if (!m_impl) return;
     m_impl->path.add_path(path);
 }
 
 void Canvas::new_path()
 {
+    if (!m_impl) return;
     m_impl->path.reset();
 }
 
 void Canvas::close_path()
 {
+    if (!m_impl) return;
     m_impl->path.close();
 }
 
 Point Canvas::current_point() const
 {
+    if (!m_impl) return {};
     return m_impl->path.current_point();
 }
 
 Path Canvas::get_path() const
 {
+    if (!m_impl) return {};
     return m_impl->path;
 }
 
@@ -770,36 +850,43 @@ Path Canvas::get_path() const
 
 bool Canvas::fill_contains(float x, float y)
 {
+    if (!m_impl) return false;
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
               impl.clip_rect, nullptr, st.winding);
-    return span_buffer_contains(impl.fill_spans, x, y);
+    auto p = st.matrix.map(Point{x, y});
+    return span_buffer_contains(impl.fill_spans, p.x, p.y);
 }
 
 bool Canvas::stroke_contains(float x, float y)
 {
+    if (!m_impl) return false;
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
               impl.clip_rect, &st.stroke, FillRule::NonZero);
-    return span_buffer_contains(impl.fill_spans, x, y);
+    auto p = st.matrix.map(Point{x, y});
+    return span_buffer_contains(impl.fill_spans, p.x, p.y);
 }
 
 bool Canvas::clip_contains(float x, float y)
 {
+    if (!m_impl) return false;
     auto& st = m_impl->state();
+    auto p = st.matrix.map(Point{x, y});
     if (st.clipping)
-        return span_buffer_contains(st.clip_spans, x, y);
+        return span_buffer_contains(st.clip_spans, p.x, p.y);
 
     const auto& cr = m_impl->clip_rect;
-    return x >= cr.x && x < cr.right() && y >= cr.y && y < cr.bottom();
+    return p.x >= cr.x && p.x < cr.right() && p.y >= cr.y && p.y < cr.bottom();
 }
 
 // Extents
 
 Rect Canvas::fill_extents()
 {
+    if (!m_impl) return {};
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
@@ -811,6 +898,7 @@ Rect Canvas::fill_extents()
 
 Rect Canvas::stroke_extents()
 {
+    if (!m_impl) return {};
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
@@ -822,6 +910,7 @@ Rect Canvas::stroke_extents()
 
 Rect Canvas::clip_extents()
 {
+    if (!m_impl) return {};
     auto& st = m_impl->state();
     if (st.clipping) {
         Rect r;
@@ -837,24 +926,28 @@ Rect Canvas::clip_extents()
 
 void Canvas::fill()
 {
+    if (!m_impl) return;
     fill_preserve();
     new_path();
 }
 
 void Canvas::stroke()
 {
+    if (!m_impl) return;
     stroke_preserve();
     new_path();
 }
 
 void Canvas::clip()
 {
+    if (!m_impl) return;
     clip_preserve();
     new_path();
 }
 
 void Canvas::paint()
 {
+    if (!m_impl) return;
     auto& impl = *m_impl;
     auto& st = impl.state();
     if (st.clipping) {
@@ -868,6 +961,7 @@ void Canvas::paint()
 
 void Canvas::fill_preserve()
 {
+    if (!m_impl) return;
     auto& impl = *m_impl;
     const auto& spans = rasterize_and_clip(impl, nullptr);
     render_shadow(impl, spans);
@@ -876,6 +970,7 @@ void Canvas::fill_preserve()
 
 void Canvas::stroke_preserve()
 {
+    if (!m_impl) return;
     auto& impl = *m_impl;
     auto& st = impl.state();
 
@@ -899,6 +994,7 @@ void Canvas::stroke_preserve()
 
 void Canvas::clip_preserve()
 {
+    if (!m_impl) return;
     auto& impl = *m_impl;
     auto& st = impl.state();
 
@@ -918,6 +1014,7 @@ void Canvas::clip_preserve()
 
 void Canvas::fill_rect(float x, float y, float w, float h)
 {
+    if (!m_impl) return;
     new_path();
     rect(x, y, w, h);
     fill();
@@ -925,6 +1022,7 @@ void Canvas::fill_rect(float x, float y, float w, float h)
 
 void Canvas::fill_path(const Path& path)
 {
+    if (!m_impl) return;
     new_path();
     add_path(path);
     fill();
@@ -932,6 +1030,7 @@ void Canvas::fill_path(const Path& path)
 
 void Canvas::stroke_rect(float x, float y, float w, float h)
 {
+    if (!m_impl) return;
     new_path();
     rect(x, y, w, h);
     stroke();
@@ -939,6 +1038,7 @@ void Canvas::stroke_rect(float x, float y, float w, float h)
 
 void Canvas::stroke_path(const Path& path)
 {
+    if (!m_impl) return;
     new_path();
     add_path(path);
     stroke();
@@ -946,6 +1046,7 @@ void Canvas::stroke_path(const Path& path)
 
 void Canvas::clip_rect(float x, float y, float w, float h)
 {
+    if (!m_impl) return;
     new_path();
     rect(x, y, w, h);
     clip();
@@ -953,6 +1054,7 @@ void Canvas::clip_rect(float x, float y, float w, float h)
 
 void Canvas::clip_path(const Path& path)
 {
+    if (!m_impl) return;
     new_path();
     add_path(path);
     clip();
@@ -962,6 +1064,7 @@ void Canvas::clip_path(const Path& path)
 
 float Canvas::add_glyph(Codepoint codepoint, float x, float y)
 {
+    if (!m_impl) return 0;
     auto& st = m_impl->state();
     if (st.font_face && st.font_size > 0.0f)
         return st.font_face.get_glyph_path(st.font_size, x, y, codepoint, m_impl->path);
@@ -970,6 +1073,7 @@ float Canvas::add_glyph(Codepoint codepoint, float x, float y)
 
 float Canvas::add_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
+    if (!m_impl) return 0;
     auto& st = m_impl->state();
     if (!st.font_face || st.font_size <= 0.0f)
         return 0.0f;
@@ -985,6 +1089,7 @@ float Canvas::add_text(const void* text, int length, TextEncoding encoding, floa
 
 float Canvas::fill_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
+    if (!m_impl) return 0;
     new_path();
     float advance = add_text(text, length, encoding, x, y);
     fill();
@@ -993,6 +1098,7 @@ float Canvas::fill_text(const void* text, int length, TextEncoding encoding, flo
 
 float Canvas::stroke_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
+    if (!m_impl) return 0;
     new_path();
     float advance = add_text(text, length, encoding, x, y);
     stroke();
@@ -1001,6 +1107,7 @@ float Canvas::stroke_text(const void* text, int length, TextEncoding encoding, f
 
 float Canvas::clip_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
+    if (!m_impl) return 0;
     new_path();
     float advance = add_text(text, length, encoding, x, y);
     clip();
@@ -1011,6 +1118,7 @@ float Canvas::clip_text(const void* text, int length, TextEncoding encoding, flo
 
 FontMetrics Canvas::font_metrics() const
 {
+    if (!m_impl) return {};
     auto& st = m_impl->state();
     if (st.font_face && st.font_size > 0.0f)
         return st.font_face.metrics(st.font_size);
@@ -1019,6 +1127,7 @@ FontMetrics Canvas::font_metrics() const
 
 GlyphMetrics Canvas::glyph_metrics(Codepoint codepoint) const
 {
+    if (!m_impl) return {};
     auto& st = m_impl->state();
     if (st.font_face && st.font_size > 0.0f)
         return st.font_face.glyph_metrics(st.font_size, codepoint);
@@ -1027,6 +1136,7 @@ GlyphMetrics Canvas::glyph_metrics(Codepoint codepoint) const
 
 float Canvas::text_extents(const void* text, int length, TextEncoding encoding, Rect* extents) const
 {
+    if (!m_impl) return 0;
     auto& st = m_impl->state();
     if (st.font_face && st.font_size > 0.0f)
         return st.font_face.text_extents(st.font_size, text, length, encoding, extents);

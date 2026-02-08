@@ -120,6 +120,11 @@ Surface Surface::create(int width, int height) {
 }
 
 Surface Surface::create_for_data(unsigned char* data, int width, int height, int stride) {
+    if (!data || width <= 0 || height <= 0
+        || width >= kMaxSurfaceSize || height >= kMaxSurfaceSize
+        || stride < width * 4)
+        return {};
+
     auto* impl = new Impl;
     impl->width = width;
     impl->height = height;
@@ -246,7 +251,7 @@ Surface Surface::load_from_image_base64(std::string_view data) {
 
 // -- Accessors --
 
-const unsigned char* Surface::data() const {
+const unsigned char* Surface::data() const noexcept {
     return m_impl ? m_impl->data : nullptr;
 }
 
@@ -257,15 +262,15 @@ unsigned char* Surface::mutable_data() {
     return m_impl ? m_impl->data : nullptr;
 }
 
-int Surface::width() const {
+int Surface::width() const noexcept {
     return m_impl ? m_impl->width : 0;
 }
 
-int Surface::height() const {
+int Surface::height() const noexcept {
     return m_impl ? m_impl->height : 0;
 }
 
-int Surface::stride() const {
+int Surface::stride() const noexcept {
     return m_impl ? m_impl->stride : 0;
 }
 
@@ -319,16 +324,36 @@ namespace {
 /// strictly temporary and fully reversed in the destructor.
 struct WriteGuard {
     const Surface::Impl* impl;
+    unsigned char* rgba_data;
+    bool owns_buffer;
 
     explicit WriteGuard(const Surface::Impl* impl) : impl(impl) {
-        convert_argb_to_rgba(impl->data, impl->data,
-                              impl->width, impl->height, impl->stride);
+        if (impl->count() > 1) {
+            const size_t data_size = static_cast<size_t>(impl->height) * impl->stride;
+            rgba_data = static_cast<unsigned char*>(std::malloc(data_size));
+            if (rgba_data) {
+                convert_argb_to_rgba(rgba_data, impl->data,
+                                     impl->width, impl->height, impl->stride);
+            }
+            owns_buffer = true;
+        } else {
+            convert_argb_to_rgba(impl->data, impl->data,
+                                  impl->width, impl->height, impl->stride);
+            rgba_data = impl->data;
+            owns_buffer = false;
+        }
     }
 
     ~WriteGuard() {
-        convert_rgba_to_argb(impl->data, impl->data,
-                              impl->width, impl->height, impl->stride);
+        if (owns_buffer) {
+            std::free(rgba_data);
+        } else {
+            convert_rgba_to_argb(impl->data, impl->data,
+                                  impl->width, impl->height, impl->stride);
+        }
     }
+
+    explicit operator bool() const noexcept { return rgba_data != nullptr; }
 
     WriteGuard(const WriteGuard&) = delete;
     WriteGuard& operator=(const WriteGuard&) = delete;
@@ -340,16 +365,20 @@ bool Surface::write_to_png(const char* filename) const {
     if (!m_impl)
         return false;
     WriteGuard guard(m_impl);
+    if (!guard)
+        return false;
     return stbi_write_png(filename, m_impl->width, m_impl->height, 4,
-                           m_impl->data, m_impl->stride) != 0;
+                           guard.rgba_data, m_impl->stride) != 0;
 }
 
 bool Surface::write_to_jpg(const char* filename, int quality) const {
     if (!m_impl)
         return false;
     WriteGuard guard(m_impl);
+    if (!guard)
+        return false;
     return stbi_write_jpg(filename, m_impl->width, m_impl->height, 4,
-                           m_impl->data, quality) != 0;
+                           guard.rgba_data, quality) != 0;
 }
 
 bool Surface::write_to_png_stream(WriteFunc func, void* closure) const {
@@ -360,13 +389,15 @@ bool Surface::write_to_png_stream(WriteFunc func, void* closure) const {
     CallbackCtx ctx{func, closure};
 
     WriteGuard guard(m_impl);
+    if (!guard)
+        return false;
     return stbi_write_png_to_func(
         [](void* context, void* data, int size) {
             auto* c = static_cast<CallbackCtx*>(context);
             c->fn(c->cl, data, size);
         }, &ctx,
         m_impl->width, m_impl->height, 4,
-        m_impl->data, m_impl->stride) != 0;
+        guard.rgba_data, m_impl->stride) != 0;
 }
 
 bool Surface::write_to_jpg_stream(WriteFunc func, void* closure, int quality) const {
@@ -377,13 +408,15 @@ bool Surface::write_to_jpg_stream(WriteFunc func, void* closure, int quality) co
     CallbackCtx ctx{func, closure};
 
     WriteGuard guard(m_impl);
+    if (!guard)
+        return false;
     return stbi_write_jpg_to_func(
         [](void* context, void* data, int size) {
             auto* c = static_cast<CallbackCtx*>(context);
             c->fn(c->cl, data, size);
         }, &ctx,
         m_impl->width, m_impl->height, 4,
-        m_impl->data, quality) != 0;
+        guard.rgba_data, quality) != 0;
 }
 
 // -- Pixel format conversion --

@@ -121,6 +121,26 @@ struct Rect {
         return x < o.x + o.w && x + w > o.x && y < o.y + o.h && y + h > o.y;
     }
 
+    /// Compute the intersection of two rectangles. Returns empty rect if no overlap.
+    constexpr Rect intersected(const Rect& o) const noexcept {
+        float l = x > o.x ? x : o.x;
+        float t = y > o.y ? y : o.y;
+        float r = right() < o.right() ? right() : o.right();
+        float b = bottom() < o.bottom() ? bottom() : o.bottom();
+        return (r > l && b > t) ? Rect{l, t, r - l, b - t} : Rect{};
+    }
+
+    /// Compute the bounding union of two rectangles.
+    constexpr Rect united(const Rect& o) const noexcept {
+        if (empty()) return o;
+        if (o.empty()) return *this;
+        float l = x < o.x ? x : o.x;
+        float t = y < o.y ? y : o.y;
+        float r = right() > o.right() ? right() : o.right();
+        float b = bottom() > o.bottom() ? bottom() : o.bottom();
+        return {l, t, r - l, b - t};
+    }
+
     constexpr auto operator<=>(const Rect&) const noexcept = default;
 };
 
@@ -137,6 +157,36 @@ struct IntRect {
     constexpr int  right()  const noexcept { return x + w; }
     constexpr int  bottom() const noexcept { return y + h; }
     constexpr bool empty()  const noexcept { return w <= 0 || h <= 0; }
+
+    /// Check if a point lies inside the rectangle.
+    constexpr bool contains(int px, int py) const noexcept {
+        return px >= x && px < x + w && py >= y && py < y + h;
+    }
+
+    /// Check if two rectangles overlap.
+    constexpr bool intersects(const IntRect& o) const noexcept {
+        return x < o.x + o.w && x + w > o.x && y < o.y + o.h && y + h > o.y;
+    }
+
+    /// Compute the intersection of two rectangles. Returns empty rect if no overlap.
+    constexpr IntRect intersected(const IntRect& o) const noexcept {
+        int l = x > o.x ? x : o.x;
+        int t = y > o.y ? y : o.y;
+        int r = right() < o.right() ? right() : o.right();
+        int b = bottom() < o.bottom() ? bottom() : o.bottom();
+        return (r > l && b > t) ? IntRect{l, t, r - l, b - t} : IntRect{};
+    }
+
+    /// Compute the bounding union of two rectangles.
+    constexpr IntRect united(const IntRect& o) const noexcept {
+        if (empty()) return o;
+        if (o.empty()) return *this;
+        int l = x < o.x ? x : o.x;
+        int t = y < o.y ? y : o.y;
+        int r = right() > o.right() ? right() : o.right();
+        int b = bottom() > o.bottom() ? bottom() : o.bottom();
+        return {l, t, r - l, b - t};
+    }
 
     constexpr auto operator<=>(const IntRect&) const noexcept = default;
 };
@@ -631,13 +681,13 @@ public:
     // -- Queries --
 
     /// Current pen position.
-    [[nodiscard]] Point current_point() const;
+    [[nodiscard]] Point current_point() const noexcept;
 
     /// Number of raw path elements (headers + points).
-    [[nodiscard]] int element_count() const;
+    [[nodiscard]] int element_count() const noexcept;
 
     /// Direct access to the raw element array.
-    [[nodiscard]] const PathElement* elements() const;
+    [[nodiscard]] const PathElement* elements() const noexcept;
 
     /// Reserve storage for at least `count` elements.
     void reserve(int count);
@@ -923,15 +973,15 @@ public:
     // -- Accessors --
 
     /// Read-only access to pixel data.
-    [[nodiscard]] const unsigned char* data() const;
+    [[nodiscard]] const unsigned char* data() const noexcept;
 
     /// Mutable access to pixel data. Triggers COW detach if the buffer is shared,
     /// which may allocate. Use data() for read-only access to avoid unnecessary copies.
     [[nodiscard]] unsigned char* mutable_data();
 
-    [[nodiscard]] int width() const;
-    [[nodiscard]] int height() const;
-    [[nodiscard]] int stride() const;
+    [[nodiscard]] int width() const noexcept;
+    [[nodiscard]] int height() const noexcept;
+    [[nodiscard]] int stride() const noexcept;
 
     /// Clear the surface to the given color.
     void clear(const Color& color);
@@ -1058,6 +1108,11 @@ class PLUTOVG_API Canvas {
 public:
     /// Create a canvas for the given surface.
     explicit Canvas(const Surface& surface);
+
+    /// Create a canvas by moving a surface (avoids COW refcount bump).
+    /// Preferred when the caller no longer needs the surface handle.
+    explicit Canvas(Surface&& surface);
+
     ~Canvas();
 
     Canvas(const Canvas&) = delete;

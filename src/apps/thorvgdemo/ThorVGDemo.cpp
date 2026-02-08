@@ -2,7 +2,7 @@
  * Copyright 2025 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * ThorVG Demo - bouncing shapes with collision
+ * PlutoVG Demo - bouncing shapes with collision
  */
 
 #include <Application.h>
@@ -13,8 +13,9 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
-#include <thorvg.h>
+#include <plutovg.hpp>
 
 
 static const uint32 kMsgAnimate = 'anim';
@@ -99,23 +100,21 @@ struct Shape {
 };
 
 
-class ThorVGView : public BView {
+class PlutoVGView : public BView {
 public:
-	ThorVGView()
+	PlutoVGView()
 		:
-		BView(BRect(0, 0, 599, 399), "ThorVGView", B_FOLLOW_ALL, B_WILL_DRAW),
+		BView(BRect(0, 0, 599, 399), "PlutoVGView", B_FOLLOW_ALL, B_WILL_DRAW),
 		fBitmap(NULL),
-		fCanvas(NULL),
 		fRunner(NULL)
 	{
 		SetViewColor(B_TRANSPARENT_COLOR);
 		_InitShapes();
 	}
 
-	virtual ~ThorVGView()
+	virtual ~PlutoVGView()
 	{
 		delete fRunner;
-		delete fCanvas;
 		delete fBitmap;
 	}
 
@@ -238,117 +237,106 @@ private:
 
 	void _InitCanvas()
 	{
-		delete fCanvas;
-		fCanvas = NULL;
-
 		delete fBitmap;
 		fBitmap = NULL;
 
 		BRect bounds = Bounds();
-		uint32 width = (uint32)bounds.Width() + 1;
-		uint32 height = (uint32)bounds.Height() + 1;
 
 		fBitmap = new BBitmap(bounds, B_RGBA32);
 		if (fBitmap->InitCheck() != B_OK) {
 			delete fBitmap;
 			fBitmap = NULL;
-			return;
 		}
-
-		fCanvas = tvg::SwCanvas::gen();
-		if (fCanvas == NULL)
-			return;
-
-		uint32 stride = fBitmap->BytesPerRow() / 4;
-		fCanvas->target((uint32_t*)fBitmap->Bits(), stride, width, height,
-			tvg::ColorSpace::ARGB8888);
 	}
 
 	void _Render()
 	{
-		if (fCanvas == NULL || fBitmap == NULL)
+		if (fBitmap == NULL)
 			return;
 
-		float w = fBitmap->Bounds().Width() + 1;
-		float h = fBitmap->Bounds().Height() + 1;
+		int width = (int)fBitmap->Bounds().Width() + 1;
+		int height = (int)fBitmap->Bounds().Height() + 1;
+		float w = (float)width;
+		float h = (float)height;
+
+		// Create a fresh PlutoVG surface wrapping the BBitmap pixels.
+		// Must be the sole owner (refcount 1) so Canvas writes directly
+		// into the BBitmap buffer instead of COW-detaching to a new one.
+		// B_RGBA32 = BGRA in memory = 0xAARRGGBB as uint32 = PlutoVG ARGB.
+		plutovg::Surface surface = plutovg::Surface::create_for_data(
+			(unsigned char*)fBitmap->Bits(), width, height,
+			fBitmap->BytesPerRow());
+		if (!surface)
+			return;
+
+		plutovg::Canvas canvas(std::move(surface));
 
 		// Background
-		tvg::Shape* bg = tvg::Shape::gen();
-		bg->appendRect(0, 0, w, h);
-		bg->fill(30, 30, 40, 255);
-		fCanvas->add(bg);
+		canvas.set_color(plutovg::Color::from_rgba8(30, 30, 40, 255));
+		canvas.fill_rect(0, 0, w, h);
 
 		// Draw each shape
 		for (int i = 0; i < 5; i++) {
 			Shape& s = fShapes[i];
-			tvg::Shape* shape = tvg::Shape::gen();
+
+			canvas.set_color(plutovg::Color::from_rgba8(s.r, s.g, s.b, 255));
 
 			switch (s.type) {
 				case 0: // Circle
-					shape->appendCircle(s.x, s.y, s.radius, s.radius);
+					canvas.circle(s.x, s.y, s.radius);
+					canvas.fill();
 					break;
-				case 1: // Rectangle
+				case 1: // Rounded rectangle
 				{
 					float size = s.radius * 1.4f;
-					shape->appendRect(s.x - size/2, s.y - size/2,
+					canvas.round_rect(s.x - size / 2, s.y - size / 2,
 						size, size, 8, 8);
+					canvas.fill();
 					break;
 				}
 				case 2: // Triangle
 				{
 					float r = s.radius;
-					shape->moveTo(s.x, s.y - r);
-					shape->lineTo(s.x - r * 0.866f, s.y + r * 0.5f);
-					shape->lineTo(s.x + r * 0.866f, s.y + r * 0.5f);
-					shape->close();
+					canvas.move_to(s.x, s.y - r);
+					canvas.line_to(s.x - r * 0.866f, s.y + r * 0.5f);
+					canvas.line_to(s.x + r * 0.866f, s.y + r * 0.5f);
+					canvas.close_path();
+					canvas.fill();
 					break;
 				}
 			}
-
-			shape->fill(s.r, s.g, s.b, 255);
-			fCanvas->add(shape);
 		}
-
-		fCanvas->draw(true);  // clear buffer before drawing
-		fCanvas->sync();
 	}
 
-	BBitmap*		fBitmap;
-	tvg::SwCanvas*	fCanvas;
-	BMessageRunner*	fRunner;
-	Shape			fShapes[5];
+	BBitmap*			fBitmap;
+	BMessageRunner*		fRunner;
+	Shape				fShapes[5];
 };
 
 
-class ThorVGWindow : public BWindow {
+class PlutoVGWindow : public BWindow {
 public:
-	ThorVGWindow()
+	PlutoVGWindow()
 		:
-		BWindow(BRect(100, 100, 699, 499), "ThorVG Demo - Bouncing Shapes",
+		BWindow(BRect(100, 100, 699, 499), "PlutoVG Demo - Bouncing Shapes",
 			B_TITLED_WINDOW, B_QUIT_ON_WINDOW_CLOSE)
 	{
-		AddChild(new ThorVGView());
+		AddChild(new PlutoVGView());
 	}
 };
 
 
-class ThorVGApp : public BApplication {
+class PlutoVGApp : public BApplication {
 public:
-	ThorVGApp()
+	PlutoVGApp()
 		:
 		BApplication("application/x-vnd.Haiku-ThorVGDemo")
 	{
-		tvg::Initializer::init(0);
-	}
-
-	virtual ~ThorVGApp()
-	{
-		tvg::Initializer::term();
 	}
 
 	virtual void ReadyToRun()
 	{
-		(new ThorVGWindow())->Show();
+		(new PlutoVGWindow())->Show();
 	}
 };
 
@@ -356,7 +344,7 @@ public:
 int
 main()
 {
-	ThorVGApp app;
+	PlutoVGApp app;
 	app.Run();
 	return 0;
 }
