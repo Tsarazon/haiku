@@ -1,0 +1,40 @@
+SubDir HAIKU_TOP src libs plutovg ;
+
+# PlutoVG - Lightweight 2D vector graphics library
+# Version: 1.4.0
+# C++20 API with embedded FreeType rasterizer and STB libraries
+
+AddSubDirSupportedPlatforms libbe_test ;
+
+UseLibraryHeaders plutovg ;
+
+SubDirC++Flags -std=c++20 -w -DPLUTOVG_BUILD ;
+SubDirCcFlags -w -DPLUTOVG_BUILD ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		SharedLibrary [ MultiArchDefaultGristFiles libplutovg.so ] :
+			# Core
+			plutovg-canvas.cpp
+			plutovg-surface.cpp
+			plutovg-blend.cpp
+			plutovg-blur.cpp
+			plutovg-paint.cpp
+			plutovg-path.cpp
+			plutovg-matrix.cpp
+			plutovg-rasterize.cpp
+
+			# Font
+			plutovg-font.cpp
+
+			# Embedded FreeType components
+			plutovg-ft-math.cpp
+			plutovg-ft-raster.cpp
+			plutovg-ft-stroker.cpp
+
+			:
+			[ TargetLibstdc++ ]
+			;
+	}
+}

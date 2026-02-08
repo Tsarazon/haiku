@@ -136,6 +136,7 @@ rule HaikuImageGetSystemLibs
 			libspektr.so
 			libsurface.so
 			libtextencoding.so
+			libplutovg.so
 			libthorvg.so
 			libtracker.so
 			libtranslation.so

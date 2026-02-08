@@ -1,588 +1,839 @@
+// plutovg-canvas.cpp - Drawing context
+// C++20
+
 #include "plutovg-private.hpp"
-#include "plutovg-utils.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <utility>
 
 namespace plutovg {
 
-int get_version()
+// Version
+
+int runtime_version()
 {
     return version;
 }
 
-const char* get_version_string()
+const char* runtime_version_string()
 {
     return version_string;
 }
 
-static constexpr StrokeStyle default_stroke_style = { 1.f, LineCap::Butt, LineJoin::Miter, 10.f };
+// Internal helper: access pimpl pointer by layout assumption.
+// Both Path and Paint store a single Impl* as their sole data member.
+// (Actual definitions are in plutovg-private.hpp.)
 
-static inline CanvasImpl* impl(Canvas* c) { return reinterpret_cast<CanvasImpl*>(c); }
-static inline const CanvasImpl* impl(const Canvas* c) { return reinterpret_cast<const CanvasImpl*>(c); }
-static inline SurfaceImpl* impl(Surface* s) { return reinterpret_cast<SurfaceImpl*>(s); }
-static inline const SurfaceImpl* impl(const Surface* s) { return reinterpret_cast<const SurfaceImpl*>(s); }
-static inline PaintImpl* impl(Paint* p) { return reinterpret_cast<PaintImpl*>(p); }
+// RAII guard: swap fill paint/color with stroke paint/color for stroke blend ops.
+// When stroke_paint_set is true, stroke operations use stroke paint.
+// The blend(Canvas::Impl&, ...) function always reads fill_paint/fill_color,
+// so we swap them temporarily for stroke operations.
 
-static State* state_create()
-{
-    auto* state = static_cast<State*>(std::malloc(sizeof(State)));
-    state->paint = nullptr;
-    state->font_face = nullptr;
-    state->color = Color::black();
-    state->matrix = Matrix::identity();
-    state->stroke.style = default_stroke_style;
-    state->stroke.dash.offset = 0.f;
-    state->stroke.dash.array.init();
-    span_buffer_init(state->clip_spans);
-    state->winding = FillRule::NonZero;
-    state->op = Operator::SrcOver;
-    state->font_size = 12.f;
-    state->opacity = 1.f;
-    state->clipping = false;
-    state->next = nullptr;
-    return state;
-}
+struct StrokePaintGuard {
+    State& st;
+    bool active;
 
-static void state_reset(State* state)
-{
-    if(state->paint)
-        reinterpret_cast<Paint*>(state->paint)->destroy();
-    if(state->font_face)
-        state->font_face->destroy();
-    state->paint = nullptr;
-    state->font_face = nullptr;
-    state->color = Color::black();
-    state->matrix = Matrix::identity();
-    state->stroke.style = default_stroke_style;
-    state->stroke.dash.offset = 0.f;
-    state->stroke.dash.array.clear();
-    span_buffer_reset(state->clip_spans);
-    state->winding = FillRule::NonZero;
-    state->op = Operator::SrcOver;
-    state->font_size = 12.f;
-    state->opacity = 1.f;
-    state->clipping = false;
-}
-
-static void state_copy(State* state, const State* source)
-{
-    state->paint = source->paint
-        ? impl(reinterpret_cast<Paint*>(source->paint)->reference())
-        : nullptr;
-    state->font_face = source->font_face
-        ? source->font_face->reference()
-        : nullptr;
-    state->color = source->color;
-    state->matrix = source->matrix;
-    state->stroke.style = source->stroke.style;
-    state->stroke.dash.offset = source->stroke.dash.offset;
-    state->stroke.dash.array.clear();
-    state->stroke.dash.array.append(source->stroke.dash.array);
-    span_buffer_copy(state->clip_spans, source->clip_spans);
-    state->winding = source->winding;
-    state->op = source->op;
-    state->font_size = source->font_size;
-    state->opacity = source->opacity;
-    state->clipping = source->clipping;
-}
-
-static void state_destroy(State* state)
-{
-    if(state->paint)
-        reinterpret_cast<Paint*>(state->paint)->destroy();
-    if(state->font_face)
-        state->font_face->destroy();
-    state->stroke.dash.array.destroy();
-    span_buffer_destroy(state->clip_spans);
-    std::free(state);
-}
-
-Canvas* Canvas::create(Surface* surface)
-{
-    auto* ci = static_cast<CanvasImpl*>(std::malloc(sizeof(CanvasImpl)));
-    plutovg_init_reference(ci);
-    ci->surface = surface->reference();
-    ci->path = Path::create();
-    ci->state = state_create();
-    ci->freed_state = nullptr;
-    ci->face_cache = nullptr;
-    ci->clip_rect = Rect(0, 0, static_cast<float>(impl(surface)->width),
-                                static_cast<float>(impl(surface)->height));
-    span_buffer_init(ci->clip_spans);
-    span_buffer_init(ci->fill_spans);
-    return reinterpret_cast<Canvas*>(ci);
-}
-
-Canvas* Canvas::reference()
-{
-    plutovg_increment_reference(impl(this));
-    return this;
-}
-
-void Canvas::destroy()
-{
-    auto* ci = impl(this);
-    if(plutovg_destroy_reference(ci)) {
-        while(ci->state) {
-            auto* state = ci->state;
-            ci->state = state->next;
-            state_destroy(state);
+    explicit StrokePaintGuard(State& s) : st(s), active(s.stroke_paint_set) {
+        if (active) {
+            std::swap(st.fill_paint, st.stroke_paint);
+            std::swap(st.fill_color, st.stroke_color);
         }
-        while(ci->freed_state) {
-            auto* state = ci->freed_state;
-            ci->freed_state = state->next;
-            state_destroy(state);
-        }
-        if(ci->face_cache)
-            ci->face_cache->destroy();
-        span_buffer_destroy(ci->fill_spans);
-        span_buffer_destroy(ci->clip_spans);
-        ci->surface->destroy();
-        ci->path->destroy();
-        std::free(ci);
     }
+
+    ~StrokePaintGuard() {
+        if (active) {
+            std::swap(st.fill_paint, st.stroke_paint);
+            std::swap(st.fill_color, st.stroke_color);
+        }
+    }
+
+    StrokePaintGuard(const StrokePaintGuard&) = delete;
+    StrokePaintGuard& operator=(const StrokePaintGuard&) = delete;
+};
+
+// Shadow rendering helper.
+// Renders the given spans as a drop shadow (offset, blurred, with shadow color)
+// onto the canvas surface, before the main draw.
+
+static void render_shadow(Canvas::Impl& impl, const SpanBuffer& spans)
+{
+    const auto& shadow = impl.state().shadow;
+    if (shadow.is_none())
+        return;
+    if (spans.spans.empty())
+        return;
+
+    // Compute span bounding box.
+    Rect extents;
+    span_buffer_extents(spans, extents);
+    if (extents.empty())
+        return;
+
+    // Expand for blur and offset.
+    float blur_pad = std::ceil(shadow.blur * 3.0f);
+    int sx = static_cast<int>(std::floor(extents.x + shadow.offset_x - blur_pad));
+    int sy = static_cast<int>(std::floor(extents.y + shadow.offset_y - blur_pad));
+    int sr = static_cast<int>(std::ceil(extents.right() + shadow.offset_x + blur_pad)) + 1;
+    int sb = static_cast<int>(std::ceil(extents.bottom() + shadow.offset_y + blur_pad)) + 1;
+
+    // Clamp to surface bounds.
+    sx = std::max(sx, 0);
+    sy = std::max(sy, 0);
+    sr = std::min(sr, impl.surface.width());
+    sb = std::min(sb, impl.surface.height());
+    int sw = sr - sx;
+    int sh = sb - sy;
+    if (sw <= 0 || sh <= 0)
+        return;
+
+    // Ensure shadow surface is large enough.
+    if (!impl.shadow_surface
+        || impl.shadow_surface.width() < sw
+        || impl.shadow_surface.height() < sh) {
+        impl.shadow_surface = Surface::create(sw, sh);
+    }
+
+    // Clear the shadow region.
+    impl.shadow_surface.clear(Color::transparent());
+
+    // Build offset spans: shift by shadow offset, translate into shadow surface coords.
+    int ox = static_cast<int>(std::round(shadow.offset_x));
+    int oy = static_cast<int>(std::round(shadow.offset_y));
+
+    SpanBuffer offset_spans;
+    for (const auto& span : spans.spans) {
+        int dst_x = span.x + ox - sx;
+        int dst_y = span.y + oy - sy;
+        if (dst_y < 0 || dst_y >= sh)
+            continue;
+        int x0 = std::max(dst_x, 0);
+        int x1 = std::min(dst_x + span.len, sw);
+        if (x0 >= x1)
+            continue;
+        offset_spans.spans.push_back({x0, x1 - x0, dst_y, span.coverage});
+    }
+
+    if (offset_spans.spans.empty())
+        return;
+
+    // Blend shadow color onto shadow surface.
+    Paint::Impl shadow_paint;
+    shadow_paint.data = SolidPaintData{shadow.color};
+
+    IntRect shadow_clip{0, 0, sw, sh};
+    BlendParams params{
+        impl.shadow_surface,
+        &shadow_paint,
+        Operator::SrcOver,
+        BlendMode::Normal,
+        ColorInterpolation::SRGB,
+        1.0f,
+        false
+    };
+
+    blend(params, offset_spans, shadow_clip, nullptr);
+
+    // Apply gaussian blur.
+    if (shadow.blur > 0.0f)
+        gaussian_blur(impl.shadow_surface.mutable_data(), sw, sh, impl.shadow_surface.stride(), shadow.blur);
+
+    // Composite shadow surface onto main surface at (sx, sy) using a texture paint.
+    SpanBuffer rect_spans;
+    span_buffer_init_rect(rect_spans, sx, sy, sw, sh);
+
+    TexturePaintData tex_data;
+    tex_data.type = TextureType::Plain;
+    tex_data.opacity = 1.0f;
+    tex_data.matrix = Matrix::translated(static_cast<float>(sx), static_cast<float>(sy));
+    tex_data.surface = impl.shadow_surface;
+
+    Paint::Impl tex_paint;
+    tex_paint.data = tex_data;
+
+    BlendParams blit_params{
+        impl.surface,
+        &tex_paint,
+        impl.state().op,
+        impl.state().blend_mode,
+        impl.state().color_interp,
+        impl.state().opacity,
+        impl.state().dithering
+    };
+
+    blend(blit_params, rect_spans, impl.clip_rect,
+          impl.state().clipping ? &impl.state().clip_spans : nullptr);
 }
 
-int Canvas::get_reference_count() const
+// Get rasterized spans with clipping applied. Returns pointer to the span buffer to use.
+
+static const SpanBuffer& rasterize_and_clip(Canvas::Impl& impl, const StrokeData* stroke)
 {
-    return plutovg_get_reference_count(impl(this));
+    auto& st = impl.state();
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, stroke, st.winding);
+
+    if (st.clipping) {
+        span_buffer_intersect(impl.clip_spans, impl.fill_spans, st.clip_spans);
+        return impl.clip_spans;
+    }
+    return impl.fill_spans;
 }
 
-Surface* Canvas::get_surface() const
+// Canvas lifecycle
+
+Canvas::Canvas(const Surface& surface)
+    : m_impl(new Impl)
 {
-    return impl(this)->surface;
+    m_impl->surface = surface;
+    m_impl->clip_rect = IntRect{0, 0, surface.width(), surface.height()};
 }
+
+Canvas::~Canvas()
+{
+    delete m_impl;
+}
+
+Canvas::Canvas(Canvas&& other) noexcept
+    : m_impl(other.m_impl)
+{
+    other.m_impl = nullptr;
+}
+
+Canvas& Canvas::operator=(Canvas&& other) noexcept
+{
+    if (this != &other) {
+        delete m_impl;
+        m_impl = other.m_impl;
+        other.m_impl = nullptr;
+    }
+    return *this;
+}
+
+Canvas::operator bool() const
+{
+    return m_impl != nullptr;
+}
+
+Surface Canvas::surface() const
+{
+    return m_impl->surface;
+}
+
+// State stack
 
 void Canvas::save()
 {
-    auto* ci = impl(this);
-    auto* new_state = ci->freed_state;
-    if(new_state == nullptr)
-        new_state = state_create();
-    else
-        ci->freed_state = new_state->next;
-    state_copy(new_state, ci->state);
-    new_state->next = ci->state;
-    ci->state = new_state;
+    m_impl->states.push();
 }
 
 void Canvas::restore()
 {
-    auto* ci = impl(this);
-    if(ci->state->next == nullptr)
-        return;
-    auto* old_state = ci->state;
-    ci->state = old_state->next;
-    state_reset(old_state);
-    old_state->next = ci->freed_state;
-    ci->freed_state = old_state;
+    m_impl->states.pop();
 }
 
-void Canvas::set_rgb(float r, float g, float b)
+// Unified paint setters (set both fill and stroke)
+
+void Canvas::set_color(const Color& c)
 {
-    set_rgba(r, g, b, 1.f);
+    set_color(c.r, c.g, c.b, c.a);
 }
 
-void Canvas::set_rgba(float r, float g, float b, float a)
+void Canvas::set_color(float r, float g, float b, float a)
 {
-    impl(this)->state->color.init_rgba(r, g, b, a);
-    set_paint(nullptr);
-}
-
-void Canvas::set_color(const Color& color)
-{
-    set_rgba(color.r, color.g, color.b, color.a);
+    auto& st = m_impl->state();
+    st.fill_color = Color(r, g, b, a);
+    st.stroke_color = st.fill_color;
+    st.fill_paint = Paint();
+    st.stroke_paint = Paint();
+    st.stroke_paint_set = false;
 }
 
 void Canvas::set_linear_gradient(float x1, float y1, float x2, float y2,
-    SpreadMethod spread, const GradientStop* stops, int nstops, const Matrix* matrix)
+                                 SpreadMethod spread,
+                                 std::span<const GradientStop> stops,
+                                 const Matrix* matrix)
 {
-    auto* paint = Paint::create_linear_gradient(x1, y1, x2, y2, spread, stops, nstops, matrix);
+    auto paint = Paint::linear_gradient(x1, y1, x2, y2, spread, stops, matrix);
     set_paint(paint);
-    paint->destroy();
 }
 
-void Canvas::set_radial_gradient(float cx, float cy, float cr, float fx, float fy, float fr,
-    SpreadMethod spread, const GradientStop* stops, int nstops, const Matrix* matrix)
+void Canvas::set_radial_gradient(float cx, float cy, float cr,
+                                 float fx, float fy, float fr,
+                                 SpreadMethod spread,
+                                 std::span<const GradientStop> stops,
+                                 const Matrix* matrix)
 {
-    auto* paint = Paint::create_radial_gradient(cx, cy, cr, fx, fy, fr, spread, stops, nstops, matrix);
+    auto paint = Paint::radial_gradient(cx, cy, cr, fx, fy, fr, spread, stops, matrix);
     set_paint(paint);
-    paint->destroy();
 }
 
-void Canvas::set_texture(Surface* surface, TextureType type, float opacity, const Matrix* matrix)
+void Canvas::set_conic_gradient(float cx, float cy, float start_angle,
+                                SpreadMethod spread,
+                                std::span<const GradientStop> stops,
+                                const Matrix* matrix)
 {
-    auto* paint = Paint::create_texture(surface, type, opacity, matrix);
+    auto paint = Paint::conic_gradient(cx, cy, start_angle, spread, stops, matrix);
     set_paint(paint);
-    paint->destroy();
 }
 
-void Canvas::set_paint(Paint* paint)
+void Canvas::set_texture(const Surface& surface, TextureType type,
+                         float opacity, const Matrix* matrix)
 {
-    auto* ci = impl(this);
-    auto* new_paint = paint ? impl(paint->reference()) : nullptr;
-    if(ci->state->paint)
-        reinterpret_cast<Paint*>(ci->state->paint)->destroy();
-    ci->state->paint = new_paint;
+    auto paint = Paint::texture(surface, type, opacity, matrix);
+    set_paint(paint);
 }
 
-Paint* Canvas::get_paint(Color* color) const
+void Canvas::set_paint(const Paint& paint)
 {
-    if(color)
-        *color = impl(this)->state->color;
-    return reinterpret_cast<Paint*>(impl(this)->state->paint);
+    auto& st = m_impl->state();
+    st.fill_paint = paint;
+    st.stroke_paint = paint;
+    st.stroke_paint_set = false;
 }
 
-void Canvas::set_font_face_cache(FontFaceCache* cache)
+Color Canvas::get_color() const
 {
-    auto* ci = impl(this);
-    auto* new_cache = cache ? cache->reference() : nullptr;
-    if(ci->face_cache)
-        ci->face_cache->destroy();
-    ci->face_cache = new_cache;
+    return m_impl->state().fill_color;
 }
 
-FontFaceCache* Canvas::get_font_face_cache() const
+Paint Canvas::get_paint() const
 {
-    return impl(this)->face_cache;
+    return m_impl->state().fill_paint;
 }
 
-void Canvas::add_font_face(const char* family, bool bold, bool italic, FontFace* face)
+// Separate fill / stroke paint
+
+void Canvas::set_fill_color(const Color& c)
 {
-    auto* ci = impl(this);
-    if(ci->face_cache == nullptr)
-        ci->face_cache = FontFaceCache::create();
-    ci->face_cache->add(family, bold, italic, face);
+    set_fill_color(c.r, c.g, c.b, c.a);
 }
 
-bool Canvas::add_font_file(const char* family, bool bold, bool italic, const char* filename, int ttcindex)
+void Canvas::set_fill_color(float r, float g, float b, float a)
 {
-    auto* ci = impl(this);
-    if(ci->face_cache == nullptr)
-        ci->face_cache = FontFaceCache::create();
-    return ci->face_cache->add_file(family, bold, italic, filename, ttcindex);
+    auto& st = m_impl->state();
+    st.fill_color = Color(r, g, b, a);
+    st.fill_paint = Paint();
 }
 
-bool Canvas::select_font_face(const char* family, bool bold, bool italic)
+void Canvas::set_fill_paint(const Paint& paint)
 {
-    auto* ci = impl(this);
-    if(ci->face_cache == nullptr)
+    m_impl->state().fill_paint = paint;
+}
+
+void Canvas::set_stroke_color(const Color& c)
+{
+    set_stroke_color(c.r, c.g, c.b, c.a);
+}
+
+void Canvas::set_stroke_color(float r, float g, float b, float a)
+{
+    auto& st = m_impl->state();
+    st.stroke_color = Color(r, g, b, a);
+    st.stroke_paint = Paint();
+    st.stroke_paint_set = true;
+}
+
+void Canvas::set_stroke_paint(const Paint& paint)
+{
+    auto& st = m_impl->state();
+    st.stroke_paint = paint;
+    st.stroke_paint_set = true;
+}
+
+Color Canvas::get_fill_color() const
+{
+    return m_impl->state().fill_color;
+}
+
+Paint Canvas::get_fill_paint() const
+{
+    return m_impl->state().fill_paint;
+}
+
+Color Canvas::get_stroke_color() const
+{
+    auto& st = m_impl->state();
+    return st.stroke_paint_set ? st.stroke_color : st.fill_color;
+}
+
+Paint Canvas::get_stroke_paint() const
+{
+    auto& st = m_impl->state();
+    return st.stroke_paint_set ? st.stroke_paint : st.fill_paint;
+}
+
+// Shadow
+
+void Canvas::set_shadow(float offset_x, float offset_y, float blur, const Color& color)
+{
+    m_impl->state().shadow = Shadow(offset_x, offset_y, blur, color);
+}
+
+void Canvas::set_shadow(const Shadow& shadow)
+{
+    m_impl->state().shadow = shadow;
+}
+
+void Canvas::clear_shadow()
+{
+    m_impl->state().shadow = Shadow();
+}
+
+Shadow Canvas::get_shadow() const
+{
+    return m_impl->state().shadow;
+}
+
+// Blend mode
+
+void Canvas::set_blend_mode(BlendMode mode)
+{
+    m_impl->state().blend_mode = mode;
+}
+
+BlendMode Canvas::get_blend_mode() const
+{
+    return m_impl->state().blend_mode;
+}
+
+// Masking
+
+void Canvas::mask(const Surface& mask_surface, MaskMode mode, int ox, int oy)
+{
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+
+    // Determine the clip region spans.
+    const SpanBuffer* clip = nullptr;
+    if (st.clipping) {
+        clip = &st.clip_spans;
+    } else {
+        span_buffer_init_rect(impl.clip_spans, 0, 0,
+                              impl.surface.width(), impl.surface.height());
+        clip = &impl.clip_spans;
+    }
+
+    // Determine paint impl for the current fill paint.
+    const Paint::Impl* p = paint_impl(st.fill_paint);
+
+    // Build a temporary Impl for solid color fallback.
+    Paint::Impl solid_fallback;
+    if (!p) {
+        solid_fallback.data = SolidPaintData{st.fill_color};
+        p = &solid_fallback;
+    }
+
+    BlendParams params{
+        impl.surface,
+        p,
+        st.op,
+        st.blend_mode,
+        st.color_interp,
+        st.opacity,
+        st.dithering
+    };
+
+    blend_masked(params, *clip, impl.clip_rect, nullptr,
+                 mask_surface, mode, ox, oy);
+}
+
+// Color interpolation and dithering
+
+void Canvas::set_color_interpolation(ColorInterpolation ci)
+{
+    m_impl->state().color_interp = ci;
+}
+
+ColorInterpolation Canvas::get_color_interpolation() const
+{
+    return m_impl->state().color_interp;
+}
+
+void Canvas::set_dithering(bool enabled)
+{
+    m_impl->state().dithering = enabled;
+}
+
+bool Canvas::get_dithering() const
+{
+    return m_impl->state().dithering;
+}
+
+// Font management
+
+void Canvas::set_font_face_cache(const FontFaceCache& cache)
+{
+    m_impl->face_cache = cache;
+}
+
+FontFaceCache Canvas::get_font_face_cache() const
+{
+    return m_impl->face_cache;
+}
+
+void Canvas::add_font_face(std::string_view family, bool bold, bool italic, const FontFace& face)
+{
+    if (!m_impl->face_cache)
+        m_impl->face_cache = FontFaceCache();
+    m_impl->face_cache.add(family, bold, italic, face);
+}
+
+bool Canvas::add_font_file(std::string_view family, bool bold, bool italic,
+                           const char* filename, int ttcindex)
+{
+    if (!m_impl->face_cache)
+        m_impl->face_cache = FontFaceCache();
+    return m_impl->face_cache.add_file(family, bold, italic, filename, ttcindex);
+}
+
+bool Canvas::select_font_face(std::string_view family, bool bold, bool italic)
+{
+    if (!m_impl->face_cache)
         return false;
-    auto* face = ci->face_cache->get(family, bold, italic);
-    if(face == nullptr)
+    auto face = m_impl->face_cache.get(family, bold, italic);
+    if (!face)
         return false;
     set_font_face(face);
     return true;
 }
 
-void Canvas::set_font(FontFace* face, float size)
+void Canvas::set_font(const FontFace& face, float size)
 {
     set_font_face(face);
     set_font_size(size);
 }
 
-void Canvas::set_font_face(FontFace* face)
+void Canvas::set_font_face(const FontFace& face)
 {
-    auto* new_face = face ? face->reference() : nullptr;
-    if(impl(this)->state->font_face)
-        impl(this)->state->font_face->destroy();
-    impl(this)->state->font_face = new_face;
+    m_impl->state().font_face = face;
 }
 
-FontFace* Canvas::get_font_face() const
+FontFace Canvas::get_font_face() const
 {
-    return impl(this)->state->font_face;
+    return m_impl->state().font_face;
 }
 
 void Canvas::set_font_size(float size)
 {
-    impl(this)->state->font_size = size;
+    m_impl->state().font_size = size;
 }
 
 float Canvas::get_font_size() const
 {
-    return impl(this)->state->font_size;
+    return m_impl->state().font_size;
 }
+
+// Fill / stroke settings
 
 void Canvas::set_fill_rule(FillRule rule)
 {
-    impl(this)->state->winding = rule;
+    m_impl->state().winding = rule;
 }
 
 FillRule Canvas::get_fill_rule() const
 {
-    return impl(this)->state->winding;
+    return m_impl->state().winding;
 }
 
 void Canvas::set_operator(Operator op)
 {
-    impl(this)->state->op = op;
+    m_impl->state().op = op;
 }
 
 Operator Canvas::get_operator() const
 {
-    return impl(this)->state->op;
+    return m_impl->state().op;
 }
 
 void Canvas::set_opacity(float opacity)
 {
-    impl(this)->state->opacity = clamp(opacity, 0.f, 1.f);
+    m_impl->state().opacity = std::clamp(opacity, 0.0f, 1.0f);
 }
 
 float Canvas::get_opacity() const
 {
-    return impl(this)->state->opacity;
+    return m_impl->state().opacity;
 }
 
 void Canvas::set_line_width(float width)
 {
-    impl(this)->state->stroke.style.width = width;
+    m_impl->state().stroke.style.width = width;
 }
 
 float Canvas::get_line_width() const
 {
-    return impl(this)->state->stroke.style.width;
+    return m_impl->state().stroke.style.width;
 }
 
 void Canvas::set_line_cap(LineCap cap)
 {
-    impl(this)->state->stroke.style.cap = cap;
+    m_impl->state().stroke.style.cap = cap;
 }
 
 LineCap Canvas::get_line_cap() const
 {
-    return impl(this)->state->stroke.style.cap;
+    return m_impl->state().stroke.style.cap;
 }
 
 void Canvas::set_line_join(LineJoin join)
 {
-    impl(this)->state->stroke.style.join = join;
+    m_impl->state().stroke.style.join = join;
 }
 
 LineJoin Canvas::get_line_join() const
 {
-    return impl(this)->state->stroke.style.join;
+    return m_impl->state().stroke.style.join;
 }
 
 void Canvas::set_miter_limit(float limit)
 {
-    impl(this)->state->stroke.style.miter_limit = limit;
+    m_impl->state().stroke.style.miter_limit = limit;
 }
 
 float Canvas::get_miter_limit() const
 {
-    return impl(this)->state->stroke.style.miter_limit;
+    return m_impl->state().stroke.style.miter_limit;
 }
 
-void Canvas::set_dash(float offset, const float* dashes, int ndashes)
+void Canvas::set_dash(float offset, std::span<const float> dashes)
 {
     set_dash_offset(offset);
-    set_dash_array(dashes, ndashes);
+    set_dash_array(dashes);
 }
 
 void Canvas::set_dash_offset(float offset)
 {
-    impl(this)->state->stroke.dash.offset = offset;
+    m_impl->state().stroke.dash.offset = offset;
+}
+
+void Canvas::set_dash_array(std::span<const float> dashes)
+{
+    auto& arr = m_impl->state().stroke.dash.array;
+    arr.assign(dashes.begin(), dashes.end());
 }
 
 float Canvas::get_dash_offset() const
 {
-    return impl(this)->state->stroke.dash.offset;
-}
-
-void Canvas::set_dash_array(const float* dashes, int ndashes)
-{
-    auto& arr = impl(this)->state->stroke.dash.array;
-    arr.clear();
-    arr.append(dashes, ndashes);
+    return m_impl->state().stroke.dash.offset;
 }
 
 int Canvas::get_dash_array(const float** dashes) const
 {
-    auto& arr = impl(this)->state->stroke.dash.array;
-    if(dashes)
-        *dashes = arr.data;
-    return arr.size;
+    const auto& arr = m_impl->state().stroke.dash.array;
+    if (dashes)
+        *dashes = arr.data();
+    return static_cast<int>(arr.size());
 }
 
-void Canvas::apply_translate(float tx, float ty)
+// Transform
+
+void Canvas::translate(float tx, float ty)
 {
-    impl(this)->state->matrix.apply_translate(tx, ty);
+    m_impl->state().matrix.translate(tx, ty);
 }
 
-void Canvas::apply_scale(float sx, float sy)
+void Canvas::scale(float sx, float sy)
 {
-    impl(this)->state->matrix.apply_scale(sx, sy);
+    m_impl->state().matrix.scale(sx, sy);
 }
 
-void Canvas::apply_shear(float shx, float shy)
+void Canvas::shear(float shx, float shy)
 {
-    impl(this)->state->matrix.apply_shear(shx, shy);
+    m_impl->state().matrix.shear(shx, shy);
 }
 
-void Canvas::apply_rotate(float angle)
+void Canvas::rotate(float radians)
 {
-    impl(this)->state->matrix.apply_rotate(angle);
+    m_impl->state().matrix.rotate(radians);
 }
 
-void Canvas::apply_transform(const Matrix& matrix)
+void Canvas::transform(const Matrix& m)
 {
-    Matrix::multiply(impl(this)->state->matrix, matrix, impl(this)->state->matrix);
+    m_impl->state().matrix = m * m_impl->state().matrix;
 }
 
 void Canvas::reset_matrix()
 {
-    impl(this)->state->matrix.init_identity();
+    m_impl->state().matrix = Matrix::identity();
 }
 
-void Canvas::set_matrix(const Matrix& matrix)
+void Canvas::set_matrix(const Matrix& m)
 {
-    impl(this)->state->matrix = matrix;
+    m_impl->state().matrix = m;
 }
 
-void Canvas::get_matrix(Matrix& matrix) const
+Matrix Canvas::get_matrix() const
 {
-    matrix = impl(this)->state->matrix;
+    return m_impl->state().matrix;
 }
 
-void Canvas::map(float x, float y, float& xx, float& yy) const
+Point Canvas::map(Point p) const
 {
-    impl(this)->state->matrix.map(x, y, xx, yy);
+    return m_impl->state().matrix.map(p);
 }
 
-void Canvas::map_point(const Point& src, Point& dst) const
+void Canvas::map(float x, float y, float& ox, float& oy) const
 {
-    impl(this)->state->matrix.map_point(src, dst);
+    m_impl->state().matrix.map(x, y, ox, oy);
 }
 
-void Canvas::map_rect(const Rect& src, Rect& dst) const
+Rect Canvas::map_rect(const Rect& r) const
 {
-    impl(this)->state->matrix.map_rect(src, dst);
+    return m_impl->state().matrix.map_rect(r);
 }
+
+// Path construction
 
 void Canvas::move_to(float x, float y)
 {
-    impl(this)->path->move_to(x, y);
+    m_impl->path.move_to(x, y);
 }
 
 void Canvas::line_to(float x, float y)
 {
-    impl(this)->path->line_to(x, y);
+    m_impl->path.line_to(x, y);
 }
 
 void Canvas::quad_to(float x1, float y1, float x2, float y2)
 {
-    impl(this)->path->quad_to(x1, y1, x2, y2);
+    m_impl->path.quad_to(x1, y1, x2, y2);
 }
 
 void Canvas::cubic_to(float x1, float y1, float x2, float y2, float x3, float y3)
 {
-    impl(this)->path->cubic_to(x1, y1, x2, y2, x3, y3);
+    m_impl->path.cubic_to(x1, y1, x2, y2, x3, y3);
 }
 
-void Canvas::arc_to(float rx, float ry, float angle, bool large_arc_flag, bool sweep_flag, float x, float y)
+void Canvas::arc_to(float rx, float ry, float angle,
+                    bool large_arc_flag, bool sweep_flag, float x, float y)
 {
-    impl(this)->path->arc_to(rx, ry, angle, large_arc_flag, sweep_flag, x, y);
+    m_impl->path.arc_to(rx, ry, angle, large_arc_flag, sweep_flag, x, y);
 }
 
 void Canvas::rect(float x, float y, float w, float h)
 {
-    impl(this)->path->add_rect(x, y, w, h);
+    m_impl->path.add_rect(x, y, w, h);
 }
 
 void Canvas::round_rect(float x, float y, float w, float h, float rx, float ry)
 {
-    impl(this)->path->add_round_rect(x, y, w, h, rx, ry);
+    m_impl->path.add_round_rect(x, y, w, h, rx, ry);
+}
+
+void Canvas::round_rect(float x, float y, float w, float h, const CornerRadii& radii)
+{
+    m_impl->path.add_round_rect(x, y, w, h, radii);
 }
 
 void Canvas::ellipse(float cx, float cy, float rx, float ry)
 {
-    impl(this)->path->add_ellipse(cx, cy, rx, ry);
+    m_impl->path.add_ellipse(cx, cy, rx, ry);
 }
 
 void Canvas::circle(float cx, float cy, float r)
 {
-    impl(this)->path->add_circle(cx, cy, r);
+    m_impl->path.add_circle(cx, cy, r);
 }
 
 void Canvas::arc(float cx, float cy, float r, float a0, float a1, bool ccw)
 {
-    impl(this)->path->add_arc(cx, cy, r, a0, a1, ccw);
+    m_impl->path.add_arc(cx, cy, r, a0, a1, ccw);
 }
 
-void Canvas::add_path(const Path* path)
+void Canvas::add_path(const Path& path)
 {
-    impl(this)->path->add_path(path, nullptr);
+    m_impl->path.add_path(path);
 }
 
 void Canvas::new_path()
 {
-    impl(this)->path->reset();
+    m_impl->path.reset();
 }
 
 void Canvas::close_path()
 {
-    impl(this)->path->close();
+    m_impl->path.close();
 }
 
-void Canvas::get_current_point(float& x, float& y) const
+Point Canvas::current_point() const
 {
-    impl(this)->path->get_current_point(x, y);
+    return m_impl->path.current_point();
 }
 
-Path* Canvas::get_path() const
+Path Canvas::get_path() const
 {
-    return impl(this)->path;
+    return m_impl->path;
 }
+
+// Hit testing
 
 bool Canvas::fill_contains(float x, float y)
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, nullptr, nullptr, ci->state->winding);
-    return span_buffer_contains(ci->fill_spans, x, y);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, nullptr, st.winding);
+    return span_buffer_contains(impl.fill_spans, x, y);
 }
 
 bool Canvas::stroke_contains(float x, float y)
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, nullptr, &ci->state->stroke, FillRule::NonZero);
-    return span_buffer_contains(ci->fill_spans, x, y);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, &st.stroke, FillRule::NonZero);
+    return span_buffer_contains(impl.fill_spans, x, y);
 }
 
 bool Canvas::clip_contains(float x, float y)
 {
-    auto* ci = impl(this);
-    if(ci->state->clipping)
-        return span_buffer_contains(ci->state->clip_spans, x, y);
+    auto& st = m_impl->state();
+    if (st.clipping)
+        return span_buffer_contains(st.clip_spans, x, y);
 
-    float l = ci->clip_rect.x;
-    float t = ci->clip_rect.y;
-    float r = ci->clip_rect.x + ci->clip_rect.w;
-    float b = ci->clip_rect.y + ci->clip_rect.h;
-    return x >= l && x <= r && y >= t && y <= b;
+    const auto& cr = m_impl->clip_rect;
+    return x >= cr.x && x < cr.right() && y >= cr.y && y < cr.bottom();
 }
 
-void Canvas::fill_extents(Rect& extents)
+// Extents
+
+Rect Canvas::fill_extents()
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, nullptr, nullptr, ci->state->winding);
-    span_buffer_extents(ci->fill_spans, extents);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, nullptr, st.winding);
+    Rect r;
+    span_buffer_extents(impl.fill_spans, r);
+    return r;
 }
 
-void Canvas::stroke_extents(Rect& extents)
+Rect Canvas::stroke_extents()
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, nullptr, &ci->state->stroke, FillRule::NonZero);
-    span_buffer_extents(ci->fill_spans, extents);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, &st.stroke, FillRule::NonZero);
+    Rect r;
+    span_buffer_extents(impl.fill_spans, r);
+    return r;
 }
 
-void Canvas::clip_extents(Rect& extents)
+Rect Canvas::clip_extents()
 {
-    auto* ci = impl(this);
-    if(ci->state->clipping) {
-        span_buffer_extents(ci->state->clip_spans, extents);
-    } else {
-        extents = ci->clip_rect;
+    auto& st = m_impl->state();
+    if (st.clipping) {
+        Rect r;
+        span_buffer_extents(st.clip_spans, r);
+        return r;
     }
+    const auto& cr = m_impl->clip_rect;
+    return Rect(static_cast<float>(cr.x), static_cast<float>(cr.y),
+                static_cast<float>(cr.w), static_cast<float>(cr.h));
 }
+
+// Drawing operations
 
 void Canvas::fill()
 {
@@ -604,51 +855,66 @@ void Canvas::clip()
 
 void Canvas::paint()
 {
-    auto* ci = impl(this);
-    if(ci->state->clipping) {
-        blend(this, ci->state->clip_spans);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+    if (st.clipping) {
+        blend(impl, st.clip_spans);
     } else {
-        span_buffer_init_rect(ci->clip_spans, 0, 0, impl(ci->surface)->width, impl(ci->surface)->height);
-        blend(this, ci->clip_spans);
+        span_buffer_init_rect(impl.clip_spans, 0, 0,
+                              impl.surface.width(), impl.surface.height());
+        blend(impl, impl.clip_spans);
     }
 }
 
 void Canvas::fill_preserve()
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, &ci->clip_rect, nullptr, ci->state->winding);
-    if(ci->state->clipping) {
-        span_buffer_intersect(ci->clip_spans, ci->fill_spans, ci->state->clip_spans);
-        blend(this, ci->clip_spans);
-    } else {
-        blend(this, ci->fill_spans);
-    }
+    auto& impl = *m_impl;
+    const auto& spans = rasterize_and_clip(impl, nullptr);
+    render_shadow(impl, spans);
+    blend(impl, spans);
 }
 
 void Canvas::stroke_preserve()
 {
-    auto* ci = impl(this);
-    rasterize(ci->fill_spans, ci->path, &ci->state->matrix, &ci->clip_rect, &ci->state->stroke, FillRule::NonZero);
-    if(ci->state->clipping) {
-        span_buffer_intersect(ci->clip_spans, ci->fill_spans, ci->state->clip_spans);
-        blend(this, ci->clip_spans);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+
+    rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+              impl.clip_rect, &st.stroke, FillRule::NonZero);
+
+    const SpanBuffer* draw_spans;
+    if (st.clipping) {
+        span_buffer_intersect(impl.clip_spans, impl.fill_spans, st.clip_spans);
+        draw_spans = &impl.clip_spans;
     } else {
-        blend(this, ci->fill_spans);
+        draw_spans = &impl.fill_spans;
     }
+
+    render_shadow(impl, *draw_spans);
+
+    // Use stroke paint if set, otherwise fall back to fill paint.
+    StrokePaintGuard guard(st);
+    blend(impl, *draw_spans);
 }
 
 void Canvas::clip_preserve()
 {
-    auto* ci = impl(this);
-    if(ci->state->clipping) {
-        rasterize(ci->fill_spans, ci->path, &ci->state->matrix, &ci->clip_rect, nullptr, ci->state->winding);
-        span_buffer_intersect(ci->clip_spans, ci->fill_spans, ci->state->clip_spans);
-        span_buffer_copy(ci->state->clip_spans, ci->clip_spans);
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+
+    if (st.clipping) {
+        rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
+                  impl.clip_rect, nullptr, st.winding);
+        span_buffer_intersect(impl.clip_spans, impl.fill_spans, st.clip_spans);
+        span_buffer_copy(st.clip_spans, impl.clip_spans);
     } else {
-        rasterize(ci->state->clip_spans, ci->path, &ci->state->matrix, &ci->clip_rect, nullptr, ci->state->winding);
-        ci->state->clipping = true;
+        rasterize(st.clip_spans, *path_impl(impl.path), st.matrix,
+                  impl.clip_rect, nullptr, st.winding);
+        st.clipping = true;
     }
 }
+
+// Convenience: fill/stroke/clip rect/path
 
 void Canvas::fill_rect(float x, float y, float w, float h)
 {
@@ -657,7 +923,7 @@ void Canvas::fill_rect(float x, float y, float w, float h)
     fill();
 }
 
-void Canvas::fill_path(const Path* path)
+void Canvas::fill_path(const Path& path)
 {
     new_path();
     add_path(path);
@@ -671,7 +937,7 @@ void Canvas::stroke_rect(float x, float y, float w, float h)
     stroke();
 }
 
-void Canvas::stroke_path(const Path* path)
+void Canvas::stroke_path(const Path& path)
 {
     new_path();
     add_path(path);
@@ -685,92 +951,88 @@ void Canvas::clip_rect(float x, float y, float w, float h)
     clip();
 }
 
-void Canvas::clip_path(const Path* path)
+void Canvas::clip_path(const Path& path)
 {
     new_path();
     add_path(path);
     clip();
 }
 
+// Text operations
+
 float Canvas::add_glyph(Codepoint codepoint, float x, float y)
 {
-    auto* state = impl(this)->state;
-    if(state->font_face && state->font_size > 0.f)
-        return state->font_face->get_glyph_path(state->font_size, x, y, codepoint, impl(this)->path);
-    return 0.f;
+    auto& st = m_impl->state();
+    if (st.font_face && st.font_size > 0.0f)
+        return st.font_face.get_glyph_path(st.font_size, x, y, codepoint, m_impl->path);
+    return 0.0f;
 }
 
 float Canvas::add_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
-    auto* state = impl(this)->state;
-    if(state->font_face == nullptr || state->font_size <= 0.f)
-        return 0.f;
-    TextIterator it;
-    text_iterator_init(it, text, length, encoding);
-    float advance_width = 0.f;
-    while(text_iterator_has_next(it)) {
-        Codepoint codepoint = text_iterator_next(it);
-        advance_width += state->font_face->get_glyph_path(state->font_size, x + advance_width, y, codepoint, impl(this)->path);
+    auto& st = m_impl->state();
+    if (!st.font_face || st.font_size <= 0.0f)
+        return 0.0f;
+
+    TextIterator it(text, length, encoding);
+    float advance = 0.0f;
+    while (it.has_next()) {
+        Codepoint cp = it.next();
+        advance += st.font_face.get_glyph_path(st.font_size, x + advance, y, cp, m_impl->path);
     }
-    return advance_width;
+    return advance;
 }
 
 float Canvas::fill_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
     new_path();
-    float advance_width = add_text(text, length, encoding, x, y);
+    float advance = add_text(text, length, encoding, x, y);
     fill();
-    return advance_width;
+    return advance;
 }
 
 float Canvas::stroke_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
     new_path();
-    float advance_width = add_text(text, length, encoding, x, y);
+    float advance = add_text(text, length, encoding, x, y);
     stroke();
-    return advance_width;
+    return advance;
 }
 
 float Canvas::clip_text(const void* text, int length, TextEncoding encoding, float x, float y)
 {
     new_path();
-    float advance_width = add_text(text, length, encoding, x, y);
+    float advance = add_text(text, length, encoding, x, y);
     clip();
-    return advance_width;
+    return advance;
 }
 
-void Canvas::font_metrics(float* ascent, float* descent, float* line_gap, Rect* extents) const
+// Text metrics
+
+FontMetrics Canvas::font_metrics() const
 {
-    auto* state = impl(this)->state;
-    if(state->font_face && state->font_size > 0.f) {
-        state->font_face->get_metrics(state->font_size, ascent, descent, line_gap, extents);
-        return;
-    }
-    if(ascent) *ascent = 0.f;
-    if(descent) *descent = 0.f;
-    if(line_gap) *line_gap = 0.f;
-    if(extents) *extents = Rect{};
+    auto& st = m_impl->state();
+    if (st.font_face && st.font_size > 0.0f)
+        return st.font_face.metrics(st.font_size);
+    return {};
 }
 
-void Canvas::glyph_metrics(Codepoint codepoint, float* advance_width, float* left_side_bearing, Rect* extents)
+GlyphMetrics Canvas::glyph_metrics(Codepoint codepoint) const
 {
-    auto* state = impl(this)->state;
-    if(state->font_face && state->font_size > 0.f) {
-        state->font_face->get_glyph_metrics(state->font_size, codepoint, advance_width, left_side_bearing, extents);
-        return;
-    }
-    if(advance_width) *advance_width = 0.f;
-    if(left_side_bearing) *left_side_bearing = 0.f;
-    if(extents) *extents = Rect{};
+    auto& st = m_impl->state();
+    if (st.font_face && st.font_size > 0.0f)
+        return st.font_face.glyph_metrics(st.font_size, codepoint);
+    return {};
 }
 
-float Canvas::text_extents(const void* text, int length, TextEncoding encoding, Rect* extents)
+float Canvas::text_extents(const void* text, int length, TextEncoding encoding, Rect* extents) const
 {
-    auto* state = impl(this)->state;
-    if(state->font_face && state->font_size > 0.f)
-        return state->font_face->text_extents(state->font_size, text, length, encoding, extents);
-    if(extents) *extents = Rect{};
-    return 0.f;
+    auto& st = m_impl->state();
+    if (st.font_face && st.font_size > 0.0f)
+        return st.font_face.text_extents(st.font_size, text, length, encoding, extents);
+    if (extents)
+        *extents = {};
+    return 0.0f;
 }
 
 } // namespace plutovg

@@ -115,12 +115,25 @@ struct Paint::Impl : RefCounted {
 // Forward declare stb_truetype info; actual definition in .cpp
 struct StbttFontInfo;
 
+// -- FontFace data ownership --
+
+/// Type-erased release callback for externally owned font data.
+struct DataRelease {
+    void (*fn)(void*) = nullptr;
+    void* ctx = nullptr;
+
+    void operator()(const std::byte*) const noexcept {
+        if (fn) fn(ctx);
+    }
+};
+
 struct FontFace::Impl : RefCounted {
     std::unique_ptr<StbttFontInfo> font_info;
-    std::unique_ptr<std::byte[]>   owned_data;
+    const std::byte* data = nullptr;
     unsigned int data_length = 0;
+    DataRelease release;
 
-    ~Impl() = default;
+    ~Impl();
 };
 
 // -- FontFaceCache::Impl --
@@ -147,6 +160,10 @@ struct Span {
 
 struct SpanBuffer {
     std::vector<Span> spans;
+    // NOTE: bounds is only valid after span_buffer_init_rect() or span_buffer_copy().
+    // The FreeType rasterizer callback (spans_generation_callback) does NOT update
+    // this field, so after rasterize() it remains {0,0,0,0}. Use span_buffer_extents()
+    // to compute actual bounds from spans when needed.
     IntRect bounds;
 
     void reset() {
@@ -177,19 +194,24 @@ struct StrokeData {
 // -- Canvas state stack --
 
 struct State {
-    Paint       paint;
+    Paint       fill_paint;
+    Paint       stroke_paint;
     FontFace    font_face;
-    Color       color;
+    Color       fill_color;
+    Color       stroke_color;
     Matrix      matrix;
     StrokeData  stroke;
     SpanBuffer  clip_spans;
     Shadow      shadow;
-    FillRule    winding    = FillRule::NonZero;
-    Operator    op         = Operator::SrcOver;
-    BlendMode   blend_mode = BlendMode::Normal;
-    float       font_size  = 12.0f;
-    float       opacity    = 1.0f;
-    bool        clipping   = false;
+    FillRule    winding            = FillRule::NonZero;
+    Operator    op                 = Operator::SrcOver;
+    BlendMode   blend_mode         = BlendMode::Normal;
+    ColorInterpolation color_interp = ColorInterpolation::SRGB;
+    float       font_size          = 12.0f;
+    float       opacity            = 1.0f;
+    bool        clipping           = false;
+    bool        stroke_paint_set   = false; ///< If false, stroke uses fill paint.
+    bool        dithering          = false;
 };
 
 /// RAII state stack with freelist pooling.
@@ -246,15 +268,69 @@ struct Canvas::Impl {
     const State& state() const { return states.current(); }
 };
 
+// -- Mask coverage extraction --
+
+namespace mask_ops {
+
+/// Extract coverage [0..255] from a premultiplied ARGB pixel using the given mode.
+inline uint8_t extract_coverage(uint32_t pixel, MaskMode mode) {
+    switch (mode) {
+    case MaskMode::Alpha:
+        return alpha(pixel);
+    case MaskMode::InvAlpha:
+        return 255 - alpha(pixel);
+    case MaskMode::Luma: {
+        // BT.709 luminance from premultiplied RGB.
+        // Un-premultiply first if alpha > 0.
+        uint8_t a = alpha(pixel);
+        if (a == 0) return 0;
+        uint8_t r = red(pixel), g = green(pixel), b = blue(pixel);
+        if (a != 255) {
+            r = static_cast<uint8_t>((uint32_t(r) * 255) / a);
+            g = static_cast<uint8_t>((uint32_t(g) * 255) / a);
+            b = static_cast<uint8_t>((uint32_t(b) * 255) / a);
+        }
+        // Fixed-point: 54 + 183 + 19 = 256 ~ 0.2126 + 0.7152 + 0.0722
+        return static_cast<uint8_t>((54u * r + 183u * g + 19u * b) >> 8);
+    }
+    case MaskMode::InvLuma:
+        return 255 - extract_coverage(pixel, MaskMode::Luma);
+    }
+    return 0;
+}
+
+} // namespace mask_ops
+
 // -- Blend parameters (narrowed interface for blend function) --
 
 struct BlendParams {
-    const Surface&    target;
+    Surface&           target;
     const Paint::Impl* paint;
-    Operator          op;
-    BlendMode         blend_mode;
-    float             opacity;
+    Operator           op;
+    BlendMode          blend_mode;
+    ColorInterpolation color_interp;
+    float              opacity;
+    bool               dithering;
 };
+
+// -- Internal pimpl accessors --
+// Path, Paint, etc. store a single Impl* as their sole data member.
+// Internal code needs direct Impl access for blend dispatch / rasterization.
+
+inline Path::Impl* path_impl(Path& p) {
+    static_assert(sizeof(Path) == sizeof(void*));
+    return *reinterpret_cast<Path::Impl**>(&p);
+}
+
+inline const Path::Impl* path_impl(const Path& p) {
+    static_assert(sizeof(Path) == sizeof(void*));
+    return *reinterpret_cast<Path::Impl* const*>(&p);
+}
+
+inline const Paint::Impl* paint_impl(const Paint& p) {
+    static_assert(sizeof(Paint) == sizeof(void*));
+    return *reinterpret_cast<Paint::Impl* const*>(&p);
+}
 
 // -- Internal functions --
 
@@ -277,6 +353,12 @@ void blend(Canvas::Impl& canvas, const SpanBuffer& span_buffer);
 /// Blend span buffer with explicit parameters (for shadow/offscreen passes).
 void blend(const BlendParams& params, const SpanBuffer& span_buffer,
            const IntRect& clip_rect, const SpanBuffer* clip_spans);
+
+/// Blend span buffer modulated by a mask surface.
+/// Coverage at each pixel is multiplied by the mask value extracted via `mode`.
+void blend_masked(const BlendParams& params, const SpanBuffer& span_buffer,
+                  const IntRect& clip_rect, const SpanBuffer* clip_spans,
+                  const Surface& mask, MaskMode mode, int mask_ox, int mask_oy);
 
 /// Apply gaussian blur to a surface region.
 void gaussian_blur(unsigned char* data, int width, int height, int stride, float radius);
