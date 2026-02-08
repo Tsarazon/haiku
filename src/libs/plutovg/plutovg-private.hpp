@@ -280,18 +280,10 @@ inline uint8_t extract_coverage(uint32_t pixel, MaskMode mode) {
     case MaskMode::InvAlpha:
         return 255 - alpha(pixel);
     case MaskMode::Luma: {
-        // BT.709 luminance from premultiplied RGB.
-        // Un-premultiply first if alpha > 0.
         uint8_t a = alpha(pixel);
         if (a == 0) return 0;
-        uint8_t r = red(pixel), g = green(pixel), b = blue(pixel);
-        if (a != 255) {
-            r = static_cast<uint8_t>((uint32_t(r) * 255) / a);
-            g = static_cast<uint8_t>((uint32_t(g) * 255) / a);
-            b = static_cast<uint8_t>((uint32_t(b) * 255) / a);
-        }
-        // Fixed-point: 54 + 183 + 19 = 256 ~ 0.2126 + 0.7152 + 0.0722
-        return static_cast<uint8_t>((54u * r + 183u * g + 19u * b) >> 8);
+        auto [r, g, b] = unpremultiply(pixel);
+        return luminance_from_rgb(r, g, b);
     }
     case MaskMode::InvLuma:
         return 255 - extract_coverage(pixel, MaskMode::Luma);
@@ -333,6 +325,23 @@ inline const Paint::Impl* paint_impl(const Paint& p) {
 }
 
 // -- Internal functions --
+
+// -- FT outline helpers (defined in plutovg-rasterize.cpp) --
+
+struct PVG_FT_Outline; // forward declare
+
+PVG_FT_Outline* ft_outline_create(int points, int contours);
+void ft_outline_destroy(PVG_FT_Outline* outline);
+
+/// Convert a Path to an FT outline (transformed by matrix).
+PVG_FT_Outline* ft_outline_from_path(const Path& path, const Matrix& matrix);
+
+/// Run the full stroke pipeline: apply dash → convert to FT outline →
+/// FT_Stroker → return stroked outline. Caller must ft_outline_destroy().
+PVG_FT_Outline* ft_outline_stroke(const Path& path, const Matrix& matrix,
+                                    const StrokeData& stroke_data);
+
+// -- Span / blend functions --
 
 void span_buffer_init_rect(SpanBuffer& buf, int x, int y, int width, int height);
 void span_buffer_copy(SpanBuffer& dst, const SpanBuffer& src);

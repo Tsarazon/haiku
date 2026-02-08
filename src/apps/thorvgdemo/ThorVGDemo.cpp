@@ -5,10 +5,13 @@
  * PlutoVG Demo - bouncing shapes with collision
  * Showcases: gradients, shadows, strokes, transforms, bezier paths,
  *            dash patterns, opacity, per-corner radii, conic gradients.
+ * Uses KosmSurface (Surface Kit) as the rendering buffer.
  */
 
 #include <Application.h>
 #include <Bitmap.h>
+#include <KosmSurface.hpp>
+#include <KosmSurfaceAllocator.hpp>
 #include <MessageRunner.h>
 #include <View.h>
 #include <Window.h>
@@ -34,27 +37,39 @@ struct Shape {
 	float angle;		// rotation (radians)
 	float omega;		// angular velocity (radians/sec)
 
+	// Max visual extent from center (may differ from collision radius)
+	float VisualRadius() const
+	{
+		switch (type) {
+			case 4: return radius * 1.31f;				// heart diagonal when rotated
+			case 5: return radius * 1.3f;				// ellipse major axis
+			case 6: return radius * 0.75f * 1.414f;	// rounded rect half-diagonal
+			default: return radius;
+		}
+	}
+
 	void Move(float dt, float width, float height)
 	{
 		x += vx * dt;
 		y += vy * dt;
 		angle += omega * dt;
 
-		// Bounce off walls
-		if (x - radius < 0) {
-			x = radius;
+		// Bounce off walls using visual extent
+		float vr = VisualRadius();
+		if (x - vr < 0) {
+			x = vr;
 			vx = -vx;
 		}
-		if (x + radius > width) {
-			x = width - radius;
+		if (x + vr > width) {
+			x = width - vr;
 			vx = -vx;
 		}
-		if (y - radius < 0) {
-			y = radius;
+		if (y - vr < 0) {
+			y = vr;
 			vy = -vy;
 		}
-		if (y + radius > height) {
-			y = height - radius;
+		if (y + vr > height) {
+			y = height - vr;
 			vy = -vy;
 		}
 	}
@@ -112,6 +127,7 @@ public:
 		:
 		BView(BRect(0, 0, 799, 599), "PlutoVGView", B_FOLLOW_ALL,
 			B_WILL_DRAW | B_FRAME_EVENTS),
+		fSurface(NULL),
 		fBitmap(NULL),
 		fRunner(NULL)
 	{
@@ -123,6 +139,8 @@ public:
 	{
 		delete fRunner;
 		delete fBitmap;
+		if (fSurface != NULL)
+			KosmSurfaceAllocator::Default()->Free(fSurface);
 	}
 
 	virtual void AttachedToWindow()
@@ -235,7 +253,7 @@ private:
 		fShapes[5].y = 250;
 		fShapes[5].vx = 55;
 		fShapes[5].vy = -85;
-		fShapes[5].radius = 42;
+		fShapes[5].radius = 55;
 		fShapes[5].r = 60;
 		fShapes[5].g = 200;
 		fShapes[5].b = 200;
@@ -272,9 +290,9 @@ private:
 
 	void _Update()
 	{
+		float w = fSurface ? (float)fSurface->Width() : 800;
+		float h = fSurface ? (float)fSurface->Height() : 600;
 		float dt = kFrameTime / 1000000.0f;
-		float w = fBitmap ? fBitmap->Bounds().Width() + 1 : 800;
-		float h = fBitmap ? fBitmap->Bounds().Height() + 1 : 600;
 
 		for (int i = 0; i < kShapeCount; i++)
 			fShapes[i].Move(dt, w, h);
@@ -285,15 +303,60 @@ private:
 					fShapes[i].ResolveCollision(fShapes[j]);
 			}
 		}
+
+		// Clamp positions after collision resolution
+		for (int i = 0; i < kShapeCount; i++) {
+			Shape& s = fShapes[i];
+			float vr = s.VisualRadius();
+			if (s.x - vr < 0) {
+				s.x = vr;
+				if (s.vx < 0) s.vx = -s.vx;
+			}
+			if (s.x + vr > w) {
+				s.x = w - vr;
+				if (s.vx > 0) s.vx = -s.vx;
+			}
+			if (s.y - vr < 0) {
+				s.y = vr;
+				if (s.vy < 0) s.vy = -s.vy;
+			}
+			if (s.y + vr > h) {
+				s.y = h - vr;
+				if (s.vy > 0) s.vy = -s.vy;
+			}
+		}
 	}
 
 	void _InitCanvas()
 	{
+		// Free old KosmSurface
+		if (fSurface != NULL) {
+			KosmSurfaceAllocator::Default()->Free(fSurface);
+			fSurface = NULL;
+		}
 		delete fBitmap;
 		fBitmap = NULL;
 
 		BRect bounds = Bounds();
+		int w = (int)bounds.Width() + 1;
+		int h = (int)bounds.Height() + 1;
 
+		// Allocate KosmSurface as rendering buffer
+		// KOSM_PIXEL_FORMAT_ARGB8888 = 0xAARRGGBB = B_RGBA32 on little-endian
+		KosmSurfaceDesc desc;
+		desc.width = w;
+		desc.height = h;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+		desc.usage = KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE;
+
+		status_t status = KosmSurfaceAllocator::Default()->Allocate(
+			desc, &fSurface);
+		if (status != B_OK) {
+			fSurface = NULL;
+			return;
+		}
+
+		// BBitmap for BView::DrawBitmap() display path
 		fBitmap = new BBitmap(bounds, B_RGBA32);
 		if (fBitmap->InitCheck() != B_OK) {
 			delete fBitmap;
@@ -303,19 +366,27 @@ private:
 
 	void _Render()
 	{
-		if (fBitmap == NULL)
+		if (fSurface == NULL || fBitmap == NULL)
 			return;
 
-		int width = (int)fBitmap->Bounds().Width() + 1;
-		int height = (int)fBitmap->Bounds().Height() + 1;
+		// Lock KosmSurface for CPU write access
+		if (fSurface->Lock() != B_OK)
+			return;
+
+		int width = (int)fSurface->Width();
+		int height = (int)fSurface->Height();
+		int srcStride = (int)fSurface->BytesPerRow();
 		float w = (float)width;
 		float h = (float)height;
 
+		// Create PlutoVG surface wrapping KosmSurface pixel memory
 		plutovg::Surface surface = plutovg::Surface::create_for_data(
-			(unsigned char*)fBitmap->Bits(), width, height,
-			fBitmap->BytesPerRow());
-		if (!surface)
+			(unsigned char*)fSurface->BaseAddress(), width, height,
+			srcStride);
+		if (!surface) {
+			fSurface->Unlock();
 			return;
+		}
 
 		plutovg::Canvas canvas(std::move(surface));
 
@@ -509,8 +580,6 @@ private:
 					canvas.round_rect(-half, -half, size, size, radii);
 					canvas.fill_preserve();
 
-					// Thick darker stroke (shadow is still on from
-					// save state, restore will clear it)
 					canvas.set_color(plutovg::Color::from_rgba8(
 						(uint8)(s.r * 0.5f), (uint8)(s.g * 0.5f),
 						(uint8)(s.b * 0.5f), 255));
@@ -551,8 +620,34 @@ private:
 
 			canvas.restore();
 		}
+
+		// Copy rendered pixels from KosmSurface to BBitmap for display
+		_CopyToDisplay();
+
+		fSurface->Unlock();
 	}
 
+	void _CopyToDisplay()
+	{
+		if (fSurface == NULL || fBitmap == NULL)
+			return;
+
+		int height = (int)fSurface->Height();
+		int srcStride = (int)fSurface->BytesPerRow();
+		int dstStride = fBitmap->BytesPerRow();
+		const uint8* src = (const uint8*)fSurface->BaseAddress();
+		uint8* dst = (uint8*)fBitmap->Bits();
+
+		if (srcStride == dstStride) {
+			memcpy(dst, src, height * srcStride);
+		} else {
+			int copyBytes = (int)fSurface->Width() * 4;
+			for (int y = 0; y < height; y++)
+				memcpy(dst + y * dstStride, src + y * srcStride, copyBytes);
+		}
+	}
+
+	KosmSurface*		fSurface;
 	BBitmap*			fBitmap;
 	BMessageRunner*		fRunner;
 	Shape				fShapes[kShapeCount];

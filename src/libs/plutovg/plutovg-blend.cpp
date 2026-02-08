@@ -5,7 +5,6 @@
 #include "plutovg-utils.hpp"
 
 #include <algorithm>
-#include <cassert>
 #include <climits>
 #include <cmath>
 #include <cstring>
@@ -193,22 +192,6 @@ static inline uint32_t premultiply_color_with_opacity(const Color& color, float 
 }
 
 // CSS blend mode helpers
-
-// Un-premultiply a premultiplied ARGB pixel to straight alpha.
-// Returns {R, G, B} in [0..255], un-premultiplied. Alpha unchanged.
-struct UnpremulRGB { uint8_t r, g, b; };
-
-static inline UnpremulRGB unpremultiply(uint32_t px)
-{
-    uint8_t a = alpha(px);
-    if (a == 0)   return {0, 0, 0};
-    if (a == 255) return {red(px), green(px), blue(px)};
-    return {
-        static_cast<uint8_t>(std::min(255u, (uint32_t(red(px))   * 255) / a)),
-        static_cast<uint8_t>(std::min(255u, (uint32_t(green(px)) * 255) / a)),
-        static_cast<uint8_t>(std::min(255u, (uint32_t(blue(px))  * 255) / a))
-    };
-}
 
 // Apply a separable blend mode per-channel.
 using ChannelBlendFn = uint8_t(*)(uint8_t, uint8_t);
@@ -845,47 +828,6 @@ static void blend_untransformed_argb(const SurfaceRef& surface, Operator op,
     }
 }
 
-static void blend_transformed_argb(const SurfaceRef& surface, Operator op,
-                                   const TextureData& texture, const SpanBuffer& span_buffer)
-{
-    auto func = composition_table[static_cast<int>(op)];
-    uint32_t buffer[kBufferSize];
-
-    int fdx = static_cast<int>(texture.matrix.a * kFixedScale);
-    int fdy = static_cast<int>(texture.matrix.b * kFixedScale);
-
-    for (const auto& span : span_buffer.spans) {
-        auto* target = reinterpret_cast<uint32_t*>(surface.data + span.y * surface.stride) + span.x;
-
-        float cx = span.x + 0.5f;
-        float cy = span.y + 0.5f;
-
-        int x = static_cast<int>((texture.matrix.c * cy + texture.matrix.a * cx + texture.matrix.e) * kFixedScale);
-        int y = static_cast<int>((texture.matrix.d * cy + texture.matrix.b * cx + texture.matrix.f) * kFixedScale);
-
-        int length = span.len;
-        int coverage = (span.coverage * texture.const_alpha) >> 8;
-        while (length) {
-            int l = std::min(length, kBufferSize);
-            uint32_t* b = buffer;
-            const uint32_t* end = buffer + l;
-            while (b < end) {
-                int px = x >> 16;
-                int py = y >> 16;
-                if (px < 0 || px >= texture.width || py < 0 || py >= texture.height)
-                    *b = 0x00000000;
-                else
-                    *b = reinterpret_cast<const uint32_t*>(texture.data + py * texture.stride)[px];
-                x += fdx;
-                y += fdy;
-                ++b;
-            }
-            func(target, l, buffer, coverage);
-            target += l;
-            length -= l;
-        }
-    }
-}
 
 static void blend_untransformed_tiled_argb(const SurfaceRef& surface, Operator op,
                                            const TextureData& texture, const SpanBuffer& span_buffer)
@@ -915,122 +857,6 @@ static void blend_untransformed_tiled_argb(const SurfaceRef& surface, Operator o
             sx += l;
             length -= l;
             if (sx >= texture.width) sx = 0;
-        }
-    }
-}
-
-static void blend_transformed_tiled_argb(const SurfaceRef& surface, Operator op,
-                                         const TextureData& texture, const SpanBuffer& span_buffer)
-{
-    auto func = composition_table[static_cast<int>(op)];
-    uint32_t buffer[kBufferSize];
-
-    int scanline_offset = texture.stride / 4;
-    int fdx = static_cast<int>(texture.matrix.a * kFixedScale);
-    int fdy = static_cast<int>(texture.matrix.b * kFixedScale);
-
-    for (const auto& span : span_buffer.spans) {
-        auto* target = reinterpret_cast<uint32_t*>(surface.data + span.y * surface.stride) + span.x;
-        const auto* image_bits = reinterpret_cast<const uint32_t*>(texture.data);
-
-        float cx = span.x + 0.5f;
-        float cy = span.y + 0.5f;
-
-        int x = static_cast<int>((texture.matrix.c * cy + texture.matrix.a * cx + texture.matrix.e) * kFixedScale);
-        int y = static_cast<int>((texture.matrix.d * cy + texture.matrix.b * cx + texture.matrix.f) * kFixedScale);
-
-        int coverage = (span.coverage * texture.const_alpha) >> 8;
-        int length = span.len;
-        while (length) {
-            int l = std::min(length, kBufferSize);
-            uint32_t* b = buffer;
-            const uint32_t* end = buffer + l;
-            while (b < end) {
-                int px = (x >> 16) % texture.width;
-                int py = (y >> 16) % texture.height;
-                if (px < 0) px += texture.width;
-                if (py < 0) py += texture.height;
-
-                assert(px >= 0 && px < texture.width);
-                assert(py >= 0 && py < texture.height);
-
-                *b = image_bits[py * scanline_offset + px];
-                x += fdx;
-                y += fdy;
-                ++b;
-            }
-            func(target, l, buffer, coverage);
-            target += l;
-            length -= l;
-        }
-    }
-}
-
-static inline uint32_t interpolate_4_pixels(uint32_t tl, uint32_t tr, uint32_t bl, uint32_t br,
-                                            uint32_t distx, uint32_t disty)
-{
-    uint32_t idistx = 256 - distx;
-    uint32_t idisty = 256 - disty;
-    uint32_t xtop = interpolate_pixel_256(tl, idistx, tr, distx);
-    uint32_t xbot = interpolate_pixel_256(bl, idistx, br, distx);
-    return interpolate_pixel_256(xtop, idisty, xbot, disty);
-}
-
-static void blend_transformed_bilinear_tiled_argb(const SurfaceRef& surface, Operator op,
-                                                  const TextureData& texture, const SpanBuffer& span_buffer)
-{
-    auto func = composition_table[static_cast<int>(op)];
-    uint32_t buffer[kBufferSize];
-
-    int fdx = static_cast<int>(texture.matrix.a * kFixedScale);
-    int fdy = static_cast<int>(texture.matrix.b * kFixedScale);
-
-    for (const auto& span : span_buffer.spans) {
-        auto* target = reinterpret_cast<uint32_t*>(surface.data + span.y * surface.stride) + span.x;
-
-        float cx = span.x + 0.5f;
-        float cy = span.y + 0.5f;
-
-        int fx = static_cast<int>((texture.matrix.c * cy + texture.matrix.a * cx + texture.matrix.e) * kFixedScale);
-        int fy = static_cast<int>((texture.matrix.d * cy + texture.matrix.b * cx + texture.matrix.f) * kFixedScale);
-
-        fx -= kHalfPoint;
-        fy -= kHalfPoint;
-
-        int coverage = (span.coverage * texture.const_alpha) >> 8;
-        int length = span.len;
-        while (length) {
-            int l = std::min(length, kBufferSize);
-            uint32_t* b = buffer;
-            const uint32_t* end = buffer + l;
-            while (b < end) {
-                int x1 = (fx >> 16) % texture.width;
-                int y1 = (fy >> 16) % texture.height;
-                if (x1 < 0) x1 += texture.width;
-                if (y1 < 0) y1 += texture.height;
-
-                int x2 = (x1 + 1) % texture.width;
-                int y2 = (y1 + 1) % texture.height;
-
-                const auto* s1 = reinterpret_cast<const uint32_t*>(texture.data + y1 * texture.stride);
-                const auto* s2 = reinterpret_cast<const uint32_t*>(texture.data + y2 * texture.stride);
-
-                uint32_t tl = s1[x1];
-                uint32_t tr = s1[x2];
-                uint32_t bl = s2[x1];
-                uint32_t br = s2[x2];
-
-                int distx = (fx & 0x0000ffff) >> 8;
-                int disty = (fy & 0x0000ffff) >> 8;
-                *b = interpolate_4_pixels(tl, tr, bl, br, distx, disty);
-
-                fx += fdx;
-                fy += fdy;
-                ++b;
-            }
-            func(target, l, buffer, coverage);
-            target += l;
-            length -= l;
         }
     }
 }
@@ -1232,10 +1058,24 @@ static void fetch_gradient_row(uint32_t* buffer, const GradientPaintData& paint,
     }
 }
 
-// Fetch texture source pixels for a span row.
-// Uses nearest-neighbour with the inverse-transformed coordinates.
+static inline uint32_t interpolate_4_pixels(uint32_t tl, uint32_t tr, uint32_t bl, uint32_t br,
+                                            uint32_t distx, uint32_t disty)
+{
+    uint32_t idistx = 256 - distx;
+    uint32_t idisty = 256 - disty;
+    uint32_t xtop = interpolate_pixel_256(tl, idistx, tr, distx);
+    uint32_t xbot = interpolate_pixel_256(bl, idistx, br, distx);
+    return interpolate_pixel_256(xtop, idisty, xbot, disty);
+}
 
-static void fetch_texture_row(uint32_t* buffer, const TextureData& tex, int y, int x, int length)
+// Texture fetch functions.
+// Each fetches `length` pixels into `buffer` using the inverse transform stored in `tex.matrix`.
+
+using TextureFetchFn = void(*)(uint32_t* buffer, const TextureData& tex,
+                                int y, int x, int length);
+
+/// Nearest-neighbor, plain (clamp to edges, transparent outside).
+static void fetch_nearest_plain(uint32_t* buffer, const TextureData& tex, int y, int x, int length)
 {
     int fdx = static_cast<int>(tex.matrix.a * kFixedScale);
     int fdy = static_cast<int>(tex.matrix.b * kFixedScale);
@@ -1256,6 +1096,84 @@ static void fetch_texture_row(uint32_t* buffer, const TextureData& tex, int y, i
         tx += fdx;
         ty += fdy;
     }
+}
+
+/// Nearest-neighbor, tiled (wrap coordinates).
+static void fetch_nearest_tiled(uint32_t* buffer, const TextureData& tex, int y, int x, int length)
+{
+    int fdx = static_cast<int>(tex.matrix.a * kFixedScale);
+    int fdy = static_cast<int>(tex.matrix.b * kFixedScale);
+
+    int scanline_offset = tex.stride / 4;
+    const auto* image_bits = reinterpret_cast<const uint32_t*>(tex.data);
+
+    float cx = x + 0.5f;
+    float cy = y + 0.5f;
+
+    int fx = static_cast<int>((tex.matrix.c * cy + tex.matrix.a * cx + tex.matrix.e) * kFixedScale);
+    int fy = static_cast<int>((tex.matrix.d * cy + tex.matrix.b * cx + tex.matrix.f) * kFixedScale);
+
+    for (int i = 0; i < length; ++i) {
+        int px = (fx >> 16) % tex.width;
+        int py = (fy >> 16) % tex.height;
+        if (px < 0) px += tex.width;
+        if (py < 0) py += tex.height;
+        buffer[i] = image_bits[py * scanline_offset + px];
+        fx += fdx;
+        fy += fdy;
+    }
+}
+
+/// Bilinear, tiled (wrap coordinates, bilinear interpolation).
+static void fetch_bilinear_tiled(uint32_t* buffer, const TextureData& tex, int y, int x, int length)
+{
+    int fdx = static_cast<int>(tex.matrix.a * kFixedScale);
+    int fdy = static_cast<int>(tex.matrix.b * kFixedScale);
+
+    float cx = x + 0.5f;
+    float cy = y + 0.5f;
+
+    int fx = static_cast<int>((tex.matrix.c * cy + tex.matrix.a * cx + tex.matrix.e) * kFixedScale);
+    int fy = static_cast<int>((tex.matrix.d * cy + tex.matrix.b * cx + tex.matrix.f) * kFixedScale);
+
+    fx -= kHalfPoint;
+    fy -= kHalfPoint;
+
+    for (int i = 0; i < length; ++i) {
+        int x1 = (fx >> 16) % tex.width;
+        int y1 = (fy >> 16) % tex.height;
+        if (x1 < 0) x1 += tex.width;
+        if (y1 < 0) y1 += tex.height;
+
+        int x2 = (x1 + 1) % tex.width;
+        int y2 = (y1 + 1) % tex.height;
+
+        const auto* s1 = reinterpret_cast<const uint32_t*>(tex.data + y1 * tex.stride);
+        const auto* s2 = reinterpret_cast<const uint32_t*>(tex.data + y2 * tex.stride);
+
+        uint32_t tl = s1[x1];
+        uint32_t tr = s1[x2];
+        uint32_t bl = s2[x1];
+        uint32_t br = s2[x2];
+
+        int distx = (fx & 0x0000ffff) >> 8;
+        int disty = (fy & 0x0000ffff) >> 8;
+        buffer[i] = interpolate_4_pixels(tl, tr, bl, br, distx, disty);
+
+        fx += fdx;
+        fy += fdy;
+    }
+}
+
+/// Select texture fetch function based on texture type and transform.
+static TextureFetchFn select_texture_fetch(TextureType type, const Matrix& m) {
+    if (type == TextureType::Tiled) {
+        // Preserve current behavior: tiled + rotation → bilinear
+        if (std::fabs(m.b) > 1e-6f || std::fabs(m.c) > 1e-6f)
+            return fetch_bilinear_tiled;
+        return fetch_nearest_tiled;
+    }
+    return fetch_nearest_plain;
 }
 
 // Clip spans to an IntRect, appending results to `out`.
@@ -1365,40 +1283,36 @@ static void blend_texture(const SurfaceRef& surface, Operator op, const TextureP
     if (!tex) return;
 
     bool use_mode = (mode != BlendMode::Normal);
+    const auto& m = tex->matrix;
+    bool is_untransformed = (m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1);
 
-    if (!use_mode) {
-        // Fast paths: no blend mode, use specialized texture functions.
-        const auto& m = tex->matrix;
-        if (m.a == 1 && m.b == 0 && m.c == 0 && m.d == 1) {
-            if (texture.type == TextureType::Plain)
-                blend_untransformed_argb(surface, op, *tex, span_buffer);
-            else
-                blend_untransformed_tiled_argb(surface, op, *tex, span_buffer);
-        } else {
-            if (texture.type == TextureType::Plain) {
-                blend_transformed_argb(surface, op, *tex, span_buffer);
-            } else if (std::fabs(m.b) > 1e-6f || std::fabs(m.c) > 1e-6f) {
-                blend_transformed_bilinear_tiled_argb(surface, op, *tex, span_buffer);
-            } else {
-                blend_transformed_tiled_argb(surface, op, *tex, span_buffer);
-            }
-        }
+    if (!use_mode && is_untransformed) {
+        // Fast path: direct scanline blit, no intermediate buffer.
+        if (texture.type == TextureType::Plain)
+            blend_untransformed_argb(surface, op, *tex, span_buffer);
+        else
+            blend_untransformed_tiled_argb(surface, op, *tex, span_buffer);
         return;
     }
 
-    // Blend mode path: fetch texture into buffer, apply mode, then SrcOver compose.
-    auto func = composition_table[static_cast<int>(Operator::SrcOver)];
+    // Transformed or blend-mode path: fetch → [blend mode] → compose.
+    auto fetch = select_texture_fetch(texture.type, tex->matrix);
+    Operator comp_op = use_mode ? Operator::SrcOver : op;
+    auto func = composition_table[static_cast<int>(comp_op)];
     uint32_t buffer[kBufferSize];
 
     for (const auto& span : span_buffer.spans) {
+        auto* target = reinterpret_cast<uint32_t*>(surface.data + span.y * surface.stride) + span.x;
+        int coverage = use_mode ? span.coverage : ((span.coverage * tex->const_alpha) >> 8);
         int length = span.len;
         int x = span.x;
         while (length) {
             int l = std::min(length, kBufferSize);
-            fetch_texture_row(buffer, *tex, span.y, x, l);
-            auto* target = reinterpret_cast<uint32_t*>(surface.data + span.y * surface.stride) + x;
-            apply_blend_mode_buffer(buffer, target, l, mode);
-            func(target, l, buffer, span.coverage);
+            fetch(buffer, *tex, span.y, x, l);
+            if (use_mode)
+                apply_blend_mode_buffer(buffer, target, l, mode);
+            func(target, l, buffer, coverage);
+            target += l;
             x += l;
             length -= l;
         }
@@ -1598,6 +1512,7 @@ static void blend_masked_texture(const SurfaceRef& surf, Operator op,
 
     bool use_mode = (blend_mode != BlendMode::Normal);
     Operator comp_op = use_mode ? Operator::SrcOver : op;
+    auto fetch = select_texture_fetch(texture.type, tex->matrix);
 
     uint32_t buffer[kBufferSize];
 
@@ -1613,7 +1528,7 @@ static void blend_masked_texture(const SurfaceRef& surf, Operator op,
         int x = span.x;
         while (length) {
             int l = std::min(length, kBufferSize);
-            fetch_texture_row(buffer, *tex, span.y, x, l);
+            fetch(buffer, *tex, span.y, x, l);
 
             if (use_mode)
                 apply_blend_mode_buffer(buffer, dest, l, blend_mode);

@@ -109,34 +109,17 @@ void span_buffer_intersect(SpanBuffer& dst, const SpanBuffer& a, const SpanBuffe
 
 // -- FT outline helpers --
 
+// Forward declarations for exposed functions (defined below).
+PVG_FT_Outline* ft_outline_create(int points, int contours);
+void ft_outline_destroy(PVG_FT_Outline* outline);
+PVG_FT_Outline* ft_outline_from_path(const Path& path, const Matrix& matrix);
+PVG_FT_Outline* ft_outline_stroke(const Path& path, const Matrix& matrix,
+                                    const StrokeData& stroke_data);
+
 namespace {
 
 constexpr size_t align_size(size_t size) {
     return (size + 7u) & ~7u;
-}
-
-PVG_FT_Outline* ft_outline_create(int points, int contours) {
-    size_t points_size = align_size((points + contours) * sizeof(PVG_FT_Vector));
-    size_t tags_size = align_size((points + contours) * sizeof(char));
-    size_t contours_size = align_size(contours * sizeof(int));
-    size_t contours_flag_size = align_size(contours * sizeof(char));
-    size_t total = points_size + tags_size + contours_size + contours_flag_size + sizeof(PVG_FT_Outline);
-
-    auto* outline = static_cast<PVG_FT_Outline*>(std::malloc(total));
-    auto* data = reinterpret_cast<PVG_FT_Byte*>(outline + 1);
-
-    outline->points = reinterpret_cast<PVG_FT_Vector*>(data);
-    outline->tags = reinterpret_cast<char*>(data + points_size);
-    outline->contours = reinterpret_cast<int*>(data + points_size + tags_size);
-    outline->contours_flag = reinterpret_cast<char*>(data + points_size + tags_size + contours_size);
-    outline->n_points = 0;
-    outline->n_contours = 0;
-    outline->flags = 0x0;
-    return outline;
-}
-
-void ft_outline_destroy(PVG_FT_Outline* outline) {
-    std::free(outline);
 }
 
 inline PVG_FT_Pos ft_coord(float x) {
@@ -270,57 +253,6 @@ Path path_from_impl(const Path::Impl& impl) {
     return p;
 }
 
-/// Convert Impl elements to FT outline, iterating through elements directly.
-PVG_FT_Outline* ft_outline_from_path(const Path& path, const Matrix& matrix) {
-    const auto* elems = path.elements();
-    int size = path.element_count();
-    if (!elems || size == 0)
-        return ft_outline_create(0, 0);
-
-    // Count points and contours for allocation.
-    int num_points = 0, num_contours = 0;
-    for (int i = 0; i < size; i += elems[i].header.length) {
-        if (elems[i].header.command == PathCommand::MoveTo)
-            num_contours++;
-        num_points += elems[i].header.length - 1;
-    }
-
-    auto* outline = ft_outline_create(num_points, num_contours);
-    int idx = 0;
-    while (idx < size) {
-        auto cmd = elems[idx].header.command;
-        int len = elems[idx].header.length;
-        const Point* pts = &elems[idx + 1].point;
-        switch (cmd) {
-        case PathCommand::MoveTo: {
-            Point p = matrix.map(pts[0]);
-            ft_outline_move_to(outline, p.x, p.y);
-            break;
-        }
-        case PathCommand::LineTo: {
-            Point p = matrix.map(pts[0]);
-            ft_outline_line_to(outline, p.x, p.y);
-            break;
-        }
-        case PathCommand::CubicTo: {
-            Point mapped[3];
-            matrix.map_points(pts, mapped, 3);
-            ft_outline_cubic_to(outline,
-                mapped[0].x, mapped[0].y,
-                mapped[1].x, mapped[1].y,
-                mapped[2].x, mapped[2].y);
-            break;
-        }
-        case PathCommand::Close:
-            ft_outline_close(outline);
-            break;
-        }
-        idx += len;
-    }
-    ft_outline_end(outline);
-    return outline;
-}
-
 PVG_FT_Outline* ft_outline_convert_dash(const Path::Impl& path, const Matrix& matrix,
                                          const StrokeDash& dash) {
     if (dash.array.empty())
@@ -376,8 +308,6 @@ PVG_FT_Outline* ft_outline_convert_stroke(const Path::Impl& path, const Matrix& 
 
 void spans_generation_callback(int count, const PVG_FT_Span* ft_spans, void* user) {
     auto* buf = static_cast<SpanBuffer*>(user);
-    // Append spans. If Span and PVG_FT_Span have identical layout, we can memcpy.
-    // Otherwise, convert element by element for safety.
     size_t old_size = buf->spans.size();
     buf->spans.resize(old_size + count);
     for (int i = 0; i < count; ++i) {
@@ -391,6 +321,90 @@ void spans_generation_callback(int count, const PVG_FT_Span* ft_spans, void* use
 }
 
 } // namespace
+
+// -- Exposed FT outline functions --
+
+PVG_FT_Outline* ft_outline_create(int points, int contours) {
+    size_t points_size = align_size((points + contours) * sizeof(PVG_FT_Vector));
+    size_t tags_size = align_size((points + contours) * sizeof(char));
+    size_t contours_size = align_size(contours * sizeof(int));
+    size_t contours_flag_size = align_size(contours * sizeof(char));
+    size_t total = points_size + tags_size + contours_size + contours_flag_size + sizeof(PVG_FT_Outline);
+
+    auto* outline = static_cast<PVG_FT_Outline*>(std::malloc(total));
+    auto* data = reinterpret_cast<PVG_FT_Byte*>(outline + 1);
+
+    outline->points = reinterpret_cast<PVG_FT_Vector*>(data);
+    outline->tags = reinterpret_cast<char*>(data + points_size);
+    outline->contours = reinterpret_cast<int*>(data + points_size + tags_size);
+    outline->contours_flag = reinterpret_cast<char*>(data + points_size + tags_size + contours_size);
+    outline->n_points = 0;
+    outline->n_contours = 0;
+    outline->flags = 0x0;
+    return outline;
+}
+
+void ft_outline_destroy(PVG_FT_Outline* outline) {
+    std::free(outline);
+}
+
+PVG_FT_Outline* ft_outline_from_path(const Path& path, const Matrix& matrix) {
+    const auto* elems = path.elements();
+    int size = path.element_count();
+    if (!elems || size == 0)
+        return ft_outline_create(0, 0);
+
+    // Count points and contours for allocation.
+    int num_points = 0, num_contours = 0;
+    for (int i = 0; i < size; i += elems[i].header.length) {
+        if (elems[i].header.command == PathCommand::MoveTo)
+            num_contours++;
+        num_points += elems[i].header.length - 1;
+    }
+
+    auto* outline = ft_outline_create(num_points, num_contours);
+    int idx = 0;
+    while (idx < size) {
+        auto cmd = elems[idx].header.command;
+        int len = elems[idx].header.length;
+        const Point* pts = &elems[idx + 1].point;
+        switch (cmd) {
+        case PathCommand::MoveTo: {
+            Point p = matrix.map(pts[0]);
+            ft_outline_move_to(outline, p.x, p.y);
+            break;
+        }
+        case PathCommand::LineTo: {
+            Point p = matrix.map(pts[0]);
+            ft_outline_line_to(outline, p.x, p.y);
+            break;
+        }
+        case PathCommand::CubicTo: {
+            Point mapped[3];
+            matrix.map_points(pts, mapped, 3);
+            ft_outline_cubic_to(outline,
+                mapped[0].x, mapped[0].y,
+                mapped[1].x, mapped[1].y,
+                mapped[2].x, mapped[2].y);
+            break;
+        }
+        case PathCommand::Close:
+            ft_outline_close(outline);
+            break;
+        }
+        idx += len;
+    }
+    ft_outline_end(outline);
+    return outline;
+}
+
+PVG_FT_Outline* ft_outline_stroke(const Path& path, const Matrix& matrix,
+                                    const StrokeData& stroke_data) {
+    const auto* impl = path_impl(path);
+    if (!impl)
+        return ft_outline_create(0, 0);
+    return ft_outline_convert_stroke(*impl, matrix, stroke_data);
+}
 
 // -- Rasterize --
 

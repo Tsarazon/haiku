@@ -45,8 +45,44 @@ inline uint32_t premultiply_argb(uint32_t color) {
     return pack_argb(a, r, g, b);
 }
 
-// -- Blend mode pixel operations --
-// All inputs/outputs are in [0, 255] range.
+/// Un-premultiplied RGB from a premultiplied ARGB pixel.
+struct UnpremulRGB { uint8_t r, g, b; };
+
+/// Un-premultiply a premultiplied ARGB pixel to straight-alpha RGB [0..255].
+inline UnpremulRGB unpremultiply(uint32_t px) {
+    uint8_t a = alpha(px);
+    if (a == 0)   return {0, 0, 0};
+    if (a == 255) return {red(px), green(px), blue(px)};
+    return {
+        static_cast<uint8_t>(std::min(255u, (uint32_t(red(px))   * 255) / a)),
+        static_cast<uint8_t>(std::min(255u, (uint32_t(green(px)) * 255) / a)),
+        static_cast<uint8_t>(std::min(255u, (uint32_t(blue(px))  * 255) / a))
+    };
+}
+
+/// Un-premultiplied RGBA in [0..1] float range (for color matrix, etc.).
+struct UnpremulRGBA_f { float r, g, b, a; };
+
+inline UnpremulRGBA_f unpremultiply_f(uint32_t px) {
+    float a = alpha(px) / 255.0f;
+    if (a <= 0.0f) return {0, 0, 0, 0};
+    float inv_a = 1.0f / a;
+    return {
+        std::min(1.0f, (red(px)   / 255.0f) * inv_a),
+        std::min(1.0f, (green(px) / 255.0f) * inv_a),
+        std::min(1.0f, (blue(px)  / 255.0f) * inv_a),
+        a
+    };
+}
+
+/// BT.709 luminance from straight (non-premultiplied) RGB [0..255].
+/// Weights: 0.2126R + 0.7152G + 0.0722B
+/// Fixed-point: 54/256 ≈ 0.2109, 183/256 ≈ 0.7148, 19/256 ≈ 0.0742
+inline constexpr uint8_t luminance_from_rgb(uint8_t r, uint8_t g, uint8_t b) {
+    return static_cast<uint8_t>((54u * r + 183u * g + 19u * b) >> 8);
+}
+
+// -- Blend mode pixel operations --// All inputs/outputs are in [0, 255] range.
 
 namespace blend_ops {
 

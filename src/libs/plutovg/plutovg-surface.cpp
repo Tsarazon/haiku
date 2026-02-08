@@ -428,26 +428,12 @@ void convert_argb_to_rgba(unsigned char* dst, const unsigned char* src,
         auto* dst_row = dst + stride * y;
         for (int x = 0; x < width; ++x) {
             uint32_t pixel = src_row[x];
+            auto [r, g, b] = unpremultiply(pixel);
             uint32_t a = alpha(pixel);
-            if (a == 0) {
-                dst_row[0] = 0;
-                dst_row[1] = 0;
-                dst_row[2] = 0;
-                dst_row[3] = 0;
-            } else {
-                uint32_t r = red(pixel);
-                uint32_t g = green(pixel);
-                uint32_t b = blue(pixel);
-                if (a != 255) {
-                    r = (r * 255) / a;
-                    g = (g * 255) / a;
-                    b = (b * 255) / a;
-                }
-                dst_row[0] = static_cast<unsigned char>(r);
-                dst_row[1] = static_cast<unsigned char>(g);
-                dst_row[2] = static_cast<unsigned char>(b);
-                dst_row[3] = static_cast<unsigned char>(a);
-            }
+            dst_row[0] = r;
+            dst_row[1] = g;
+            dst_row[2] = b;
+            dst_row[3] = static_cast<unsigned char>(a);
             dst_row += 4;
         }
     }
