@@ -182,11 +182,11 @@ static const SpanBuffer& rasterize_and_clip(Canvas::Impl& impl, const StrokeData
 
 // Canvas lifecycle
 
-Canvas::Canvas(const Surface& surface)
+Canvas::Canvas(Surface surface)
     : m_impl(new Impl)
 {
-    m_impl->surface = surface;
     m_impl->clip_rect = IntRect{0, 0, surface.width(), surface.height()};
+    m_impl->surface = std::move(surface);
 }
 
 Canvas::~Canvas()

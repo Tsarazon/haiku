@@ -1107,12 +1107,19 @@ private:
 class PLUTOVG_API Canvas {
 public:
     /// Create a canvas for the given surface.
-    explicit Canvas(const Surface& surface);
-
-    /// Create a canvas by moving a surface (avoids COW refcount bump).
-    /// Preferred when the caller no longer needs the surface handle.
-    explicit Canvas(Surface&& surface);
-
+    ///
+    /// The surface is taken by value. For surfaces created with
+    /// Surface::create_for_data() (zero-copy external buffer), pass the
+    /// surface as a temporary or use std::move() so that the canvas holds
+    /// the sole reference and draws directly into the external buffer:
+    ///
+    ///     Canvas c(Surface::create_for_data(buf, w, h, stride)); // OK
+    ///     Canvas c(std::move(my_surface));                        // OK
+    ///
+    /// Passing an lvalue copies the handle (increments the refcount), which
+    /// causes the first draw to COW-detach into a new buffer — the intended
+    /// behaviour for owned surfaces but not for external buffers.
+    explicit Canvas(Surface surface);
     ~Canvas();
 
     Canvas(const Canvas&) = delete;
