@@ -6,6 +6,7 @@
 
 #include "plutovg.hpp"
 #include "plutovg-utils.hpp"
+#include "plutovg-ft-raster.h"
 
 #include <atomic>
 #include <memory>
@@ -328,7 +329,7 @@ inline const Paint::Impl* paint_impl(const Paint& p) {
 
 // -- FT outline helpers (defined in plutovg-rasterize.cpp) --
 
-struct PVG_FT_Outline; // forward declare
+using PVG_FT_Outline = ::PVG_FT_Outline;
 
 PVG_FT_Outline* ft_outline_create(int points, int contours);
 void ft_outline_destroy(PVG_FT_Outline* outline);
