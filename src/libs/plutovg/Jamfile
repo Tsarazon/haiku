@@ -8,7 +8,8 @@ AddSubDirSupportedPlatforms libbe_test ;
 
 UseLibraryHeaders plutovg ;
 
-SubDirC++Flags -std=c++20 -w -fpermissive -DPLUTOVG_BUILD ;
+SubDirC++Flags -std=c++20 -w -fpermissive -DPLUTOVG_BUILD
+	-I$(SUBDIR)/polyclip ;
 SubDirCcFlags -w -DPLUTOVG_BUILD ;
 
 local architectureObject ;
@@ -27,6 +28,9 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 
 			# Font
 			plutovg-font.cpp
+
+			# Path boolean operations
+			polyclip/polyclip.cpp
 
 			# Embedded FreeType components
 			plutovg-ft-math.cpp

@@ -1,3 +1,7 @@
+/*
+ * Copyright 2026 KosmOS Project. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ */
 #include "polyclip_internal.hpp"
 #include <algorithm>
 #include <array>

@@ -1,3 +1,7 @@
+/*
+ * Copyright 2026 KosmOS Project. All rights reserved.
+ * Distributed under the terms of the MIT License.
+ */
 #ifndef POLYCLIP_HPP
 #define POLYCLIP_HPP
 
