@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <memory>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -52,6 +53,9 @@ struct Surface::Impl : RefCounted {
     int stride = 0;
     unsigned char* data = nullptr;
     bool owns_data = false;
+    bool writable_external = false; ///< True for wrap(): non-owning, COW disabled.
+    PixelFormat format = PixelFormat::ARGB32_Premultiplied;
+    float scale_factor = 1.0f;
 
     ~Impl() {
         if (owns_data)
@@ -192,6 +196,19 @@ struct StrokeData {
     StrokeDash  dash;
 };
 
+/// Layer state for offscreen rendering (saveLayer / restore).
+/// Stored in the State that owns the layer. On restore, the offscreen surface
+/// is composited back onto the parent surface.
+struct LayerInfo {
+    Surface   surface;            ///< The offscreen layer surface (drawing target).
+    Surface   parent_surface;     ///< The surface we were rendering to before the layer.
+    IntRect   parent_clip_rect;   ///< The clip_rect of the parent canvas.
+    IntRect   device_bounds;      ///< Bounding box of the layer in parent device space.
+    float     alpha = 1.0f;       ///< Group opacity applied when compositing.
+    BlendMode blend_mode = BlendMode::Normal; ///< Blend mode for compositing.
+    Operator  op = Operator::SrcOver;         ///< Compositing operator.
+};
+
 // -- Canvas state stack --
 
 struct State {
@@ -213,6 +230,9 @@ struct State {
     bool        clipping           = false;
     bool        stroke_paint_set   = false; ///< If false, stroke uses fill paint.
     bool        dithering          = false;
+    bool        antialias          = true;
+    bool        pixel_snap         = false;
+    std::optional<LayerInfo> layer; ///< Set only by save_layer(), checked by restore().
 };
 
 /// RAII state stack with freelist pooling.
@@ -232,6 +252,7 @@ public:
             m_stack.emplace_back();
         } else {
             m_stack.push_back(m_stack.back()); // copy current
+            m_stack.back().layer.reset();       // only save_layer() sets this
         }
     }
 
@@ -329,7 +350,7 @@ inline const Paint::Impl* paint_impl(const Paint& p) {
 
 // -- FT outline helpers (defined in plutovg-rasterize.cpp) --
 
-using PVG_FT_Outline = ::PVG_FT_Outline;
+struct PVG_FT_Outline; // forward declare
 
 PVG_FT_Outline* ft_outline_create(int points, int contours);
 void ft_outline_destroy(PVG_FT_Outline* outline);
@@ -342,9 +363,13 @@ PVG_FT_Outline* ft_outline_from_path(const Path& path, const Matrix& matrix);
 PVG_FT_Outline* ft_outline_stroke(const Path& path, const Matrix& matrix,
                                     const StrokeData& stroke_data);
 
+/// Convert an FT outline back to a Path. Handles on-curve, conic, and cubic segments.
+Path ft_outline_to_path(const PVG_FT_Outline* outline);
+
 // -- Span / blend functions --
 
 void span_buffer_init_rect(SpanBuffer& buf, int x, int y, int width, int height);
+void span_buffer_init_region(SpanBuffer& buf, std::span<const IntRect> rects);
 void span_buffer_copy(SpanBuffer& dst, const SpanBuffer& src);
 bool span_buffer_contains(const SpanBuffer& buf, float x, float y);
 void span_buffer_extents(const SpanBuffer& buf, Rect& extents);
@@ -355,7 +380,8 @@ void rasterize(SpanBuffer& span_buffer,
                const Matrix& matrix,
                const IntRect& clip_rect,
                const StrokeData* stroke_data,
-               FillRule winding);
+               FillRule winding,
+               bool antialias = true);
 
 /// Blend span buffer onto canvas using current state.
 void blend(Canvas::Impl& canvas, const SpanBuffer& span_buffer);
@@ -374,6 +400,22 @@ void blend_masked(const BlendParams& params, const SpanBuffer& span_buffer,
 void gaussian_blur(unsigned char* data, int width, int height, int stride, float radius);
 
 void memfill32(uint32_t* dest, int length, uint32_t value);
+
+// -- Pixel format conversion utilities --
+
+/// Convert a single pixel from any 32-bit format to ARGB32_Premultiplied.
+uint32_t pixel_to_argb_premul(uint32_t pixel, PixelFormat src_fmt);
+
+/// Convert a single pixel from ARGB32_Premultiplied to any 32-bit format.
+uint32_t pixel_from_argb_premul(uint32_t argb_premul, PixelFormat dst_fmt);
+
+/// Convert a scanline between pixel formats.
+/// Both src and dst must have at least `width` pixels.
+/// For A8 source, rgb_fill is used as the color (ARGB32 premul); coverage modulates alpha.
+/// For A8 destination, luminance is extracted.
+void convert_scanline(const unsigned char* src, PixelFormat src_fmt,
+                      unsigned char* dst, PixelFormat dst_fmt,
+                      int width, uint32_t rgb_fill = 0xFFFFFFFF);
 
 } // namespace plutovg
 

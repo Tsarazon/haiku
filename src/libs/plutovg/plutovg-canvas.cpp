@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <span>
 #include <utility>
 
 namespace plutovg {
@@ -171,7 +172,7 @@ static const SpanBuffer& rasterize_and_clip(Canvas::Impl& impl, const StrokeData
 {
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, stroke, st.winding);
+              impl.clip_rect, stroke, st.winding, st.antialias);
 
     if (st.clipping) {
         span_buffer_intersect(impl.clip_spans, impl.fill_spans, st.clip_spans);
@@ -187,6 +188,13 @@ Canvas::Canvas(Surface surface)
 {
     m_impl->clip_rect = IntRect{0, 0, surface.width(), surface.height()};
     m_impl->surface = std::move(surface);
+
+    // Apply backing scale factor: initial CTM scales user coordinates
+    // to device coordinates, so all API operates in logical units.
+    float scale = m_impl->surface.scale_factor();
+    if (scale != 1.0f && scale > 0.0f) {
+        m_impl->state().matrix = Matrix::scaled(scale, scale);
+    }
 }
 
 Canvas::~Canvas()
@@ -229,10 +237,144 @@ void Canvas::save()
     m_impl->states.push();
 }
 
+void Canvas::save_layer(float alpha, const Rect* bounds)
+{
+    save_layer(alpha, BlendMode::Normal, bounds);
+}
+
+void Canvas::save_layer(float alpha, BlendMode blend_mode, const Rect* bounds)
+{
+    if (!m_impl) return;
+
+    // Push state first (normal save).
+    save();
+
+    auto& st = m_impl->state();
+
+    // Compute device-space bounds for the layer.
+    IntRect dev_bounds;
+    if (bounds && !bounds->empty()) {
+        // Transform user bounds by CTM, then intersect with clip_rect.
+        auto p0 = st.matrix.map(Point{bounds->x, bounds->y});
+        auto p1 = st.matrix.map(Point{bounds->right(), bounds->y});
+        auto p2 = st.matrix.map(Point{bounds->x, bounds->bottom()});
+        auto p3 = st.matrix.map(Point{bounds->right(), bounds->bottom()});
+
+        float minx = std::min({p0.x, p1.x, p2.x, p3.x});
+        float miny = std::min({p0.y, p1.y, p2.y, p3.y});
+        float maxx = std::max({p0.x, p1.x, p2.x, p3.x});
+        float maxy = std::max({p0.y, p1.y, p2.y, p3.y});
+
+        int x0 = static_cast<int>(std::floor(minx));
+        int y0 = static_cast<int>(std::floor(miny));
+        int x1 = static_cast<int>(std::ceil(maxx));
+        int y1 = static_cast<int>(std::ceil(maxy));
+
+        // Intersect with current clip_rect.
+        x0 = std::max(x0, m_impl->clip_rect.x);
+        y0 = std::max(y0, m_impl->clip_rect.y);
+        x1 = std::min(x1, m_impl->clip_rect.right());
+        y1 = std::min(y1, m_impl->clip_rect.bottom());
+
+        dev_bounds = {x0, y0, std::max(x1 - x0, 0), std::max(y1 - y0, 0)};
+    } else {
+        // Use current clip_rect as layer bounds.
+        dev_bounds = m_impl->clip_rect;
+    }
+
+    if (dev_bounds.w <= 0 || dev_bounds.h <= 0) {
+        // Degenerate layer — nothing would be visible.
+        // Leave layer info unset; restore() will just pop state normally.
+        return;
+    }
+
+    // Create offscreen surface.
+    Surface layer_surface = Surface::create(dev_bounds.w, dev_bounds.h);
+    if (!layer_surface) return;
+
+    // Build LayerInfo.
+    LayerInfo info;
+    info.surface         = std::move(layer_surface);
+    info.parent_surface  = m_impl->surface;
+    info.parent_clip_rect = m_impl->clip_rect;
+    info.device_bounds   = dev_bounds;
+    info.alpha           = std::clamp(alpha, 0.0f, 1.0f);
+    info.blend_mode      = blend_mode;
+    info.op              = st.op;
+
+    // Redirect drawing to the offscreen surface.
+    m_impl->surface = info.surface;
+    m_impl->clip_rect = {0, 0, dev_bounds.w, dev_bounds.h};
+
+    // Adjust CTM so device-space coordinates map to layer-local coordinates.
+    st.matrix = Matrix::translated(static_cast<float>(-dev_bounds.x),
+                                   static_cast<float>(-dev_bounds.y))
+              * st.matrix;
+
+    // Adjust clip spans if clipping is active.
+    if (st.clipping) {
+        for (auto& span : st.clip_spans.spans) {
+            span.x -= dev_bounds.x;
+            span.y -= dev_bounds.y;
+        }
+    }
+
+    st.layer = std::move(info);
+}
+
 void Canvas::restore()
 {
     if (!m_impl) return;
+    if (m_impl->states.depth() <= 1) return;
+
+    // Check if the state being popped has a layer BEFORE popping.
+    auto& popped = m_impl->state();
+    std::optional<LayerInfo> layer_info;
+    if (popped.layer.has_value())
+        layer_info = std::move(popped.layer);
+
+    // Pop state (destroys popped state).
     m_impl->states.pop();
+
+    // If we had a layer, composite it back.
+    if (layer_info) {
+        // Restore parent surface and clip_rect.
+        m_impl->surface = std::move(layer_info->parent_surface);
+        m_impl->clip_rect = layer_info->parent_clip_rect;
+
+        auto& bounds = layer_info->device_bounds;
+
+        // Build rect spans covering the layer bounds in parent device space.
+        SpanBuffer rect_spans;
+        span_buffer_init_rect(rect_spans, bounds.x, bounds.y, bounds.w, bounds.h);
+
+        // Build texture paint to blit the layer surface.
+        // Texture matrix maps texture-local → user space (device space here).
+        TexturePaintData tex_data;
+        tex_data.type = TextureType::Plain;
+        tex_data.opacity = 1.0f;
+        tex_data.matrix = Matrix::translated(
+            static_cast<float>(bounds.x),
+            static_cast<float>(bounds.y));
+        tex_data.surface = std::move(layer_info->surface);
+
+        Paint::Impl tex_paint;
+        tex_paint.data = tex_data;
+
+        auto& st = m_impl->state();
+        BlendParams params{
+            m_impl->surface,
+            &tex_paint,
+            layer_info->op,
+            layer_info->blend_mode,
+            st.color_interp,
+            layer_info->alpha,
+            st.dithering
+        };
+
+        blend(params, rect_spans, m_impl->clip_rect,
+              st.clipping ? &st.clip_spans : nullptr);
+    }
 }
 
 // Unified paint setters (set both fill and stroke)
@@ -483,6 +625,30 @@ bool Canvas::get_dithering() const
 {
     if (!m_impl) return false;
     return m_impl->state().dithering;
+}
+
+void Canvas::set_antialias(bool enabled)
+{
+    if (!m_impl) return;
+    m_impl->state().antialias = enabled;
+}
+
+bool Canvas::get_antialias() const
+{
+    if (!m_impl) return true;
+    return m_impl->state().antialias;
+}
+
+void Canvas::set_pixel_snap(bool enabled)
+{
+    if (!m_impl) return;
+    m_impl->state().pixel_snap = enabled;
+}
+
+bool Canvas::get_pixel_snap() const
+{
+    if (!m_impl) return false;
+    return m_impl->state().pixel_snap;
 }
 
 // Font management
@@ -783,18 +949,60 @@ void Canvas::arc_to(float rx, float ry, float angle,
 void Canvas::rect(float x, float y, float w, float h)
 {
     if (!m_impl) return;
+    auto& st = m_impl->state();
+    if (st.pixel_snap && st.matrix.b == 0.0f && st.matrix.c == 0.0f
+        && st.matrix.a != 0.0f && st.matrix.d != 0.0f) {
+        float dx = st.matrix.a * x + st.matrix.e;
+        float dy = st.matrix.d * y + st.matrix.f;
+        float dr = st.matrix.a * (x + w) + st.matrix.e;
+        float db = st.matrix.d * (y + h) + st.matrix.f;
+        dx = std::round(dx); dy = std::round(dy);
+        dr = std::round(dr); db = std::round(db);
+        x = (dx - st.matrix.e) / st.matrix.a;
+        y = (dy - st.matrix.f) / st.matrix.d;
+        w = (dr - dx) / st.matrix.a;
+        h = (db - dy) / st.matrix.d;
+    }
     m_impl->path.add_rect(x, y, w, h);
 }
 
 void Canvas::round_rect(float x, float y, float w, float h, float rx, float ry)
 {
     if (!m_impl) return;
+    auto& st = m_impl->state();
+    if (st.pixel_snap && st.matrix.b == 0.0f && st.matrix.c == 0.0f
+        && st.matrix.a != 0.0f && st.matrix.d != 0.0f) {
+        float dx = st.matrix.a * x + st.matrix.e;
+        float dy = st.matrix.d * y + st.matrix.f;
+        float dr = st.matrix.a * (x + w) + st.matrix.e;
+        float db = st.matrix.d * (y + h) + st.matrix.f;
+        dx = std::round(dx); dy = std::round(dy);
+        dr = std::round(dr); db = std::round(db);
+        x = (dx - st.matrix.e) / st.matrix.a;
+        y = (dy - st.matrix.f) / st.matrix.d;
+        w = (dr - dx) / st.matrix.a;
+        h = (db - dy) / st.matrix.d;
+    }
     m_impl->path.add_round_rect(x, y, w, h, rx, ry);
 }
 
 void Canvas::round_rect(float x, float y, float w, float h, const CornerRadii& radii)
 {
     if (!m_impl) return;
+    auto& st = m_impl->state();
+    if (st.pixel_snap && st.matrix.b == 0.0f && st.matrix.c == 0.0f
+        && st.matrix.a != 0.0f && st.matrix.d != 0.0f) {
+        float dx = st.matrix.a * x + st.matrix.e;
+        float dy = st.matrix.d * y + st.matrix.f;
+        float dr = st.matrix.a * (x + w) + st.matrix.e;
+        float db = st.matrix.d * (y + h) + st.matrix.f;
+        dx = std::round(dx); dy = std::round(dy);
+        dr = std::round(dr); db = std::round(db);
+        x = (dx - st.matrix.e) / st.matrix.a;
+        y = (dy - st.matrix.f) / st.matrix.d;
+        w = (dr - dx) / st.matrix.a;
+        h = (db - dy) / st.matrix.d;
+    }
     m_impl->path.add_round_rect(x, y, w, h, radii);
 }
 
@@ -854,7 +1062,7 @@ bool Canvas::fill_contains(float x, float y)
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, nullptr, st.winding);
+              impl.clip_rect, nullptr, st.winding, st.antialias);
     auto p = st.matrix.map(Point{x, y});
     return span_buffer_contains(impl.fill_spans, p.x, p.y);
 }
@@ -865,7 +1073,7 @@ bool Canvas::stroke_contains(float x, float y)
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, &st.stroke, FillRule::NonZero);
+              impl.clip_rect, &st.stroke, FillRule::NonZero, st.antialias);
     auto p = st.matrix.map(Point{x, y});
     return span_buffer_contains(impl.fill_spans, p.x, p.y);
 }
@@ -890,7 +1098,7 @@ Rect Canvas::fill_extents()
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, nullptr, st.winding);
+              impl.clip_rect, nullptr, st.winding, st.antialias);
     Rect r;
     span_buffer_extents(impl.fill_spans, r);
     return r;
@@ -902,7 +1110,7 @@ Rect Canvas::stroke_extents()
     auto& impl = *m_impl;
     auto& st = impl.state();
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, &st.stroke, FillRule::NonZero);
+              impl.clip_rect, &st.stroke, FillRule::NonZero, st.antialias);
     Rect r;
     span_buffer_extents(impl.fill_spans, r);
     return r;
@@ -975,7 +1183,7 @@ void Canvas::stroke_preserve()
     auto& st = impl.state();
 
     rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-              impl.clip_rect, &st.stroke, FillRule::NonZero);
+              impl.clip_rect, &st.stroke, FillRule::NonZero, st.antialias);
 
     const SpanBuffer* draw_spans;
     if (st.clipping) {
@@ -1000,12 +1208,12 @@ void Canvas::clip_preserve()
 
     if (st.clipping) {
         rasterize(impl.fill_spans, *path_impl(impl.path), st.matrix,
-                  impl.clip_rect, nullptr, st.winding);
+                  impl.clip_rect, nullptr, st.winding, st.antialias);
         span_buffer_intersect(impl.clip_spans, impl.fill_spans, st.clip_spans);
         span_buffer_copy(st.clip_spans, impl.clip_spans);
     } else {
         rasterize(st.clip_spans, *path_impl(impl.path), st.matrix,
-                  impl.clip_rect, nullptr, st.winding);
+                  impl.clip_rect, nullptr, st.winding, st.antialias);
         st.clipping = true;
     }
 }
@@ -1058,6 +1266,63 @@ void Canvas::clip_path(const Path& path)
     new_path();
     add_path(path);
     clip();
+}
+
+void Canvas::clip_region(std::span<const IntRect> rects)
+{
+    if (!m_impl || rects.empty()) return;
+    auto& impl = *m_impl;
+    auto& st = impl.state();
+
+    // Build span buffer directly from rectangles — no path, no rasterization.
+    SpanBuffer region_spans;
+    span_buffer_init_region(region_spans, rects);
+
+    if (region_spans.spans.empty()) return;
+
+    if (st.clipping) {
+        // Intersect with existing clip.
+        span_buffer_intersect(impl.clip_spans, region_spans, st.clip_spans);
+        span_buffer_copy(st.clip_spans, impl.clip_spans);
+    } else {
+        span_buffer_copy(st.clip_spans, region_spans);
+        st.clipping = true;
+    }
+}
+
+// Direct surface compositing
+
+void Canvas::draw_surface(const Surface& src, const Rect& src_rect, const Rect& dst_rect)
+{
+    if (!m_impl || !src) return;
+    if (src_rect.w <= 0 || src_rect.h <= 0 || dst_rect.w <= 0 || dst_rect.h <= 0) return;
+
+    // Texture matrix maps texture-local → user space.
+    // (0,0) in src_rect → (dst.x, dst.y) in user space.
+    Matrix tex_matrix = Matrix::translated(dst_rect.x, dst_rect.y)
+                      * Matrix::scaled(dst_rect.w / src_rect.w, dst_rect.h / src_rect.h)
+                      * Matrix::translated(-src_rect.x, -src_rect.y);
+
+    save();
+    set_texture(src, TextureType::Plain, 1.0f, &tex_matrix);
+    fill_rect(dst_rect.x, dst_rect.y, dst_rect.w, dst_rect.h);
+    restore();
+}
+
+void Canvas::draw_surface(const Surface& src, float x, float y)
+{
+    if (!m_impl || !src) return;
+    float w = static_cast<float>(src.width());
+    float h = static_cast<float>(src.height());
+    draw_surface(src, Rect{0, 0, w, h}, Rect{x, y, w, h});
+}
+
+void Canvas::draw_surface(const Surface& src, const Rect& dst_rect)
+{
+    if (!m_impl || !src) return;
+    float w = static_cast<float>(src.width());
+    float h = static_cast<float>(src.height());
+    draw_surface(src, Rect{0, 0, w, h}, dst_rect);
 }
 
 // Text operations

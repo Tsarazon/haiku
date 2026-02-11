@@ -84,6 +84,20 @@ inline constexpr uint8_t luminance_from_rgb(uint8_t r, uint8_t g, uint8_t b) {
 
 // -- Blend mode pixel operations --// All inputs/outputs are in [0, 255] range.
 
+/// Multiply a premultiplied ARGB pixel by a [0..255] factor.
+/// Used by Porter-Duff operators and compositing.
+inline uint32_t byte_mul(uint32_t x, uint32_t a) {
+    uint32_t t = (x & 0xff00ff) * a;
+    t = (t + ((t >> 8) & 0xff00ff) + 0x800080) >> 8;
+    t &= 0xff00ff;
+
+    x = ((x >> 8) & 0xff00ff) * a;
+    x = (x + ((x >> 8) & 0xff00ff) + 0x800080);
+    x &= 0xff00ff00;
+    x |= t;
+    return x;
+}
+
 namespace blend_ops {
 
 inline constexpr uint8_t multiply(uint8_t a, uint8_t b) {

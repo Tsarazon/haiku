@@ -2,6 +2,7 @@
 // C++20
 
 #include "plutovg-private.hpp"
+#include "polyclip.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -860,6 +861,43 @@ Path Path::trimmed(float begin_t, float end_t) const {
     return result;
 }
 
+// -- Stroke-to-fill conversion --
+
+Path Path::stroked(float width, LineCap cap, LineJoin join, float miter_limit) const {
+    if (!m_impl || width <= 0.0f)
+        return {};
+
+    StrokeData stroke_data;
+    stroke_data.style.width = width;
+    stroke_data.style.cap = cap;
+    stroke_data.style.join = join;
+    stroke_data.style.miter_limit = miter_limit;
+
+    PVG_FT_Outline* outline = ft_outline_stroke(*this, Matrix::identity(), stroke_data);
+    Path result = ft_outline_to_path(outline);
+    ft_outline_destroy(outline);
+    return result;
+}
+
+Path Path::stroked(float width, LineCap cap, LineJoin join, float miter_limit,
+                   float dash_offset, std::span<const float> dashes) const {
+    if (!m_impl || width <= 0.0f)
+        return {};
+
+    StrokeData stroke_data;
+    stroke_data.style.width = width;
+    stroke_data.style.cap = cap;
+    stroke_data.style.join = join;
+    stroke_data.style.miter_limit = miter_limit;
+    stroke_data.dash.offset = dash_offset;
+    stroke_data.dash.array.assign(dashes.begin(), dashes.end());
+
+    PVG_FT_Outline* outline = ft_outline_stroke(*this, Matrix::identity(), stroke_data);
+    Path result = ft_outline_to_path(outline);
+    ft_outline_destroy(outline);
+    return result;
+}
+
 // -- Parse SVG path data --
 
 namespace {
@@ -1072,6 +1110,106 @@ Path::Iterator Path::end() const {
         return {};
     int sz = static_cast<int>(m_impl->elements.size());
     return {m_impl->elements.data(), sz, sz};
+}
+
+// -- Boolean operations (Path ↔ polyclip) --
+
+static polyclip::Polygon path_to_polygon(const Path& path, FillRule rule)
+{
+    polyclip::Polygon poly;
+    std::vector<polyclip::Point> pts;
+
+    path.traverse_flatten([&](PathCommand cmd, const Point* p, [[maybe_unused]] int n) {
+        switch (cmd) {
+        case PathCommand::MoveTo:
+            if (pts.size() >= 3)
+                poly.add(polyclip::Contour(std::move(pts)));
+            pts.clear();
+            pts.push_back({double(p[0].x), double(p[0].y)});
+            break;
+        case PathCommand::LineTo:
+            pts.push_back({double(p[0].x), double(p[0].y)});
+            break;
+        case PathCommand::Close:
+            if (pts.size() >= 3)
+                poly.add(polyclip::Contour(std::move(pts)));
+            pts.clear();
+            break;
+        case PathCommand::CubicTo:
+            // flatten should never emit this, but just in case — take endpoint
+            pts.push_back({double(p[2].x), double(p[2].y)});
+            break;
+        }
+    });
+
+    if (pts.size() >= 3)
+        poly.add(polyclip::Contour(std::move(pts)));
+
+    poly.sanitize();
+
+    auto pc_rule = (rule == FillRule::EvenOdd)
+                 ? polyclip::FillRule::EvenOdd
+                 : polyclip::FillRule::NonZero;
+    poly.decompose(pc_rule);
+
+    return poly;
+}
+
+static Path polygon_to_path(const polyclip::Polygon& poly)
+{
+    Path result;
+    if (poly.empty())
+        return result;
+
+    int total = 0;
+    for (auto& c : poly.contours())
+        total += static_cast<int>(c.size());
+    result.reserve(total * 2 + static_cast<int>(poly.contour_count()) * 3);
+
+    for (auto& contour : poly.contours()) {
+        auto pts = contour.points();
+        if (pts.size() < 3)
+            continue;
+        result.move_to(float(pts[0].x), float(pts[0].y));
+        for (std::size_t i = 1; i < pts.size(); ++i)
+            result.line_to(float(pts[i].x), float(pts[i].y));
+        result.close();
+    }
+
+    return result;
+}
+
+static Path path_boolean(const Path& a, const Path& b,
+                         polyclip::Operation op, FillRule rule)
+{
+    if (!a || !b)
+        return {};
+    auto pa = path_to_polygon(a, rule);
+    auto pb = path_to_polygon(b, rule);
+    if (pa.empty() && pb.empty())
+        return {};
+
+    auto pc_rule = (rule == FillRule::EvenOdd)
+                 ? polyclip::FillRule::EvenOdd
+                 : polyclip::FillRule::NonZero;
+
+    return polygon_to_path(polyclip::compute(op, pa, pb, pc_rule));
+}
+
+Path Path::united(const Path& other, FillRule rule) const {
+    return path_boolean(*this, other, polyclip::Operation::Union, rule);
+}
+
+Path Path::intersected(const Path& other, FillRule rule) const {
+    return path_boolean(*this, other, polyclip::Operation::Intersection, rule);
+}
+
+Path Path::subtracted(const Path& other, FillRule rule) const {
+    return path_boolean(*this, other, polyclip::Operation::Difference, rule);
+}
+
+Path Path::xored(const Path& other, FillRule rule) const {
+    return path_boolean(*this, other, polyclip::Operation::Xor, rule);
 }
 
 } // namespace plutovg

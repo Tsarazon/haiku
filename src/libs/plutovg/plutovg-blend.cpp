@@ -103,18 +103,7 @@ static inline uint32_t interpolate_pixel_256(uint32_t x, uint32_t a, uint32_t y,
     return x;
 }
 
-static inline uint32_t byte_mul(uint32_t x, uint32_t a)
-{
-    uint32_t t = (x & 0xff00ff) * a;
-    t = (t + ((t >> 8) & 0xff00ff) + 0x800080) >> 8;
-    t &= 0xff00ff;
-
-    x = ((x >> 8) & 0xff00ff) * a;
-    x = (x + ((x >> 8) & 0xff00ff) + 0x800080);
-    x &= 0xff00ff00;
-    x |= t;
-    return x;
-}
+// byte_mul is now in plutovg-utils.hpp as an inline function.
 
 // memfill32
 

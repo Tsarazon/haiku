@@ -438,6 +438,52 @@ enum class ColorInterpolation {
     LinearRGB   ///< Interpolate in linear RGB space (physically correct).
 };
 
+/// Pixel format for surface data.
+///
+/// The internal rendering pipeline always works in ARGB32_Premultiplied.
+/// Other formats are supported for interop with external systems (Wayland,
+/// framebuffers, image loaders). Conversion happens at blit/composite boundaries.
+enum class PixelFormat : uint8_t {
+    ARGB32_Premultiplied,  ///< 0xAARRGGBB, premultiplied alpha. Native PlutoVG format.
+    BGRA32_Premultiplied,  ///< 0xBBGGRRAA memory order, premultiplied. Wayland/Vulkan native.
+    RGBA32,                ///< 0xRRGGBBAA memory order, straight alpha. PNG exchange format.
+    BGRA32,                ///< 0xBBGGRRAA memory order, straight alpha. Windows DIB.
+    A8                     ///< 8-bit alpha/coverage. Glyph bitmaps, masks.
+};
+
+/// Compile-time pixel format descriptor.
+struct PixelFormatInfo {
+    uint8_t bpp;           ///< Bytes per pixel.
+    uint8_t r_shift;       ///< Bit offset for red (0 for A8).
+    uint8_t g_shift;       ///< Bit offset for green (0 for A8).
+    uint8_t b_shift;       ///< Bit offset for blue (0 for A8).
+    uint8_t a_shift;       ///< Bit offset for alpha.
+    bool    premultiplied; ///< Whether RGB is premultiplied by alpha.
+    bool    has_color;     ///< False for A8 (alpha-only).
+};
+
+/// Get format descriptor for a pixel format.
+inline constexpr PixelFormatInfo pixel_format_info(PixelFormat fmt) {
+    switch (fmt) {
+    case PixelFormat::ARGB32_Premultiplied:
+        return {4, 16, 8, 0, 24, true, true};
+    case PixelFormat::BGRA32_Premultiplied:
+        return {4, 8, 16, 24, 0, true, true};
+    case PixelFormat::RGBA32:
+        return {4, 24, 16, 8, 0, false, true};
+    case PixelFormat::BGRA32:
+        return {4, 8, 16, 24, 0, false, true};
+    case PixelFormat::A8:
+        return {1, 0, 0, 0, 0, false, false};
+    }
+    return {4, 16, 8, 0, 24, true, true};
+}
+
+/// Minimum stride (bytes per row) for a given width and format.
+inline constexpr int min_stride(int width, PixelFormat fmt) {
+    return width * pixel_format_info(fmt).bpp;
+}
+
 // ---- Color ----
 
 /// RGBA color with float components in [0, 1].
@@ -554,6 +600,61 @@ struct Shadow {
     }
 };
 
+/// 4×5 color transformation matrix.
+/// Transforms [R,G,B,A,1] → [R',G',B',A'] in straight (non-premultiplied) color space.
+/// Layout: R' = m[0]*R + m[1]*G + m[2]*B  + m[3]*A + m[4]
+///         G' = m[5]*R + m[6]*G + m[7]*B  + m[8]*A + m[9]
+///         B' = m[10]*R + m[11]*G + m[12]*B + m[13]*A + m[14]
+///         A' = m[15]*R + m[16]*G + m[17]*B + m[18]*A + m[19]
+/// R, G, B, A and bias terms are in [0, 1].
+struct ColorMatrix {
+    float m[20] = {
+        1,0,0,0,0,  // R' = R
+        0,1,0,0,0,  // G' = G
+        0,0,1,0,0,  // B' = B
+        0,0,0,1,0   // A' = A
+    };
+
+    static constexpr ColorMatrix identity() { return {}; }
+
+    /// Grayscale using BT.709 luminance weights.
+    PLUTOVG_API static ColorMatrix grayscale();
+
+    /// Sepia tone.
+    PLUTOVG_API static ColorMatrix sepia();
+
+    /// Saturate: 0 = grayscale, 1 = identity, >1 = oversaturated.
+    PLUTOVG_API static ColorMatrix saturate(float amount);
+
+    /// Brightness: 0 = black, 1 = identity, >1 = brighter.
+    PLUTOVG_API static ColorMatrix brightness(float amount);
+
+    /// Contrast: 0 = flat gray, 1 = identity, >1 = increased.
+    PLUTOVG_API static ColorMatrix contrast(float amount);
+
+    /// Hue rotation in radians.
+    PLUTOVG_API static ColorMatrix hue_rotate(float radians);
+
+    /// Invert colors.
+    PLUTOVG_API static ColorMatrix invert();
+
+    /// Multiply two matrices (apply this, then other).
+    [[nodiscard]] constexpr ColorMatrix operator*(const ColorMatrix& other) const {
+        ColorMatrix result;
+        for (int row = 0; row < 4; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                float sum = 0.0f;
+                for (int k = 0; k < 4; ++k)
+                    sum += m[row * 5 + k] * other.m[k * 5 + col];
+                if (col == 4)
+                    sum += m[row * 5 + 4]; // bias passthrough
+                result.m[row * 5 + col] = sum;
+            }
+        }
+        return result;
+    }
+};
+
 // ---- Font metrics (returned as value) ----
 
 /// Metrics of a font face at a given size.
@@ -628,6 +729,51 @@ public:
     /// @param begin Normalized start position [0, 1].
     /// @param end   Normalized end position [0, 1].
     [[nodiscard]] Path trimmed(float begin, float end) const;
+
+    /// Convert this path's stroke to a filled path (stroke-to-fill conversion).
+    /// Uses identity matrix — stroke width is in user-space units.
+    /// @param width      Stroke width.
+    /// @param cap        Line cap style (default: Butt).
+    /// @param join       Line join style (default: Miter).
+    /// @param miter_limit Miter limit (default: 10).
+    [[nodiscard]] PLUTOVG_API Path stroked(float width,
+                                           LineCap cap = LineCap::Butt,
+                                           LineJoin join = LineJoin::Miter,
+                                           float miter_limit = 10.0f) const;
+
+    /// Convert this path's stroke to a filled path, with dash pattern.
+    /// @param width      Stroke width.
+    /// @param cap        Line cap style.
+    /// @param join       Line join style.
+    /// @param miter_limit Miter limit.
+    /// @param dash_offset Dash pattern offset.
+    /// @param dashes     Dash pattern array.
+    [[nodiscard]] PLUTOVG_API Path stroked(float width,
+                                           LineCap cap,
+                                           LineJoin join,
+                                           float miter_limit,
+                                           float dash_offset,
+                                           std::span<const float> dashes) const;
+
+    // -- Boolean operations (via polyclip) --
+    // Paths are flattened (cubics → line segments) before clipping.
+    // The result is always a flattened path.
+
+    /// Union of this path and @p other.
+    [[nodiscard]] PLUTOVG_API Path united(const Path& other,
+                                          FillRule rule = FillRule::NonZero) const;
+
+    /// Intersection of this path and @p other.
+    [[nodiscard]] PLUTOVG_API Path intersected(const Path& other,
+                                               FillRule rule = FillRule::NonZero) const;
+
+    /// Subtract @p other from this path (this minus other).
+    [[nodiscard]] PLUTOVG_API Path subtracted(const Path& other,
+                                              FillRule rule = FillRule::NonZero) const;
+
+    /// Symmetric difference (XOR) of this path and @p other.
+    [[nodiscard]] PLUTOVG_API Path xored(const Path& other,
+                                         FillRule rule = FillRule::NonZero) const;
 
     /// Construct a path from raw command and point arrays (zero-copy import).
     /// @param cmds   Array of path commands.
@@ -940,7 +1086,12 @@ private:
 
 // ---- Surface ----
 
-/// Pixel surface in premultiplied ARGB (0xAARRGGBB) format.
+/// Pixel surface for 2D rendering.
+///
+/// Default format is premultiplied ARGB (0xAARRGGBB). Other pixel formats
+/// are supported for interop with external systems. The internal rendering
+/// pipeline always works in ARGB32_Premultiplied; format conversion happens
+/// at composite/blit boundaries.
 ///
 /// Copy-on-write (COW) value semantics. Copies are cheap (shared data).
 /// Mutating operations (clear, apply_blur, drawing via Canvas) detach from shared storage.
@@ -955,11 +1106,26 @@ public:
 
     explicit operator bool() const;
 
-    /// Create a surface with the given dimensions.
-    [[nodiscard]] static Surface create(int width, int height);
+    /// Create a surface with the given dimensions (default: ARGB32_Premultiplied).
+    [[nodiscard]] static Surface create(int width, int height,
+                                        PixelFormat format = PixelFormat::ARGB32_Premultiplied);
 
     /// Create a surface wrapping existing pixel data (no ownership transfer).
-    [[nodiscard]] static Surface create_for_data(unsigned char* data, int width, int height, int stride);
+    /// The data pointer must remain valid for the lifetime of this surface.
+    /// COW detach may copy to a new buffer if the surface is shared.
+    [[nodiscard]] static Surface create_for_data(unsigned char* data, int width, int height, int stride,
+                                                  PixelFormat format = PixelFormat::ARGB32_Premultiplied);
+
+    /// Wrap an external buffer with explicit non-owning, non-COW semantics.
+    ///
+    /// Unlike create_for_data(), wrap() guarantees zero-copy: all drawing
+    /// goes directly into the provided buffer. COW detach is disabled —
+    /// attempting to share and mutate a wrapped surface is a fatal error.
+    ///
+    /// Use this for framebuffers, shared memory, and compositor back-buffers
+    /// where you need guaranteed control over the memory being written to.
+    [[nodiscard]] static Surface wrap(unsigned char* data, int width, int height, int stride,
+                                      PixelFormat format = PixelFormat::ARGB32_Premultiplied);
 
     /// Load a surface from an image file (PNG, JPEG, etc.).
     [[nodiscard]] static Surface load_from_image_file(const char* filename);
@@ -977,14 +1143,79 @@ public:
 
     /// Mutable access to pixel data. Triggers COW detach if the buffer is shared,
     /// which may allocate. Use data() for read-only access to avoid unnecessary copies.
+    /// For wrapped surfaces, always returns the original buffer (no COW).
     [[nodiscard]] unsigned char* mutable_data();
 
     [[nodiscard]] int width() const noexcept;
     [[nodiscard]] int height() const noexcept;
     [[nodiscard]] int stride() const noexcept;
 
+    /// Pixel format of this surface.
+    [[nodiscard]] PixelFormat format() const noexcept;
+
+    /// Bytes per pixel for this surface's format.
+    [[nodiscard]] int bytes_per_pixel() const noexcept;
+
+    /// True if this surface was created with wrap() (non-COW, external buffer).
+    [[nodiscard]] bool is_wrapped() const noexcept;
+
+    // -- HiDPI scale factor --
+
+    /// The backing scale factor (default: 1.0).
+    /// A scale factor of 2.0 means this surface has 2x the pixel density:
+    /// a 200×200 pixel surface represents a 100×100 logical area.
+    [[nodiscard]] float scale_factor() const noexcept;
+
+    /// Set the backing scale factor.
+    void set_scale_factor(float scale);
+
+    /// Logical width (width / scale_factor), for coordinate mapping.
+    [[nodiscard]] float logical_width() const noexcept;
+
+    /// Logical height (height / scale_factor), for coordinate mapping.
+    [[nodiscard]] float logical_height() const noexcept;
+
+    // -- Direct compositing (no Canvas, no rasterization) --
+
+    /// Composite a source surface onto this surface.
+    ///
+    /// This is the fast path for window managers and compositors: direct
+    /// rect-to-rect pixel blit with Porter-Duff operator and optional blend mode.
+    /// No path construction, no span rasterization, no Canvas overhead.
+    ///
+    /// If source and destination have different pixel formats, conversion
+    /// happens per-scanline through the native ARGB32_Premultiplied format.
+    ///
+    /// @param src        Source surface to composite.
+    /// @param src_rect   Region of the source to read (in source pixel coords).
+    /// @param dst_x      Destination x (in this surface's pixel coords).
+    /// @param dst_y      Destination y (in this surface's pixel coords).
+    /// @param op         Porter-Duff compositing operator (default: SrcOver).
+    /// @param blend_mode Extended blend mode (default: Normal).
+    /// @param opacity    Global opacity [0..1] applied to source (default: 1).
+    void composite(const Surface& src, const IntRect& src_rect,
+                   int dst_x, int dst_y,
+                   Operator op = Operator::SrcOver,
+                   BlendMode blend_mode = BlendMode::Normal,
+                   float opacity = 1.0f);
+
+    /// Composite entire source surface at (dst_x, dst_y).
+    void composite(const Surface& src, int dst_x, int dst_y,
+                   Operator op = Operator::SrcOver,
+                   BlendMode blend_mode = BlendMode::Normal,
+                   float opacity = 1.0f);
+
     /// Clear the surface to the given color.
     void clear(const Color& color);
+
+    // -- Pixel format conversion --
+
+    /// Convert this surface to a different pixel format, in-place.
+    /// Triggers COW detach. A8 → 32-bit fills RGB with white.
+    void convert_to(PixelFormat target_format);
+
+    /// Create a copy in a different pixel format.
+    [[nodiscard]] Surface converted(PixelFormat target_format) const;
 
     // -- Filters --
 
@@ -993,6 +1224,18 @@ public:
 
     /// Create a blurred copy without modifying this surface.
     [[nodiscard]] Surface blurred(float radius) const;
+
+    /// Apply a 4×5 color matrix filter in-place. Operates in straight (non-premultiplied) color space.
+    PLUTOVG_API void apply_color_matrix(const float matrix[20]);
+
+    /// Apply a ColorMatrix struct in-place.
+    PLUTOVG_API void apply_color_matrix(const ColorMatrix& cm);
+
+    /// Create a color-matrix-transformed copy without modifying this surface.
+    [[nodiscard]] PLUTOVG_API Surface color_matrix_transformed(const float matrix[20]) const;
+
+    /// Create a color-matrix-transformed copy from a ColorMatrix struct.
+    [[nodiscard]] PLUTOVG_API Surface color_matrix_transformed(const ColorMatrix& cm) const;
 
     // -- Export --
 
@@ -1109,9 +1352,9 @@ public:
     /// Create a canvas for the given surface.
     ///
     /// The surface is taken by value. For surfaces created with
-    /// Surface::create_for_data() (zero-copy external buffer), pass the
-    /// surface as a temporary or use std::move() so that the canvas holds
-    /// the sole reference and draws directly into the external buffer:
+    /// Surface::create_for_data() or Surface::wrap() (zero-copy external buffer),
+    /// pass the surface as a temporary or use std::move() so that the canvas
+    /// holds the sole reference and draws directly into the external buffer:
     ///
     ///     Canvas c(Surface::create_for_data(buf, w, h, stride)); // OK
     ///     Canvas c(std::move(my_surface));                        // OK
@@ -1119,6 +1362,11 @@ public:
     /// Passing an lvalue copies the handle (increments the refcount), which
     /// causes the first draw to COW-detach into a new buffer — the intended
     /// behaviour for owned surfaces but not for external buffers.
+    ///
+    /// If the surface has a scale_factor != 1.0, the initial CTM is set to
+    /// scale by that factor, so all user-space coordinates are in logical units.
+    /// For example, a 200×200 surface with scale=2 behaves as a 100×100 canvas
+    /// at 2× resolution, identical to Core Graphics backing scale factor.
     explicit Canvas(Surface surface);
     ~Canvas();
 
@@ -1141,6 +1389,21 @@ public:
 
     /// Pop the most recently saved state.
     void restore();
+
+    /// Push state and begin rendering to an offscreen layer.
+    ///
+    /// All drawing between save_layer() and the matching restore() is rendered
+    /// onto a temporary surface. When restore() is called, the offscreen layer
+    /// is composited onto the parent surface with the given opacity, respecting
+    /// the current compositing operator, blend mode, and clip.
+    ///
+    /// @param alpha Group opacity applied when compositing the layer (default: 1).
+    /// @param bounds Optional bounding rect in user space. If null or empty,
+    ///               the full clip region is used.
+    PLUTOVG_API void save_layer(float alpha, const Rect* bounds = nullptr);
+
+    /// Push a layer with explicit blend mode override.
+    PLUTOVG_API void save_layer(float alpha, BlendMode blend_mode, const Rect* bounds = nullptr);
 
     // -- Paint (default: opaque black) --
     //
@@ -1237,6 +1500,18 @@ public:
     /// Reduces visible banding on 8-bit displays, especially in dark gradients.
     void  set_dithering(bool enabled);
     [[nodiscard]] bool get_dithering() const;
+
+    /// Enable anti-aliasing for rasterization (default: true).
+    /// When disabled, all spans have full coverage (hard edges).
+    PLUTOVG_API void set_antialias(bool enabled);
+    [[nodiscard]] PLUTOVG_API bool get_antialias() const;
+
+    /// Enable pixel snapping for axis-aligned rectangles and lines (default: false).
+    /// When enabled, rect() and round_rect() coordinates are snapped to pixel
+    /// boundaries in device space, eliminating sub-pixel seams. Only active when
+    /// the current transform is axis-aligned (no rotation or skew).
+    PLUTOVG_API void set_pixel_snap(bool enabled);
+    [[nodiscard]] PLUTOVG_API bool get_pixel_snap() const;
 
     // -- Font management --
 
@@ -1430,6 +1705,28 @@ public:
 
     void clip_rect(float x, float y, float w, float h);
     void clip_path(const Path& path);
+
+    /// Set clip to a set of axis-aligned rectangles (damage rects, window regions).
+    ///
+    /// This is the fast path for compositors and window managers: it sets the
+    /// scanline clipper directly from rectangles without any path rasterization.
+    /// Much faster than building a path from rectangles and calling clip().
+    ///
+    /// Intersects with the current clip (if any). Rectangles are in device space
+    /// (post-CTM). Overlapping rectangles are merged automatically.
+    void clip_region(std::span<const IntRect> rects);
+
+    // -- Surface drawing --
+
+    /// Draw a source surface at position (x, y) in user space.
+    /// Respects current transform, clip, opacity, and blend mode.
+    PLUTOVG_API void draw_surface(const Surface& src, float x, float y);
+
+    /// Draw a source surface scaled to fit the destination rectangle.
+    PLUTOVG_API void draw_surface(const Surface& src, const Rect& dst_rect);
+
+    /// Draw a sub-region of the source surface into the destination rectangle.
+    PLUTOVG_API void draw_surface(const Surface& src, const Rect& src_rect, const Rect& dst_rect);
 
     // -- Text (low-level, any encoding) --
 

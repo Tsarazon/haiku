@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <span>
 
 namespace plutovg {
 
@@ -23,6 +24,62 @@ void span_buffer_init_rect(SpanBuffer& buf, int x, int y, int width, int height)
         buf.spans[i] = {x, width, y + i, 255};
     }
     buf.bounds = {x, y, width, height};
+}
+
+void span_buffer_init_region(SpanBuffer& buf, std::span<const IntRect> rects) {
+    buf.reset();
+    if (rects.empty()) return;
+
+    // Collect all scanline contributions: for each rect, for each Y in [y, y+h),
+    // we have a horizontal span [x, x+w). We sort by Y then X, and merge overlapping.
+
+    struct ScanSpan { int y, x0, x1; };
+    std::vector<ScanSpan> raw_spans;
+    raw_spans.reserve(rects.size() * 4); // rough estimate
+
+    int min_y = INT_MAX, max_y = INT_MIN;
+    int min_x = INT_MAX, max_x = INT_MIN;
+
+    for (const auto& r : rects) {
+        if (r.empty()) continue;
+        for (int y = r.y; y < r.y + r.h; ++y)
+            raw_spans.push_back({y, r.x, r.x + r.w});
+        min_y = std::min(min_y, r.y);
+        max_y = std::max(max_y, r.y + r.h - 1);
+        min_x = std::min(min_x, r.x);
+        max_x = std::max(max_x, r.x + r.w);
+    }
+
+    if (raw_spans.empty()) return;
+
+    // Sort by Y, then by X.
+    std::sort(raw_spans.begin(), raw_spans.end(), [](const ScanSpan& a, const ScanSpan& b) {
+        return (a.y != b.y) ? (a.y < b.y) : (a.x0 < b.x0);
+    });
+
+    // Merge overlapping/adjacent spans on same scanline.
+    buf.spans.reserve(raw_spans.size());
+    int cur_y = raw_spans[0].y;
+    int cur_x0 = raw_spans[0].x0;
+    int cur_x1 = raw_spans[0].x1;
+
+    for (size_t i = 1; i < raw_spans.size(); ++i) {
+        const auto& s = raw_spans[i];
+        if (s.y == cur_y && s.x0 <= cur_x1) {
+            // Overlapping or adjacent on same scanline — extend.
+            cur_x1 = std::max(cur_x1, s.x1);
+        } else {
+            // Emit previous span.
+            buf.spans.push_back({cur_x0, cur_x1 - cur_x0, cur_y, 255});
+            cur_y = s.y;
+            cur_x0 = s.x0;
+            cur_x1 = s.x1;
+        }
+    }
+    // Emit last span.
+    buf.spans.push_back({cur_x0, cur_x1 - cur_x0, cur_y, 255});
+
+    buf.bounds = {min_x, min_y, max_x - min_x, max_y - min_y + 1};
 }
 
 void span_buffer_copy(SpanBuffer& dst, const SpanBuffer& src) {
@@ -406,6 +463,60 @@ PVG_FT_Outline* ft_outline_stroke(const Path& path, const Matrix& matrix,
     return ft_outline_convert_stroke(*impl, matrix, stroke_data);
 }
 
+Path ft_outline_to_path(const PVG_FT_Outline* outline) {
+    Path result;
+    if (!outline || outline->n_contours == 0)
+        return result;
+
+    int point_idx = 0;
+    for (int c = 0; c < outline->n_contours; ++c) {
+        int contour_end = outline->contours[c];
+        bool first = true;
+        while (point_idx <= contour_end) {
+            float x = outline->points[point_idx].x / 64.0f;
+            float y = outline->points[point_idx].y / 64.0f;
+
+            if (first) {
+                result.move_to(x, y);
+                first = false;
+                ++point_idx;
+                continue;
+            }
+
+            char tag = outline->tags[point_idx] & 0x03;
+
+            if (tag == PVG_FT_CURVE_TAG_ON) {
+                result.line_to(x, y);
+                ++point_idx;
+            } else if (tag == PVG_FT_CURVE_TAG_CONIC) {
+                if (point_idx + 1 > contour_end) {
+                    ++point_idx;
+                    break;
+                }
+                float x2 = outline->points[point_idx + 1].x / 64.0f;
+                float y2 = outline->points[point_idx + 1].y / 64.0f;
+                result.quad_to(x, y, x2, y2);
+                point_idx += 2;
+            } else if (tag == PVG_FT_CURVE_TAG_CUBIC) {
+                if (point_idx + 2 > contour_end) {
+                    ++point_idx;
+                    break;
+                }
+                float x2 = outline->points[point_idx + 1].x / 64.0f;
+                float y2 = outline->points[point_idx + 1].y / 64.0f;
+                float x3 = outline->points[point_idx + 2].x / 64.0f;
+                float y3 = outline->points[point_idx + 2].y / 64.0f;
+                result.cubic_to(x, y, x2, y2, x3, y3);
+                point_idx += 3;
+            } else {
+                ++point_idx;
+            }
+        }
+        result.close();
+    }
+    return result;
+}
+
 // -- Rasterize --
 
 void rasterize(SpanBuffer& span_buffer,
@@ -413,7 +524,8 @@ void rasterize(SpanBuffer& span_buffer,
                const Matrix& matrix,
                const IntRect& clip_rect,
                const StrokeData* stroke_data,
-               FillRule winding) {
+               FillRule winding,
+               bool antialias) {
     PVG_FT_Outline* outline = ft_outline_convert(path, matrix, stroke_data);
     if (stroke_data) {
         outline->flags = PVG_FT_OUTLINE_NONE;
@@ -429,7 +541,9 @@ void rasterize(SpanBuffer& span_buffer,
     }
 
     PVG_FT_Raster_Params params{};
-    params.flags = PVG_FT_RASTER_FLAG_DIRECT | PVG_FT_RASTER_FLAG_AA;
+    params.flags = PVG_FT_RASTER_FLAG_DIRECT;
+    if (antialias)
+        params.flags |= PVG_FT_RASTER_FLAG_AA;
     params.gray_spans = spans_generation_callback;
     params.user = &span_buffer;
     params.source = outline;
