@@ -1,6 +1,6 @@
 SubDir HAIKU_TOP src apps thorvgdemo ;
 
-UseLibraryHeaders plutovg ;
+UseLibraryHeaders kosmvg ;
 UsePrivateHeaders shared ;
 UsePublicHeaders surface ;
 
@@ -10,7 +10,7 @@ Application ThorVGDemo :
 	ThorVGDemo.cpp
 	:
 	be
-	libplutovg.so
+	libkosmvg.so
 	libsurface.so
 	localestub
 	[ TargetLibstdc++ ]

@@ -2,7 +2,7 @@
  * Copyright 2025 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * PlutoVG Demo - bouncing shapes with collision
+ * KosmVG Demo - bouncing shapes with collision
  * Showcases: gradients, shadows, strokes, transforms, bezier paths,
  *            dash patterns, opacity, per-corner radii, conic gradients.
  * Uses KosmSurface (Surface Kit) as the rendering buffer.
@@ -20,7 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <plutovg.hpp>
+#include <kosmvg.hpp>
 
 
 static const uint32 kMsgAnimate = 'anim';
@@ -121,11 +121,11 @@ struct Shape {
 };
 
 
-class PlutoVGView : public BView {
+class KosmVGView : public BView {
 public:
-	PlutoVGView()
+	KosmVGView()
 		:
-		BView(BRect(0, 0, 799, 599), "PlutoVGView", B_FOLLOW_ALL,
+		BView(BRect(0, 0, 799, 599), "KosmVGView", B_FOLLOW_ALL,
 			B_WILL_DRAW | B_FRAME_EVENTS),
 		fSurface(NULL),
 		fBitmap(NULL),
@@ -135,7 +135,7 @@ public:
 		_InitShapes();
 	}
 
-	virtual ~PlutoVGView()
+	virtual ~KosmVGView()
 	{
 		delete fRunner;
 		delete fBitmap;
@@ -379,55 +379,65 @@ private:
 		float w = (float)width;
 		float h = (float)height;
 
-		// Create PlutoVG surface wrapping KosmSurface pixel memory
-		plutovg::Surface surface = plutovg::Surface::create_for_data(
+		// Create KosmVG bitmap context wrapping KosmSurface pixel memory
+		kvg::BitmapContext ctx = kvg::BitmapContext::create(
 			(unsigned char*)fSurface->BaseAddress(), width, height,
 			srcStride);
-		if (!surface) {
+		if (!ctx) {
 			fSurface->Unlock();
 			return;
 		}
 
-		plutovg::Canvas canvas(std::move(surface));
-
 		// Background - radial gradient from center
 		{
 			float diag = sqrtf(w * w + h * h) / 2.0f;
-			plutovg::GradientStop stops[] = {
-				{0.0f, plutovg::Color::from_rgba8(45, 45, 70, 255)},
-				{1.0f, plutovg::Color::from_rgba8(10, 10, 18, 255)}
+			kvg::Gradient::Stop stops[] = {
+				{0.0f, kvg::Color::from_rgba8(45, 45, 70, 255)},
+				{1.0f, kvg::Color::from_rgba8(10, 10, 18, 255)}
 			};
-			canvas.set_radial_gradient(w / 2, h / 2, diag,
-				w / 2, h / 2, 0,
-				plutovg::SpreadMethod::Pad, stops);
-			canvas.fill_rect(0, 0, w, h);
+			kvg::Gradient grad = kvg::Gradient::create(stops);
+
+			kvg::Path bgRect = kvg::Path::Builder{}
+				.add_rect(kvg::Rect(0, 0, w, h))
+				.build();
+
+			ctx.save_state();
+			ctx.clip_to_path(bgRect);
+			ctx.draw_radial_gradient(grad,
+				kvg::Point(w / 2, h / 2), 0,
+				kvg::Point(w / 2, h / 2), diag);
+			ctx.restore_state();
 		}
 
 		// Draw each shape
 		for (int i = 0; i < kShapeCount; i++) {
 			Shape& s = fShapes[i];
-			canvas.save();
-			canvas.translate(s.x, s.y);
+			ctx.save_state();
+			ctx.translate_ctm(s.x, s.y);
 
 			switch (s.type) {
 				case 0: // Circle - radial gradient + shadow
 				{
-					canvas.set_shadow(4, 4, 10,
-						plutovg::Color(0, 0, 0, 0.5f));
+					ctx.set_shadow(kvg::Point(4, 4), 10,
+						kvg::Color(0, 0, 0, 0.5f));
 
-					plutovg::GradientStop stops[] = {
-						{0.0f, plutovg::Color::from_rgba8(
+					kvg::Gradient::Stop stops[] = {
+						{0.0f, kvg::Color::from_rgba8(
 							s.r + 35, s.g + 35, s.b + 35, 255)},
-						{1.0f, plutovg::Color::from_rgba8(
+						{1.0f, kvg::Color::from_rgba8(
 							s.r / 2, s.g / 2, s.b / 2, 255)}
 					};
-					canvas.set_radial_gradient(
-						-s.radius * 0.3f, -s.radius * 0.3f, s.radius * 1.2f,
-						-s.radius * 0.3f, -s.radius * 0.3f, 0,
-						plutovg::SpreadMethod::Pad, stops);
+					kvg::Gradient grad = kvg::Gradient::create(stops);
 
-					canvas.circle(0, 0, s.radius);
-					canvas.fill();
+					kvg::Path circle = kvg::Path::Builder{}
+						.add_circle(kvg::Point(0, 0), s.radius)
+						.build();
+
+					ctx.clip_to_path(circle);
+					ctx.draw_radial_gradient(grad,
+						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f), 0,
+						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f),
+						s.radius * 1.2f);
 					break;
 				}
 
@@ -436,131 +446,159 @@ private:
 					float size = s.radius * 1.4f;
 					float half = size / 2;
 
-					plutovg::GradientStop stops[] = {
-						{0.0f, plutovg::Color::from_rgba8(s.r, s.g, s.b, 255)},
-						{1.0f, plutovg::Color::from_rgba8(
+					kvg::Gradient::Stop stops[] = {
+						{0.0f, kvg::Color::from_rgba8(s.r, s.g, s.b, 255)},
+						{1.0f, kvg::Color::from_rgba8(
 							s.r / 3, s.g / 3, s.b / 3, 255)}
 					};
-					canvas.set_linear_gradient(-half, -half, half, half,
-						plutovg::SpreadMethod::Pad, stops);
+					kvg::Gradient grad = kvg::Gradient::create(stops);
 
-					canvas.rect(-half, -half, size, size);
-					canvas.fill_preserve();
+					kvg::Path rect = kvg::Path::Builder{}
+						.add_rect(kvg::Rect(-half, -half, size, size))
+						.build();
 
-					canvas.set_color(
-						plutovg::Color::from_rgba8(255, 255, 255, 160));
-					canvas.set_line_width(2.0f);
-					canvas.stroke();
+					// Fill with gradient
+					ctx.save_state();
+					ctx.clip_to_path(rect);
+					ctx.draw_linear_gradient(grad,
+						kvg::Point(-half, -half), kvg::Point(half, half));
+					ctx.restore_state();
+
+					// Stroke
+					ctx.set_stroke_color(
+						kvg::Color::from_rgba8(255, 255, 255, 160));
+					ctx.set_line_width(2.0f);
+					ctx.stroke_path(rect);
 					break;
 				}
 
 				case 2: // Triangle - solid + shadow + rotation
 				{
-					canvas.rotate(s.angle);
-					canvas.set_shadow(3, 3, 8,
-						plutovg::Color(0, 0, 0, 0.45f));
-					canvas.set_color(
-						plutovg::Color::from_rgba8(s.r, s.g, s.b, 255));
+					ctx.rotate_ctm(s.angle);
+					ctx.set_shadow(kvg::Point(3, 3), 8,
+						kvg::Color(0, 0, 0, 0.45f));
+					ctx.set_fill_color(
+						kvg::Color::from_rgba8(s.r, s.g, s.b, 255));
 
 					float rad = s.radius;
-					canvas.move_to(0, -rad);
-					canvas.line_to(-rad * 0.866f, rad * 0.5f);
-					canvas.line_to(rad * 0.866f, rad * 0.5f);
-					canvas.close_path();
-					canvas.fill();
+					kvg::Path tri = kvg::Path::Builder{}
+						.move_to(0, -rad)
+						.line_to(-rad * 0.866f, rad * 0.5f)
+						.line_to(rad * 0.866f, rad * 0.5f)
+						.close()
+						.build();
+
+					ctx.fill_path(tri);
 					break;
 				}
 
 				case 3: // Star - solid + dashed stroke + rotation
 				{
-					canvas.rotate(s.angle);
-					canvas.set_color(
-						plutovg::Color::from_rgba8(s.r, s.g, s.b, 255));
+					ctx.rotate_ctm(s.angle);
+					ctx.set_fill_color(
+						kvg::Color::from_rgba8(s.r, s.g, s.b, 255));
 
 					float rad = s.radius;
 					float inner = rad * 0.4f;
+					kvg::Path::Builder builder;
 					for (int k = 0; k < 5; k++) {
-						float a1 = k * plutovg::two_pi / 5.0f
-							- plutovg::half_pi;
-						float a2 = a1 + plutovg::pi / 5.0f;
+						float a1 = k * kvg::two_pi / 5.0f
+							- kvg::half_pi;
+						float a2 = a1 + kvg::pi / 5.0f;
 						if (k == 0)
-							canvas.move_to(
+							builder.move_to(
 								rad * cosf(a1), rad * sinf(a1));
 						else
-							canvas.line_to(
+							builder.line_to(
 								rad * cosf(a1), rad * sinf(a1));
-						canvas.line_to(
+						builder.line_to(
 							inner * cosf(a2), inner * sinf(a2));
 					}
-					canvas.close_path();
-					canvas.fill_preserve();
+					builder.close();
+					kvg::Path star = builder.build();
+
+					ctx.fill_path(star);
 
 					// Dashed stroke outline
 					float dashes[] = {5.0f, 3.0f};
-					canvas.set_dash(0, dashes);
-					canvas.set_line_cap(plutovg::LineCap::Round);
-					canvas.set_color(
-						plutovg::Color::from_rgba8(255, 255, 255, 180));
-					canvas.set_line_width(1.5f);
-					canvas.stroke();
+					ctx.set_line_dash(0, dashes);
+					ctx.set_line_cap(kvg::LineCap::Round);
+					ctx.set_stroke_color(
+						kvg::Color::from_rgba8(255, 255, 255, 180));
+					ctx.set_line_width(1.5f);
+					ctx.stroke_path(star);
 					break;
 				}
 
 				case 4: // Heart - bezier + gradient + opacity
 				{
-					canvas.rotate(s.angle);
-					canvas.set_opacity(0.8f);
+					ctx.rotate_ctm(s.angle);
+					ctx.set_opacity(0.8f);
 
-					plutovg::GradientStop stops[] = {
-						{0.0f, plutovg::Color::from_rgba8(
+					kvg::Gradient::Stop stops[] = {
+						{0.0f, kvg::Color::from_rgba8(
 							255, 140, 170, 255)},
-						{1.0f, plutovg::Color::from_rgba8(
+						{1.0f, kvg::Color::from_rgba8(
 							200, 30, 60, 255)}
 					};
-					canvas.set_radial_gradient(
-						0, -s.radius * 0.2f, s.radius * 1.2f,
-						0, -s.radius * 0.4f, 0,
-						plutovg::SpreadMethod::Pad, stops);
+					kvg::Gradient grad = kvg::Gradient::create(stops);
 
 					float rad = s.radius;
-					canvas.move_to(0, rad * 0.7f);
-					canvas.cubic_to(
-						-rad * 0.3f, rad * 0.3f,
-						-rad, rad * 0.0f,
-						-rad, -rad * 0.3f);
-					canvas.cubic_to(
-						-rad, -rad * 0.75f,
-						-rad * 0.3f, -rad * 0.85f,
-						0, -rad * 0.5f);
-					canvas.cubic_to(
-						rad * 0.3f, -rad * 0.85f,
-						rad, -rad * 0.75f,
-						rad, -rad * 0.3f);
-					canvas.cubic_to(
-						rad, rad * 0.0f,
-						rad * 0.3f, rad * 0.3f,
-						0, rad * 0.7f);
-					canvas.close_path();
-					canvas.fill();
+					kvg::Path heart = kvg::Path::Builder{}
+						.move_to(0, rad * 0.7f)
+						.cubic_to(
+							-rad * 0.3f, rad * 0.3f,
+							-rad, rad * 0.0f,
+							-rad, -rad * 0.3f)
+						.cubic_to(
+							-rad, -rad * 0.75f,
+							-rad * 0.3f, -rad * 0.85f,
+							0, -rad * 0.5f)
+						.cubic_to(
+							rad * 0.3f, -rad * 0.85f,
+							rad, -rad * 0.75f,
+							rad, -rad * 0.3f)
+						.cubic_to(
+							rad, rad * 0.0f,
+							rad * 0.3f, rad * 0.3f,
+							0, rad * 0.7f)
+						.close()
+						.build();
+
+					ctx.save_state();
+					ctx.clip_to_path(heart);
+					ctx.draw_radial_gradient(grad,
+						kvg::Point(0, -s.radius * 0.4f), 0,
+						kvg::Point(0, -s.radius * 0.2f),
+						s.radius * 1.2f);
+					ctx.restore_state();
 					break;
 				}
 
 				case 5: // Ellipse - linear gradient + rotation
 				{
-					canvas.rotate(s.angle);
+					ctx.rotate_ctm(s.angle);
 
-					plutovg::GradientStop stops[] = {
-						{0.0f, plutovg::Color::from_rgba8(s.r, s.g, s.b, 255)},
-						{0.5f, plutovg::Color::from_rgba8(
+					kvg::Gradient::Stop stops[] = {
+						{0.0f, kvg::Color::from_rgba8(s.r, s.g, s.b, 255)},
+						{0.5f, kvg::Color::from_rgba8(
 							255, 255, 255, 180)},
-						{1.0f, plutovg::Color::from_rgba8(s.r, s.g, s.b, 255)}
+						{1.0f, kvg::Color::from_rgba8(s.r, s.g, s.b, 255)}
 					};
-					canvas.set_linear_gradient(
-						0, -s.radius, 0, s.radius,
-						plutovg::SpreadMethod::Pad, stops);
+					kvg::Gradient grad = kvg::Gradient::create(stops);
 
-					canvas.ellipse(0, 0, s.radius * 1.3f, s.radius * 0.65f);
-					canvas.fill();
+					kvg::Path ellipse = kvg::Path::Builder{}
+						.add_ellipse(kvg::Rect(
+							-s.radius * 1.3f, -s.radius * 0.65f,
+							s.radius * 2.6f, s.radius * 1.3f))
+						.build();
+
+					ctx.save_state();
+					ctx.clip_to_path(ellipse);
+					ctx.draw_linear_gradient(grad,
+						kvg::Point(0, -s.radius),
+						kvg::Point(0, s.radius));
+					ctx.restore_state();
 					break;
 				}
 
@@ -569,56 +607,67 @@ private:
 					float size = s.radius * 1.5f;
 					float half = size / 2;
 
-					canvas.set_shadow(5, 5, 12,
-						plutovg::Color(0, 0, 0, 0.5f));
-					canvas.set_color(
-						plutovg::Color::from_rgba8(s.r, s.g, s.b, 255));
+					ctx.set_shadow(kvg::Point(5, 5), 12,
+						kvg::Color(0, 0, 0, 0.5f));
+					ctx.set_fill_color(
+						kvg::Color::from_rgba8(s.r, s.g, s.b, 255));
 
-					plutovg::CornerRadii radii(
+					kvg::CornerRadii radii(
 						size * 0.3f, size * 0.05f,
 						size * 0.3f, size * 0.05f);
-					canvas.round_rect(-half, -half, size, size, radii);
-					canvas.fill_preserve();
+					kvg::Path rrect = kvg::Path::Builder{}
+						.add_round_rect(
+							kvg::Rect(-half, -half, size, size), radii)
+						.build();
 
-					canvas.set_color(plutovg::Color::from_rgba8(
+					ctx.fill_path(rrect);
+
+					ctx.clear_shadow();
+					ctx.set_stroke_color(kvg::Color::from_rgba8(
 						(uint8)(s.r * 0.5f), (uint8)(s.g * 0.5f),
 						(uint8)(s.b * 0.5f), 255));
-					canvas.set_line_width(3.0f);
-					canvas.set_line_join(plutovg::LineJoin::Round);
-					canvas.stroke();
+					ctx.set_line_width(3.0f);
+					ctx.set_line_join(kvg::LineJoin::Round);
+					ctx.stroke_path(rrect);
 					break;
 				}
 
 				case 7: // Hexagon - conic gradient + rotation
 				{
-					canvas.rotate(s.angle);
+					ctx.rotate_ctm(s.angle);
 
-					plutovg::GradientStop stops[] = {
-						{0.0f, plutovg::Color::from_rgba8(s.r, s.g, s.b, 255)},
-						{0.33f, plutovg::Color::from_rgba8(
+					kvg::Gradient::Stop stops[] = {
+						{0.0f, kvg::Color::from_rgba8(s.r, s.g, s.b, 255)},
+						{0.33f, kvg::Color::from_rgba8(
 							s.g, s.b, s.r, 255)},
-						{0.66f, plutovg::Color::from_rgba8(
+						{0.66f, kvg::Color::from_rgba8(
 							s.b, s.r, s.g, 255)},
-						{1.0f, plutovg::Color::from_rgba8(s.r, s.g, s.b, 255)}
+						{1.0f, kvg::Color::from_rgba8(s.r, s.g, s.b, 255)}
 					};
-					canvas.set_conic_gradient(0, 0, 0,
-						plutovg::SpreadMethod::Pad, stops);
+					kvg::Gradient grad = kvg::Gradient::create(stops);
 
 					float rad = s.radius;
+					kvg::Path::Builder builder;
 					for (int k = 0; k < 6; k++) {
-						float a = k * plutovg::pi / 3.0f - plutovg::half_pi;
+						float a = k * kvg::pi / 3.0f - kvg::half_pi;
 						if (k == 0)
-							canvas.move_to(rad * cosf(a), rad * sinf(a));
+							builder.move_to(rad * cosf(a), rad * sinf(a));
 						else
-							canvas.line_to(rad * cosf(a), rad * sinf(a));
+							builder.line_to(rad * cosf(a), rad * sinf(a));
 					}
-					canvas.close_path();
-					canvas.fill();
+					builder.close();
+					kvg::Path hex = builder.build();
+
+					ctx.save_state();
+					ctx.clip_to_path(hex);
+					ctx.draw_conic_gradient(grad,
+						kvg::Point(0, 0), 0);
+					ctx.restore_state();
 					break;
 				}
 			}
 
-			canvas.restore();
+			ctx.restore_state();
 		}
 
 		// Copy rendered pixels from KosmSurface to BBitmap for display
@@ -654,21 +703,21 @@ private:
 };
 
 
-class PlutoVGWindow : public BWindow {
+class KosmVGWindow : public BWindow {
 public:
-	PlutoVGWindow()
+	KosmVGWindow()
 		:
-		BWindow(BRect(100, 100, 899, 699), "PlutoVG Demo - Bouncing Shapes",
+		BWindow(BRect(100, 100, 899, 699), "KosmVG Demo - Bouncing Shapes",
 			B_TITLED_WINDOW, B_QUIT_ON_WINDOW_CLOSE)
 	{
-		AddChild(new PlutoVGView());
+		AddChild(new KosmVGView());
 	}
 };
 
 
-class PlutoVGApp : public BApplication {
+class KosmVGApp : public BApplication {
 public:
-	PlutoVGApp()
+	KosmVGApp()
 		:
 		BApplication("application/x-vnd.Haiku-ThorVGDemo")
 	{
@@ -676,7 +725,7 @@ public:
 
 	virtual void ReadyToRun()
 	{
-		(new PlutoVGWindow())->Show();
+		(new KosmVGWindow())->Show();
 	}
 };
 
@@ -684,7 +733,7 @@ public:
 int
 main()
 {
-	PlutoVGApp app;
+	KosmVGApp app;
 	app.Run();
 	return 0;
 }
