@@ -256,8 +256,8 @@ struct Matrix {
     /// Rotation matrix. Not constexpr (requires std::cos/sin at runtime).
     PLUTOVG_API static Matrix rotated(float radians);
 
-    /// Shear matrix.
-    PLUTOVG_API static Matrix sheared(float shx, float shy);
+    /// Shear matrix. Not constexpr (requires std::tan at runtime).
+    PLUTOVG_API static Matrix sheared(float shx_radians, float shy_radians);
 
     /// Parse an SVG transform attribute string.
     /// @return The parsed matrix, or std::nullopt on failure.
@@ -275,7 +275,7 @@ struct Matrix {
     PLUTOVG_API Matrix& rotate(float radians);
 
     /// Pre-multiply by a shear.
-    PLUTOVG_API Matrix& shear(float shx, float shy);
+    PLUTOVG_API Matrix& shear(float shx_radians, float shy_radians);
 
     // -- Queries (hot path, inline) --
 
@@ -356,6 +356,13 @@ enum class TextEncoding {
 enum class TextureType {
     Plain,
     Tiled
+};
+
+/// Texture sampling filter.
+enum class TextureFilter {
+    Auto,      ///< Bilinear if rotated/skewed, nearest otherwise.
+    Nearest,   ///< Nearest-neighbor (pixel-perfect, no smoothing).
+    Bilinear   ///< Bilinear interpolation (smooth scaling).
 };
 
 /// Gradient spread mode beyond the defined range.
@@ -1334,7 +1341,8 @@ public:
 
     /// Texture paint from a surface.
     [[nodiscard]] static Paint texture(const Surface& surface, TextureType type,
-                                       float opacity = 1.0f, const Matrix* matrix = nullptr);
+                                       float opacity = 1.0f, const Matrix* matrix = nullptr,
+                                       TextureFilter filter = TextureFilter::Auto);
 
     struct Impl;
 
@@ -1431,7 +1439,8 @@ public:
                             const Matrix* matrix = nullptr);
 
     void set_texture(const Surface& surface, TextureType type,
-                     float opacity = 1.0f, const Matrix* matrix = nullptr);
+                     float opacity = 1.0f, const Matrix* matrix = nullptr,
+                     TextureFilter filter = TextureFilter::Auto);
 
     void set_paint(const Paint& paint);
 
@@ -1582,7 +1591,7 @@ public:
 
     void translate(float tx, float ty);
     void scale(float sx, float sy);
-    void shear(float shx, float shy);
+    void shear(float shx_radians, float shy_radians);
     void rotate(float radians);
 
     /// Pre-multiply the CTM by the given matrix.

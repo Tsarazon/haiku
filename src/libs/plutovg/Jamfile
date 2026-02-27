@@ -15,6 +15,7 @@ SubDirCcFlags -w -DPLUTOVG_BUILD ;
 local architectureObject ;
 for architectureObject in [ MultiArchSubDirSetup ] {
 	on $(architectureObject) {
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) polyclip ] ;
 		SharedLibrary [ MultiArchDefaultGristFiles libplutovg.so ] :
 			# Core
 			plutovg-canvas.cpp
@@ -30,7 +31,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			plutovg-font.cpp
 
 			# Path boolean operations
-			polyclip/polyclip.cpp
+			polyclip.cpp
 
 			# Embedded FreeType components
 			plutovg-ft-math.cpp

@@ -90,10 +90,14 @@ void span_buffer_copy(SpanBuffer& dst, const SpanBuffer& src) {
 bool span_buffer_contains(const SpanBuffer& buf, float x, float y) {
     int ix = static_cast<int>(std::floor(x));
     int iy = static_cast<int>(std::floor(y));
-    for (const auto& span : buf.spans) {
-        if (span.y != iy)
-            continue;
-        if (ix >= span.x && ix < span.x + span.len)
+
+    // Spans are sorted by Y (rasterizer generates top-to-bottom).
+    // Binary search for the first span with y >= iy.
+    auto it = std::lower_bound(buf.spans.begin(), buf.spans.end(), iy,
+        [](const Span& span, int target_y) { return span.y < target_y; });
+
+    for (; it != buf.spans.end() && it->y == iy; ++it) {
+        if (ix >= it->x && ix < it->x + it->len)
             return true;
     }
     return false;

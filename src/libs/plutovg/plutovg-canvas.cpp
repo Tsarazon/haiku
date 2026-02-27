@@ -428,10 +428,11 @@ void Canvas::set_conic_gradient(float cx, float cy, float start_angle,
 }
 
 void Canvas::set_texture(const Surface& surface, TextureType type,
-                         float opacity, const Matrix* matrix)
+                         float opacity, const Matrix* matrix,
+                         TextureFilter filter)
 {
     if (!m_impl) return;
-    auto paint = Paint::texture(surface, type, opacity, matrix);
+    auto paint = Paint::texture(surface, type, opacity, matrix, filter);
     set_paint(paint);
 }
 
@@ -859,10 +860,10 @@ void Canvas::scale(float sx, float sy)
     m_impl->state().matrix.scale(sx, sy);
 }
 
-void Canvas::shear(float shx, float shy)
+void Canvas::shear(float shx_radians, float shy_radians)
 {
     if (!m_impl) return;
-    m_impl->state().matrix.shear(shx, shy);
+    m_impl->state().matrix.shear(shx_radians, shy_radians);
 }
 
 void Canvas::rotate(float radians)

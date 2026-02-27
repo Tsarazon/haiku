@@ -18,8 +18,8 @@ Matrix Matrix::rotated(float angle) {
     return {c, s, -s, c, 0, 0};
 }
 
-Matrix Matrix::sheared(float shx, float shy) {
-    return {1, std::tan(shy), std::tan(shx), 1, 0, 0};
+Matrix Matrix::sheared(float shx_radians, float shy_radians) {
+    return {1, std::tan(shy_radians), std::tan(shx_radians), 1, 0, 0};
 }
 
 // -- In-place mutators (pre-multiply) --
@@ -36,8 +36,8 @@ Matrix& Matrix::rotate(float radians) {
     return *this = rotated(radians) * *this;
 }
 
-Matrix& Matrix::shear(float shx, float shy) {
-    return *this = sheared(shx, shy) * *this;
+Matrix& Matrix::shear(float shx_radians, float shy_radians) {
+    return *this = sheared(shx_radians, shy_radians) * *this;
 }
 
 // -- Mapping --

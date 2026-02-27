@@ -503,7 +503,8 @@ static FontFaceCache::Impl* detach(FontFaceCache::Impl*& impl) {
     if (impl->count() > 1) {
         auto* copy = new FontFaceCache::Impl;
         copy->entries = impl->entries;
-        impl->deref();
+        if (impl->deref())
+            delete impl;
         impl = copy;
     }
     return impl;

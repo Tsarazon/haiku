@@ -802,13 +802,16 @@ static inline uint32_t apply_blend_mode_pixel(uint32_t src, uint32_t dst, BlendM
         return src + byte_mul(dst, 255 - sa);
     }
 
-    // Composite blended result with SrcOver: result * sa + dst * (1 - sa)
-    // Re-premultiply blended color
-    uint8_t oa = sa + byte_mul(da, 255 - sa) > 255 ? 255 :
-                 static_cast<uint8_t>(sa + ((da * (255 - sa)) / 255));
-    uint8_t opr = static_cast<uint8_t>((br * sa) / 255);
-    uint8_t opg = static_cast<uint8_t>((bg * sa) / 255);
-    uint8_t opb = static_cast<uint8_t>((bb * sa) / 255);
+    // CSS spec: Co = (1-αb)·Cs + αb·B(Cb, Cs)
+    uint32_t ida = 255 - da;
+    uint8_t cor = static_cast<uint8_t>((ida * sr + da * br) / 255);
+    uint8_t cog = static_cast<uint8_t>((ida * sg + da * bg) / 255);
+    uint8_t cob = static_cast<uint8_t>((ida * sb + da * bb) / 255);
+
+    // Premultiply Co with source alpha, then SrcOver with destination.
+    uint8_t opr = static_cast<uint8_t>((sa * cor) / 255);
+    uint8_t opg = static_cast<uint8_t>((sa * cog) / 255);
+    uint8_t opb = static_cast<uint8_t>((sa * cob) / 255);
 
     uint32_t blended = pack_argb(sa, opr, opg, opb);
     return blended + byte_mul(dst, 255 - sa);

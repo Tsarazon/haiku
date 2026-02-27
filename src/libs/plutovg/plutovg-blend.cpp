@@ -1154,15 +1154,58 @@ static void fetch_bilinear_tiled(uint32_t* buffer, const TextureData& tex, int y
     }
 }
 
-/// Select texture fetch function based on texture type and transform.
-static TextureFetchFn select_texture_fetch(TextureType type, const Matrix& m) {
-    if (type == TextureType::Tiled) {
-        // Preserve current behavior: tiled + rotation → bilinear
-        if (std::fabs(m.b) > 1e-6f || std::fabs(m.c) > 1e-6f)
-            return fetch_bilinear_tiled;
-        return fetch_nearest_tiled;
+/// Bilinear, plain (clamp/transparent outside, bilinear interpolation).
+static void fetch_bilinear_plain(uint32_t* buffer, const TextureData& tex, int y, int x, int length)
+{
+    int fdx = static_cast<int>(tex.matrix.a * kFixedScale);
+    int fdy = static_cast<int>(tex.matrix.b * kFixedScale);
+
+    float cx = x + 0.5f;
+    float cy = y + 0.5f;
+
+    int fx = static_cast<int>((tex.matrix.c * cy + tex.matrix.a * cx + tex.matrix.e) * kFixedScale);
+    int fy = static_cast<int>((tex.matrix.d * cy + tex.matrix.b * cx + tex.matrix.f) * kFixedScale);
+
+    fx -= kHalfPoint;
+    fy -= kHalfPoint;
+
+    auto sample = [&](int px, int py) -> uint32_t {
+        if (px < 0 || px >= tex.width || py < 0 || py >= tex.height)
+            return 0x00000000;
+        return reinterpret_cast<const uint32_t*>(tex.data + py * tex.stride)[px];
+    };
+
+    for (int i = 0; i < length; ++i) {
+        int x1 = fx >> 16;
+        int y1 = fy >> 16;
+
+        uint32_t tl = sample(x1,     y1);
+        uint32_t tr = sample(x1 + 1, y1);
+        uint32_t bl = sample(x1,     y1 + 1);
+        uint32_t br = sample(x1 + 1, y1 + 1);
+
+        int distx = (fx & 0x0000ffff) >> 8;
+        int disty = (fy & 0x0000ffff) >> 8;
+        buffer[i] = interpolate_4_pixels(tl, tr, bl, br, distx, disty);
+
+        fx += fdx;
+        fy += fdy;
     }
-    return fetch_nearest_plain;
+}
+
+/// Select texture fetch function based on texture type, filter mode, and transform.
+static TextureFetchFn select_texture_fetch(TextureType type, TextureFilter filter, const Matrix& m) {
+    bool use_bilinear;
+    switch (filter) {
+    case TextureFilter::Nearest:  use_bilinear = false; break;
+    case TextureFilter::Bilinear: use_bilinear = true;  break;
+    default: // Auto: bilinear only when rotated/skewed
+        use_bilinear = std::fabs(m.b) > 1e-6f || std::fabs(m.c) > 1e-6f;
+        break;
+    }
+    if (type == TextureType::Tiled)
+        return use_bilinear ? fetch_bilinear_tiled : fetch_nearest_tiled;
+    return use_bilinear ? fetch_bilinear_plain : fetch_nearest_plain;
 }
 
 // Clip spans to an IntRect, appending results to `out`.
@@ -1285,7 +1328,7 @@ static void blend_texture(const SurfaceRef& surface, Operator op, const TextureP
     }
 
     // Transformed or blend-mode path: fetch → [blend mode] → compose.
-    auto fetch = select_texture_fetch(texture.type, tex->matrix);
+    auto fetch = select_texture_fetch(texture.type, texture.filter, tex->matrix);
     Operator comp_op = use_mode ? Operator::SrcOver : op;
     auto func = composition_table[static_cast<int>(comp_op)];
     uint32_t buffer[kBufferSize];
@@ -1501,7 +1544,7 @@ static void blend_masked_texture(const SurfaceRef& surf, Operator op,
 
     bool use_mode = (blend_mode != BlendMode::Normal);
     Operator comp_op = use_mode ? Operator::SrcOver : op;
-    auto fetch = select_texture_fetch(texture.type, tex->matrix);
+    auto fetch = select_texture_fetch(texture.type, texture.filter, tex->matrix);
 
     uint32_t buffer[kBufferSize];
 

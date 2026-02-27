@@ -484,11 +484,13 @@ Paint Paint::conic_gradient(float cx, float cy, float start_angle,
 }
 
 Paint Paint::texture(const Surface& surface, TextureType type,
-                     float opacity, const Matrix* matrix) {
+                     float opacity, const Matrix* matrix,
+                     TextureFilter filter) {
     Paint p;
     p.m_impl = make_impl();
     p.m_impl->data = TexturePaintData{
         type,
+        filter,
         std::clamp(opacity, 0.0f, 1.0f),
         matrix ? *matrix : Matrix::identity(),
         surface
