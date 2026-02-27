@@ -1,0 +1,65 @@
+SubDir HAIKU_TOP src libs kosmvg ;
+
+# KosmVG - Vector graphics library for KosmOS
+# C++20 API with embedded FreeType rasterizer and STB libraries
+
+AddSubDirSupportedPlatforms libbe_test ;
+
+UseLibraryHeaders kosmvg ;
+
+SubDirC++Flags -std=c++20 -w -fpermissive -DKOSMVG_BUILD
+	-I$(SUBDIR)/polyclip
+	-I$(SUBDIR)/stb
+	-I$(SUBDIR)/FT ;
+SubDirCcFlags -w -DKOSMVG_BUILD ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) FT ] ;
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) polyclip ] ;
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) stb ] ;
+		SharedLibrary [ MultiArchDefaultGristFiles libkosmvg.so ] :
+			# Core
+			kvgcontext.cpp
+			kvgbitmap.cpp
+			kvgblend.cpp
+			kvgblur.cpp
+			kvgcolor.cpp
+			kvgpaint.cpp
+			kvgpath.cpp
+			kvgtransform.cpp
+			kvgrasterize.cpp
+			kvgpixelconv.cpp
+			kvgerror.cpp
+
+			# Image I/O
+			kvgimage.cpp
+
+			# Font
+			kvgfont.cpp
+
+			# OpenType
+			kvgotf.cpp
+
+			# Path boolean operations
+			polyclip.cpp
+
+			# Embedded FreeType components
+			kosmvg-ft-math.cpp
+			kosmvg-ft-mono.cpp
+			kosmvg-ft-raster.cpp
+			kosmvg-ft-stroker.cpp
+
+			# STB image
+			stbi_core.cpp
+			stbi_jpeg.cpp
+			stbi_png.cpp
+			stbi_other.cpp
+			stb_image_write.cpp
+
+			:
+			[ TargetLibstdc++ ]
+			;
+	}
+}
