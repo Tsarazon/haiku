@@ -2,7 +2,6 @@ SubDir HAIKU_TOP src apps thorvgdemo ;
 
 UseLibraryHeaders kosmvg ;
 UsePrivateHeaders shared ;
-UsePublicHeaders surface ;
 
 SubDirC++Flags -std=c++20 ;
 
@@ -11,7 +10,6 @@ Application ThorVGDemo :
 	:
 	be
 	libkosmvg.so
-	libsurface.so
 	localestub
 	[ TargetLibstdc++ ]
 	:

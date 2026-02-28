@@ -5,13 +5,11 @@
  * KosmVG Demo - bouncing shapes with collision
  * Showcases: gradients, shadows, strokes, transforms, bezier paths,
  *            dash patterns, opacity, per-corner radii, conic gradients.
- * Uses KosmSurface (Surface Kit) as the rendering buffer.
+ * Renders directly into BBitmap (no KosmSurface).
  */
 
 #include <Application.h>
 #include <Bitmap.h>
-#include <KosmSurface.hpp>
-#include <KosmSurfaceAllocator.hpp>
 #include <MessageRunner.h>
 #include <View.h>
 #include <Window.h>
@@ -26,6 +24,11 @@
 static const uint32 kMsgAnimate = 'anim';
 static const bigtime_t kFrameTime = 16667; // ~60 fps
 static const int kShapeCount = 8;
+
+// Enable fast gradient blend path (draws outside gradient range too)
+static const auto kGradExtend =
+	kvg::GradientDrawingOptions::DrawsBeforeStart
+	| kvg::GradientDrawingOptions::DrawsAfterEnd;
 
 
 struct Shape {
@@ -127,7 +130,6 @@ public:
 		:
 		BView(BRect(0, 0, 799, 599), "KosmVGView", B_FOLLOW_ALL,
 			B_WILL_DRAW | B_FRAME_EVENTS),
-		fSurface(NULL),
 		fBitmap(NULL),
 		fRunner(NULL)
 	{
@@ -139,8 +141,6 @@ public:
 	{
 		delete fRunner;
 		delete fBitmap;
-		if (fSurface != NULL)
-			KosmSurfaceAllocator::Default()->Free(fSurface);
 	}
 
 	virtual void AttachedToWindow()
@@ -290,8 +290,8 @@ private:
 
 	void _Update()
 	{
-		float w = fSurface ? (float)fSurface->Width() : 800;
-		float h = fSurface ? (float)fSurface->Height() : 600;
+		float w = fBitmap ? (float)(fBitmap->Bounds().IntegerWidth() + 1) : 800;
+		float h = fBitmap ? (float)(fBitmap->Bounds().IntegerHeight() + 1) : 600;
 		float dt = kFrameTime / 1000000.0f;
 
 		for (int i = 0; i < kShapeCount; i++)
@@ -329,34 +329,10 @@ private:
 
 	void _InitCanvas()
 	{
-		// Free old KosmSurface
-		if (fSurface != NULL) {
-			KosmSurfaceAllocator::Default()->Free(fSurface);
-			fSurface = NULL;
-		}
 		delete fBitmap;
 		fBitmap = NULL;
 
 		BRect bounds = Bounds();
-		int w = (int)bounds.Width() + 1;
-		int h = (int)bounds.Height() + 1;
-
-		// Allocate KosmSurface as rendering buffer
-		// KOSM_PIXEL_FORMAT_ARGB8888 = 0xAARRGGBB = B_RGBA32 on little-endian
-		KosmSurfaceDesc desc;
-		desc.width = w;
-		desc.height = h;
-		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
-		desc.usage = KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE;
-
-		status_t status = KosmSurfaceAllocator::Default()->Allocate(
-			desc, &fSurface);
-		if (status != B_OK) {
-			fSurface = NULL;
-			return;
-		}
-
-		// BBitmap for BView::DrawBitmap() display path
 		fBitmap = new BBitmap(bounds, B_RGBA32);
 		if (fBitmap->InitCheck() != B_OK) {
 			delete fBitmap;
@@ -366,27 +342,23 @@ private:
 
 	void _Render()
 	{
-		if (fSurface == NULL || fBitmap == NULL)
+		if (fBitmap == NULL)
 			return;
 
-		// Lock KosmSurface for CPU write access
-		if (fSurface->Lock() != B_OK)
-			return;
-
-		int width = (int)fSurface->Width();
-		int height = (int)fSurface->Height();
-		int srcStride = (int)fSurface->BytesPerRow();
+		int width = fBitmap->Bounds().IntegerWidth() + 1;
+		int height = fBitmap->Bounds().IntegerHeight() + 1;
+		int stride = fBitmap->BytesPerRow();
 		float w = (float)width;
 		float h = (float)height;
 
-		// Create KosmVG bitmap context wrapping KosmSurface pixel memory
+		// Create KosmVG bitmap context wrapping BBitmap pixel memory directly
+		// Use sRGB working space for fast integer blending path
 		kvg::BitmapContext ctx = kvg::BitmapContext::create(
-			(unsigned char*)fSurface->BaseAddress(), width, height,
-			srcStride);
-		if (!ctx) {
-			fSurface->Unlock();
+			(unsigned char*)fBitmap->Bits(), width, height,
+			stride, kvg::PixelFormat::ARGB32_Premultiplied,
+			kvg::ColorSpace::srgb(), kvg::ColorSpace::srgb());
+		if (!ctx)
 			return;
-		}
 
 		// Background - radial gradient from center
 		{
@@ -405,7 +377,8 @@ private:
 			ctx.clip_to_path(bgRect);
 			ctx.draw_radial_gradient(grad,
 				kvg::Point(w / 2, h / 2), 0,
-				kvg::Point(w / 2, h / 2), diag);
+				kvg::Point(w / 2, h / 2), diag,
+				nullptr, kGradExtend);
 			ctx.restore_state();
 		}
 
@@ -437,7 +410,8 @@ private:
 					ctx.draw_radial_gradient(grad,
 						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f), 0,
 						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f),
-						s.radius * 1.2f);
+						s.radius * 1.2f,
+						nullptr, kGradExtend);
 					break;
 				}
 
@@ -461,7 +435,8 @@ private:
 					ctx.save_state();
 					ctx.clip_to_path(rect);
 					ctx.draw_linear_gradient(grad,
-						kvg::Point(-half, -half), kvg::Point(half, half));
+						kvg::Point(-half, -half), kvg::Point(half, half),
+						nullptr, kGradExtend);
 					ctx.restore_state();
 
 					// Stroke
@@ -570,7 +545,8 @@ private:
 					ctx.draw_radial_gradient(grad,
 						kvg::Point(0, -s.radius * 0.4f), 0,
 						kvg::Point(0, -s.radius * 0.2f),
-						s.radius * 1.2f);
+						s.radius * 1.2f,
+						nullptr, kGradExtend);
 					ctx.restore_state();
 					break;
 				}
@@ -597,7 +573,8 @@ private:
 					ctx.clip_to_path(ellipse);
 					ctx.draw_linear_gradient(grad,
 						kvg::Point(0, -s.radius),
-						kvg::Point(0, s.radius));
+						kvg::Point(0, s.radius),
+						nullptr, kGradExtend);
 					ctx.restore_state();
 					break;
 				}
@@ -661,7 +638,8 @@ private:
 					ctx.save_state();
 					ctx.clip_to_path(hex);
 					ctx.draw_conic_gradient(grad,
-						kvg::Point(0, 0), 0);
+						kvg::Point(0, 0), 0,
+						nullptr, kGradExtend);
 					ctx.restore_state();
 					break;
 				}
@@ -669,34 +647,8 @@ private:
 
 			ctx.restore_state();
 		}
-
-		// Copy rendered pixels from KosmSurface to BBitmap for display
-		_CopyToDisplay();
-
-		fSurface->Unlock();
 	}
 
-	void _CopyToDisplay()
-	{
-		if (fSurface == NULL || fBitmap == NULL)
-			return;
-
-		int height = (int)fSurface->Height();
-		int srcStride = (int)fSurface->BytesPerRow();
-		int dstStride = fBitmap->BytesPerRow();
-		const uint8* src = (const uint8*)fSurface->BaseAddress();
-		uint8* dst = (uint8*)fBitmap->Bits();
-
-		if (srcStride == dstStride) {
-			memcpy(dst, src, height * srcStride);
-		} else {
-			int copyBytes = (int)fSurface->Width() * 4;
-			for (int y = 0; y < height; y++)
-				memcpy(dst + y * dstStride, src + y * srcStride, copyBytes);
-		}
-	}
-
-	KosmSurface*		fSurface;
 	BBitmap*			fBitmap;
 	BMessageRunner*		fRunner;
 	Shape				fShapes[kShapeCount];
