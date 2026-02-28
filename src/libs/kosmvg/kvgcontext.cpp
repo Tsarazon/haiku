@@ -540,6 +540,53 @@ inline uint32_t composite_src_over(uint32_t src, uint32_t dst) {
         static_cast<uint8_t>(std::min(255u, blue(src)  + (uint32_t(blue(dst))  * inv_sa) / 255)));
 }
 
+// Row index for O(1) scanline lookup into a SpanBuffer.
+// Replaces per-pixel binary search with direct row access.
+struct ClipRowIndex {
+    int min_y = 0;
+    int max_y = -1;
+    // For each row y in [min_y, max_y]: row_starts[y - min_y] is the index
+    // of the first span on that row, row_ends[y - min_y] is one past the last.
+    std::vector<int> row_starts;
+    std::vector<int> row_ends;
+
+    void build(const SpanBuffer& buf) {
+        if (buf.spans.empty()) return;
+        min_y = buf.spans.front().y;
+        max_y = buf.spans.back().y;
+        int rows = max_y - min_y + 1;
+        row_starts.assign(static_cast<size_t>(rows), -1);
+        row_ends.assign(static_cast<size_t>(rows), -1);
+
+        for (int i = 0, n = static_cast<int>(buf.spans.size()); i < n; ++i) {
+            int ry = buf.spans[i].y - min_y;
+            if (row_starts[ry] < 0)
+                row_starts[ry] = i;
+            row_ends[ry] = i + 1;
+        }
+    }
+
+    // Find coverage for pixel (px, py). Returns 0 if not in clip.
+    // out_in_clip is set to true if the pixel falls within a clip span.
+    uint8_t lookup(const SpanBuffer& buf, int px, int py, bool& out_in_clip) const {
+        out_in_clip = false;
+        if (py < min_y || py > max_y) return 0;
+        int ry = py - min_y;
+        int start = row_starts[ry];
+        if (start < 0) return 0;
+        int end = row_ends[ry];
+        for (int i = start; i < end; ++i) {
+            const auto& s = buf.spans[i];
+            if (px >= s.x && px < s.x + s.len) {
+                out_in_clip = true;
+                return s.coverage;
+            }
+            if (s.x > px) break;
+        }
+        return 0;
+    }
+};
+
 void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow& shd) {
     if (shd.is_none()) return;
 
@@ -555,7 +602,11 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
     if (sw <= 0 || sh <= 0) return;
 
     int stride = sw * 4;
-    std::vector<unsigned char> shadow_buf(static_cast<size_t>(sh) * stride, 0);
+    size_t buf_size = static_cast<size_t>(sh) * stride;
+
+    // Reuse cached buffer to avoid per-frame heap allocation.
+    ctx.shadow_buf_cache.resize(buf_size);
+    std::memset(ctx.shadow_buf_cache.data(), 0, buf_size);
 
     Color shadow_premul = shd.color.premultiplied();
     uint32_t shadow_argb = shadow_premul.to_argb32();
@@ -567,7 +618,7 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
         int dst_y = span.y + off_y - sy;
         int dst_x = span.x + off_x - sx;
         if (dst_y < 0 || dst_y >= sh) continue;
-        auto* row = reinterpret_cast<uint32_t*>(shadow_buf.data() + dst_y * stride);
+        auto* row = reinterpret_cast<uint32_t*>(ctx.shadow_buf_cache.data() + dst_y * stride);
         for (int i = 0; i < span.len; ++i) {
             int px = dst_x + i;
             if (px >= 0 && px < sw)
@@ -576,14 +627,20 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
     }
 
     if (shd.blur > 0.0f)
-        gaussian_blur(shadow_buf.data(), sw, sh, stride, shd.blur);
+        gaussian_blur(ctx.shadow_buf_cache.data(), sw, sh, stride, shd.blur, &ctx.blur_tmp_cache);
 
     auto& st = ctx.state();
+
+    // Build row index for O(1) clip lookup (replaces per-pixel binary search).
+    ClipRowIndex clip_idx;
+    if (st.clipping)
+        clip_idx.build(st.clip_spans);
+
     for (int y = 0; y < sh; ++y) {
         int dst_y = sy + y;
         if (dst_y < 0 || dst_y >= ctx.render_height) continue;
 
-        auto* s_row = reinterpret_cast<const uint32_t*>(shadow_buf.data() + y * stride);
+        auto* s_row = reinterpret_cast<const uint32_t*>(ctx.shadow_buf_cache.data() + y * stride);
         auto* t_row = reinterpret_cast<uint32_t*>(ctx.render_data + dst_y * ctx.render_stride);
 
         for (int x = 0; x < sw; ++x) {
@@ -594,20 +651,10 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
             if (pixel_alpha(src) == 0) continue;
 
             if (st.clipping) {
-                const auto& spans = st.clip_spans.spans;
-                // Binary search for first span with y >= dst_y.
-                auto it = std::lower_bound(spans.begin(), spans.end(), dst_y,
-                    [](const Span& s, int ty) { return s.y < ty; });
                 bool in_clip = false;
-                for (; it != spans.end() && it->y == dst_y; ++it) {
-                    if (dst_x >= it->x && dst_x < it->x + it->len) {
-                        src = byte_mul(src, it->coverage);
-                        in_clip = true;
-                        break;
-                    }
-                    if (it->x > dst_x) break;
-                }
+                uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
                 if (!in_clip) continue;
+                src = byte_mul(src, cov);
             }
 
             t_row[dst_x] = composite_pixel(src, t_row[dst_x], st.op, st.blend_mode,
@@ -1026,6 +1073,8 @@ void Context::draw_linear_gradient(const Gradient& gradient,
         paint.grad_values[2] = dev_end.x;
         paint.grad_values[3] = dev_end.y;
         paint.grad_transform = AffineTransform::identity();
+        paint.grad_inv_transform = AffineTransform::identity();
+        paint.grad_inv_valid = true;
 
         BlendParams params = make_blend_params(*m_impl, paint);
         blend(params, draw_spans, m_impl->clip_rect, st.clipping ? &st.clip_spans : nullptr);
@@ -1119,6 +1168,8 @@ void Context::draw_radial_gradient(const Gradient& gradient,
         paint.grad_values[4] = dev_start.y;
         paint.grad_values[5] = dev_sr;
         paint.grad_transform = AffineTransform::identity();
+        paint.grad_inv_transform = AffineTransform::identity();
+        paint.grad_inv_valid = true;
 
         BlendParams params = make_blend_params(*m_impl, paint);
         blend(params, draw_spans, m_impl->clip_rect, st.clipping ? &st.clip_spans : nullptr);
@@ -1219,6 +1270,8 @@ void Context::draw_conic_gradient(const Gradient& gradient,
         paint.grad_values[1] = dev_center.y;
         paint.grad_values[2] = start_angle;
         paint.grad_transform = AffineTransform::identity();
+        paint.grad_inv_transform = AffineTransform::identity();
+        paint.grad_inv_valid = true;
 
         BlendParams params = make_blend_params(*m_impl, paint);
         blend(params, draw_spans, m_impl->clip_rect, st.clipping ? &st.clip_spans : nullptr);

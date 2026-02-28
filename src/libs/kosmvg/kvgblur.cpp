@@ -183,7 +183,8 @@ void box_blur_v(const uint32_t* src, uint32_t* dst,
 } // anonymous namespace
 
 void gaussian_blur(unsigned char* data, int width, int height,
-                   int stride, float radius) {
+                   int stride, float radius,
+                   std::vector<unsigned char>* tmp_buf) {
     if (width <= 0 || height <= 0 || radius <= 0.0f)
         return;
 
@@ -195,9 +196,12 @@ void gaussian_blur(unsigned char* data, int width, int height,
     int radii[3];
     box_radii_for_gaussian(sigma, radii);
 
-    // Temporary buffer for ping-pong
+    // Temporary buffer for ping-pong.
+    // Reuse caller-provided buffer when available to avoid per-call allocation.
     size_t buf_size = static_cast<size_t>(height) * stride;
-    std::vector<unsigned char> tmp(buf_size);
+    std::vector<unsigned char> local_tmp;
+    std::vector<unsigned char>& tmp = tmp_buf ? *tmp_buf : local_tmp;
+    tmp.resize(buf_size);
 
     auto* src = reinterpret_cast<uint32_t*>(data);
     auto* dst = reinterpret_cast<uint32_t*>(tmp.data());

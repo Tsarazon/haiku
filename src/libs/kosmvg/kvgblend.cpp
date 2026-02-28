@@ -52,10 +52,10 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float x1 = paint.grad_values[0], y1 = paint.grad_values[1];
         float x2 = paint.grad_values[2], y2 = paint.grad_values[3];
 
-        // inverse transform pixel to gradient space
-        auto inv = paint.grad_transform.inverted();
-        Point gp = inv ? inv->apply(Point(float(px) + 0.5f, float(py) + 0.5f))
-                       : Point(float(px) + 0.5f, float(py) + 0.5f);
+        // Use pre-computed inverse transform (avoids per-pixel matrix inversion)
+        Point gp = paint.grad_inv_valid
+            ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
+            : Point(float(px) + 0.5f, float(py) + 0.5f);
 
         float dx = x2 - x1;
         float dy = y2 - y1;
@@ -71,9 +71,9 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float cx = paint.grad_values[0], cy = paint.grad_values[1], cr = paint.grad_values[2];
         float fx = paint.grad_values[3], fy = paint.grad_values[4], fr = paint.grad_values[5];
 
-        auto inv = paint.grad_transform.inverted();
-        Point gp = inv ? inv->apply(Point(float(px) + 0.5f, float(py) + 0.5f))
-                       : Point(float(px) + 0.5f, float(py) + 0.5f);
+        Point gp = paint.grad_inv_valid
+            ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
+            : Point(float(px) + 0.5f, float(py) + 0.5f);
 
         // Two-point radial: solve for t where point is on circle(f + t*(c-f), fr + t*(cr-fr))
         float dx = gp.x - fx;
@@ -118,9 +118,9 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float cx = paint.grad_values[0], cy = paint.grad_values[1];
         float start_angle = paint.grad_values[2];
 
-        auto inv = paint.grad_transform.inverted();
-        Point gp = inv ? inv->apply(Point(float(px) + 0.5f, float(py) + 0.5f))
-                       : Point(float(px) + 0.5f, float(py) + 0.5f);
+        Point gp = paint.grad_inv_valid
+            ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
+            : Point(float(px) + 0.5f, float(py) + 0.5f);
 
         float angle = std::atan2(gp.y - cy, gp.x - cx) - start_angle;
         float t = angle / two_pi;
@@ -211,9 +211,9 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
     case PaintKind::Shading: {
         if (!paint.shading || !paint.shading->eval) return 0;
 
-        auto inv = paint.grad_transform.inverted();
-        Point gp = inv ? inv->apply(Point(float(px) + 0.5f, float(py) + 0.5f))
-                       : Point(float(px) + 0.5f, float(py) + 0.5f);
+        Point gp = paint.grad_inv_valid
+            ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
+            : Point(float(px) + 0.5f, float(py) + 0.5f);
 
         float t = 0.0f;
 

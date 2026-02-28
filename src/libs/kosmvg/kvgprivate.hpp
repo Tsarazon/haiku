@@ -370,6 +370,10 @@ struct Context::Impl {
     // Temporary surface for shadow rendering (lazily allocated).
     Image          shadow_surface;
 
+    // Reusable buffers to avoid per-frame heap allocations.
+    std::vector<unsigned char> shadow_buf_cache;
+    std::vector<unsigned char> blur_tmp_cache;
+
     State& state() { return states.current(); }
     const State& state() const { return states.current(); }
 };
@@ -439,6 +443,8 @@ struct PaintSource {
     // Radial: cx, cy, cr, fx, fy, fr
     // Conic:  cx, cy, start_angle
     AffineTransform grad_transform;
+    AffineTransform grad_inv_transform; // pre-computed inverse (avoids per-pixel inversion)
+    bool grad_inv_valid = false;
     GradientSpread grad_spread = GradientSpread::Pad;
 
     // Texture / image
@@ -667,7 +673,8 @@ uint32_t dither_pixel_srgb(uint32_t premul, int px, int py);
 
 // -- Post-processing --
 
-void gaussian_blur(unsigned char* data, int width, int height, int stride, float radius);
+void gaussian_blur(unsigned char* data, int width, int height, int stride, float radius,
+                   std::vector<unsigned char>* tmp_buf = nullptr);
 
 void memfill32(uint32_t* dest, int length, uint32_t value);
 
