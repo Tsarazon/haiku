@@ -10,20 +10,25 @@
 
 #include <Application.h>
 #include <Bitmap.h>
-#include <MessageRunner.h>
+#include <FindDirectory.h>
+#include <OS.h>
+#include <Path.h>
 #include <View.h>
 #include <Window.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <optional>
 
 #include <kosmvg.hpp>
 
 
-static const uint32 kMsgAnimate = 'anim';
-static const bigtime_t kFrameTime = 16667; // ~60 fps
+static const bigtime_t kPulseRate = 16667; // ~60 fps
 static const int kShapeCount = 8;
+static const int kTraceFrames = 1800; // trace first 1800 frames (~30 sec)
 
 // Enable fast gradient blend path (draws outside gradient range too)
 static const auto kGradExtend =
@@ -129,17 +134,22 @@ public:
 	KosmVGView()
 		:
 		BView(BRect(0, 0, 799, 599), "KosmVGView", B_FOLLOW_ALL,
-			B_WILL_DRAW | B_FRAME_EVENTS),
+			B_WILL_DRAW | B_FRAME_EVENTS | B_PULSE_NEEDED),
 		fBitmap(NULL),
-		fRunner(NULL)
+		fTraceFile(NULL),
+		fFrameNum(0)
 	{
 		SetViewColor(B_TRANSPARENT_COLOR);
 		_InitShapes();
+		_OpenTrace();
 	}
 
 	virtual ~KosmVGView()
 	{
-		delete fRunner;
+		if (fTraceFile) {
+			fprintf(fTraceFile, "# tracing done, %d frames\n", fFrameNum);
+			fclose(fTraceFile);
+		}
 		delete fBitmap;
 	}
 
@@ -148,29 +158,32 @@ public:
 		_InitCanvas();
 		_Render();
 
-		// Start animation timer
-		BMessage msg(kMsgAnimate);
-		fRunner = new BMessageRunner(BMessenger(this), &msg, kFrameTime);
+		// Use Pulse() for animation — simpler, no BMessage overhead
+		Window()->SetPulseRate(kPulseRate);
 	}
 
-	virtual void MessageReceived(BMessage* message)
+	virtual void Pulse()
 	{
-		switch (message->what) {
-			case kMsgAnimate:
-				_Update();
-				_Render();
-				Invalidate();
-				break;
-			default:
-				BView::MessageReceived(message);
-				break;
-		}
+		bigtime_t t0 = system_time();
+		_Update();
+		bigtime_t t1 = system_time();
+		_Render();
+		bigtime_t t2 = system_time();
+		Invalidate();
+		bigtime_t t3 = system_time();
+
+		_TraceFrame(t0, t1, t2, t3);
 	}
 
 	virtual void Draw(BRect updateRect)
 	{
+		bigtime_t t0 = system_time();
 		if (fBitmap != NULL)
 			DrawBitmap(fBitmap, B_ORIGIN);
+		bigtime_t t1 = system_time();
+
+		if (fTraceFile && fFrameNum <= kTraceFrames)
+			fprintf(fTraceFile, "  draw_bitmap: %lld us\n", (long long)(t1 - t0));
 	}
 
 	virtual void FrameResized(float width, float height)
@@ -292,7 +305,7 @@ private:
 	{
 		float w = fBitmap ? (float)(fBitmap->Bounds().IntegerWidth() + 1) : 800;
 		float h = fBitmap ? (float)(fBitmap->Bounds().IntegerHeight() + 1) : 600;
-		float dt = kFrameTime / 1000000.0f;
+		float dt = kPulseRate / 1000000.0f;
 
 		for (int i = 0; i < kShapeCount; i++)
 			fShapes[i].Move(dt, w, h);
@@ -331,34 +344,47 @@ private:
 	{
 		delete fBitmap;
 		fBitmap = NULL;
+		fCtx.reset(); // release old context
 
 		BRect bounds = Bounds();
 		fBitmap = new BBitmap(bounds, B_RGBA32);
 		if (fBitmap->InitCheck() != B_OK) {
 			delete fBitmap;
 			fBitmap = NULL;
+			return;
 		}
+
+		int width = bounds.IntegerWidth() + 1;
+		int height = bounds.IntegerHeight() + 1;
+		int stride = fBitmap->BytesPerRow();
+
+		fCtx.emplace(kvg::BitmapContext::create(
+			(unsigned char*)fBitmap->Bits(), width, height,
+			stride, kvg::PixelFormat::ARGB32_Premultiplied,
+			kvg::ColorSpace::srgb(), kvg::ColorSpace::srgb()));
+	}
+
+	// Trace helper: log sub-step timing
+	void _T(bool tracing, const char* label)
+	{
+		if (!tracing) return;
+		bigtime_t now = system_time();
+		fprintf(fTraceFile, "    %s: %lld us\n", label,
+			(long long)(now - fRenderStart));
+		fRenderStart = now;
 	}
 
 	void _Render()
 	{
-		if (fBitmap == NULL)
+		if (fBitmap == NULL || !fCtx.has_value() || !(*fCtx))
 			return;
 
-		int width = fBitmap->Bounds().IntegerWidth() + 1;
-		int height = fBitmap->Bounds().IntegerHeight() + 1;
-		int stride = fBitmap->BytesPerRow();
-		float w = (float)width;
-		float h = (float)height;
-
-		// Create KosmVG bitmap context wrapping BBitmap pixel memory directly
-		// Use sRGB working space for fast integer blending path
-		kvg::BitmapContext ctx = kvg::BitmapContext::create(
-			(unsigned char*)fBitmap->Bits(), width, height,
-			stride, kvg::PixelFormat::ARGB32_Premultiplied,
-			kvg::ColorSpace::srgb(), kvg::ColorSpace::srgb());
-		if (!ctx)
-			return;
+		bool T = fTraceFile && fFrameNum <= kTraceFrames;
+		float w = (float)(fBitmap->Bounds().IntegerWidth() + 1);
+		float h = (float)(fBitmap->Bounds().IntegerHeight() + 1);
+		kvg::BitmapContext& ctx = *fCtx;
+		if (T)
+			fRenderStart = system_time();
 
 		// Background - radial gradient from center
 		{
@@ -368,18 +394,25 @@ private:
 				{1.0f, kvg::Color::from_rgba8(10, 10, 18, 255)}
 			};
 			kvg::Gradient grad = kvg::Gradient::create(stops);
+			_T(T, "bg_grad_create");
 
 			kvg::Path bgRect = kvg::Path::Builder{}
 				.add_rect(kvg::Rect(0, 0, w, h))
 				.build();
+			_T(T, "bg_path_build");
 
 			ctx.save_state();
 			ctx.clip_to_path(bgRect);
+			_T(T, "bg_clip");
+
 			ctx.draw_radial_gradient(grad,
 				kvg::Point(w / 2, h / 2), 0,
 				kvg::Point(w / 2, h / 2), diag,
 				nullptr, kGradExtend);
+			_T(T, "bg_draw_gradient");
+
 			ctx.restore_state();
+			_T(T, "bg_restore");
 		}
 
 		// Draw each shape
@@ -405,13 +438,17 @@ private:
 					kvg::Path circle = kvg::Path::Builder{}
 						.add_circle(kvg::Point(0, 0), s.radius)
 						.build();
+					_T(T, "circle_setup");
 
 					ctx.clip_to_path(circle);
+					_T(T, "circle_clip");
+
 					ctx.draw_radial_gradient(grad,
 						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f), 0,
 						kvg::Point(-s.radius * 0.3f, -s.radius * 0.3f),
 						s.radius * 1.2f,
 						nullptr, kGradExtend);
+					_T(T, "circle_draw_grad+shadow");
 					break;
 				}
 
@@ -430,20 +467,21 @@ private:
 					kvg::Path rect = kvg::Path::Builder{}
 						.add_rect(kvg::Rect(-half, -half, size, size))
 						.build();
+					_T(T, "rect_setup");
 
-					// Fill with gradient
 					ctx.save_state();
 					ctx.clip_to_path(rect);
 					ctx.draw_linear_gradient(grad,
 						kvg::Point(-half, -half), kvg::Point(half, half),
 						nullptr, kGradExtend);
 					ctx.restore_state();
+					_T(T, "rect_fill_grad");
 
-					// Stroke
 					ctx.set_stroke_color(
 						kvg::Color::from_rgba8(255, 255, 255, 160));
 					ctx.set_line_width(2.0f);
 					ctx.stroke_path(rect);
+					_T(T, "rect_stroke");
 					break;
 				}
 
@@ -462,8 +500,10 @@ private:
 						.line_to(rad * 0.866f, rad * 0.5f)
 						.close()
 						.build();
+					_T(T, "tri_setup");
 
 					ctx.fill_path(tri);
+					_T(T, "tri_fill+shadow");
 					break;
 				}
 
@@ -491,10 +531,11 @@ private:
 					}
 					builder.close();
 					kvg::Path star = builder.build();
+					_T(T, "star_setup");
 
 					ctx.fill_path(star);
+					_T(T, "star_fill");
 
-					// Dashed stroke outline
 					float dashes[] = {5.0f, 3.0f};
 					ctx.set_line_dash(0, dashes);
 					ctx.set_line_cap(kvg::LineCap::Round);
@@ -502,6 +543,7 @@ private:
 						kvg::Color::from_rgba8(255, 255, 255, 180));
 					ctx.set_line_width(1.5f);
 					ctx.stroke_path(star);
+					_T(T, "star_stroke_dash");
 					break;
 				}
 
@@ -539,14 +581,19 @@ private:
 							0, rad * 0.7f)
 						.close()
 						.build();
+					_T(T, "heart_setup");
 
 					ctx.save_state();
 					ctx.clip_to_path(heart);
+					_T(T, "heart_clip");
+
 					ctx.draw_radial_gradient(grad,
 						kvg::Point(0, -s.radius * 0.4f), 0,
 						kvg::Point(0, -s.radius * 0.2f),
 						s.radius * 1.2f,
 						nullptr, kGradExtend);
+					_T(T, "heart_draw_grad");
+
 					ctx.restore_state();
 					break;
 				}
@@ -568,13 +615,18 @@ private:
 							-s.radius * 1.3f, -s.radius * 0.65f,
 							s.radius * 2.6f, s.radius * 1.3f))
 						.build();
+					_T(T, "ellipse_setup");
 
 					ctx.save_state();
 					ctx.clip_to_path(ellipse);
+					_T(T, "ellipse_clip");
+
 					ctx.draw_linear_gradient(grad,
 						kvg::Point(0, -s.radius),
 						kvg::Point(0, s.radius),
 						nullptr, kGradExtend);
+					_T(T, "ellipse_draw_grad");
+
 					ctx.restore_state();
 					break;
 				}
@@ -596,8 +648,10 @@ private:
 						.add_round_rect(
 							kvg::Rect(-half, -half, size, size), radii)
 						.build();
+					_T(T, "rrect_setup");
 
 					ctx.fill_path(rrect);
+					_T(T, "rrect_fill+shadow");
 
 					ctx.clear_shadow();
 					ctx.set_stroke_color(kvg::Color::from_rgba8(
@@ -606,6 +660,7 @@ private:
 					ctx.set_line_width(3.0f);
 					ctx.set_line_join(kvg::LineJoin::Round);
 					ctx.stroke_path(rrect);
+					_T(T, "rrect_stroke");
 					break;
 				}
 
@@ -634,24 +689,70 @@ private:
 					}
 					builder.close();
 					kvg::Path hex = builder.build();
+					_T(T, "hex_setup");
 
 					ctx.save_state();
 					ctx.clip_to_path(hex);
+					_T(T, "hex_clip");
+
 					ctx.draw_conic_gradient(grad,
 						kvg::Point(0, 0), 0,
 						nullptr, kGradExtend);
+					_T(T, "hex_draw_conic");
+
 					ctx.restore_state();
 					break;
 				}
 			}
 
 			ctx.restore_state();
+			_T(T, "restore");
 		}
 	}
 
-	BBitmap*			fBitmap;
-	BMessageRunner*		fRunner;
-	Shape				fShapes[kShapeCount];
+	void _OpenTrace()
+	{
+		BPath desktop;
+		if (find_directory(B_DESKTOP_DIRECTORY, &desktop) != B_OK)
+			return;
+		BPath path(desktop);
+		path.Append("kvg_trace.log");
+		fTraceFile = fopen(path.Path(), "w");
+		if (fTraceFile)
+			fprintf(fTraceFile, "# KosmVG frame trace (times in microseconds)\n");
+	}
+
+	void _TraceFrame(bigtime_t t0, bigtime_t t1, bigtime_t t2, bigtime_t t3)
+	{
+		if (!fTraceFile || fFrameNum > kTraceFrames)
+			return;
+
+		bigtime_t update_us = t1 - t0;
+		bigtime_t render_us = t2 - t1;
+		bigtime_t inval_us  = t3 - t2;
+		bigtime_t total_us  = t3 - t0;
+
+		fprintf(fTraceFile, "frame %d: total=%lld  update=%lld  render=%lld  invalidate=%lld\n",
+			fFrameNum, (long long)total_us, (long long)update_us,
+			(long long)render_us, (long long)inval_us);
+
+		// Flag slow frames (> 2x target)
+		if (total_us > kPulseRate * 2)
+			fprintf(fTraceFile, "  *** SLOW FRAME ***\n");
+
+		fFrameNum++;
+
+		// Flush periodically so we see data even if app crashes
+		if ((fFrameNum % 60) == 0)
+			fflush(fTraceFile);
+	}
+
+	BBitmap*						fBitmap;
+	std::optional<kvg::BitmapContext>	fCtx;
+	Shape							fShapes[kShapeCount];
+	FILE*							fTraceFile;
+	int								fFrameNum;
+	bigtime_t						fRenderStart;
 };
 
 
