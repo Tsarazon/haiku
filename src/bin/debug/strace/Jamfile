@@ -26,6 +26,7 @@ local straceSources =
 	fcntl.cpp
 	file.cpp
 	ioctl.cpp
+	kosm_mutex.cpp
 	mutex.cpp
 	network.cpp
 	rlimit.cpp
