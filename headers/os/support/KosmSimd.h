@@ -1,14 +1,22 @@
-// kosm_simd.h — KosmOS Support Kit
+// KosmSimd.h — KosmOS Support Kit
 // Portable SIMD primitives: ARM64 (NEON) / x86_64 (SSE4.1) / RISC-V 64 (RVV 1.0)
+//
+// Structure:
+//   1. Platform backend (types, load/store, arithmetic, bitwise, shuffle ...)
+//      — x86_64 (SSE4.1)
+//      — ARM64 (NEON)
+//      — RISC-V 64 (RVV 1.0)
+//   2. Architecture-independent helpers (math, color, alpha, pixel pack/unpack ...)
+//   3. Compositing and blend modes
 
 #pragma once
 
 #include <cstdint>
 
-#if defined(__aarch64__)
-#include <arm_neon.h>
-#elif defined(__x86_64__)
+#if defined(__x86_64__)
 #include <smmintrin.h>
+#elif defined(__aarch64__)
+#include <arm_neon.h>
 #elif defined(__riscv_v)
 #include <riscv_vector.h>
 #else
@@ -19,262 +27,11 @@ namespace kosmsimd {
 
 inline constexpr int width = 4;
 
-// ARM64 (NEON) — native types are already distinct
+// 1. Platform backend — x86_64 (SSE4.1)
 
-#if defined(__aarch64__)
+#if defined(__x86_64__)
 
-using f32x4 = float32x4_t;
-using i32x4 = int32x4_t;
-using u32x4 = uint32x4_t;
-using u16x8 = uint16x8_t;
-using u8x16 = uint8x16_t;
-
-// Load / Store
-inline f32x4 load(const float* p)                    { return vld1q_f32(p); }
-inline void  store(float* p, f32x4 v)                { vst1q_f32(p, v); }
-inline f32x4 load_aligned(const float* p)             { return vld1q_f32(p); }
-inline void  store_aligned(float* p, f32x4 v)         { vst1q_f32(p, v); }
-inline i32x4 load(const int32_t* p)                   { return vld1q_s32(p); }
-inline void  store(int32_t* p, i32x4 v)               { vst1q_s32(p, v); }
-inline u32x4 load(const uint32_t* p)                  { return vld1q_u32(p); }
-inline void  store(uint32_t* p, u32x4 v)              { vst1q_u32(p, v); }
-inline u8x16 load(const uint8_t* p)                   { return vld1q_u8(p); }
-inline void  store(uint8_t* p, u8x16 v)               { vst1q_u8(p, v); }
-
-// Splat
-inline f32x4 splat(float x)                           { return vdupq_n_f32(x); }
-inline i32x4 splat(int32_t x)                         { return vdupq_n_s32(x); }
-inline u32x4 splat(uint32_t x)                        { return vdupq_n_u32(x); }
-inline f32x4 zero_f32()                               { return vdupq_n_f32(0.0f); }
-inline i32x4 zero_i32()                               { return vdupq_n_s32(0); }
-inline u32x4 zero_u32()                               { return vdupq_n_u32(0); }
-
-// Arithmetic float
-inline f32x4 add(f32x4 a, f32x4 b)                   { return vaddq_f32(a, b); }
-inline f32x4 sub(f32x4 a, f32x4 b)                   { return vsubq_f32(a, b); }
-inline f32x4 mul(f32x4 a, f32x4 b)                   { return vmulq_f32(a, b); }
-inline f32x4 div(f32x4 a, f32x4 b)                   { return vdivq_f32(a, b); }
-inline f32x4 fma(f32x4 a, f32x4 b, f32x4 c)          { return vfmaq_f32(c, a, b); }
-inline f32x4 fnma(f32x4 a, f32x4 b, f32x4 c)         { return vfmsq_f32(c, a, b); }
-inline f32x4 neg(f32x4 a)                             { return vnegq_f32(a); }
-inline f32x4 abs(f32x4 a)                             { return vabsq_f32(a); }
-inline f32x4 sqrt(f32x4 a)                            { return vsqrtq_f32(a); }
-inline f32x4 rcp(f32x4 a) {
-    auto est = vrecpeq_f32(a);
-    return vmulq_f32(est, vrecpsq_f32(a, est)); // ~23 bit
-}
-
-// Arithmetic signed integer
-inline i32x4 add(i32x4 a, i32x4 b)                   { return vaddq_s32(a, b); }
-inline i32x4 sub(i32x4 a, i32x4 b)                   { return vsubq_s32(a, b); }
-inline i32x4 mul(i32x4 a, i32x4 b)                   { return vmulq_s32(a, b); }
-
-// Arithmetic unsigned integer
-inline u32x4 add(u32x4 a, u32x4 b)                   { return vaddq_u32(a, b); }
-inline u32x4 sub(u32x4 a, u32x4 b)                   { return vsubq_u32(a, b); }
-inline u32x4 mul(u32x4 a, u32x4 b)                   { return vmulq_u32(a, b); }
-
-// Min / Max / Clamp
-inline f32x4 min(f32x4 a, f32x4 b)                   { return vminq_f32(a, b); }
-inline f32x4 max(f32x4 a, f32x4 b)                   { return vmaxq_f32(a, b); }
-inline i32x4 min(i32x4 a, i32x4 b)                   { return vminq_s32(a, b); }
-inline i32x4 max(i32x4 a, i32x4 b)                   { return vmaxq_s32(a, b); }
-inline u32x4 min(u32x4 a, u32x4 b)                   { return vminq_u32(a, b); }
-inline u32x4 max(u32x4 a, u32x4 b)                   { return vmaxq_u32(a, b); }
-inline f32x4 clamp(f32x4 v, f32x4 lo, f32x4 hi)      { return vminq_f32(vmaxq_f32(v, lo), hi); }
-
-// Rounding
-inline f32x4 floor(f32x4 a)                           { return vrndmq_f32(a); }
-inline f32x4 ceil(f32x4 a)                            { return vrndpq_f32(a); }
-inline f32x4 round(f32x4 a)                           { return vrndnq_f32(a); }
-inline f32x4 trunc(f32x4 a)                           { return vrndq_f32(a); }
-
-// Conversion
-inline i32x4 cvt_trunc(f32x4 a)                      { return vcvtq_s32_f32(a); }
-inline i32x4 cvt_round(f32x4 a)                      { return vcvtnq_s32_f32(a); }
-inline f32x4 cvt(i32x4 a)                             { return vcvtq_f32_s32(a); }
-inline f32x4 cvt(u32x4 a)                             { return vcvtq_f32_u32(a); }
-
-// Compare
-inline u32x4 cmpeq(f32x4 a, f32x4 b)                 { return vceqq_f32(a, b); }
-inline u32x4 cmplt(f32x4 a, f32x4 b)                 { return vcltq_f32(a, b); }
-inline u32x4 cmple(f32x4 a, f32x4 b)                 { return vcleq_f32(a, b); }
-inline u32x4 cmpgt(f32x4 a, f32x4 b)                 { return vcgtq_f32(a, b); }
-inline u32x4 cmpge(f32x4 a, f32x4 b)                 { return vcgeq_f32(a, b); }
-inline u32x4 cmpeq(i32x4 a, i32x4 b)                 { return vceqq_s32(a, b); }
-inline u32x4 cmplt(i32x4 a, i32x4 b)                 { return vcltq_s32(a, b); }
-inline u32x4 cmpgt(i32x4 a, i32x4 b)                 { return vcgtq_s32(a, b); }
-
-// Bitwise
-inline u32x4 bit_and(u32x4 a, u32x4 b)               { return vandq_u32(a, b); }
-inline u32x4 bit_or(u32x4 a, u32x4 b)                { return vorrq_u32(a, b); }
-inline u32x4 bit_xor(u32x4 a, u32x4 b)               { return veorq_u32(a, b); }
-// bit_andnot(a, b) = ~a & b  (clear bits of a in b)
-inline u32x4 bit_andnot(u32x4 a, u32x4 b)            { return vbicq_u32(b, a); }
-inline u32x4 bit_not(u32x4 a)                         { return vmvnq_u32(a); }
-
-inline f32x4 bit_and(f32x4 a, f32x4 b) {
-    return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
-}
-inline f32x4 bit_or(f32x4 a, f32x4 b) {
-    return vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
-}
-inline f32x4 bit_xor(f32x4 a, f32x4 b) {
-    return vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
-}
-
-// Blend: mask ? b : a
-inline f32x4 blend(f32x4 a, f32x4 b, u32x4 m)        { return vbslq_f32(m, b, a); }
-inline i32x4 blend(i32x4 a, i32x4 b, u32x4 m)        { return vbslq_s32(m, b, a); }
-inline u32x4 blend(u32x4 a, u32x4 b, u32x4 m)        { return vbslq_u32(m, b, a); }
-
-// Shift
-template<int N> inline i32x4 shl(i32x4 a)             { return vshlq_n_s32(a, N); }
-template<int N> inline i32x4 shr(i32x4 a)             { return vshrq_n_s32(a, N); }
-template<int N> inline u32x4 shl(u32x4 a)             { return vshlq_n_u32(a, N); }
-template<int N> inline u32x4 shr(u32x4 a)             { return vshrq_n_u32(a, N); }
-
-// Reinterpret casts
-inline f32x4 as_f32(u32x4 a)                          { return vreinterpretq_f32_u32(a); }
-inline f32x4 as_f32(i32x4 a)                          { return vreinterpretq_f32_s32(a); }
-inline u32x4 as_u32(f32x4 a)                          { return vreinterpretq_u32_f32(a); }
-inline u32x4 as_u32(i32x4 a)                          { return vreinterpretq_u32_s32(a); }
-inline i32x4 as_i32(f32x4 a)                          { return vreinterpretq_s32_f32(a); }
-inline i32x4 as_i32(u32x4 a)                          { return vreinterpretq_s32_u32(a); }
-
-// Lane access
-template<int I> inline float extract(f32x4 v)          { return vgetq_lane_f32(v, I); }
-template<int I> inline f32x4 insert(f32x4 v, float x)  { return vsetq_lane_f32(x, v, I); }
-template<int I> inline int32_t extract(i32x4 v)        { return vgetq_lane_s32(v, I); }
-template<int I> inline uint32_t extract(u32x4 v)       { return vgetq_lane_u32(v, I); }
-
-// Horizontal
-inline float hmin(f32x4 a)                            { return vminvq_f32(a); }
-inline float hmax(f32x4 a)                            { return vmaxvq_f32(a); }
-inline float hsum(f32x4 a)                            { return vaddvq_f32(a); }
-inline int32_t hsum(i32x4 a)                          { return vaddvq_s32(a); }
-inline uint32_t hsum(u32x4 a)                         { return vaddvq_u32(a); }
-
-// Mask queries
-inline bool all(u32x4 m)                              { return vminvq_u32(m) != 0; }
-inline bool any(u32x4 m)                              { return vmaxvq_u32(m) != 0; }
-inline bool none(u32x4 m)                             { return vmaxvq_u32(m) == 0; }
-
-// Sliding window
-inline f32x4 shift_left_1(f32x4 a)                    { return vextq_f32(a, vdupq_n_f32(0), 1); }
-inline f32x4 shift_right_1(f32x4 a)                   { return vextq_f32(vdupq_n_f32(0), a, 3); }
-
-// Prefix sum
-inline f32x4 prefix_sum(f32x4 v) {
-    v = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 3));
-    v = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 2));
-    return v;
-}
-
-// Pixel pack / unpack
-inline u32x4 unpack_u8_to_u32(u8x16 v) {
-    return vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(v))));
-}
-inline u8x16 pack_u32_to_u8(u32x4 v) {
-    auto n16 = vqmovn_u32(v);
-    auto n8  = vqmovn_u16(vcombine_u16(n16, n16));
-    return vcombine_u8(n8, n8);
-}
-inline void widen_u8_to_u16(u8x16 v, u16x8& lo, u16x8& hi) {
-    lo = vmovl_u8(vget_low_u8(v));
-    hi = vmovl_u8(vget_high_u8(v));
-}
-
-// Saturating u8 arithmetic
-inline u8x16 adds_u8(u8x16 a, u8x16 b)              { return vqaddq_u8(a, b); }
-inline u8x16 subs_u8(u8x16 a, u8x16 b)              { return vqsubq_u8(a, b); }
-
-// Shuffle
-inline f32x4 reverse(f32x4 v)                        { return vrev64q_f32(vcombine_f32(vget_high_f32(v), vget_low_f32(v))); }
-inline u32x4 reverse(u32x4 v)                        { return vrev64q_u32(vcombine_u32(vget_high_u32(v), vget_low_u32(v))); }
-inline i32x4 reverse(i32x4 v)                        { return vrev64q_s32(vcombine_s32(vget_high_s32(v), vget_low_s32(v))); }
-template<int I> inline f32x4 broadcast_lane(f32x4 v)  { return vdupq_laneq_f32(v, I); }
-template<int I> inline i32x4 broadcast_lane(i32x4 v)  { return vdupq_laneq_s32(v, I); }
-template<int I> inline u32x4 broadcast_lane(u32x4 v)  { return vdupq_laneq_u32(v, I); }
-
-// 4 pixels RGBA (R in byte 0). Each uint32 = 0xAABBGGRR.
-// Deinterleave to float [0..1] per channel.
-inline void unpack_rgba(const uint8_t* pixel, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
-    // Load exactly 16 bytes (4 pixels × 4 bytes). Manual deinterleave.
-    auto raw = vld1q_u32(reinterpret_cast<const uint32_t*>(pixel));
-    auto scale = vdupq_n_f32(1.0f / 255.0f);
-    auto mask8 = vdupq_n_u32(0xFF);
-    r = vmulq_f32(vcvtq_f32_u32(vandq_u32(raw, mask8)), scale);
-    g = vmulq_f32(vcvtq_f32_u32(vandq_u32(vshrq_n_u32(raw, 8), mask8)), scale);
-    b = vmulq_f32(vcvtq_f32_u32(vandq_u32(vshrq_n_u32(raw, 16), mask8)), scale);
-    a = vmulq_f32(vcvtq_f32_u32(vshrq_n_u32(raw, 24)), scale);
-}
-
-// Cross product 2D: ax*by - ay*bx
-inline f32x4 cross2d(f32x4 ax, f32x4 ay, f32x4 bx, f32x4 by) {
-    return vfmsq_f32(vmulq_f32(ax, by), ay, bx);
-}
-
-// Lerp: a + t*(b - a)
-inline f32x4 lerp(f32x4 a, f32x4 b, f32x4 t) {
-    return vfmaq_f32(a, t, vsubq_f32(b, a));
-}
-
-// Color matrix: r*cr + g*cg + b*cb
-inline f32x4 dot3(f32x4 r, f32x4 g, f32x4 b, f32x4 cr, f32x4 cg, f32x4 cb) {
-    auto result = vmulq_f32(r, cr);
-    result = vfmaq_f32(result, g, cg);
-    result = vfmaq_f32(result, b, cb);
-    return result;
-}
-
-// sRGB <-> linear (fast approximation)
-inline f32x4 srgb_to_linear(f32x4 v) {
-    return vmulq_f32(vmulq_f32(v, v), vsqrtq_f32(vsqrtq_f32(v)));
-}
-inline f32x4 linear_to_srgb(f32x4 v) {
-    auto vsq  = vsqrtq_f32(v);
-    auto vqrt = vsqrtq_f32(vsq);
-    return vfmaq_f32(vmulq_f32(vdupq_n_f32(0.82f), vsq), vdupq_n_f32(0.18f), vqrt);
-}
-
-// sRGB -> linear, precise piecewise (max absolute error < 0.002 vs true sRGB).
-// Low: x / 12.92. High: pow((x + 0.055) / 1.055, 2.4) via t^2.5 * poly(t).
-inline f32x4 srgb_to_linear_precise(f32x4 x) {
-    auto lo = vmulq_f32(x, vdupq_n_f32(1.0f / 12.92f));
-    auto t  = vmulq_f32(vaddq_f32(x, vdupq_n_f32(0.055f)), vdupq_n_f32(1.0f / 1.055f));
-    auto t2  = vmulq_f32(t, t);
-    auto t25 = vmulq_f32(t2, vsqrtq_f32(t));
-    auto corr = vfmaq_f32(vdupq_n_f32(-0.6866f), vdupq_n_f32(0.3617f), t);
-    corr = vfmaq_f32(vdupq_n_f32(1.3249f), corr, t);
-    auto hi = vmulq_f32(t25, corr);
-    auto mask = vcleq_f32(x, vdupq_n_f32(0.04045f));
-    return vbslq_f32(mask, lo, hi);
-}
-
-// Premultiply alpha
-inline void premultiply(f32x4 r, f32x4 g, f32x4 b, f32x4 a,
-                         f32x4& pr, f32x4& pg, f32x4& pb) {
-    pr = vmulq_f32(r, a);
-    pg = vmulq_f32(g, a);
-    pb = vmulq_f32(b, a);
-}
-
-// Unpremultiply alpha
-inline void unpremultiply(f32x4 pr, f32x4 pg, f32x4 pb, f32x4 a,
-                           f32x4& r, f32x4& g, f32x4& b) {
-    auto inv_a = vrecpeq_f32(a);
-    inv_a = vmulq_f32(inv_a, vrecpsq_f32(a, inv_a));
-    auto mask = vcgtq_f32(a, vdupq_n_f32(0.0f));
-    inv_a = vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(inv_a), mask));
-    r = vmulq_f32(pr, inv_a);
-    g = vmulq_f32(pg, inv_a);
-    b = vmulq_f32(pb, inv_a);
-}
-
-// x86_64 (SSE4.1) — wrapper structs for type safety
-
-#elif defined(__x86_64__)
+// Wrapper structs for type safety (__m128i is shared by i32/u32/u16/u8)
 
 using f32x4 = __m128;
 
@@ -495,78 +252,7 @@ template<int I> inline f32x4 broadcast_lane(f32x4 v)   { return _mm_shuffle_ps(v
 template<int I> inline i32x4 broadcast_lane(i32x4 v)   { return _mm_shuffle_epi32(v.v, _MM_SHUFFLE(I,I,I,I)); }
 template<int I> inline u32x4 broadcast_lane(u32x4 v)   { return _mm_shuffle_epi32(v.v, _MM_SHUFFLE(I,I,I,I)); }
 
-// 4 pixels RGBA (R in byte 0). Each uint32 = 0xAABBGGRR.
-// Deinterleave to float [0..1] per channel.
-inline void unpack_rgba(const uint8_t* pixel, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
-    auto raw = _mm_loadu_si128((const __m128i*)pixel);
-    auto scale = _mm_set1_ps(1.0f / 255.0f);
-    auto mask8 = _mm_set1_epi32(0xFF);
-    r = _mm_mul_ps(_mm_cvtepi32_ps(_mm_and_si128(raw, mask8)), scale);
-    g = _mm_mul_ps(_mm_cvtepi32_ps(_mm_and_si128(_mm_srli_epi32(raw, 8), mask8)), scale);
-    b = _mm_mul_ps(_mm_cvtepi32_ps(_mm_and_si128(_mm_srli_epi32(raw, 16), mask8)), scale);
-    a = _mm_mul_ps(_mm_cvtepi32_ps(_mm_srli_epi32(raw, 24)), scale);
-}
-
-// Cross product 2D
-inline f32x4 cross2d(f32x4 ax, f32x4 ay, f32x4 bx, f32x4 by) {
-    return _mm_sub_ps(_mm_mul_ps(ax, by), _mm_mul_ps(ay, bx));
-}
-
-// Lerp
-inline f32x4 lerp(f32x4 a, f32x4 b, f32x4 t) {
-    return _mm_add_ps(a, _mm_mul_ps(t, _mm_sub_ps(b, a)));
-}
-
-// Color matrix
-inline f32x4 dot3(f32x4 r, f32x4 g, f32x4 b, f32x4 cr, f32x4 cg, f32x4 cb) {
-    return _mm_add_ps(_mm_mul_ps(r, cr), _mm_add_ps(_mm_mul_ps(g, cg), _mm_mul_ps(b, cb)));
-}
-
-// sRGB <-> linear
-inline f32x4 srgb_to_linear(f32x4 v) {
-    return _mm_mul_ps(_mm_mul_ps(v, v), _mm_sqrt_ps(_mm_sqrt_ps(v)));
-}
-inline f32x4 linear_to_srgb(f32x4 v) {
-    auto vsq  = _mm_sqrt_ps(v);
-    auto vqrt = _mm_sqrt_ps(vsq);
-    return _mm_add_ps(_mm_mul_ps(_mm_set1_ps(0.82f), vsq), _mm_mul_ps(_mm_set1_ps(0.18f), vqrt));
-}
-
-// sRGB -> linear, precise piecewise (max absolute error < 0.002 vs true sRGB).
-// Low: x / 12.92. High: pow((x + 0.055) / 1.055, 2.4) via t^2.5 * poly(t).
-inline f32x4 srgb_to_linear_precise(f32x4 x) {
-    auto lo = _mm_mul_ps(x, _mm_set1_ps(1.0f / 12.92f));
-    auto t  = _mm_mul_ps(_mm_add_ps(x, _mm_set1_ps(0.055f)), _mm_set1_ps(1.0f / 1.055f));
-    auto t2  = _mm_mul_ps(t, t);
-    auto t25 = _mm_mul_ps(t2, _mm_sqrt_ps(t));
-    auto corr = _mm_add_ps(_mm_mul_ps(_mm_set1_ps(0.3617f), t), _mm_set1_ps(-0.6866f));
-    corr = _mm_add_ps(_mm_mul_ps(corr, t), _mm_set1_ps(1.3249f));
-    auto hi = _mm_mul_ps(t25, corr);
-    auto mask = _mm_cmple_ps(x, _mm_set1_ps(0.04045f));
-    return _mm_blendv_ps(hi, lo, mask);
-}
-
-// Premultiply
-inline void premultiply(f32x4 r, f32x4 g, f32x4 b, f32x4 a,
-                         f32x4& pr, f32x4& pg, f32x4& pb) {
-    pr = _mm_mul_ps(r, a);
-    pg = _mm_mul_ps(g, a);
-    pb = _mm_mul_ps(b, a);
-}
-
-// Unpremultiply
-inline void unpremultiply(f32x4 pr, f32x4 pg, f32x4 pb, f32x4 a,
-                           f32x4& r, f32x4& g, f32x4& b) {
-    auto inv_a = _mm_rcp_ps(a);
-    inv_a = _mm_mul_ps(inv_a, _mm_sub_ps(_mm_set1_ps(2.0f), _mm_mul_ps(a, inv_a)));
-    auto mask = _mm_cmpgt_ps(a, _mm_setzero_ps());
-    inv_a = _mm_and_ps(inv_a, mask);
-    r = _mm_mul_ps(pr, inv_a);
-    g = _mm_mul_ps(pg, inv_a);
-    b = _mm_mul_ps(pb, inv_a);
-}
-
-// Pixel format swaps (pshufb — single-instruction byte permute, available since SSSE3 ⊂ SSE4.1)
+// Pixel format swaps (pshufb — single-instruction byte permute)
 
 // ARGB → BGRA: 0xAARRGGBB → 0xBBGGRRAA (byte reverse per lane)
 inline u32x4 argb_to_bgra(u32x4 px) {
@@ -591,9 +277,202 @@ inline u32x4 bgra_to_argb(u32x4 px) {
     return argb_to_bgra(px);
 }
 
-// RISC-V 64 (RVV 1.0) — vl=4 fixed width, matching NEON/SSE semantics
+// BGRA → RGBA: 0xBBGGRRAA → 0xRRGGBBAA (swap R and B, keep G and A)
+inline u32x4 bgra_to_rgba(u32x4 px) {
+    const __m128i shuf = _mm_setr_epi8(0,3,2,1, 4,7,6,5, 8,11,10,9, 12,15,14,13);
+    return _mm_shuffle_epi8(px.v, shuf);
+}
+
+// RGBA → BGRA: same swap (self-inverse)
+inline u32x4 rgba_to_bgra(u32x4 px) {
+    return bgra_to_rgba(px);
+}
+
+// 1. Platform backend — ARM64 (NEON)
+
+#elif defined(__aarch64__)
+
+// Native NEON types (already distinct, no wrappers needed)
+
+using f32x4 = float32x4_t;
+using i32x4 = int32x4_t;
+using u32x4 = uint32x4_t;
+using u16x8 = uint16x8_t;
+using u8x16 = uint8x16_t;
+
+// Load / Store
+inline f32x4 load(const float* p)                    { return vld1q_f32(p); }
+inline void  store(float* p, f32x4 v)                { vst1q_f32(p, v); }
+inline f32x4 load_aligned(const float* p)             { return vld1q_f32(p); }
+inline void  store_aligned(float* p, f32x4 v)         { vst1q_f32(p, v); }
+inline i32x4 load(const int32_t* p)                   { return vld1q_s32(p); }
+inline void  store(int32_t* p, i32x4 v)               { vst1q_s32(p, v); }
+inline u32x4 load(const uint32_t* p)                  { return vld1q_u32(p); }
+inline void  store(uint32_t* p, u32x4 v)              { vst1q_u32(p, v); }
+inline u8x16 load(const uint8_t* p)                   { return vld1q_u8(p); }
+inline void  store(uint8_t* p, u8x16 v)               { vst1q_u8(p, v); }
+
+// Splat
+inline f32x4 splat(float x)                           { return vdupq_n_f32(x); }
+inline i32x4 splat(int32_t x)                         { return vdupq_n_s32(x); }
+inline u32x4 splat(uint32_t x)                        { return vdupq_n_u32(x); }
+inline f32x4 zero_f32()                               { return vdupq_n_f32(0.0f); }
+inline i32x4 zero_i32()                               { return vdupq_n_s32(0); }
+inline u32x4 zero_u32()                               { return vdupq_n_u32(0); }
+
+// Arithmetic float
+inline f32x4 add(f32x4 a, f32x4 b)                   { return vaddq_f32(a, b); }
+inline f32x4 sub(f32x4 a, f32x4 b)                   { return vsubq_f32(a, b); }
+inline f32x4 mul(f32x4 a, f32x4 b)                   { return vmulq_f32(a, b); }
+inline f32x4 div(f32x4 a, f32x4 b)                   { return vdivq_f32(a, b); }
+inline f32x4 fma(f32x4 a, f32x4 b, f32x4 c)          { return vfmaq_f32(c, a, b); }
+inline f32x4 fnma(f32x4 a, f32x4 b, f32x4 c)         { return vfmsq_f32(c, a, b); }
+inline f32x4 neg(f32x4 a)                             { return vnegq_f32(a); }
+inline f32x4 abs(f32x4 a)                             { return vabsq_f32(a); }
+inline f32x4 sqrt(f32x4 a)                            { return vsqrtq_f32(a); }
+inline f32x4 rcp(f32x4 a) {
+    auto est = vrecpeq_f32(a);
+    return vmulq_f32(est, vrecpsq_f32(a, est)); // ~23 bit
+}
+
+// Arithmetic signed integer
+inline i32x4 add(i32x4 a, i32x4 b)                   { return vaddq_s32(a, b); }
+inline i32x4 sub(i32x4 a, i32x4 b)                   { return vsubq_s32(a, b); }
+inline i32x4 mul(i32x4 a, i32x4 b)                   { return vmulq_s32(a, b); }
+
+// Arithmetic unsigned integer
+inline u32x4 add(u32x4 a, u32x4 b)                   { return vaddq_u32(a, b); }
+inline u32x4 sub(u32x4 a, u32x4 b)                   { return vsubq_u32(a, b); }
+inline u32x4 mul(u32x4 a, u32x4 b)                   { return vmulq_u32(a, b); }
+
+// Min / Max / Clamp
+inline f32x4 min(f32x4 a, f32x4 b)                   { return vminq_f32(a, b); }
+inline f32x4 max(f32x4 a, f32x4 b)                   { return vmaxq_f32(a, b); }
+inline i32x4 min(i32x4 a, i32x4 b)                   { return vminq_s32(a, b); }
+inline i32x4 max(i32x4 a, i32x4 b)                   { return vmaxq_s32(a, b); }
+inline u32x4 min(u32x4 a, u32x4 b)                   { return vminq_u32(a, b); }
+inline u32x4 max(u32x4 a, u32x4 b)                   { return vmaxq_u32(a, b); }
+inline f32x4 clamp(f32x4 v, f32x4 lo, f32x4 hi)      { return vminq_f32(vmaxq_f32(v, lo), hi); }
+
+// Rounding
+inline f32x4 floor(f32x4 a)                           { return vrndmq_f32(a); }
+inline f32x4 ceil(f32x4 a)                            { return vrndpq_f32(a); }
+inline f32x4 round(f32x4 a)                           { return vrndnq_f32(a); }
+inline f32x4 trunc(f32x4 a)                           { return vrndq_f32(a); }
+
+// Conversion
+inline i32x4 cvt_trunc(f32x4 a)                      { return vcvtq_s32_f32(a); }
+inline i32x4 cvt_round(f32x4 a)                      { return vcvtnq_s32_f32(a); }
+inline f32x4 cvt(i32x4 a)                             { return vcvtq_f32_s32(a); }
+inline f32x4 cvt(u32x4 a)                             { return vcvtq_f32_u32(a); }
+
+// Compare
+inline u32x4 cmpeq(f32x4 a, f32x4 b)                 { return vceqq_f32(a, b); }
+inline u32x4 cmplt(f32x4 a, f32x4 b)                 { return vcltq_f32(a, b); }
+inline u32x4 cmple(f32x4 a, f32x4 b)                 { return vcleq_f32(a, b); }
+inline u32x4 cmpgt(f32x4 a, f32x4 b)                 { return vcgtq_f32(a, b); }
+inline u32x4 cmpge(f32x4 a, f32x4 b)                 { return vcgeq_f32(a, b); }
+inline u32x4 cmpeq(i32x4 a, i32x4 b)                 { return vceqq_s32(a, b); }
+inline u32x4 cmplt(i32x4 a, i32x4 b)                 { return vcltq_s32(a, b); }
+inline u32x4 cmpgt(i32x4 a, i32x4 b)                 { return vcgtq_s32(a, b); }
+
+// Bitwise
+inline u32x4 bit_and(u32x4 a, u32x4 b)               { return vandq_u32(a, b); }
+inline u32x4 bit_or(u32x4 a, u32x4 b)                { return vorrq_u32(a, b); }
+inline u32x4 bit_xor(u32x4 a, u32x4 b)               { return veorq_u32(a, b); }
+// bit_andnot(a, b) = ~a & b  (clear bits of a in b)
+inline u32x4 bit_andnot(u32x4 a, u32x4 b)            { return vbicq_u32(b, a); }
+inline u32x4 bit_not(u32x4 a)                         { return vmvnq_u32(a); }
+
+inline f32x4 bit_and(f32x4 a, f32x4 b) {
+    return vreinterpretq_f32_u32(vandq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
+}
+inline f32x4 bit_or(f32x4 a, f32x4 b) {
+    return vreinterpretq_f32_u32(vorrq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
+}
+inline f32x4 bit_xor(f32x4 a, f32x4 b) {
+    return vreinterpretq_f32_u32(veorq_u32(vreinterpretq_u32_f32(a), vreinterpretq_u32_f32(b)));
+}
+
+// Blend: mask ? b : a
+inline f32x4 blend(f32x4 a, f32x4 b, u32x4 m)        { return vbslq_f32(m, b, a); }
+inline i32x4 blend(i32x4 a, i32x4 b, u32x4 m)        { return vbslq_s32(m, b, a); }
+inline u32x4 blend(u32x4 a, u32x4 b, u32x4 m)        { return vbslq_u32(m, b, a); }
+
+// Shift
+template<int N> inline i32x4 shl(i32x4 a)             { return vshlq_n_s32(a, N); }
+template<int N> inline i32x4 shr(i32x4 a)             { return vshrq_n_s32(a, N); }
+template<int N> inline u32x4 shl(u32x4 a)             { return vshlq_n_u32(a, N); }
+template<int N> inline u32x4 shr(u32x4 a)             { return vshrq_n_u32(a, N); }
+
+// Reinterpret casts
+inline f32x4 as_f32(u32x4 a)                          { return vreinterpretq_f32_u32(a); }
+inline f32x4 as_f32(i32x4 a)                          { return vreinterpretq_f32_s32(a); }
+inline u32x4 as_u32(f32x4 a)                          { return vreinterpretq_u32_f32(a); }
+inline u32x4 as_u32(i32x4 a)                          { return vreinterpretq_u32_s32(a); }
+inline i32x4 as_i32(f32x4 a)                          { return vreinterpretq_s32_f32(a); }
+inline i32x4 as_i32(u32x4 a)                          { return vreinterpretq_s32_u32(a); }
+
+// Lane access
+template<int I> inline float extract(f32x4 v)          { return vgetq_lane_f32(v, I); }
+template<int I> inline f32x4 insert(f32x4 v, float x)  { return vsetq_lane_f32(x, v, I); }
+template<int I> inline int32_t extract(i32x4 v)        { return vgetq_lane_s32(v, I); }
+template<int I> inline uint32_t extract(u32x4 v)       { return vgetq_lane_u32(v, I); }
+
+// Horizontal
+inline float hmin(f32x4 a)                            { return vminvq_f32(a); }
+inline float hmax(f32x4 a)                            { return vmaxvq_f32(a); }
+inline float hsum(f32x4 a)                            { return vaddvq_f32(a); }
+inline int32_t hsum(i32x4 a)                          { return vaddvq_s32(a); }
+inline uint32_t hsum(u32x4 a)                         { return vaddvq_u32(a); }
+
+// Mask queries
+inline bool all(u32x4 m)                              { return vminvq_u32(m) != 0; }
+inline bool any(u32x4 m)                              { return vmaxvq_u32(m) != 0; }
+inline bool none(u32x4 m)                             { return vmaxvq_u32(m) == 0; }
+
+// Sliding window
+inline f32x4 shift_left_1(f32x4 a)                    { return vextq_f32(a, vdupq_n_f32(0), 1); }
+inline f32x4 shift_right_1(f32x4 a)                   { return vextq_f32(vdupq_n_f32(0), a, 3); }
+
+// Prefix sum
+inline f32x4 prefix_sum(f32x4 v) {
+    v = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 3));
+    v = vaddq_f32(v, vextq_f32(vdupq_n_f32(0), v, 2));
+    return v;
+}
+
+// Pixel pack / unpack
+inline u32x4 unpack_u8_to_u32(u8x16 v) {
+    return vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(v))));
+}
+inline u8x16 pack_u32_to_u8(u32x4 v) {
+    auto n16 = vqmovn_u32(v);
+    auto n8  = vqmovn_u16(vcombine_u16(n16, n16));
+    return vcombine_u8(n8, n8);
+}
+inline void widen_u8_to_u16(u8x16 v, u16x8& lo, u16x8& hi) {
+    lo = vmovl_u8(vget_low_u8(v));
+    hi = vmovl_u8(vget_high_u8(v));
+}
+
+// Saturating u8 arithmetic
+inline u8x16 adds_u8(u8x16 a, u8x16 b)              { return vqaddq_u8(a, b); }
+inline u8x16 subs_u8(u8x16 a, u8x16 b)              { return vqsubq_u8(a, b); }
+
+// Shuffle
+inline f32x4 reverse(f32x4 v)                        { return vrev64q_f32(vcombine_f32(vget_high_f32(v), vget_low_f32(v))); }
+inline u32x4 reverse(u32x4 v)                        { return vrev64q_u32(vcombine_u32(vget_high_u32(v), vget_low_u32(v))); }
+inline i32x4 reverse(i32x4 v)                        { return vrev64q_s32(vcombine_s32(vget_high_s32(v), vget_low_s32(v))); }
+template<int I> inline f32x4 broadcast_lane(f32x4 v)  { return vdupq_laneq_f32(v, I); }
+template<int I> inline i32x4 broadcast_lane(i32x4 v)  { return vdupq_laneq_s32(v, I); }
+template<int I> inline u32x4 broadcast_lane(u32x4 v)  { return vdupq_laneq_u32(v, I); }
+
+// 1. Platform backend — RISC-V 64 (RVV 1.0)
 
 #elif defined(__riscv_v)
+
+// Fixed vector lengths matching NEON/SSE lane counts
 
 inline constexpr size_t VL4  = 4;
 inline constexpr size_t VL8  = 8;
@@ -900,91 +779,238 @@ template<int I> inline u32x4 broadcast_lane(u32x4 v) {
     return __riscv_vrgather_vx_u32m1(v, I, VL4);
 }
 
-// 4 pixels RGBA (R in byte 0). Each uint32 = 0xAABBGGRR.
-// Deinterleave to float [0..1] per channel.
-inline void unpack_rgba(const uint8_t* pixel, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
-    auto raw = __riscv_vle32_v_u32m1(reinterpret_cast<const uint32_t*>(pixel), VL4);
-    auto scale = __riscv_vfmv_v_f_f32m1(1.0f / 255.0f, VL4);
-    auto mask8 = __riscv_vmv_v_x_u32m1(0xFF, VL4);
-    r = __riscv_vfmul_vv_f32m1(__riscv_vfcvt_f_xu_v_f32m1(__riscv_vand_vv_u32m1(raw, mask8, VL4), VL4), scale, VL4);
-    g = __riscv_vfmul_vv_f32m1(__riscv_vfcvt_f_xu_v_f32m1(__riscv_vand_vv_u32m1(__riscv_vsrl_vx_u32m1(raw, 8, VL4), mask8, VL4), VL4), scale, VL4);
-    b = __riscv_vfmul_vv_f32m1(__riscv_vfcvt_f_xu_v_f32m1(__riscv_vand_vv_u32m1(__riscv_vsrl_vx_u32m1(raw, 16, VL4), mask8, VL4), VL4), scale, VL4);
-    a = __riscv_vfmul_vv_f32m1(__riscv_vfcvt_f_xu_v_f32m1(__riscv_vsrl_vx_u32m1(raw, 24, VL4), VL4), scale, VL4);
-}
+#endif // platform backend
+
+// 2. Architecture-independent helpers
+
+// Math
 
 // Cross product 2D: ax*by - ay*bx
 inline f32x4 cross2d(f32x4 ax, f32x4 ay, f32x4 bx, f32x4 by) {
-    return __riscv_vfnmsac_vv_f32m1(__riscv_vfmul_vv_f32m1(ax, by, VL4), ay, bx, VL4);
+    return sub(mul(ax, by), mul(ay, bx));
 }
 
 // Lerp: a + t*(b - a)
 inline f32x4 lerp(f32x4 a, f32x4 b, f32x4 t) {
-    return __riscv_vfmacc_vv_f32m1(a, t, __riscv_vfsub_vv_f32m1(b, a, VL4), VL4);
+    return add(a, mul(t, sub(b, a)));
 }
 
 // Color matrix: r*cr + g*cg + b*cb
 inline f32x4 dot3(f32x4 r, f32x4 g, f32x4 b, f32x4 cr, f32x4 cg, f32x4 cb) {
-    auto result = __riscv_vfmul_vv_f32m1(r, cr, VL4);
-    result = __riscv_vfmacc_vv_f32m1(result, g, cg, VL4);
-    result = __riscv_vfmacc_vv_f32m1(result, b, cb, VL4);
-    return result;
+    return add(mul(r, cr), add(mul(g, cg), mul(b, cb)));
 }
+
+// 4-component dot: r*cr + g*cg + b*cb + a*ca
+inline f32x4 dot4(f32x4 r, f32x4 g, f32x4 b, f32x4 a,
+                   f32x4 cr, f32x4 cg, f32x4 cb, f32x4 ca) {
+    return add(add(mul(r, cr), mul(g, cg)), add(mul(b, cb), mul(a, ca)));
+}
+
+// Clamp to [0, 1]
+inline f32x4 clamp01(f32x4 v) {
+    return clamp(v, zero_f32(), splat(1.0f));
+}
+
+// Bilinear interpolation of 4 taps at fractional position (fx, fy)
+inline f32x4 bilerp(f32x4 tl, f32x4 tr, f32x4 bl, f32x4 br, f32x4 fx, f32x4 fy) {
+    return lerp(lerp(tl, tr, fx), lerp(bl, br, fx), fy);
+}
+
+// Color space
 
 // sRGB <-> linear (fast approximation)
 inline f32x4 srgb_to_linear(f32x4 v) {
-    return __riscv_vfmul_vv_f32m1(
-        __riscv_vfmul_vv_f32m1(v, v, VL4),
-        __riscv_vfsqrt_v_f32m1(__riscv_vfsqrt_v_f32m1(v, VL4), VL4), VL4);
+    return mul(mul(v, v), sqrt(sqrt(v)));
 }
 inline f32x4 linear_to_srgb(f32x4 v) {
-    auto vsq  = __riscv_vfsqrt_v_f32m1(v, VL4);
-    auto vqrt = __riscv_vfsqrt_v_f32m1(vsq, VL4);
-    return __riscv_vfmacc_vv_f32m1(
-        __riscv_vfmul_vf_f32m1(vsq, 0.82f, VL4),
-        vqrt, __riscv_vfmv_v_f_f32m1(0.18f, VL4), VL4);
+    auto vsq  = sqrt(v);
+    auto vqrt = sqrt(vsq);
+    return add(mul(splat(0.82f), vsq), mul(splat(0.18f), vqrt));
 }
 
 // sRGB -> linear, precise piecewise (max absolute error < 0.002 vs true sRGB).
 // Low: x / 12.92. High: pow((x + 0.055) / 1.055, 2.4) via t^2.5 * poly(t).
 inline f32x4 srgb_to_linear_precise(f32x4 x) {
-    auto lo = __riscv_vfmul_vf_f32m1(x, 1.0f / 12.92f, VL4);
-    auto t  = __riscv_vfmul_vf_f32m1(
-        __riscv_vfadd_vf_f32m1(x, 0.055f, VL4), 1.0f / 1.055f, VL4);
-    auto t2  = __riscv_vfmul_vv_f32m1(t, t, VL4);
-    auto t25 = __riscv_vfmul_vv_f32m1(t2, __riscv_vfsqrt_v_f32m1(t, VL4), VL4);
-    auto corr = __riscv_vfmacc_vf_f32m1(
-        __riscv_vfmv_v_f_f32m1(-0.6866f, VL4), 0.3617f, t, VL4);
-    corr = __riscv_vfmacc_vv_f32m1(
-        __riscv_vfmv_v_f_f32m1(1.3249f, VL4), corr, t, VL4);
-    auto hi = __riscv_vfmul_vv_f32m1(t25, corr, VL4);
-    auto mask = __riscv_vmfle_vf_f32m1_b32(x, 0.04045f, VL4);
-    return __riscv_vmerge_vvm_f32m1(hi, lo, mask, VL4);
+    auto lo = mul(x, splat(1.0f / 12.92f));
+    auto t  = mul(add(x, splat(0.055f)), splat(1.0f / 1.055f));
+    auto t2  = mul(t, t);
+    auto t25 = mul(t2, sqrt(t));
+    auto corr = add(mul(splat(0.3617f), t), splat(-0.6866f));
+    corr = add(mul(corr, t), splat(1.3249f));
+    auto hi = mul(t25, corr);
+    auto mask = cmple(x, splat(0.04045f));
+    return blend(hi, lo, mask);
 }
+
+// linear -> sRGB, precise piecewise (matches srgb_to_linear_precise roundtrip).
+// Low: x * 12.92. High: 1.055 * x^(1/2.4) - 0.055 via iterated Newton cbrt.
+inline f32x4 linear_to_srgb_precise(f32x4 x) {
+    auto lo = mul(x, splat(12.92f));
+
+    auto one_third = splat(1.0f / 3.0f);
+    auto two = splat(2.0f);
+    auto s = sqrt(x);
+    auto q = sqrt(s);
+
+    // cbrt(x): Newton from seed x^(1/4), 3 iterations
+    auto z = q;
+    z = mul(add(mul(two, z), div(x, mul(z, z))), one_third);
+    z = mul(add(mul(two, z), div(x, mul(z, z))), one_third);
+    z = mul(add(mul(two, z), div(x, mul(z, z))), one_third);
+
+    // cbrt(x^(1/4)): Newton from seed x^(1/8), 3 iterations
+    auto w = sqrt(q);
+    w = mul(add(mul(two, w), div(q, mul(w, w))), one_third);
+    w = mul(add(mul(two, w), div(q, mul(w, w))), one_third);
+    w = mul(add(mul(two, w), div(q, mul(w, w))), one_third);
+
+    // x^(5/12) = x^(1/3) * x^(1/12) = cbrt(x) * cbrt(x^(1/4))
+    auto hi = sub(mul(splat(1.055f), mul(z, w)), splat(0.055f));
+
+    auto mask = cmple(x, splat(0.0031308f));
+    return blend(hi, lo, mask);
+}
+
+// Alpha
 
 // Premultiply alpha
 inline void premultiply(f32x4 r, f32x4 g, f32x4 b, f32x4 a,
                          f32x4& pr, f32x4& pg, f32x4& pb) {
-    pr = __riscv_vfmul_vv_f32m1(r, a, VL4);
-    pg = __riscv_vfmul_vv_f32m1(g, a, VL4);
-    pb = __riscv_vfmul_vv_f32m1(b, a, VL4);
+    pr = mul(r, a);
+    pg = mul(g, a);
+    pb = mul(b, a);
 }
 
 // Unpremultiply alpha
 inline void unpremultiply(f32x4 pr, f32x4 pg, f32x4 pb, f32x4 a,
                            f32x4& r, f32x4& g, f32x4& b) {
-    auto est = __riscv_vfrec7_v_f32m1(a, VL4);
-    auto inv_a = __riscv_vfmul_vv_f32m1(est,
-        __riscv_vfrsub_vf_f32m1(__riscv_vfmul_vv_f32m1(a, est, VL4), 2.0f, VL4), VL4);
-    auto mask = __riscv_vmfgt_vf_f32m1_b32(a, 0.0f, VL4);
-    inv_a = __riscv_vfmerge_vfm_f32m1(inv_a, 0.0f, __riscv_vmnot_m_b32(mask, VL4), VL4);
-    r = __riscv_vfmul_vv_f32m1(pr, inv_a, VL4);
-    g = __riscv_vfmul_vv_f32m1(pg, inv_a, VL4);
-    b = __riscv_vfmul_vv_f32m1(pb, inv_a, VL4);
+    auto inv_a = rcp(a);
+    auto mask = cmpgt(a, zero_f32());
+    inv_a = as_f32(bit_and(as_u32(inv_a), mask));
+    r = mul(pr, inv_a);
+    g = mul(pg, inv_a);
+    b = mul(pb, inv_a);
 }
 
-#endif
+// Extract alpha from 4 packed ARGB pixels.
+inline u32x4 alpha_x4(u32x4 pixels) {
+    return shr<24>(pixels);
+}
 
-// Compositing primitives (architecture-independent)
+// Pixel pack / unpack
+
+// 4 pixels RGBA (R in byte 0). Each uint32 = 0xAABBGGRR.
+// Deinterleave to float [0..1] per channel.
+inline void unpack_rgba(const uint8_t* pixel, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
+    auto raw   = load(reinterpret_cast<const uint32_t*>(pixel));
+    auto scale = splat(1.0f / 255.0f);
+    auto mask8 = splat(0xFFu);
+    r = mul(cvt(as_i32(bit_and(raw, mask8))), scale);
+    g = mul(cvt(as_i32(bit_and(shr<8>(raw), mask8))), scale);
+    b = mul(cvt(as_i32(bit_and(shr<16>(raw), mask8))), scale);
+    a = mul(cvt(as_i32(shr<24>(raw))), scale);
+}
+
+// Unpack 4 ARGB pixels (0xAARRGGBB, B in byte 0) -> float [0..1] channels.
+inline void unpack_argb(const uint32_t* pixels, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
+    auto raw = as_u32(load(reinterpret_cast<const int32_t*>(pixels)));
+    auto scale = splat(1.0f / 255.0f);
+    auto mask8 = splat(0xFFu);
+    b = mul(cvt(as_i32(bit_and(raw, mask8))), scale);
+    g = mul(cvt(as_i32(bit_and(shr<8>(raw), mask8))), scale);
+    r = mul(cvt(as_i32(bit_and(shr<16>(raw), mask8))), scale);
+    a = mul(cvt(as_i32(shr<24>(raw))), scale);
+}
+
+// Pack float [0..1] channels -> 4 ARGB pixels (0xAARRGGBB, B in byte 0).
+inline u32x4 pack_argb(f32x4 r, f32x4 g, f32x4 b, f32x4 a) {
+    auto scale = splat(255.0f);
+    auto lo = zero_f32();
+    auto ai = as_u32(cvt_round(clamp(mul(a, scale), lo, scale)));
+    auto ri = as_u32(cvt_round(clamp(mul(r, scale), lo, scale)));
+    auto gi = as_u32(cvt_round(clamp(mul(g, scale), lo, scale)));
+    auto bi = as_u32(cvt_round(clamp(mul(b, scale), lo, scale)));
+    return bit_or(bit_or(shl<24>(ai), shl<16>(ri)),
+                  bit_or(shl<8>(gi), bi));
+}
+
+// Unpack 4 BGRA pixels (0xBBGGRRAA, A in byte 0) -> float [0..1] channels.
+inline void unpack_bgra(const uint32_t* pixels, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
+    auto raw = as_u32(load(reinterpret_cast<const int32_t*>(pixels)));
+    auto scale = splat(1.0f / 255.0f);
+    auto mask8 = splat(0xFFu);
+    a = mul(cvt(as_i32(bit_and(raw, mask8))), scale);
+    r = mul(cvt(as_i32(bit_and(shr<8>(raw), mask8))), scale);
+    g = mul(cvt(as_i32(bit_and(shr<16>(raw), mask8))), scale);
+    b = mul(cvt(as_i32(shr<24>(raw))), scale);
+}
+
+// Pack float [0..1] channels -> 4 RGBA pixels (0xRRGGBBAA, A in byte 0).
+inline u32x4 pack_rgba(f32x4 r, f32x4 g, f32x4 b, f32x4 a) {
+    auto scale = splat(255.0f);
+    auto lo = zero_f32();
+    auto ai = as_u32(cvt_round(clamp(mul(a, scale), lo, scale)));
+    auto ri = as_u32(cvt_round(clamp(mul(r, scale), lo, scale)));
+    auto gi = as_u32(cvt_round(clamp(mul(g, scale), lo, scale)));
+    auto bi = as_u32(cvt_round(clamp(mul(b, scale), lo, scale)));
+    return bit_or(bit_or(shl<24>(ri), shl<16>(gi)),
+                  bit_or(shl<8>(bi), ai));
+}
+
+// Pack float [0..1] channels -> 4 BGRA pixels (0xBBGGRRAA, A in byte 0).
+inline u32x4 pack_bgra(f32x4 r, f32x4 g, f32x4 b, f32x4 a) {
+    auto scale = splat(255.0f);
+    auto lo = zero_f32();
+    auto ai = as_u32(cvt_round(clamp(mul(a, scale), lo, scale)));
+    auto ri = as_u32(cvt_round(clamp(mul(r, scale), lo, scale)));
+    auto gi = as_u32(cvt_round(clamp(mul(g, scale), lo, scale)));
+    auto bi = as_u32(cvt_round(clamp(mul(b, scale), lo, scale)));
+    return bit_or(bit_or(shl<24>(bi), shl<16>(gi)),
+                  bit_or(shl<8>(ri), ai));
+}
+
+// Pixel format swaps (generic bit-shift fallback for ARM64 and RISC-V)
+#if !defined(__x86_64__)
+
+// ARGB -> BGRA: 0xAARRGGBB -> 0xBBGGRRAA (byte reverse per lane).
+inline u32x4 argb_to_bgra(u32x4 px) {
+    return bit_or(
+        bit_or(shl<24>(px), bit_and(shl<8>(px), splat(0x00FF0000u))),
+        bit_or(bit_and(shr<8>(px), splat(0x0000FF00u)), shr<24>(px))
+    );
+}
+
+// ARGB -> RGBA: 0xAARRGGBB -> 0xRRGGBBAA (rotate left 8 bits).
+inline u32x4 argb_to_rgba(u32x4 px) {
+    return bit_or(shl<8>(px), shr<24>(px));
+}
+
+// RGBA -> ARGB: 0xRRGGBBAA -> 0xAARRGGBB (rotate right 8 bits).
+inline u32x4 rgba_to_argb(u32x4 px) {
+    return bit_or(shr<8>(px), shl<24>(px));
+}
+
+// BGRA -> ARGB: byte reverse (self-inverse).
+inline u32x4 bgra_to_argb(u32x4 px) {
+    return argb_to_bgra(px);
+}
+
+// BGRA -> RGBA: 0xBBGGRRAA -> 0xRRGGBBAA (swap R and B, keep G and A).
+inline u32x4 bgra_to_rgba(u32x4 px) {
+    auto hi = shr<16>(bit_and(px, splat(0xFF000000u)));
+    auto lo = shl<16>(bit_and(px, splat(0x0000FF00u)));
+    return bit_or(bit_or(hi, lo), bit_and(px, splat(0x00FF00FFu)));
+}
+
+// RGBA -> BGRA: same swap (self-inverse).
+inline u32x4 rgba_to_bgra(u32x4 px) {
+    return bgra_to_rgba(px);
+}
+
+#endif // !__x86_64__
+
+// 3. Compositing and blend modes
+
 //
 // Pixel format: ARGB packed as 0xAARRGGBB (alpha in bits 31..24, blue in bits 7..0).
 // All compositing operates on 4 premultiplied ARGB pixels in parallel.
@@ -1027,61 +1053,150 @@ inline u32x4 interpolate_x4(u32x4 x, u32x4 a, u32x4 y, u32x4 b) {
     return bit_or(rb, ag);
 }
 
-// Extract alpha from 4 packed ARGB pixels.
-inline u32x4 alpha_x4(u32x4 pixels) {
-    return shr<24>(pixels);
+// Affine transform
+//
+// Batch-transform 4 points (SoA) by an affine matrix.
+// | a  c  tx |   | x |   | a*x + c*y + tx |
+// | b  d  ty | × | y | = | b*x + d*y + ty |
+
+inline void affine_apply_x4(f32x4 x, f32x4 y,
+                              float a, float b, float c, float d, float tx, float ty,
+                              f32x4& ox, f32x4& oy) {
+    ox = add(add(mul(splat(a), x), mul(splat(c), y)), splat(tx));
+    oy = add(add(mul(splat(b), x), mul(splat(d), y)), splat(ty));
 }
 
-// Unpack 4 ARGB pixels (0xAARRGGBB, B in byte 0) -> float [0..1] channels.
-inline void unpack_argb(const uint32_t* pixels, f32x4& r, f32x4& g, f32x4& b, f32x4& a) {
-    auto raw = as_u32(load(reinterpret_cast<const int32_t*>(pixels)));
-    auto scale = splat(1.0f / 255.0f);
-    auto mask8 = splat(0xFFu);
-    b = mul(cvt(as_i32(bit_and(raw, mask8))), scale);
-    g = mul(cvt(as_i32(bit_and(shr<8>(raw), mask8))), scale);
-    r = mul(cvt(as_i32(bit_and(shr<16>(raw), mask8))), scale);
-    a = mul(cvt(as_i32(shr<24>(raw))), scale);
+// Color matrix
+//
+// Apply a 4×5 color matrix to RGBA channels. Matrix layout (row-major):
+// m[0..4]   = R row:  R' = m[0]*R + m[1]*G + m[2]*B + m[3]*A + m[4]
+// m[5..9]   = G row:  G' = m[5]*R + m[6]*G + m[7]*B + m[8]*A + m[9]
+// m[10..14] = B row:  B' = m[10]*R + m[11]*G + m[12]*B + m[13]*A + m[14]
+// m[15..19] = A row:  A' = m[15]*R + m[16]*G + m[17]*B + m[18]*A + m[19]
+
+inline void color_matrix_apply(f32x4& r, f32x4& g, f32x4& b, f32x4& a, const float m[20]) {
+    auto r0 = r, g0 = g, b0 = b, a0 = a;
+    r = add(dot4(r0, g0, b0, a0, splat(m[0]),  splat(m[1]),  splat(m[2]),  splat(m[3])),  splat(m[4]));
+    g = add(dot4(r0, g0, b0, a0, splat(m[5]),  splat(m[6]),  splat(m[7]),  splat(m[8])),  splat(m[9]));
+    b = add(dot4(r0, g0, b0, a0, splat(m[10]), splat(m[11]), splat(m[12]), splat(m[13])), splat(m[14]));
+    a = add(dot4(r0, g0, b0, a0, splat(m[15]), splat(m[16]), splat(m[17]), splat(m[18])), splat(m[19]));
 }
 
-// Pack float [0..1] channels -> 4 ARGB pixels (0xAARRGGBB, B in byte 0).
-inline u32x4 pack_argb(f32x4 r, f32x4 g, f32x4 b, f32x4 a) {
-    auto scale = splat(255.0f);
-    auto lo = zero_f32();
-    auto ai = as_u32(cvt_round(clamp(mul(a, scale), lo, scale)));
-    auto ri = as_u32(cvt_round(clamp(mul(r, scale), lo, scale)));
-    auto gi = as_u32(cvt_round(clamp(mul(g, scale), lo, scale)));
-    auto bi = as_u32(cvt_round(clamp(mul(b, scale), lo, scale)));
-    return bit_or(bit_or(shl<24>(ai), shl<16>(ri)),
-                  bit_or(shl<8>(gi), bi));
+// Blend modes (separable)
+//
+// Per-channel blend functions on float [0..1]. These compute the raw blend
+// result B(s, d); the caller is responsible for Porter-Duff alpha compositing:
+//   out = (1-da)*sc + (1-sa)*dc + sa*da*B(sc/sa, dc/da)
+
+inline f32x4 blend_multiply(f32x4 s, f32x4 d) {
+    return mul(s, d);
 }
 
-// Pixel format swaps — generic fallback for architectures without byte-level shuffle.
-// x86_64 provides pshufb-optimized overrides above.
-#if !defined(__x86_64__)
-
-// ARGB → BGRA: 0xAARRGGBB → 0xBBGGRRAA (byte reverse per lane).
-inline u32x4 argb_to_bgra(u32x4 px) {
-    return bit_or(
-        bit_or(shl<24>(px), bit_and(shl<8>(px), splat(0x00FF0000u))),
-        bit_or(bit_and(shr<8>(px), splat(0x0000FF00u)), shr<24>(px))
-    );
+inline f32x4 blend_screen(f32x4 s, f32x4 d) {
+    return sub(add(s, d), mul(s, d));
 }
 
-// ARGB → RGBA: 0xAARRGGBB → 0xRRGGBBAA (rotate left 8 bits).
-inline u32x4 argb_to_rgba(u32x4 px) {
-    return bit_or(shl<8>(px), shr<24>(px));
+inline f32x4 blend_darken(f32x4 s, f32x4 d) {
+    return min(s, d);
 }
 
-// RGBA → ARGB: 0xRRGGBBAA → 0xAARRGGBB (rotate right 8 bits).
-inline u32x4 rgba_to_argb(u32x4 px) {
-    return bit_or(shr<8>(px), shl<24>(px));
+inline f32x4 blend_lighten(f32x4 s, f32x4 d) {
+    return max(s, d);
 }
 
-// BGRA → ARGB: byte reverse (self-inverse).
-inline u32x4 bgra_to_argb(u32x4 px) {
-    return argb_to_bgra(px);
+inline f32x4 blend_difference(f32x4 s, f32x4 d) {
+    return abs(sub(s, d));
 }
 
-#endif // !__x86_64__
+inline f32x4 blend_exclusion(f32x4 s, f32x4 d) {
+    return sub(add(s, d), mul(splat(2.0f), mul(s, d)));
+}
+
+inline f32x4 blend_add(f32x4 s, f32x4 d) {
+    return min(add(s, d), splat(1.0f));
+}
+
+// Overlay: 2*s*d if d < 0.5, else 1 - 2*(1-s)*(1-d)
+inline f32x4 blend_overlay(f32x4 s, f32x4 d) {
+    auto one = splat(1.0f);
+    auto two = splat(2.0f);
+    auto lo = mul(two, mul(s, d));
+    auto hi = sub(one, mul(two, mul(sub(one, s), sub(one, d))));
+    auto mask = cmplt(d, splat(0.5f));
+    return blend(hi, lo, mask);
+}
+
+// HardLight: overlay with s and d swapped in the condition
+inline f32x4 blend_hard_light(f32x4 s, f32x4 d) {
+    auto one = splat(1.0f);
+    auto two = splat(2.0f);
+    auto lo = mul(two, mul(s, d));
+    auto hi = sub(one, mul(two, mul(sub(one, s), sub(one, d))));
+    auto mask = cmplt(s, splat(0.5f));
+    return blend(hi, lo, mask);
+}
+
+// ColorDodge: d / (1-s), clamped
+inline f32x4 blend_color_dodge(f32x4 s, f32x4 d) {
+    auto one = splat(1.0f);
+    auto inv_s = sub(one, s);
+    auto result = min(div(d, inv_s), one);
+    // s >= 1 && d > 0 -> 1.0
+    auto s_one = cmpge(s, one);
+    result = blend(result, one, s_one);
+    // d == 0 -> 0 regardless of s
+    auto d_zero = cmple(d, zero_f32());
+    return blend(result, zero_f32(), d_zero);
+}
+
+// ColorBurn: 1 - (1-d) / s, clamped
+inline f32x4 blend_color_burn(f32x4 s, f32x4 d) {
+    auto one = splat(1.0f);
+    auto zero = zero_f32();
+    auto result = max(sub(one, div(sub(one, d), s)), zero);
+    // s <= 0 && d < 1 -> 0.0
+    auto s_zero = cmple(s, zero);
+    result = blend(result, zero, s_zero);
+    // d >= 1 -> 1 regardless of s
+    auto d_one = cmpge(d, one);
+    return blend(result, one, d_one);
+}
+
+// SoftLight (W3C compositing spec):
+// Low (s <= 0.5):  d - (1-2s)*d*(1-d)
+// High (s > 0.5):  d + (2s-1)*(D-d)
+//   where D = sqrt(d) if d > 0.25, else ((16d-12)*d+4)*d
+inline f32x4 blend_soft_light(f32x4 s, f32x4 d) {
+    auto one = splat(1.0f);
+    auto two_s = mul(splat(2.0f), s);
+
+    auto lo = sub(d, mul(mul(sub(one, two_s), d), sub(one, d)));
+
+    auto d_poly = mul(add(mul(sub(mul(splat(16.0f), d), splat(12.0f)), d), splat(4.0f)), d);
+    auto d_sqrt = sqrt(d);
+    auto d_mask = cmple(d, splat(0.25f));
+    auto D = blend(d_sqrt, d_poly, d_mask);
+    auto hi = add(d, mul(sub(two_s, one), sub(D, d)));
+
+    auto s_mask = cmple(s, splat(0.5f));
+    return blend(hi, lo, s_mask);
+}
+
+// SrcOver in float domain (non-premultiplied RGBA)
+//
+// Composites source over destination, returning result in or/og/ob/oa.
+// Both inputs are non-premultiplied float [0..1] channels.
+inline void src_over_f32(f32x4 sr, f32x4 sg, f32x4 sb, f32x4 sa,
+                          f32x4 dr, f32x4 dg, f32x4 db, f32x4 da,
+                          f32x4& or_, f32x4& og, f32x4& ob, f32x4& oa) {
+    auto one_minus_sa = sub(splat(1.0f), sa);
+    oa = add(sa, mul(da, one_minus_sa));
+    auto inv_oa = rcp(oa);
+    auto has_alpha = cmpgt(oa, zero_f32());
+    inv_oa = as_f32(bit_and(as_u32(inv_oa), has_alpha));
+    or_ = mul(add(mul(sr, sa), mul(mul(dr, da), one_minus_sa)), inv_oa);
+    og  = mul(add(mul(sg, sa), mul(mul(dg, da), one_minus_sa)), inv_oa);
+    ob  = mul(add(mul(sb, sa), mul(mul(db, da), one_minus_sa)), inv_oa);
+}
 
 } // namespace kosmsimd
