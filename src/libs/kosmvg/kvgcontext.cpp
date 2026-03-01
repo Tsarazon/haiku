@@ -1067,6 +1067,7 @@ void Context::draw_linear_gradient(const Gradient& gradient,
         PaintSource paint;
         paint.kind = PaintKind::LinearGradient;
         paint.gradient = gradient_impl(gradient);
+        paint.gradient->ensure_colortable();
         paint.grad_spread = gradient.spread();
         paint.grad_values[0] = dev_start.x;
         paint.grad_values[1] = dev_start.y;
@@ -1089,6 +1090,7 @@ void Context::draw_linear_gradient(const Gradient& gradient,
     float dy = dev_end.y - dev_start.y;
     float len_sq = dx * dx + dy * dy;
     const auto* gi = gradient_impl(gradient);
+    gi->ensure_colortable();
 
     float eff_op = effective_opacity(st);
     uint32_t op8 = static_cast<uint32_t>(eff_op * 255.0f + 0.5f);
@@ -1160,6 +1162,7 @@ void Context::draw_radial_gradient(const Gradient& gradient,
         PaintSource paint;
         paint.kind = PaintKind::RadialGradient;
         paint.gradient = gradient_impl(gradient);
+        paint.gradient->ensure_colortable();
         paint.grad_spread = gradient.spread();
         paint.grad_values[0] = dev_end.x;
         paint.grad_values[1] = dev_end.y;
@@ -1183,6 +1186,7 @@ void Context::draw_radial_gradient(const Gradient& gradient,
     float cx = dev_end.x, cy = dev_end.y, cr = dev_er;
     float fx = dev_start.x, fy = dev_start.y, fr = dev_sr;
     const auto* gi = gradient_impl(gradient);
+    gi->ensure_colortable();
 
     float eff_op = effective_opacity(st);
     uint32_t op8 = static_cast<uint32_t>(eff_op * 255.0f + 0.5f);
@@ -1265,6 +1269,7 @@ void Context::draw_conic_gradient(const Gradient& gradient,
         PaintSource paint;
         paint.kind = PaintKind::ConicGradient;
         paint.gradient = gradient_impl(gradient);
+        paint.gradient->ensure_colortable();
         paint.grad_spread = gradient.spread();
         paint.grad_values[0] = dev_center.x;
         paint.grad_values[1] = dev_center.y;
@@ -1283,6 +1288,7 @@ void Context::draw_conic_gradient(const Gradient& gradient,
         draw_shadow(*m_impl, draw_spans, st.shadow);
 
     const auto* gi = gradient_impl(gradient);
+    gi->ensure_colortable();
 
     float eff_op = effective_opacity(st);
     uint32_t op8 = static_cast<uint32_t>(eff_op * 255.0f + 0.5f);

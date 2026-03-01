@@ -52,19 +52,17 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float x1 = paint.grad_values[0], y1 = paint.grad_values[1];
         float x2 = paint.grad_values[2], y2 = paint.grad_values[3];
 
-        // Use pre-computed inverse transform (avoids per-pixel matrix inversion)
         Point gp = paint.grad_inv_valid
             ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
             : Point(float(px) + 0.5f, float(py) + 0.5f);
 
-        float dx = x2 - x1;
-        float dy = y2 - y1;
+        float dx = x2 - x1, dy = y2 - y1;
         float len_sq = dx * dx + dy * dy;
         if (len_sq < 1e-10f)
-            return sample_gradient(paint.gradient, 0.0f);
+            return gradient_pixel(paint.gradient, 0.0f);
 
         float t = ((gp.x - x1) * dx + (gp.y - y1) * dy) / len_sq;
-        return sample_gradient(paint.gradient, t);
+        return gradient_pixel(paint.gradient, t);
     }
 
     case PaintKind::RadialGradient: {
@@ -75,43 +73,30 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
             ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
             : Point(float(px) + 0.5f, float(py) + 0.5f);
 
-        // Two-point radial: solve for t where point is on circle(f + t*(c-f), fr + t*(cr-fr))
-        float dx = gp.x - fx;
-        float dy = gp.y - fy;
-        float cdx = cx - fx;
-        float cdy = cy - fy;
+        float dx = gp.x - fx, dy = gp.y - fy;
+        float cdx = cx - fx, cdy = cy - fy;
         float dr = cr - fr;
 
         float a = cdx * cdx + cdy * cdy - dr * dr;
         float b = 2.0f * (dx * cdx + dy * cdy + fr * dr);
         float c = dx * dx + dy * dy - fr * fr;
 
-        // Per SVG spec: choose the largest t for which the interpolated
-        // radius (fr + t*dr) is non-negative. That maps pixels to the
-        // outermost visible shell of the gradient cone.
         float t = 0.0f;
         if (std::abs(a) < 1e-10f) {
-            // Degenerate (linear) case: single solution.
-            if (std::abs(b) > 1e-10f)
-                t = -c / b;
+            if (std::abs(b) > 1e-10f) t = -c / b;
         } else {
             float disc = b * b - 4.0f * a * c;
             if (disc >= 0.0f) {
                 float sq = std::sqrt(disc);
                 float t1 = (-b + sq) / (2.0f * a);
                 float t2 = (-b - sq) / (2.0f * a);
-                bool t1_valid = (fr + t1 * dr >= 0.0f);
-                bool t2_valid = (fr + t2 * dr >= 0.0f);
-                if (t1_valid && t2_valid)
-                    t = (t1 > t2) ? t1 : t2;  // both valid: take the larger
-                else if (t1_valid)
-                    t = t1;
-                else if (t2_valid)
-                    t = t2;
-                // else: both produce negative radius — leave t = 0 (pad/transparent)
+                bool v1 = (fr + t1 * dr >= 0.0f), v2 = (fr + t2 * dr >= 0.0f);
+                if (v1 && v2) t = (t1 > t2) ? t1 : t2;
+                else if (v1) t = t1;
+                else if (v2) t = t2;
             }
         }
-        return sample_gradient(paint.gradient, t);
+        return gradient_pixel(paint.gradient, t);
     }
 
     case PaintKind::ConicGradient: {
@@ -126,7 +111,7 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float t = angle / two_pi;
         t = std::fmod(t, 1.0f);
         if (t < 0.0f) t += 1.0f;
-        return sample_gradient(paint.gradient, t);
+        return gradient_pixel(paint.gradient, t);
     }
 
     case PaintKind::Texture: {
@@ -696,6 +681,284 @@ struct ClipRowIndex {
     }
 };
 
+// =========================================================================
+//  Row-based gradient fetchers
+//  Fill a scanline buffer with gradient colors, avoiding per-pixel overhead.
+// =========================================================================
+
+// Linear gradient: incremental t along scanline.
+// Uses fixed-point when possible for maximum throughput.
+void fetch_linear_row(uint32_t* buffer, const PaintSource& paint,
+                      int y, int x, int length) {
+    const auto* gi = paint.gradient;
+    float x1 = paint.grad_values[0], y1 = paint.grad_values[1];
+    float x2 = paint.grad_values[2], y2 = paint.grad_values[3];
+
+    float gdx = x2 - x1, gdy = y2 - y1;
+    float len_sq = gdx * gdx + gdy * gdy;
+
+    if (len_sq < 1e-10f) {
+        memfill32(buffer, length, gradient_pixel(gi, 0.0f));
+        return;
+    }
+
+    float inv_len_sq = 1.0f / len_sq;
+
+    // Transform first pixel through grad_inv_transform
+    float px0 = float(x) + 0.5f, py = float(y) + 0.5f;
+    float gx, gy;
+    if (paint.grad_inv_valid) {
+        const auto& m = paint.grad_inv_transform;
+        gx = m.a * px0 + m.c * py + m.tx;
+        gy = m.b * px0 + m.d * py + m.ty;
+    } else {
+        gx = px0;
+        gy = py;
+    }
+
+    float t = ((gx - x1) * gdx + (gy - y1) * gdy) * inv_len_sq;
+    // Per-pixel increment: transform step (1,0) -> (m.a, m.b)
+    float inc;
+    if (paint.grad_inv_valid) {
+        const auto& m = paint.grad_inv_transform;
+        inc = (m.a * gdx + m.b * gdy) * inv_len_sq;
+    } else {
+        inc = gdx * inv_len_sq;
+    }
+
+    // Scale to color table range
+    float tbl = t * (kColorTableSize - 1);
+    float inc_tbl = inc * (kColorTableSize - 1);
+
+    const uint32_t* end = buffer + length;
+    if (inc_tbl > -1e-5f && inc_tbl < 1e-5f) {
+        // Constant-color row (gradient perpendicular to scanline)
+        memfill32(buffer, length, gradient_pixel_fixed(gi,
+            static_cast<int>(tbl * kFixptSize)));
+    } else if (tbl + inc_tbl * length < float(INT_MAX >> (kFixptBits + 1))
+            && tbl + inc_tbl * length > float(INT_MIN >> (kFixptBits + 1))) {
+        // Fixed-point fast path
+        int t_fixed = static_cast<int>(tbl * kFixptSize);
+        int inc_fixed = static_cast<int>(inc_tbl * kFixptSize);
+        while (buffer < end) {
+            *buffer++ = gradient_pixel_fixed(gi, t_fixed);
+            t_fixed += inc_fixed;
+        }
+    } else {
+        // Float fallback (very large gradients)
+        while (buffer < end) {
+            *buffer++ = gradient_pixel(gi, tbl / (kColorTableSize - 1));
+            tbl += inc_tbl;
+        }
+    }
+}
+
+// Radial gradient: incremental discriminant stepping.
+// Pre-computes quadratic coefficients once per scanline, then steps
+// through pixels with additions + one sqrt per pixel.
+void fetch_radial_row(uint32_t* buffer, const PaintSource& paint,
+                      int y, int x, int length) {
+    const auto* gi = paint.gradient;
+    float cx = paint.grad_values[0], cy = paint.grad_values[1], cr = paint.grad_values[2];
+    float fx = paint.grad_values[3], fy = paint.grad_values[4], fr = paint.grad_values[5];
+
+    float cdx = cx - fx, cdy = cy - fy;
+    float dr = cr - fr;
+    float a_coeff = cdx * cdx + cdy * cdy - dr * dr;
+
+    // Transform first pixel through grad_inv_transform
+    float px0 = float(x) + 0.5f, py = float(y) + 0.5f;
+    float gx, gy;
+    float step_x, step_y; // transform of (1, 0)
+    if (paint.grad_inv_valid) {
+        const auto& m = paint.grad_inv_transform;
+        gx = m.a * px0 + m.c * py + m.tx;
+        gy = m.b * px0 + m.d * py + m.ty;
+        step_x = m.a;
+        step_y = m.b;
+    } else {
+        gx = px0;
+        gy = py;
+        step_x = 1.0f;
+        step_y = 0.0f;
+    }
+
+    float rx = gx - fx;
+    float ry = gy - fy;
+
+    if (std::abs(a_coeff) < 1e-10f) {
+        // Degenerate case: per-pixel fallback
+        for (int i = 0; i < length; ++i) {
+            float dx = rx + float(i) * step_x;
+            float dy = ry + float(i) * step_y;
+            float b = 2.0f * (dx * cdx + dy * cdy + fr * dr);
+            float c = dx * dx + dy * dy - fr * fr;
+            float t = (std::abs(b) > 1e-10f) ? -c / b : 0.0f;
+            buffer[i] = gradient_pixel(gi, t);
+        }
+        return;
+    }
+
+    float inv_a = 1.0f / (2.0f * a_coeff);
+
+    float b_raw = 2.0f * (dr * fr + rx * cdx + ry * cdy);
+    float delta_b_raw = 2.0f * (step_x * cdx + step_y * cdy);
+
+    float bb = b_raw * b_raw;
+    float db_sq = delta_b_raw * delta_b_raw;
+
+    float b_scaled = b_raw * inv_a;
+    float delta_b_scaled = delta_b_raw * inv_a;
+
+    float rxrxryry = rx * rx + ry * ry;
+    float step_sq = step_x * step_x + step_y * step_y;
+    float rx_step = 2.0f * (rx * step_x + ry * step_y);
+
+    float inv_a2 = inv_a * inv_a;
+
+    // D(i) = b(i)^2 - 4*a*c(i);  det = D / (4a^2)
+    float det = (bb - 4.0f * a_coeff * (rxrxryry - fr * fr)) * inv_a2;
+    // delta_det = (2*b0*db + db^2 - 4*a*(rx_step + step_sq)) / (4a^2)
+    float delta_det = (2.0f * b_raw * delta_b_raw + db_sq
+                       - 4.0f * a_coeff * (rx_step + step_sq)) * inv_a2;
+    // delta2_det = (2*db^2 - 8*a*step_sq) / (4a^2)
+    float delta_delta_det = (2.0f * db_sq
+                             - 8.0f * a_coeff * step_sq) * inv_a2;
+
+    bool extended = (fr != 0.0f || dr != cr);
+
+    for (int i = 0; i < length; ++i) {
+        float w = 0.0f;
+        if (det >= 0.0f) {
+            float sq = std::sqrt(det);
+            float w1 = sq - b_scaled;
+            float w2 = -sq - b_scaled;
+            bool v1 = !extended || (fr + dr * w1 >= 0.0f);
+            bool v2 = !extended || (fr + dr * w2 >= 0.0f);
+            if (v1 && v2)
+                w = (w1 > w2) ? w1 : w2;
+            else if (v1)
+                w = w1;
+            else if (v2)
+                w = w2;
+        }
+        buffer[i] = gradient_pixel(gi, w);
+        det += delta_det;
+        delta_det += delta_delta_det;
+        b_scaled += delta_b_scaled;
+    }
+}
+
+// Conic gradient: atan2 per pixel (no incremental shortcut).
+// LUT still provides the main speedup.
+void fetch_conic_row(uint32_t* buffer, const PaintSource& paint,
+                     int y, int x, int length) {
+    const auto* gi = paint.gradient;
+    float cx = paint.grad_values[0], cy = paint.grad_values[1];
+    float start_angle = paint.grad_values[2];
+
+    float px0 = float(x) + 0.5f, py = float(y) + 0.5f;
+    float gx0, gy0;
+    float step_x, step_y;
+    if (paint.grad_inv_valid) {
+        const auto& m = paint.grad_inv_transform;
+        gx0 = m.a * px0 + m.c * py + m.tx;
+        gy0 = m.b * px0 + m.d * py + m.ty;
+        step_x = m.a;
+        step_y = m.b;
+    } else {
+        gx0 = px0;
+        gy0 = py;
+        step_x = 1.0f;
+        step_y = 0.0f;
+    }
+
+    float rx = gx0 - cx;
+    float ry = gy0 - cy;
+
+    for (int i = 0; i < length; ++i) {
+        float angle = std::atan2(ry + float(i) * step_y,
+                                 rx + float(i) * step_x) - start_angle;
+        float t = angle / two_pi;
+        t = std::fmod(t, 1.0f);
+        if (t < 0.0f) t += 1.0f;
+        buffer[i] = gradient_pixel(gi, t);
+    }
+}
+
+// Specialized blend span for gradient + Normal + SourceOver + sRGB.
+// Fetches a whole row of gradient colors via the appropriate row fetcher,
+// then composites the row in a tight loop.
+void blend_span_gradient_srcover(
+        const BlendParams& params,
+        const Span& span,
+        const SpanBuffer* clip_spans,
+        const ClipRowIndex* clip_idx,
+        const IntRect& clip_rect,
+        uint32_t* fetch_buf) {
+    int y = span.y;
+    if (y < clip_rect.y || y >= clip_rect.y + clip_rect.h) return;
+
+    int x0 = std::max(span.x, clip_rect.x);
+    int x1 = std::min(span.x + span.len, clip_rect.x + clip_rect.w);
+    if (x0 >= x1) return;
+
+    uint32_t coverage = span.coverage;
+    if (coverage == 0) return;
+
+    uint32_t global_opacity = static_cast<uint32_t>(
+        std::clamp(params.opacity * 255.0f + 0.5f, 0.0f, 255.0f));
+
+    int length = x1 - x0;
+
+    // Fetch gradient colors for this row
+    switch (params.paint->kind) {
+    case PaintKind::LinearGradient:
+        fetch_linear_row(fetch_buf, *params.paint, y, x0, length); break;
+    case PaintKind::RadialGradient:
+        fetch_radial_row(fetch_buf, *params.paint, y, x0, length); break;
+    case PaintKind::ConicGradient:
+        fetch_conic_row(fetch_buf, *params.paint, y, x0, length); break;
+    default:
+        return;
+    }
+
+    auto* row = reinterpret_cast<uint32_t*>(
+        params.target_data + y * params.target_stride);
+
+    for (int i = 0; i < length; ++i) {
+        int px = x0 + i;
+
+        uint8_t cc = (clip_idx && clip_spans)
+            ? clip_idx->coverage_at(*clip_spans, px, y) : 255;
+        if (cc == 0) continue;
+
+        uint32_t src = fetch_buf[i];
+        if (pixel_alpha(src) == 0) continue;
+
+        // Apply coverage: span * clip * opacity
+        uint32_t eff = (coverage * uint32_t(cc) * global_opacity + 32512) / 65025;
+        if (eff == 0) continue;
+
+        if (eff < 255)
+            src = byte_mul(src, eff);
+
+        uint32_t sa = pixel_alpha(src);
+        if (sa == 0) continue;
+
+        if (sa == 255) {
+            row[px] = src;
+        } else {
+            uint32_t dst = row[px];
+            uint32_t inv_sa = 255 - sa;
+            uint32_t t = byte_mul(dst, inv_sa);
+            uint32_t rb = ((src & 0xFF00FF) + (t & 0xFF00FF));
+            uint32_t ag = ((src >> 8) & 0xFF00FF) + ((t >> 8) & 0xFF00FF);
+            row[px] = (ag << 8 & 0xFF00FF00) | (rb & 0x00FF00FF);
+        }
+    }
+}
+
 // Core scanline blend function.
 // Processes one span: reads paint colors, applies coverage, composites onto target.
 
@@ -965,17 +1228,41 @@ void blend(const BlendParams& params, const SpanBuffer& span_buffer,
         clip_idx.build(*clip_spans);
     const ClipRowIndex* cidx = clip_idx.empty() ? nullptr : &clip_idx;
 
-    // Check for fast path
-    bool use_fast = effective.paint->kind == PaintKind::Solid
-                 && effective.blend_mode == BlendMode::Normal
-                 && effective.op == CompositeOp::SourceOver
-                 && !is_linear_space(effective.working_space)
-                 && !effective.dithering
-                 && effective.target_format == PixelFormat::ARGB32_Premultiplied;
+    // Common conditions for all fast paths
+    bool fast_common = effective.blend_mode == BlendMode::Normal
+                    && effective.op == CompositeOp::SourceOver
+                    && !is_linear_space(effective.working_space)
+                    && !effective.dithering
+                    && effective.target_format == PixelFormat::ARGB32_Premultiplied;
 
-    if (use_fast) {
+    bool use_fast_solid = fast_common
+                       && effective.paint->kind == PaintKind::Solid;
+
+    bool use_fast_gradient = fast_common
+                          && (effective.paint->kind == PaintKind::LinearGradient
+                           || effective.paint->kind == PaintKind::RadialGradient
+                           || effective.paint->kind == PaintKind::ConicGradient)
+                          && effective.paint->gradient != nullptr;
+
+    if (use_fast_solid) {
         for (auto& span : span_buffer.spans)
             blend_span_solid_srcover(effective, span, clip_spans, cidx, clip_rect);
+    } else if (use_fast_gradient) {
+        // Stack buffer for gradient row fetch; heap fallback for very wide spans
+        constexpr int kStackBufSize = 4096;
+        uint32_t stack_buf[kStackBufSize];
+        std::unique_ptr<uint32_t[]> heap_buf;
+        uint32_t* fetch_buf = stack_buf;
+
+        int max_len = clip_rect.w;
+        if (max_len > kStackBufSize) {
+            heap_buf.reset(new uint32_t[max_len]);
+            fetch_buf = heap_buf.get();
+        }
+
+        for (auto& span : span_buffer.spans)
+            blend_span_gradient_srcover(effective, span, clip_spans, cidx,
+                                        clip_rect, fetch_buf);
     } else {
         for (auto& span : span_buffer.spans)
             blend_span(effective, span, clip_spans, cidx, clip_rect);

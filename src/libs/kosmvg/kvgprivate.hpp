@@ -22,6 +22,14 @@ namespace kvg {
 
 inline constexpr double sqrt2 = std::numbers::sqrt2;
 
+// Gradient color table size.  2048 gives sub-pixel precision even on 4K
+// displays while fitting comfortably in L1 cache (8 KB).
+inline constexpr int kColorTableSize = 2048;
+
+// Fixed-point precision for scanline-incremental gradient fetching.
+inline constexpr int kFixptBits = 8;
+inline constexpr int kFixptSize = 1 << kFixptBits; // 256
+
 // -- Intrusive reference counting --
 
 struct RefCounted {
@@ -161,6 +169,22 @@ struct Gradient::Impl : RefCounted {
     std::vector<Gradient::Stop> stops;
     GradientSpread spread = GradientSpread::Pad;
     ColorSpace color_space_;
+
+    // Pre-computed color table for fast per-pixel lookup.
+    // Built lazily on first use via ensure_colortable().
+    mutable uint32_t colortable[kColorTableSize];
+    mutable bool colortable_valid = false;
+
+    void ensure_colortable() const {
+        if (colortable_valid) return;
+        build_colortable();
+        colortable_valid = true;
+    }
+
+    void invalidate_colortable() { colortable_valid = false; }
+
+private:
+    void build_colortable() const;
 };
 
 // -- Pattern::Impl --
@@ -530,21 +554,58 @@ inline bool is_linear_space(const ColorSpace* ws) {
 // Mirrors Gradient::sample() exactly (same spread formulas, binary search).
 // When the gradient's color space is linear sRGB, interpolation happens
 // in linear light for physically correct results.
+// Clamp a LUT index according to spread mode.
+inline int gradient_clamp(const Gradient::Impl* gi, int ipos) {
+    switch (gi->spread) {
+    case GradientSpread::Pad:
+        return std::clamp(ipos, 0, kColorTableSize - 1);
+    case GradientSpread::Repeat:
+        ipos = ipos % kColorTableSize;
+        if (ipos < 0) ipos += kColorTableSize;
+        return ipos;
+    case GradientSpread::Reflect: {
+        const int limit = kColorTableSize * 2;
+        ipos = ipos % limit;
+        if (ipos < 0) ipos += limit;
+        if (ipos >= kColorTableSize) ipos = limit - 1 - ipos;
+        return ipos;
+    }
+    }
+    return std::clamp(ipos, 0, kColorTableSize - 1);
+}
+
+// Fast gradient pixel lookup via pre-computed color table.
+// pos is normalized [0,1] (or outside for repeat/reflect).
+inline uint32_t gradient_pixel(const Gradient::Impl* gi, float pos) {
+    int ipos = static_cast<int>(pos * (kColorTableSize - 1) + 0.5f);
+    return gi->colortable[gradient_clamp(gi, ipos)];
+}
+
+// Fixed-point variant: pos is in fixed-point with kFixptBits fractional bits,
+// scaled to kColorTableSize range.
+inline uint32_t gradient_pixel_fixed(const Gradient::Impl* gi, int fixed_pos) {
+    int ipos = (fixed_pos + (kFixptSize / 2)) >> kFixptBits;
+    return gi->colortable[gradient_clamp(gi, ipos)];
+}
+
+// Legacy per-pixel sampling (used by Gradient::sample() public API and
+// as fallback when colortable is not available).
 inline uint32_t sample_gradient_argb(const Gradient::Impl* gi, float t) {
     if (!gi || gi->stops.empty())
         return 0xFF000000;
 
-    // NaN/Inf guard — must match Gradient::sample().
-    if (t != t)  // NaN
-        return gi->stops.front().color.premultiplied().to_argb32();
-    if (!std::isfinite(t))
-        t = (t > 0) ? 1.0f : 0.0f;
+    // Fast path: use pre-computed LUT when available.
+    if (gi->colortable_valid)
+        return gradient_pixel(gi, t);
 
-    // Apply spread mode — must match Gradient::sample() exactly.
+    // NaN/Inf guard
+    if (t != t) return gi->stops.front().color.premultiplied().to_argb32();
+    if (!std::isfinite(t)) t = (t > 0) ? 1.0f : 0.0f;
+
+    // Apply spread mode
     switch (gi->spread) {
     case GradientSpread::Pad:
-        t = std::clamp(t, 0.0f, 1.0f);
-        break;
+        t = std::clamp(t, 0.0f, 1.0f); break;
     case GradientSpread::Reflect: {
         t = std::fmod(t, 2.0f);
         if (t < 0.0f) t += 2.0f;
@@ -552,8 +613,7 @@ inline uint32_t sample_gradient_argb(const Gradient::Impl* gi, float t) {
         break;
     }
     case GradientSpread::Repeat:
-        t = t - std::floor(t); // floor-based: correct for negative t, matches Gradient::sample()
-        break;
+        t = t - std::floor(t); break;
     }
 
     auto& stops = gi->stops;
@@ -562,20 +622,16 @@ inline uint32_t sample_gradient_argb(const Gradient::Impl* gi, float t) {
     if (t >= stops.back().offset)
         return stops.back().color.premultiplied().to_argb32();
 
-    // Binary search for the surrounding interval — O(log n), matches Gradient::sample().
     size_t lo = 0, hi = stops.size() - 1;
     while (lo + 1 < hi) {
         size_t mid = (lo + hi) / 2;
-        if (stops[mid].offset <= t)
-            lo = mid;
-        else
-            hi = mid;
+        if (stops[mid].offset <= t) lo = mid;
+        else hi = mid;
     }
 
     float range = stops[hi].offset - stops[lo].offset;
     float local_t = (range > 0.0f) ? (t - stops[lo].offset) / range : 0.0f;
 
-    // Determine interpolation space from gradient's color_space_.
     auto* cs = color_space_impl(gi->color_space_);
     bool linear = cs && (cs->type == ColorSpace::Impl::Type::LinearSRGB ||
                          cs->type == ColorSpace::Impl::Type::ExtLinearSRGB);
@@ -583,20 +639,12 @@ inline uint32_t sample_gradient_argb(const Gradient::Impl* gi, float t) {
     if (linear) {
         const Color& c0 = stops[lo].color;
         const Color& c1 = stops[hi].color;
-
-        // Convert sRGB stop components to linear, lerp, convert back.
         using color_space_util::srgb_to_linear_f;
         using color_space_util::linear_to_srgb_f;
-
-        float r0 = srgb_to_linear_f(c0.r()), r1 = srgb_to_linear_f(c1.r());
-        float g0 = srgb_to_linear_f(c0.g()), g1 = srgb_to_linear_f(c1.g());
-        float b0 = srgb_to_linear_f(c0.b()), b1 = srgb_to_linear_f(c1.b());
-
-        float r = r0 + (r1 - r0) * local_t;
-        float g = g0 + (g1 - g0) * local_t;
-        float b = b0 + (b1 - b0) * local_t;
+        float r = srgb_to_linear_f(c0.r()) + (srgb_to_linear_f(c1.r()) - srgb_to_linear_f(c0.r())) * local_t;
+        float g = srgb_to_linear_f(c0.g()) + (srgb_to_linear_f(c1.g()) - srgb_to_linear_f(c0.g())) * local_t;
+        float b = srgb_to_linear_f(c0.b()) + (srgb_to_linear_f(c1.b()) - srgb_to_linear_f(c0.b())) * local_t;
         float a = c0.a() + (c1.a() - c0.a()) * local_t;
-
         Color result(linear_to_srgb_f(r), linear_to_srgb_f(g), linear_to_srgb_f(b), a);
         return result.premultiplied().to_argb32();
     }

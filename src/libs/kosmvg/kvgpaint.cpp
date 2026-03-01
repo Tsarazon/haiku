@@ -172,6 +172,67 @@ Color Gradient::sample(float t) const {
     return stops[lo].color.lerp(stops[hi].color, frac);
 }
 
+// -- color table --
+
+void Gradient::Impl::build_colortable() const {
+    if (stops.empty()) {
+        std::fill_n(colortable, kColorTableSize, uint32_t(0xFF000000));
+        return;
+    }
+    if (stops.size() == 1) {
+        uint32_t c = stops[0].color.premultiplied().to_argb32();
+        std::fill_n(colortable, kColorTableSize, c);
+        return;
+    }
+
+    // Determine interpolation space
+    auto* cs = color_space_impl(color_space_);
+    bool linear = cs && (cs->type == ColorSpace::Impl::Type::LinearSRGB ||
+                         cs->type == ColorSpace::Impl::Type::ExtLinearSRGB);
+
+    // Fill color table by sampling at each of the kColorTableSize positions.
+    // t ranges from 0.0 to 1.0 (spread mode is applied at lookup time, not here).
+    size_t stop_lo = 0;
+    for (int i = 0; i < kColorTableSize; ++i) {
+        float t = static_cast<float>(i) / static_cast<float>(kColorTableSize - 1);
+
+        // Advance stop_lo so that stops[stop_lo].offset <= t < stops[stop_lo+1].offset
+        while (stop_lo + 2 < stops.size() && stops[stop_lo + 1].offset <= t)
+            ++stop_lo;
+        size_t stop_hi = stop_lo + 1;
+        if (stop_hi >= stops.size()) stop_hi = stops.size() - 1;
+
+        if (t <= stops.front().offset) {
+            colortable[i] = stops.front().color.premultiplied().to_argb32();
+            continue;
+        }
+        if (t >= stops.back().offset) {
+            colortable[i] = stops.back().color.premultiplied().to_argb32();
+            continue;
+        }
+
+        float range = stops[stop_hi].offset - stops[stop_lo].offset;
+        float frac = (range > 0.0f) ? (t - stops[stop_lo].offset) / range : 0.0f;
+        frac = std::clamp(frac, 0.0f, 1.0f);
+
+        if (linear) {
+            const Color& c0 = stops[stop_lo].color;
+            const Color& c1 = stops[stop_hi].color;
+            using color_space_util::srgb_to_linear_f;
+            using color_space_util::linear_to_srgb_f;
+            float r = srgb_to_linear_f(c0.r()) + (srgb_to_linear_f(c1.r()) - srgb_to_linear_f(c0.r())) * frac;
+            float g = srgb_to_linear_f(c0.g()) + (srgb_to_linear_f(c1.g()) - srgb_to_linear_f(c0.g())) * frac;
+            float b = srgb_to_linear_f(c0.b()) + (srgb_to_linear_f(c1.b()) - srgb_to_linear_f(c0.b())) * frac;
+            float a = c0.a() + (c1.a() - c0.a()) * frac;
+            Color result(linear_to_srgb_f(r), linear_to_srgb_f(g), linear_to_srgb_f(b), a);
+            colortable[i] = result.premultiplied().to_argb32();
+        } else {
+            Color c = stops[stop_lo].color.lerp(stops[stop_hi].color, frac);
+            colortable[i] = c.premultiplied().to_argb32();
+        }
+    }
+}
+
 // ============================================================
 //  Pattern
 // ============================================================
