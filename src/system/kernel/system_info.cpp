@@ -33,6 +33,7 @@
 #include <messaging.h>
 #include <port.h>
 #include <real_time_clock.h>
+#include <kosm_mutex.h>
 #include <sem.h>
 #include <smp.h>
 #include <team.h>
@@ -66,6 +67,8 @@ dump_info(int argc, char **argv)
 
 	kprintf("sems:\t\t%" B_PRId32 " (%" B_PRId32 " max)\n", sem_used_sems(),
 		sem_max_sems());
+	kprintf("kosm_mtx:\t%" B_PRId32 " (%" B_PRId32 " max)\n",
+		kosm_mutex_used(), kosm_mutex_max());
 	kprintf("ports:\t\t%" B_PRId32 " (%" B_PRId32 " max)\n", port_used_ports(),
 			port_max_ports());
 	kprintf("threads:\t%" B_PRId32 " (%" B_PRId32 " max)\n",
