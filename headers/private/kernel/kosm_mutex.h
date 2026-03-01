@@ -44,6 +44,8 @@ status_t		_user_kosm_release_mutex(kosm_mutex_id id);
 status_t		_user_kosm_mark_mutex_consistent(kosm_mutex_id id);
 status_t		_user_kosm_get_mutex_info(kosm_mutex_id id,
 					kosm_mutex_info* userInfo, size_t size);
+status_t		_user_kosm_get_next_mutex_info(team_id team, int32* userCookie,
+					kosm_mutex_info* userInfo, size_t size);
 
 #ifdef __cplusplus
 }

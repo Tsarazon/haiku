@@ -27,7 +27,8 @@ enum {
 	KOSM_MUTEX_OWNER_DEAD			= B_ERRORS_END + 0x2000,
 	KOSM_MUTEX_NOT_OWNER,
 	KOSM_MUTEX_NOT_RECOVERABLE,
-	KOSM_MUTEX_DEADLOCK
+	KOSM_MUTEX_DEADLOCK,
+	KOSM_MUTEX_NO_MORE
 };
 
 typedef struct {
@@ -51,12 +52,17 @@ extern status_t			kosm_release_mutex(kosm_mutex_id id);
 
 extern status_t			kosm_mark_mutex_consistent(kosm_mutex_id id);
 
-/* system private, use macro instead */
+/* system private, use macros instead */
 extern status_t			_kosm_get_mutex_info(kosm_mutex_id id,
+							kosm_mutex_info* info, size_t size);
+extern status_t			_kosm_get_next_mutex_info(team_id team, int32* cookie,
 							kosm_mutex_info* info, size_t size);
 
 #define kosm_get_mutex_info(id, info) \
 	_kosm_get_mutex_info((id), (info), sizeof(*(info)))
+
+#define kosm_get_next_mutex_info(team, cookie, info) \
+	_kosm_get_next_mutex_info((team), (cookie), (info), sizeof(*(info)))
 
 
 #ifdef __cplusplus

@@ -106,6 +106,9 @@ extern status_t		_kern_kosm_release_mutex(kosm_mutex_id id);
 extern status_t		_kern_kosm_mark_mutex_consistent(kosm_mutex_id id);
 extern status_t		_kern_kosm_get_mutex_info(kosm_mutex_id id,
 						kosm_mutex_info* info, size_t size);
+extern status_t		_kern_kosm_get_next_mutex_info(team_id team,
+						int32* cookie, kosm_mutex_info* info,
+						size_t size);
 
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);

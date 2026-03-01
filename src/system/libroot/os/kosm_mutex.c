@@ -69,3 +69,11 @@ _kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info *info, size_t size)
 {
 	return _kern_kosm_get_mutex_info(id, info, size);
 }
+
+
+status_t
+_kosm_get_next_mutex_info(team_id team, int32 *cookie,
+	kosm_mutex_info *info, size_t size)
+{
+	return _kern_kosm_get_next_mutex_info(team, cookie, info, size);
+}

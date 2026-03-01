@@ -14,6 +14,9 @@
  *                         max(waiter_priorities across all held PI mutexes))
  *   Recalculated on every waiter add/remove and ownership transfer.
  *   Transitive PI is not implemented.
+ *
+ * Name lookup uses a hash table (sNameHashTable) for O(1) find_mutex,
+ * protected by sMutexListSpinlock.
  */
 
 #include <stdlib.h>
@@ -92,8 +95,59 @@ struct kosm_mutex_entry {
 	// Held-list links (hlist pattern for O(1) insert/remove).
 	struct kosm_mutex_entry*	next_held;
 	struct kosm_mutex_entry**	prev_held_ptr;
+
+	// Name hash chain (protected by sMutexListSpinlock).
+	struct kosm_mutex_entry*	hash_next;
 };
 
+
+// Name hash table
+
+static const int32 kNameHashSize = 256;
+
+static struct kosm_mutex_entry* sNameHashTable[kNameHashSize];
+
+static uint32
+name_hash(const char* name)
+{
+	// djb2
+	uint32 hash = 5381;
+	while (*name != '\0')
+		hash = hash * 33 + (uint8)*name++;
+	return hash % kNameHashSize;
+}
+
+
+static void
+name_hash_insert(struct kosm_mutex_entry* entry)
+{
+	if (entry->u.used.name == NULL)
+		return;
+	uint32 bucket = name_hash(entry->u.used.name);
+	entry->hash_next = sNameHashTable[bucket];
+	sNameHashTable[bucket] = entry;
+}
+
+
+static void
+name_hash_remove(struct kosm_mutex_entry* entry)
+{
+	if (entry->u.used.name == NULL)
+		return;
+	uint32 bucket = name_hash(entry->u.used.name);
+	struct kosm_mutex_entry** slot = &sNameHashTable[bucket];
+	while (*slot != NULL) {
+		if (*slot == entry) {
+			*slot = entry->hash_next;
+			entry->hash_next = NULL;
+			return;
+		}
+		slot = &(*slot)->hash_next;
+	}
+}
+
+
+// Mutex table
 
 static const int32 kMaxMutexes = 16384;
 static int32 sMaxMutexes = 2048;
@@ -156,7 +210,7 @@ pi_update_max_waiter(kosm_mutex_entry* entry)
 
 	TODO(SMP): If the boosted thread is running on another CPU, the
 	priority change won't take effect until the next scheduling decision
-	on that CPU.  For proper SMP support, send an IPI or call
+	on that CPU.  For proper SMP support (4+ cores), send an IPI or call
 	scheduler_enqueue_in_run_queue() to force a reschedule.  Safe to
 	defer while targeting 1-2 cores.
 */
@@ -178,8 +232,8 @@ pi_boost_thread_locked(Thread* thread, int32 neededPriority)
 	Must be called with thread's scheduler_lock held.
 
 	Reads max_waiter_priority from held entries without their spinlocks.
-	On ARM64/x86-64 aligned int32 reads are atomic; a slightly stale
-	value is self-correcting on the next waiter add/remove event.
+	On ARM64/x86-64 aligned int32 reads are naturally atomic; a slightly
+	stale value is self-correcting on the next waiter add/remove event.
 */
 static void
 pi_recalculate_locked(Thread* thread)
@@ -237,7 +291,8 @@ fill_mutex_info(struct kosm_mutex_entry* entry, kosm_mutex_info* info)
 
 
 /*!	Uninitializes a mutex slot. Must be called with interrupts disabled,
-	the entry's spinlock held. Unlocks the spinlock before returning.
+	sMutexListSpinlock NOT held, and the entry's spinlock held.
+	Unlocks the entry spinlock before returning.
 	Returns the name pointer for the caller to free().
 */
 static void
@@ -271,9 +326,35 @@ uninit_mutex_locked(struct kosm_mutex_entry& entry, char** _name,
 
 	locker.Unlock();
 
-	SpinLocker _(&sMutexListSpinlock);
+	SpinLocker listLocker(sMutexListSpinlock);
+	name_hash_remove(&entry);
 	free_mutex_slot(id % sMaxMutexes, id + sMaxMutexes);
 	atomic_add(&sUsedMutexes, -1);
+}
+
+
+/*!	Check whether the calling userland thread belongs to the mutex's
+	owner team or to the team that currently holds the mutex.
+	Returns B_NOT_ALLOWED on mismatch.
+	Must be called with entry->lock held.
+*/
+static inline status_t
+check_team_permission(struct kosm_mutex_entry& entry)
+{
+	team_id callerTeam = team_get_current_team_id();
+	if (entry.u.used.owner_team != callerTeam) {
+		// Also allow the holder's team (for KOSM_MUTEX_SHARED across
+		// processes — the holder might be in a different team).
+		if (entry.u.used.holder_ptr != NULL
+			&& entry.u.used.holder_ptr->team->id == callerTeam) {
+			return B_OK;
+		}
+		// Shared mutexes are accessible from any team
+		if ((entry.u.used.creation_flags & KOSM_MUTEX_SHARED) != 0)
+			return B_OK;
+		return B_NOT_ALLOWED;
+	}
+	return B_OK;
 }
 
 
@@ -432,8 +513,11 @@ kosm_mutex_init(kernel_args* args)
 		sMutexes[i].max_waiter_priority = -1;
 		sMutexes[i].next_held = NULL;
 		sMutexes[i].prev_held_ptr = NULL;
+		sMutexes[i].hash_next = NULL;
 		free_mutex_slot(i, i);
 	}
+
+	memset(sNameHashTable, 0, sizeof(sNameHashTable));
 
 	add_debugger_command_etc("kosm_mutexes", &dump_kosm_mutex_list,
 		"List active KosmOS mutexes",
@@ -456,7 +540,7 @@ kosm_mutex_id
 kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 {
 	if (!sMutexesActive || sUsedMutexes == sMaxMutexes)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 
 	if (name == NULL)
 		name = "unnamed kosm_mutex";
@@ -473,10 +557,10 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		return B_NO_MEMORY;
 	strlcpy(tempName, name, nameLength);
 
-	InterruptsSpinLocker _(&sMutexListSpinlock);
+	InterruptsSpinLocker listLocker(sMutexListSpinlock);
 
 	struct kosm_mutex_entry* entry = sFreeMutexesHead;
-	kosm_mutex_id id = B_NO_MORE_SEMS;
+	kosm_mutex_id id = KOSM_MUTEX_NO_MORE;
 
 	if (entry != NULL) {
 		sFreeMutexesHead = entry->u.unused.next;
@@ -496,8 +580,10 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		entry->max_waiter_priority = -1;
 		entry->next_held = NULL;
 		entry->prev_held_ptr = NULL;
+		entry->hash_next = NULL;
 		id = entry->id;
 
+		name_hash_insert(entry);
 		list_add_item(&team->kosm_mutex_list, &entry->u.used.team_link);
 
 		entryLocker.Unlock();
@@ -519,7 +605,7 @@ static status_t
 delete_mutex_internal(kosm_mutex_id id, bool checkPermission)
 {
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 
@@ -537,6 +623,12 @@ delete_mutex_internal(kosm_mutex_id id, bool checkPermission)
 		dprintf("thread %" B_PRId32 " tried to delete kernel kosm_mutex "
 			"%" B_PRId32 "\n", thread_get_current_thread_id(), id);
 		return B_NOT_ALLOWED;
+	}
+
+	if (checkPermission) {
+		status_t perm = check_team_permission(sMutexes[slot]);
+		if (perm != B_OK)
+			return perm;
 	}
 
 	if (sMutexes[slot].u.used.owner_team >= 0) {
@@ -693,21 +785,25 @@ kosm_delete_mutex(kosm_mutex_id id)
 }
 
 
+/*!	Find a mutex by name using the hash table.
+	O(1) average case instead of O(n) linear scan.
+*/
 kosm_mutex_id
 kosm_find_mutex(const char* name)
 {
 	if (name == NULL)
 		return B_BAD_VALUE;
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 
-	InterruptsLocker _;
+	InterruptsSpinLocker listLocker(sMutexListSpinlock);
 
-	for (int32 i = 0; i < sMaxMutexes; i++) {
-		SpinLocker entryLocker(sMutexes[i].lock);
-		if (sMutexes[i].id >= 0 && sMutexes[i].u.used.name != NULL
-			&& strcmp(name, sMutexes[i].u.used.name) == 0) {
-			return sMutexes[i].id;
+	uint32 bucket = name_hash(name);
+	for (struct kosm_mutex_entry* entry = sNameHashTable[bucket];
+		 entry != NULL; entry = entry->hash_next) {
+		if (entry->id >= 0 && entry->u.used.name != NULL
+			&& strcmp(name, entry->u.used.name) == 0) {
+			return entry->id;
 		}
 	}
 
@@ -731,7 +827,7 @@ kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
 	int32 slot = id % sMaxMutexes;
 
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 
@@ -746,6 +842,12 @@ kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
 	if ((flags & B_CHECK_PERMISSION) != 0
 		&& entry.u.used.owner_team == team_get_kernel_team_id()) {
 		return B_NOT_ALLOWED;
+	}
+
+	if ((flags & B_CHECK_PERMISSION) != 0) {
+		status_t perm = check_team_permission(entry);
+		if (perm != B_OK)
+			return perm;
 	}
 
 	Thread* thread = thread_get_current_thread();
@@ -789,7 +891,7 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 	if (gKernelStartup)
 		return B_OK;
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 	if ((flags & (B_RELATIVE_TIMEOUT | B_ABSOLUTE_TIMEOUT))
@@ -812,6 +914,12 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 		dprintf("thread %" B_PRId32 " tried to acquire kernel kosm_mutex "
 			"%" B_PRId32 "\n", thread_get_current_thread_id(), id);
 		return B_NOT_ALLOWED;
+	}
+
+	if ((flags & B_CHECK_PERMISSION) != 0) {
+		status_t perm = check_team_permission(entry);
+		if (perm != B_OK)
+			return perm;
 	}
 
 	Thread* thread = thread_get_current_thread();
@@ -916,7 +1024,7 @@ kosm_release_mutex(kosm_mutex_id id)
 	if (gKernelStartup)
 		return B_OK;
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 
@@ -945,6 +1053,13 @@ kosm_release_mutex(kosm_mutex_id id)
 	// If released without marking consistent after OWNER_DEAD,
 	// the mutex becomes not recoverable.
 	if (entry.u.used.state == KOSM_MUTEX_STATE_NEEDS_RECOVERY) {
+#ifdef DEBUG
+		dprintf("kosm_mutex %" B_PRId32 " (\"%s\"): released in "
+			"NEEDS_RECOVERY state by thread %" B_PRId32 " without "
+			"kosm_mark_mutex_consistent() — now NOT_RECOVERABLE\n",
+			id, entry.u.used.name ? entry.u.used.name : "?",
+			thread_get_current_thread_id());
+#endif
 		entry.u.used.state = KOSM_MUTEX_STATE_NOT_RECOVERABLE;
 		entry.u.used.holder_thread = -1;
 		entry.u.used.holder_ptr = NULL;
@@ -1032,7 +1147,7 @@ status_t
 kosm_mark_mutex_consistent(kosm_mutex_id id)
 {
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 
@@ -1060,7 +1175,7 @@ status_t
 _kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info* info, size_t size)
 {
 	if (!sMutexesActive)
-		return B_NO_MORE_SEMS;
+		return KOSM_MUTEX_NO_MORE;
 	if (id < 0)
 		return B_BAD_VALUE;
 	if (info == NULL || size != sizeof(kosm_mutex_info))
@@ -1075,6 +1190,41 @@ _kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info* info, size_t size)
 
 	fill_mutex_info(&sMutexes[slot], info);
 	return B_OK;
+}
+
+
+/*!	Iterate over kosm mutexes owned by the specified team.
+	\a cookie should be initialized to 0 before the first call.
+	Pass \a team == -1 to iterate over all mutexes.
+*/
+status_t
+_kosm_get_next_mutex_info(team_id team, int32* _cookie,
+	kosm_mutex_info* info, size_t size)
+{
+	if (!sMutexesActive)
+		return KOSM_MUTEX_NO_MORE;
+	if (_cookie == NULL || info == NULL || size != sizeof(kosm_mutex_info))
+		return B_BAD_VALUE;
+
+	int32 slot = *_cookie;
+	if (slot < 0 || slot >= sMaxMutexes)
+		return B_BAD_VALUE;
+
+	InterruptsLocker _;
+
+	for (; slot < sMaxMutexes; slot++) {
+		SpinLocker entryLocker(sMutexes[slot].lock);
+		if (sMutexes[slot].id < 0)
+			continue;
+		if (team != -1 && sMutexes[slot].u.used.owner_team != team)
+			continue;
+
+		fill_mutex_info(&sMutexes[slot], info);
+		*_cookie = slot + 1;
+		return B_OK;
+	}
+
+	return B_ENTRY_NOT_FOUND;
 }
 
 
@@ -1154,6 +1304,31 @@ _user_kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags,
 status_t
 _user_kosm_release_mutex(kosm_mutex_id id)
 {
+	if (id < 0)
+		return B_BAD_VALUE;
+
+	int32 slot = id % sMaxMutexes;
+
+	// Verify thread belongs to a team that should have access
+	{
+		InterruptsLocker _;
+		SpinLocker entryLocker(sMutexes[slot].lock);
+
+		if (sMutexes[slot].id != id)
+			return B_BAD_VALUE;
+
+		// The holder_thread check inside kosm_release_mutex is the
+		// primary guard.  This team check prevents a thread in a
+		// foreign process from releasing if thread IDs happen to
+		// collide after recycling.
+		struct kosm_mutex_entry& entry = sMutexes[slot];
+		if (entry.u.used.holder_thread == thread_get_current_thread_id()) {
+			status_t perm = check_team_permission(entry);
+			if (perm != B_OK)
+				return perm;
+		}
+	}
+
 	return kosm_release_mutex(id);
 }
 
@@ -1161,6 +1336,27 @@ _user_kosm_release_mutex(kosm_mutex_id id)
 status_t
 _user_kosm_mark_mutex_consistent(kosm_mutex_id id)
 {
+	if (id < 0)
+		return B_BAD_VALUE;
+
+	int32 slot = id % sMaxMutexes;
+
+	// Verify team permission before forwarding
+	{
+		InterruptsLocker _;
+		SpinLocker entryLocker(sMutexes[slot].lock);
+
+		if (sMutexes[slot].id != id)
+			return B_BAD_VALUE;
+
+		struct kosm_mutex_entry& entry = sMutexes[slot];
+		if (entry.u.used.holder_thread == thread_get_current_thread_id()) {
+			status_t perm = check_team_permission(entry);
+			if (perm != B_OK)
+				return perm;
+		}
+	}
+
 	return kosm_mark_mutex_consistent(id);
 }
 
@@ -1178,6 +1374,33 @@ _user_kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info* userInfo,
 
 	if (status == B_OK && user_memcpy(userInfo, &info, size) < B_OK)
 		return B_BAD_ADDRESS;
+
+	return status;
+}
+
+
+status_t
+_user_kosm_get_next_mutex_info(team_id team, int32* userCookie,
+	kosm_mutex_info* userInfo, size_t size)
+{
+	int32 cookie;
+	kosm_mutex_info info;
+
+	if (userCookie == NULL || !IS_USER_ADDRESS(userCookie))
+		return B_BAD_ADDRESS;
+	if (userInfo == NULL || !IS_USER_ADDRESS(userInfo))
+		return B_BAD_ADDRESS;
+	if (user_memcpy(&cookie, userCookie, sizeof(int32)) < B_OK)
+		return B_BAD_ADDRESS;
+
+	status_t status = _kosm_get_next_mutex_info(team, &cookie, &info, size);
+
+	if (status == B_OK) {
+		if (user_memcpy(userInfo, &info, size) < B_OK)
+			return B_BAD_ADDRESS;
+		if (user_memcpy(userCookie, &cookie, sizeof(int32)) < B_OK)
+			return B_BAD_ADDRESS;
+	}
 
 	return status;
 }
