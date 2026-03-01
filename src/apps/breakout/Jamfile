@@ -1,0 +1,25 @@
+SubDir HAIKU_TOP src apps breakout ;
+
+UseLibraryHeaders kosmvg ;
+UsePrivateHeaders shared ;
+
+SubDirC++Flags -std=c++20 ;
+
+Application BreakoutGame :
+	BreakoutGame.cpp
+	BreakoutView.cpp
+	:
+	be
+	libkosmvg.so
+	localestub
+	[ TargetLibstdc++ ]
+	:
+	BreakoutGame.rdef
+;
+
+DoCatalogs BreakoutGame :
+	x-vnd.Haiku-BreakoutGame
+	:
+	BreakoutGame.cpp
+	BreakoutView.cpp
+;
