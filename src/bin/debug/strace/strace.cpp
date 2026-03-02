@@ -236,6 +236,7 @@ patch_syscalls()
 	extern void patch_file();
 	extern void patch_ioctl();
 	extern void patch_kosm_mutex();
+	extern void patch_kosm_ray();
 	extern void patch_mutex();
 	extern void patch_network();
 	extern void patch_rlimit();
@@ -261,6 +262,7 @@ patch_syscalls()
 	patch_file();
 	patch_ioctl();
 	patch_kosm_mutex();
+	patch_kosm_ray();
 	patch_mutex();
 	patch_network();
 	patch_rlimit();

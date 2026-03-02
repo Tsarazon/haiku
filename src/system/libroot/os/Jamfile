@@ -35,6 +35,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			scheduler.c
 			sem.c
 			kosm_mutex.c
+			kosm_ray.c
 			stack_protector.cpp
 			system_info.cpp
 			system_revision.c
