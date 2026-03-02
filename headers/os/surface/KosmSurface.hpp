@@ -34,8 +34,13 @@ public:
 			uint32				BitOffsetOfComponentOfPlane(uint32 planeIndex,
 									uint32 componentIndex) const;
 
-			status_t			Lock(uint32 options = 0, uint32* outSeed = NULL);
-			status_t			Unlock(uint32 options = 0, uint32* outSeed = NULL);
+			status_t			Lock(uint32 options = 0,
+									uint32* outSeed = nullptr);
+			status_t			LockWithTimeout(bigtime_t timeout,
+									uint32 options = 0,
+									uint32* outSeed = nullptr);
+			status_t			Unlock(uint32 options = 0,
+									uint32* outSeed = nullptr);
 			void*				BaseAddress() const;
 
 			uint32				Seed() const;
@@ -55,7 +60,7 @@ public:
 			status_t			RemoveAllAttachments();
 
 			status_t			SetPurgeable(kosm_purgeable_state newState,
-									kosm_purgeable_state* outOldState = NULL);
+									kosm_purgeable_state* outOldState = nullptr);
 			bool				IsVolatile() const;
 
 			status_t			CreateAccessToken(KosmSurfaceToken* outToken);

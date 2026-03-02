@@ -20,8 +20,8 @@ KosmSurfaceRegistry::Default()
 KosmSurfaceRegistry::KosmSurfaceRegistry()
 	:
 	fRegistryArea(-1),
-	fHeader(NULL),
-	fEntries(NULL),
+	fHeader(nullptr),
+	fEntries(nullptr),
 	fIsOwner(false)
 {
 	_InitSharedArea();
@@ -31,7 +31,7 @@ KosmSurfaceRegistry::KosmSurfaceRegistry()
 KosmSurfaceRegistry::~KosmSurfaceRegistry()
 {
 	if (fRegistryArea >= 0) {
-		if (fIsOwner && fHeader != NULL && fHeader->lock >= 0)
+		if (fIsOwner && fHeader != nullptr && fHeader->lock >= 0)
 			kosm_delete_mutex(fHeader->lock);
 		delete_area(fRegistryArea);
 	}
@@ -64,7 +64,7 @@ KosmSurfaceRegistry::_CreateSharedArea()
 		+ sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	size = (size + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
 
-	void* address = NULL;
+	void* address = nullptr;
 	fRegistryArea = create_area(KOSM_SURFACE_REGISTRY_AREA_NAME, &address,
 		B_ANY_ADDRESS, size, B_NO_LOCK,
 		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA);
@@ -81,8 +81,8 @@ KosmSurfaceRegistry::_CreateSharedArea()
 		status_t error = fHeader->lock;
 		delete_area(fRegistryArea);
 		fRegistryArea = -1;
-		fHeader = NULL;
-		fEntries = NULL;
+		fHeader = nullptr;
+		fEntries = nullptr;
 		return error;
 	}
 
@@ -101,7 +101,7 @@ KosmSurfaceRegistry::_CreateSharedArea()
 status_t
 KosmSurfaceRegistry::_CloneSharedArea(area_id sourceArea)
 {
-	void* address = NULL;
+	void* address = nullptr;
 	fRegistryArea = clone_area("kosm_surface_registry_clone", &address,
 		B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, sourceArea);
 
@@ -197,7 +197,7 @@ KosmSurfaceRegistry::_Compact()
 {
 	KosmSurfaceRegistryEntry* temp = new(std::nothrow)
 		KosmSurfaceRegistryEntry[KOSM_SURFACE_REGISTRY_MAX_ENTRIES];
-	if (temp == NULL)
+	if (temp == nullptr)
 		return;
 
 	memset(temp, 0,
@@ -222,6 +222,51 @@ KosmSurfaceRegistry::_Compact()
 }
 
 
+void
+KosmSurfaceRegistry::_PurgeDeadTeams()
+{
+	team_info info;
+
+	for (int32 i = 0; i < KOSM_SURFACE_REGISTRY_MAX_ENTRIES; i++) {
+		KosmSurfaceRegistryEntry& entry = fEntries[i];
+		if (entry.id == 0 || entry.id == KOSM_SURFACE_ID_TOMBSTONE)
+			continue;
+
+		if (get_team_info(entry.ownerTeam, &info) != B_OK) {
+			entry.id = KOSM_SURFACE_ID_TOMBSTONE;
+			entry.globalUseCount = 0;
+			entry.ownerTeam = -1;
+			entry.sourceArea = -1;
+			fHeader->entryCount--;
+			fHeader->tombstoneCount++;
+		}
+	}
+
+	if (fHeader->tombstoneCount > KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
+		_Compact();
+}
+
+
+status_t
+KosmSurfaceRegistry::_UnregisterLocked(int32 index)
+{
+	KosmSurfaceRegistryEntry& entry = fEntries[index];
+
+	entry.id = KOSM_SURFACE_ID_TOMBSTONE;
+	entry.globalUseCount = 0;
+	entry.ownerTeam = -1;
+	entry.sourceArea = -1;
+
+	fHeader->entryCount--;
+	fHeader->tombstoneCount++;
+
+	if (fHeader->tombstoneCount > KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
+		_Compact();
+
+	return B_OK;
+}
+
+
 static uint64
 generate_secret()
 {
@@ -239,7 +284,7 @@ KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -247,6 +292,10 @@ KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
 		return status;
 
 	int32 index = _FindEmptySlot(id);
+	if (index < 0) {
+		_PurgeDeadTeams();
+		index = _FindEmptySlot(id);
+	}
 	if (index < 0) {
 		_Unlock();
 		return B_NO_MEMORY;
@@ -266,13 +315,14 @@ KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
 	entry.globalUseCount = 0;
 
 	thread_info info;
-	get_thread_info(find_thread(NULL), &info);
+	get_thread_info(find_thread(nullptr), &info);
 	entry.ownerTeam = info.team;
 
 	entry.sourceArea = sourceArea;
 	entry.width = desc.width;
 	entry.height = desc.height;
 	entry.format = desc.format;
+	entry.usage = desc.usage;
 	entry.bytesPerRow = desc.bytesPerRow;
 	entry.bytesPerElement = desc.bytesPerElement;
 	entry.allocSize = allocSize;
@@ -294,7 +344,7 @@ KosmSurfaceRegistry::Unregister(kosm_surface_id id)
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -307,23 +357,38 @@ KosmSurfaceRegistry::Unregister(kosm_surface_id id)
 		return B_NAME_NOT_FOUND;
 	}
 
-	KosmSurfaceRegistryEntry& entry = fEntries[index];
-
-	if (entry.globalUseCount > 0) {
+	if (fEntries[index].globalUseCount > 0) {
 		_Unlock();
 		return KOSM_SURFACE_IN_USE;
 	}
 
-	entry.id = KOSM_SURFACE_ID_TOMBSTONE;
-	entry.globalUseCount = 0;
-	entry.ownerTeam = -1;
-	entry.sourceArea = -1;
+	_UnregisterLocked(index);
 
-	fHeader->entryCount--;
-	fHeader->tombstoneCount++;
+	_Unlock();
+	return B_OK;
+}
 
-	if (fHeader->tombstoneCount > KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
-		_Compact();
+
+status_t
+KosmSurfaceRegistry::ForceUnregister(kosm_surface_id id)
+{
+	if (id == 0)
+		return B_BAD_VALUE;
+
+	if (fHeader == nullptr)
+		return B_NO_INIT;
+
+	status_t status = _Lock();
+	if (status != B_OK)
+		return status;
+
+	int32 index = _FindSlot(id);
+	if (index < 0) {
+		_Unlock();
+		return B_NAME_NOT_FOUND;
+	}
+
+	_UnregisterLocked(index);
 
 	_Unlock();
 	return B_OK;
@@ -336,7 +401,7 @@ KosmSurfaceRegistry::IncrementGlobalUseCount(kosm_surface_id id)
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -362,7 +427,7 @@ KosmSurfaceRegistry::DecrementGlobalUseCount(kosm_surface_id id)
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -389,7 +454,7 @@ KosmSurfaceRegistry::GlobalUseCount(kosm_surface_id id) const
 	if (id == 0)
 		return 0;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return 0;
 
 	if (_Lock() != B_OK)
@@ -420,7 +485,7 @@ KosmSurfaceRegistry::LookupInfo(kosm_surface_id id,
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -436,27 +501,28 @@ KosmSurfaceRegistry::LookupInfo(kosm_surface_id id,
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
-	get_thread_info(find_thread(NULL), &info);
+	get_thread_info(find_thread(nullptr), &info);
 	if (entry.ownerTeam != info.team) {
 		_Unlock();
 		return B_NOT_ALLOWED;
 	}
 
-	if (outDesc != NULL) {
+	if (outDesc != nullptr) {
 		outDesc->width = entry.width;
 		outDesc->height = entry.height;
 		outDesc->format = entry.format;
+		outDesc->usage = entry.usage;
 		outDesc->bytesPerRow = entry.bytesPerRow;
 		outDesc->bytesPerElement = entry.bytesPerElement;
 	}
 
-	if (outArea != NULL)
+	if (outArea != nullptr)
 		*outArea = entry.sourceArea;
 
-	if (outAllocSize != NULL)
+	if (outAllocSize != nullptr)
 		*outAllocSize = entry.allocSize;
 
-	if (outPlaneCount != NULL)
+	if (outPlaneCount != nullptr)
 		*outPlaneCount = entry.planeCount;
 
 	_Unlock();
@@ -468,10 +534,10 @@ status_t
 KosmSurfaceRegistry::CreateAccessToken(kosm_surface_id id,
 	KosmSurfaceToken* outToken)
 {
-	if (id == 0 || outToken == NULL)
+	if (id == 0 || outToken == nullptr)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -487,7 +553,7 @@ KosmSurfaceRegistry::CreateAccessToken(kosm_surface_id id,
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
-	get_thread_info(find_thread(NULL), &info);
+	get_thread_info(find_thread(nullptr), &info);
 	if (entry.ownerTeam != info.team) {
 		_Unlock();
 		return B_NOT_ALLOWED;
@@ -508,7 +574,7 @@ KosmSurfaceRegistry::ValidateToken(const KosmSurfaceToken& token)
 	if (token.id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -540,7 +606,7 @@ KosmSurfaceRegistry::RevokeAllAccess(kosm_surface_id id)
 	if (id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -556,7 +622,7 @@ KosmSurfaceRegistry::RevokeAllAccess(kosm_surface_id id)
 	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
-	get_thread_info(find_thread(NULL), &info);
+	get_thread_info(find_thread(nullptr), &info);
 	if (entry.ownerTeam != info.team) {
 		_Unlock();
 		return B_NOT_ALLOWED;
@@ -578,7 +644,7 @@ KosmSurfaceRegistry::LookupInfoWithToken(const KosmSurfaceToken& token,
 	if (token.id == 0)
 		return B_BAD_VALUE;
 
-	if (fHeader == NULL)
+	if (fHeader == nullptr)
 		return B_NO_INIT;
 
 	status_t status = _Lock();
@@ -599,21 +665,22 @@ KosmSurfaceRegistry::LookupInfoWithToken(const KosmSurfaceToken& token,
 		return B_NOT_ALLOWED;
 	}
 
-	if (outDesc != NULL) {
+	if (outDesc != nullptr) {
 		outDesc->width = entry.width;
 		outDesc->height = entry.height;
 		outDesc->format = entry.format;
+		outDesc->usage = entry.usage;
 		outDesc->bytesPerRow = entry.bytesPerRow;
 		outDesc->bytesPerElement = entry.bytesPerElement;
 	}
 
-	if (outArea != NULL)
+	if (outArea != nullptr)
 		*outArea = entry.sourceArea;
 
-	if (outAllocSize != NULL)
+	if (outAllocSize != nullptr)
 		*outAllocSize = entry.allocSize;
 
-	if (outPlaneCount != NULL)
+	if (outPlaneCount != nullptr)
 		*outPlaneCount = entry.planeCount;
 
 	_Unlock();

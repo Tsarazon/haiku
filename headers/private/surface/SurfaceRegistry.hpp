@@ -43,6 +43,7 @@ struct KosmSurfaceRegistryEntry {
 	uint32			width;
 	uint32			height;
 	kosm_pixel_format format;
+	uint32			usage;
 	uint32			bytesPerRow;
 	uint32			bytesPerElement;
 	size_t			allocSize;
@@ -61,6 +62,7 @@ public:
 									const KosmSurfaceDesc& desc,
 									size_t allocSize, uint32 planeCount);
 			status_t			Unregister(kosm_surface_id id);
+			status_t			ForceUnregister(kosm_surface_id id);
 
 			status_t			CreateAccessToken(kosm_surface_id id,
 									KosmSurfaceToken* outToken);
@@ -70,15 +72,15 @@ public:
 			status_t			LookupInfo(kosm_surface_id id,
 									KosmSurfaceDesc* outDesc,
 									area_id* outArea,
-									size_t* outAllocSize = NULL,
-									uint32* outPlaneCount = NULL) const;
+									size_t* outAllocSize = nullptr,
+									uint32* outPlaneCount = nullptr) const;
 
 			status_t			LookupInfoWithToken(
 									const KosmSurfaceToken& token,
 									KosmSurfaceDesc* outDesc,
 									area_id* outArea,
-									size_t* outAllocSize = NULL,
-									uint32* outPlaneCount = NULL) const;
+									size_t* outAllocSize = nullptr,
+									uint32* outPlaneCount = nullptr) const;
 
 			status_t			IncrementGlobalUseCount(kosm_surface_id id);
 			status_t			DecrementGlobalUseCount(kosm_surface_id id);
@@ -99,6 +101,9 @@ private:
 			int32				_FindSlot(kosm_surface_id id) const;
 			int32				_FindEmptySlot(kosm_surface_id id) const;
 			void				_Compact();
+			void				_PurgeDeadTeams();
+
+			status_t			_UnregisterLocked(int32 index);
 
 			area_id				fRegistryArea;
 			KosmSurfaceRegistryHeader* fHeader;

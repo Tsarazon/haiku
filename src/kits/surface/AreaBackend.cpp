@@ -62,7 +62,7 @@ status_t
 KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 	KosmSurfaceBuffer** outBuffer)
 {
-	if (outBuffer == NULL)
+	if (outBuffer == nullptr)
 		return B_BAD_VALUE;
 
 	if (desc.width == 0 || desc.height == 0)
@@ -72,7 +72,7 @@ KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 		return B_BAD_VALUE;
 
 	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
-	if (buffer == NULL)
+	if (buffer == nullptr)
 		return B_NO_MEMORY;
 
 	buffer->desc = desc;
@@ -99,7 +99,7 @@ KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 	snprintf(name, sizeof(name), "kosm_surface_%d_%ux%u",
 		uniqueId, desc.width, desc.height);
 
-	buffer->baseAddress = NULL;
+	buffer->baseAddress = nullptr;
 	buffer->areaId = create_area(name, &buffer->baseAddress,
 		B_ANY_ADDRESS, areaSize, B_NO_LOCK,
 		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA);
@@ -121,7 +121,7 @@ KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 void
 KosmAreaBackend::Free(KosmSurfaceBuffer* buffer)
 {
-	if (buffer == NULL)
+	if (buffer == nullptr)
 		return;
 
 	if (buffer->ownsArea && buffer->areaId >= 0)

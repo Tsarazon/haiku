@@ -13,6 +13,7 @@
 
 struct KosmSurfaceBuffer {
 								KosmSurfaceBuffer();
+								~KosmSurfaceBuffer();
 
 			kosm_surface_id		id;
 
@@ -31,6 +32,7 @@ struct KosmSurfaceBuffer {
 			thread_id			lockOwner;
 			bool				lockedReadOnly;
 			uint32				seed;
+			sem_id				waitSem;
 
 			int32				localUseCount;
 

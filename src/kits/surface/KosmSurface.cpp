@@ -16,15 +16,15 @@
 #include "PlanarLayout.hpp"
 
 
-#define SURFACE_INVALID() (fData == NULL || fData->buffer == NULL)
+#define SURFACE_INVALID() (fData == nullptr || fData->buffer == nullptr)
 
 
 KosmSurface::KosmSurface()
 	:
 	fData(new(std::nothrow) Data)
 {
-	if (fData != NULL)
-		fData->buffer = NULL;
+	if (fData != nullptr)
+		fData->buffer = nullptr;
 }
 
 
@@ -154,11 +154,11 @@ void*
 KosmSurface::BaseAddressOfPlane(uint32 planeIndex) const
 {
 	if (SURFACE_INVALID())
-		return NULL;
+		return nullptr;
 	if (planeIndex >= fData->buffer->planeCount)
-		return NULL;
-	if (fData->buffer->lockCount == 0)
-		return NULL;
+		return nullptr;
+	if (atomic_get(&fData->buffer->lockCount) == 0)
+		return nullptr;
 
 	uint8* base = (uint8*)fData->buffer->baseAddress;
 	return base + fData->buffer->planes[planeIndex].offset;
@@ -211,7 +211,7 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 
 	BAutolock locker(fData->buffer->lock);
 
-	thread_id currentThread = find_thread(NULL);
+	thread_id currentThread = find_thread(nullptr);
 	bool readOnly = (options & KOSM_SURFACE_LOCK_READ_ONLY) != 0;
 
 	if (fData->buffer->lockCount > 0) {
@@ -231,10 +231,37 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 		fData->buffer->lockedReadOnly = readOnly;
 	}
 
-	if (outSeed != NULL)
+	if (outSeed != nullptr)
 		*outSeed = fData->buffer->seed;
 
 	return B_OK;
+}
+
+
+status_t
+KosmSurface::LockWithTimeout(bigtime_t timeout, uint32 options,
+	uint32* outSeed)
+{
+	if (SURFACE_INVALID())
+		return B_BAD_VALUE;
+
+	bigtime_t deadline = system_time() + timeout;
+
+	for (;;) {
+		status_t status = Lock(options, outSeed);
+		if (status != B_BUSY)
+			return status;
+
+		bigtime_t remaining = deadline - system_time();
+		if (remaining <= 0)
+			return B_TIMED_OUT;
+
+		status = acquire_sem_etc(fData->buffer->waitSem, 1,
+			B_RELATIVE_TIMEOUT, remaining);
+
+		if (status == B_TIMED_OUT)
+			return B_TIMED_OUT;
+	}
 }
 
 
@@ -249,7 +276,7 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 	if (fData->buffer->lockCount == 0)
 		return KOSM_SURFACE_NOT_LOCKED;
 
-	if (fData->buffer->lockOwner != find_thread(NULL))
+	if (fData->buffer->lockOwner != find_thread(nullptr))
 		return B_NOT_ALLOWED;
 
 	fData->buffer->lockCount--;
@@ -260,9 +287,11 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 
 		fData->buffer->lockOwner = -1;
 		fData->buffer->lockedReadOnly = false;
+
+		release_sem_etc(fData->buffer->waitSem, 1, B_RELEASE_ALL);
 	}
 
-	if (outSeed != NULL)
+	if (outSeed != nullptr)
 		*outSeed = fData->buffer->seed;
 
 	return B_OK;
@@ -273,9 +302,9 @@ void*
 KosmSurface::BaseAddress() const
 {
 	if (SURFACE_INVALID())
-		return NULL;
-	if (fData->buffer->lockCount == 0)
-		return NULL;
+		return nullptr;
+	if (atomic_get(&fData->buffer->lockCount) == 0)
+		return nullptr;
 	return fData->buffer->baseAddress;
 }
 
@@ -285,7 +314,7 @@ KosmSurface::Seed() const
 {
 	if (SURFACE_INVALID())
 		return 0;
-	return fData->buffer->seed;
+	return atomic_get((int32*)&fData->buffer->seed);
 }
 
 
@@ -329,7 +358,7 @@ KosmSurface::LocalUseCount() const
 {
 	if (SURFACE_INVALID())
 		return 0;
-	return fData->buffer->localUseCount;
+	return atomic_get(&fData->buffer->localUseCount);
 }
 
 
@@ -345,7 +374,7 @@ KosmSurface::IsInUse() const
 status_t
 KosmSurface::SetAttachment(const char* key, const BMessage& value)
 {
-	if (key == NULL)
+	if (key == nullptr)
 		return B_BAD_VALUE;
 
 	if (SURFACE_INVALID())
@@ -386,7 +415,7 @@ KosmSurface::SetAttachments(const BMessage& values)
 status_t
 KosmSurface::GetAttachment(const char* key, BMessage* outValue) const
 {
-	if (key == NULL || outValue == NULL)
+	if (key == nullptr || outValue == nullptr)
 		return B_BAD_VALUE;
 
 	if (SURFACE_INVALID())
@@ -400,7 +429,7 @@ KosmSurface::GetAttachment(const char* key, BMessage* outValue) const
 status_t
 KosmSurface::RemoveAttachment(const char* key)
 {
-	if (key == NULL)
+	if (key == nullptr)
 		return B_BAD_VALUE;
 
 	if (SURFACE_INVALID())
@@ -414,7 +443,7 @@ KosmSurface::RemoveAttachment(const char* key)
 status_t
 KosmSurface::CopyAllAttachments(BMessage* outValues) const
 {
-	if (outValues == NULL)
+	if (outValues == nullptr)
 		return B_BAD_VALUE;
 
 	if (SURFACE_INVALID())
@@ -449,7 +478,7 @@ KosmSurface::SetPurgeable(kosm_purgeable_state newState,
 
 	kosm_purgeable_state oldState = fData->buffer->purgeableState;
 
-	if (outOldState != NULL)
+	if (outOldState != nullptr)
 		*outOldState = oldState;
 
 	if (newState == KOSM_PURGEABLE_KEEP_CURRENT)
@@ -492,14 +521,14 @@ KosmSurface::IsLocked() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return fData->buffer->lockCount > 0;
+	return atomic_get(&fData->buffer->lockCount) > 0;
 }
 
 
 bool
 KosmSurface::IsValid() const
 {
-	return fData != NULL && fData->buffer != NULL
+	return fData != nullptr && fData->buffer != nullptr
 		&& fData->buffer->areaId >= 0;
 }
 
@@ -518,7 +547,7 @@ KosmSurface::CreateAccessToken(KosmSurfaceToken* outToken)
 {
 	if (SURFACE_INVALID())
 		return B_NO_INIT;
-	if (outToken == NULL)
+	if (outToken == nullptr)
 		return B_BAD_VALUE;
 
 	return KosmSurfaceRegistry::Default()->CreateAccessToken(

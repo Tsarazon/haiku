@@ -14,17 +14,25 @@ KosmSurfaceBuffer::KosmSurfaceBuffer()
 	allocSize(0),
 	planeCount(1),
 	areaId(-1),
-	baseAddress(NULL),
+	baseAddress(nullptr),
 	ownsArea(true),
 	isOriginal(true),
 	lockCount(0),
 	lockOwner(-1),
 	lockedReadOnly(false),
 	seed(0),
+	waitSem(create_sem(0, "kosm_surface_wait")),
 	localUseCount(0),
 	purgeableState(KOSM_PURGEABLE_NON_VOLATILE),
 	contentsPurged(false),
 	lock("kosm_surface_buffer")
 {
 	memset(planes, 0, sizeof(planes));
+}
+
+
+KosmSurfaceBuffer::~KosmSurfaceBuffer()
+{
+	if (waitSem >= 0)
+		delete_sem(waitSem);
 }
