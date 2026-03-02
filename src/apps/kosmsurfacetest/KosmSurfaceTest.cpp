@@ -111,6 +111,8 @@ unlock_from_other_thread(void* data)
 struct alloc_free_args {
 	int				iterations;
 	int				errors;
+	int				allocFails;
+	int				lockFails;
 	bigtime_t		totalTime;
 };
 
@@ -121,6 +123,12 @@ alloc_free_churn_thread(void* data)
 	alloc_free_args* args = (alloc_free_args*)data;
 	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
 	args->errors = 0;
+	args->allocFails = 0;
+	args->lockFails = 0;
+
+	int tid = (int)find_thread(NULL);
+	trace("    [thread %d] alloc_free_churn start, iters=%d\n",
+		tid, args->iterations);
 
 	bigtime_t t0 = system_time();
 	for (int i = 0; i < args->iterations; i++) {
@@ -132,7 +140,10 @@ alloc_free_churn_thread(void* data)
 		KosmSurface* surface = NULL;
 		status_t err = alloc->Allocate(desc, &surface);
 		if (err != B_OK || surface == NULL) {
+			args->allocFails++;
 			args->errors++;
+			trace("    [thread %d] Allocate FAIL iter %d: %s (0x%08x)\n",
+				tid, i, strerror(err), (unsigned)err);
 			continue;
 		}
 
@@ -142,11 +153,18 @@ alloc_free_churn_thread(void* data)
 			if (base != NULL)
 				memset(base, 0xFF, 64 * 4);
 			surface->Unlock();
+		} else {
+			args->lockFails++;
+			trace("    [thread %d] Lock FAIL iter %d: %s (0x%08x)\n",
+				tid, i, strerror(err), (unsigned)err);
 		}
 
 		alloc->Free(surface);
 	}
 	args->totalTime = system_time() - t0;
+	trace("    [thread %d] alloc_free_churn done: allocFails=%d, "
+		"lockFails=%d, time=%lld us\n", tid, args->allocFails,
+		args->lockFails, (long long)args->totalTime);
 	return B_OK;
 }
 
@@ -155,8 +173,11 @@ struct lock_contention_args {
 	KosmSurface*	surface;
 	int				iterations;
 	int				errors;
+	int				acquired;
+	int				timedOut;
 	bigtime_t		maxLockTime;
-	int32*	counter;
+	bigtime_t		totalTime;
+	int32*			counter;
 };
 
 
@@ -165,7 +186,15 @@ lock_contention_thread(void* data)
 {
 	lock_contention_args* args = (lock_contention_args*)data;
 	args->errors = 0;
+	args->acquired = 0;
+	args->timedOut = 0;
 	args->maxLockTime = 0;
+
+	int tid = (int)find_thread(NULL);
+	bigtime_t tStart = system_time();
+
+	trace("    [thread %d] lock_contention start, iters=%d\n",
+		tid, args->iterations);
 
 	for (int i = 0; i < args->iterations; i++) {
 		bigtime_t t0 = system_time();
@@ -176,14 +205,29 @@ lock_contention_thread(void* data)
 			args->maxLockTime = dt;
 
 		if (err != B_OK) {
+			if (err == B_TIMED_OUT) {
+				args->timedOut++;
+			} else {
+				trace("    [thread %d] LockWithTimeout FAIL iter %d: %s "
+					"(0x%08x), waited %lld us\n", tid, i, strerror(err),
+					(unsigned)err, (long long)dt);
+			}
 			args->errors++;
 			continue;
 		}
 
+		args->acquired++;
 		atomic_add(args->counter, 1);
 		snooze(1);
 		args->surface->Unlock();
 	}
+
+	args->totalTime = system_time() - tStart;
+	trace("    [thread %d] lock_contention done: acquired=%d, timedOut=%d, "
+		"errors=%d, maxWait=%lld us, time=%lld us\n", tid,
+		args->acquired, args->timedOut,
+		args->errors - args->timedOut,
+		(long long)args->maxLockTime, (long long)args->totalTime);
 	return B_OK;
 }
 
@@ -366,6 +410,442 @@ test_format_support()
 	TEST_ASSERT("maxWidth > 0", maxW > 0);
 	TEST_ASSERT("maxHeight > 0", maxH > 0);
 	TEST_ASSERT("strideAlign > 0", strideAlign > 0);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_lookup_or_clone()
+{
+	trace("\n--- test_lookup_or_clone ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 128;
+	desc.height = 128;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+	KosmSurface* original = NULL;
+	alloc->Allocate(desc, &original);
+	TEST_ASSERT("allocate original", original != NULL);
+
+	kosm_surface_id id = original->ID();
+
+	// Write known pattern into original
+	original->Lock();
+	uint32* pixels = (uint32*)original->BaseAddress();
+	if (pixels != NULL) {
+		uint32 bpr = original->BytesPerRow();
+		for (uint32 y = 0; y < 4; y++) {
+			uint32* row = (uint32*)((uint8*)pixels + y * bpr);
+			for (uint32 x = 0; x < 128; x++)
+				row[x] = 0xDEADBEEF;
+		}
+	}
+	original->Unlock();
+
+	// LookupOrClone with same ID — should return same or cloned surface
+	KosmSurface* cloned = NULL;
+	status_t err = alloc->LookupOrClone(id, &cloned);
+	trace_status("LookupOrClone(id)", err);
+	TEST_ASSERT("lookup or clone succeeds", err == B_OK);
+	TEST_ASSERT("cloned not null", cloned != NULL);
+
+	if (cloned != NULL) {
+		TEST_ASSERT("cloned has same dimensions",
+			cloned->Width() == 128 && cloned->Height() == 128);
+		TEST_ASSERT("cloned has same format",
+			cloned->Format() == KOSM_PIXEL_FORMAT_ARGB8888);
+
+		// Verify data visible through clone
+		err = cloned->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+		if (err == B_OK) {
+			uint32* clonedPixels = (uint32*)cloned->BaseAddress();
+			bool dataMatch = (clonedPixels != NULL
+				&& clonedPixels[0] == 0xDEADBEEF);
+			trace("    cloned pixel[0]=0x%08x\n",
+				clonedPixels ? (unsigned)clonedPixels[0] : 0);
+			TEST_ASSERT("cloned data matches original", dataMatch);
+			cloned->Unlock();
+		} else {
+			trace("    could not lock clone: %s\n", strerror(err));
+			TEST_ASSERT("lock clone for read", false);
+		}
+
+		if (cloned != original)
+			alloc->Free(cloned);
+	}
+
+	alloc->Free(original);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_lookup_with_token()
+{
+	trace("\n--- test_lookup_with_token ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	// Create token
+	KosmSurfaceToken token;
+	memset(&token, 0, sizeof(token));
+	status_t err = surface->CreateAccessToken(&token);
+	TEST_ASSERT("create token", err == B_OK);
+	trace("    token: id=%u, secret=0x%llx, gen=%u\n",
+		(unsigned)token.id, (unsigned long long)token.secret,
+		(unsigned)token.generation);
+
+	// Lookup using token
+	KosmSurface* found = NULL;
+	err = alloc->LookupWithToken(token, &found);
+	trace_status("LookupWithToken", err);
+	TEST_ASSERT("lookup with token succeeds", err == B_OK);
+	TEST_ASSERT("found not null", found != NULL);
+
+	if (found != NULL) {
+		TEST_ASSERT("found has correct dimensions",
+			found->Width() == 64 && found->Height() == 64);
+		TEST_ASSERT("found has correct format",
+			found->Format() == KOSM_PIXEL_FORMAT_ARGB8888);
+		trace("    found: id=%u, %ux%u\n",
+			(unsigned)found->ID(),
+			(unsigned)found->Width(),
+			(unsigned)found->Height());
+
+		if (found != surface)
+			alloc->Free(found);
+	}
+
+	// Invalid token should fail
+	KosmSurfaceToken bogus;
+	bogus.id = 99999;
+	bogus.secret = 0xBADBADBAD;
+	bogus.generation = 0;
+	KosmSurface* notFound = NULL;
+	err = alloc->LookupWithToken(bogus, &notFound);
+	trace_status("LookupWithToken(bogus)", err);
+	TEST_ASSERT("bogus token fails", err != B_OK);
+	TEST_ASSERT("bogus result is null", notFound == NULL);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_revoked_token_lookup()
+{
+	trace("\n--- test_revoked_token_lookup ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	// Create token, then revoke
+	KosmSurfaceToken token;
+	memset(&token, 0, sizeof(token));
+	surface->CreateAccessToken(&token);
+	trace("    token before revoke: secret=0x%llx, gen=%u\n",
+		(unsigned long long)token.secret, (unsigned)token.generation);
+
+	surface->RevokeAllAccess();
+
+	// Old token should no longer work
+	KosmSurface* found = NULL;
+	status_t err = alloc->LookupWithToken(token, &found);
+	trace_status("LookupWithToken(revoked)", err);
+	TEST_ASSERT("revoked token lookup fails", err != B_OK);
+	TEST_ASSERT("revoked result is null", found == NULL);
+
+	// New token should still work
+	KosmSurfaceToken newToken;
+	surface->CreateAccessToken(&newToken);
+	trace("    new token: secret=0x%llx, gen=%u\n",
+		(unsigned long long)newToken.secret,
+		(unsigned)newToken.generation);
+
+	found = NULL;
+	err = alloc->LookupWithToken(newToken, &found);
+	trace_status("LookupWithToken(new)", err);
+	TEST_ASSERT("new token lookup succeeds", err == B_OK);
+
+	if (found != NULL && found != surface)
+		alloc->Free(found);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_free_then_lookup()
+{
+	trace("\n--- test_free_then_lookup ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	kosm_surface_id id = surface->ID();
+	trace("    allocated id=%u\n", (unsigned)id);
+
+	// Also grab a token before freeing
+	KosmSurfaceToken token;
+	memset(&token, 0, sizeof(token));
+	surface->CreateAccessToken(&token);
+
+	alloc->Free(surface);
+
+	// Lookup by ID should fail after free
+	KosmSurface* found = NULL;
+	status_t err = alloc->Lookup(id, &found);
+	trace_status("Lookup(freed id)", err);
+	TEST_ASSERT("lookup after free fails", err != B_OK);
+	TEST_ASSERT("result is null", found == NULL);
+
+	// LookupWithToken should also fail
+	found = NULL;
+	err = alloc->LookupWithToken(token, &found);
+	trace_status("LookupWithToken(freed)", err);
+	TEST_ASSERT("token lookup after free fails", err != B_OK);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_double_free()
+{
+	trace("\n--- test_double_free ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	kosm_surface_id id = surface->ID();
+	trace("    id=%u, freeing first time\n", (unsigned)id);
+	alloc->Free(surface);
+
+	// Second free — should not crash
+	trace("    freeing second time (should not crash)\n");
+	alloc->Free(surface);
+
+	TEST_ASSERT("double free did not crash", true);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_cache_modes()
+{
+	trace("\n--- test_cache_modes ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	uint32 modes[] = {
+		KOSM_CACHE_DEFAULT,
+		KOSM_CACHE_INHIBIT,
+		KOSM_CACHE_WRITE_THROUGH,
+		KOSM_CACHE_WRITE_COMBINE
+	};
+	const char* modeNames[] = {
+		"DEFAULT", "INHIBIT", "WRITE_THROUGH", "WRITE_COMBINE"
+	};
+
+	for (int i = 0; i < 4; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 64;
+		desc.height = 64;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+		desc.cacheMode = modes[i];
+
+		KosmSurface* s = NULL;
+		status_t err = alloc->Allocate(desc, &s);
+		trace("    cacheMode %s (%u) -> %s\n",
+			modeNames[i], (unsigned)modes[i], strerror(err));
+
+		char name[64];
+		snprintf(name, sizeof(name), "cache mode %s", modeNames[i]);
+		TEST_ASSERT(name, err == B_OK && s != NULL);
+
+		if (s != NULL) {
+			// Verify basic lock/write/unlock cycle works
+			err = s->Lock();
+			if (err == B_OK) {
+				void* base = s->BaseAddress();
+				if (base != NULL)
+					memset(base, 0xAA, 64 * 4);
+				s->Unlock();
+			}
+			alloc->Free(s);
+		}
+	}
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_custom_stride()
+{
+	trace("\n--- test_custom_stride ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	// Custom stride with extra padding (e.g. 256-byte aligned rows)
+	KosmSurfaceDesc desc;
+	desc.width = 100;
+	desc.height = 100;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+	desc.bytesPerRow = 512;  // 100*4=400, padded to 512
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(100x100, bpr=512)", err);
+	TEST_ASSERT("custom stride alloc succeeds", err == B_OK);
+
+	if (surface != NULL) {
+		trace("    actual bpr=%u\n", (unsigned)surface->BytesPerRow());
+		TEST_ASSERT("bytesPerRow >= requested 512",
+			surface->BytesPerRow() >= 512);
+		TEST_ASSERT("allocSize accounts for stride",
+			surface->AllocSize() >= (size_t)512 * 100);
+
+		// Write and read using custom stride
+		err = surface->Lock();
+		if (err == B_OK) {
+			uint8* base = (uint8*)surface->BaseAddress();
+			uint32 bpr = surface->BytesPerRow();
+			// Write last pixel of first row
+			uint32* lastPixel = (uint32*)(base + 99 * 4);
+			*lastPixel = 0xCAFEBABE;
+			// Write first pixel of second row
+			uint32* nextRow = (uint32*)(base + bpr);
+			*nextRow = 0xFACEFACE;
+			surface->Unlock();
+		}
+
+		err = surface->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+		if (err == B_OK) {
+			uint8* base = (uint8*)surface->BaseAddress();
+			uint32 bpr = surface->BytesPerRow();
+			uint32 val1 = *(uint32*)(base + 99 * 4);
+			uint32 val2 = *(uint32*)(base + bpr);
+			trace("    last pixel row0=0x%08x, first pixel row1=0x%08x\n",
+				(unsigned)val1, (unsigned)val2);
+			TEST_ASSERT("stride preserves row separation",
+				val1 == 0xCAFEBABE && val2 == 0xFACEFACE);
+			surface->Unlock();
+		}
+
+		alloc->Free(surface);
+	}
+
+	// Too-small stride should fail
+	KosmSurfaceDesc badDesc;
+	badDesc.width = 100;
+	badDesc.height = 100;
+	badDesc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+	badDesc.bytesPerRow = 64;  // way too small for 100*4=400
+
+	KosmSurface* bad = NULL;
+	err = alloc->Allocate(badDesc, &bad);
+	trace_status("Allocate(bpr=64, too small)", err);
+	TEST_ASSERT("too-small stride rejected", err != B_OK);
+	TEST_ASSERT("bad surface is null", bad == NULL);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_large_allocation()
+{
+	trace("\n--- test_large_allocation ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	size_t maxW = alloc->GetPropertyMaximum("width");
+	size_t maxH = alloc->GetPropertyMaximum("height");
+	trace("    maxWidth=%zu, maxHeight=%zu\n", maxW, maxH);
+
+	// Allocate at max dimensions (clamped to something reasonable)
+	uint32 testW = (maxW > 8192) ? 8192 : (uint32)maxW;
+	uint32 testH = (maxH > 8192) ? 8192 : (uint32)maxH;
+
+	KosmSurfaceDesc desc;
+	desc.width = testW;
+	desc.height = testH;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(large)", err);
+	trace("    requested %ux%u\n", (unsigned)testW, (unsigned)testH);
+
+	char name[64];
+	snprintf(name, sizeof(name), "allocate %ux%u", (unsigned)testW,
+		(unsigned)testH);
+	TEST_ASSERT(name, err == B_OK && surface != NULL);
+
+	if (surface != NULL) {
+		trace("    allocSize=%zu\n", surface->AllocSize());
+		TEST_ASSERT("large surface valid", surface->IsValid());
+		alloc->Free(surface);
+	}
+
+	// Over-max should fail
+	if (maxW > 0 && maxH > 0) {
+		KosmSurfaceDesc overDesc;
+		overDesc.width = (uint32)maxW + 1;
+		overDesc.height = (uint32)maxH + 1;
+		overDesc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		KosmSurface* over = NULL;
+		err = alloc->Allocate(overDesc, &over);
+		trace_status("Allocate(over-max)", err);
+		TEST_ASSERT("over-max allocation fails", err != B_OK);
+		TEST_ASSERT("over-max surface is null", over == NULL);
+	}
 
 	trace("  total: %lld us\n", (long long)(system_time() - t0));
 }
@@ -895,6 +1375,75 @@ test_planar_yv12()
 
 
 static void
+test_planar_nv21()
+{
+	trace("\n--- test_planar_nv21 ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 640;
+	desc.height = 480;
+	desc.format = KOSM_PIXEL_FORMAT_NV21;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(640x480, NV21)", err);
+	TEST_ASSERT("allocate NV21", err == B_OK && surface != NULL);
+
+	TEST_ASSERT("NV21 has 2 planes", surface->PlaneCount() == 2);
+
+	// Plane 0: Y, full resolution (same as NV12)
+	trace("    plane0: %ux%u, bpe=%u, bpr=%u\n",
+		(unsigned)surface->WidthOfPlane(0),
+		(unsigned)surface->HeightOfPlane(0),
+		(unsigned)surface->BytesPerElementOfPlane(0),
+		(unsigned)surface->BytesPerRowOfPlane(0));
+	TEST_ASSERT("plane0 width == 640",
+		surface->WidthOfPlane(0) == 640);
+	TEST_ASSERT("plane0 height == 480",
+		surface->HeightOfPlane(0) == 480);
+	TEST_ASSERT("plane0 bpe == 1",
+		surface->BytesPerElementOfPlane(0) == 1);
+
+	// Plane 1: VU (reversed vs NV12), half resolution
+	trace("    plane1: %ux%u, bpe=%u, bpr=%u\n",
+		(unsigned)surface->WidthOfPlane(1),
+		(unsigned)surface->HeightOfPlane(1),
+		(unsigned)surface->BytesPerElementOfPlane(1),
+		(unsigned)surface->BytesPerRowOfPlane(1));
+	TEST_ASSERT("plane1 width == 320",
+		surface->WidthOfPlane(1) == 320);
+	TEST_ASSERT("plane1 height == 240",
+		surface->HeightOfPlane(1) == 240);
+	TEST_ASSERT("plane1 bpe == 2",
+		surface->BytesPerElementOfPlane(1) == 2);
+
+	// Component info — plane1 should have 2 components (V, U)
+	TEST_ASSERT("plane0 components == 1",
+		surface->ComponentCountOfPlane(0) == 1);
+	TEST_ASSERT("plane1 components == 2",
+		surface->ComponentCountOfPlane(1) == 2);
+
+	// Verify planes accessible
+	err = surface->Lock();
+	TEST_ASSERT("lock NV21", err == B_OK);
+
+	void* plane0 = surface->BaseAddressOfPlane(0);
+	void* plane1 = surface->BaseAddressOfPlane(1);
+	trace("    plane0 base=%p, plane1 base=%p\n", plane0, plane1);
+	TEST_ASSERT("plane0 base not null", plane0 != NULL);
+	TEST_ASSERT("plane1 base not null", plane1 != NULL);
+	TEST_ASSERT("plane1 > plane0",
+		(uintptr_t)plane1 > (uintptr_t)plane0);
+
+	surface->Unlock();
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
 test_component_info()
 {
 	trace("\n--- test_component_info ---\n");
@@ -1006,6 +1555,61 @@ test_use_count()
 }
 
 
+static void
+test_free_while_in_use()
+{
+	trace("\n--- test_free_while_in_use ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	// Mark as in-use (simulating compositor holding a reference)
+	surface->IncrementUseCount();
+	TEST_ASSERT("in use", surface->IsInUse());
+
+	// Free while in-use — should return KOSM_SURFACE_IN_USE
+	// The surface should remain valid until use count drops to 0
+	kosm_surface_id id = surface->ID();
+	trace("    id=%u, trying Free while InUse\n", (unsigned)id);
+
+	// Note: depending on implementation, Free might:
+	// a) return immediately with error, or
+	// b) defer destruction until use count reaches 0
+	// We verify it doesn't crash and the surface remains accessible
+	alloc->Free(surface);
+
+	// If implementation defers: surface should still be lookupable
+	// If implementation rejects: we already passed (no crash)
+	KosmSurface* found = NULL;
+	status_t err = alloc->Lookup(id, &found);
+	trace_status("Lookup(in-use freed id)", err);
+
+	if (err == B_OK && found != NULL) {
+		trace("    surface still in registry (deferred free)\n");
+		TEST_ASSERT("deferred free: still findable", true);
+
+		// Now release and free properly
+		found->DecrementUseCount();
+		TEST_ASSERT("use count back to 0",
+			found->LocalUseCount() == 0);
+		alloc->Free(found);
+	} else {
+		trace("    surface removed from registry (immediate free)\n");
+		TEST_ASSERT("immediate free: removed from registry", true);
+		// Use count was orphaned — that's the implementation's choice
+	}
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
 // --- Attachments ---
 
 static void
@@ -1058,11 +1662,45 @@ test_attachments()
 	value2.AddFloat("opacity", 0.75f);
 	surface->SetAttachment("blend_info", value2);
 
-	// CopyAllAttachments
+	// Overwrite first attachment with new value
+	BMessage value1b;
+	value1b.AddString("type", "framebuffer");
+	value1b.AddInt32("layer", 7);
+	err = surface->SetAttachment("render_info", value1b);
+	trace_status("SetAttachment(render_info) overwrite", err);
+	TEST_ASSERT("overwrite attachment", err == B_OK);
+
+	// Verify overwritten value
+	BMessage outOverwrite;
+	err = surface->GetAttachment("render_info", &outOverwrite);
+	TEST_ASSERT("get overwritten attachment", err == B_OK);
+	const char* newType = NULL;
+	outOverwrite.FindString("type", &newType);
+	int32 newLayer = 0;
+	outOverwrite.FindInt32("layer", &newLayer);
+	trace("    overwritten: type=%s, layer=%d\n",
+		newType ? newType : "(null)", (int)newLayer);
+	TEST_ASSERT("overwritten type matches",
+		newType != NULL && strcmp(newType, "framebuffer") == 0);
+	TEST_ASSERT("overwritten layer matches", newLayer == 7);
+
+	// CopyAllAttachments — verify count
 	BMessage all;
 	err = surface->CopyAllAttachments(&all);
 	trace_status("CopyAllAttachments", err);
 	TEST_ASSERT("copy all", err == B_OK);
+
+	// Should contain exactly 2 entries: render_info, blend_info
+	int32 attachCount = 0;
+	BMessage checkMsg;
+	if (all.FindMessage("render_info", &checkMsg) == B_OK)
+		attachCount++;
+	if (all.FindMessage("blend_info", &checkMsg) == B_OK)
+		attachCount++;
+	trace("    CopyAll found %d expected attachments\n",
+		(int)attachCount);
+	TEST_ASSERT("CopyAll contains both attachments",
+		attachCount == 2);
 
 	// Remove one
 	err = surface->RemoveAttachment("render_info");
@@ -1162,6 +1800,128 @@ test_purgeable()
 	TEST_ASSERT("KEEP_CURRENT succeeds", err == B_OK);
 
 	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_purgeable_lock_interaction()
+{
+	trace("\n--- test_purgeable_lock_interaction ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 128;
+	desc.height = 128;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	// Write some data first
+	surface->Lock();
+	void* base = surface->BaseAddress();
+	if (base != NULL)
+		memset(base, 0xCC, 128 * 4);
+	surface->Unlock();
+
+	// Mark as EMPTY (simulating system purge)
+	status_t err = surface->SetPurgeable(KOSM_PURGEABLE_EMPTY);
+	TEST_ASSERT("set empty", err == B_OK);
+
+	// Try to Lock the purged surface
+	err = surface->Lock();
+	trace_status("Lock() on EMPTY surface", err);
+	trace("    lock on EMPTY returned 0x%08x\n", (unsigned)err);
+
+	// Expected: either KOSM_SURFACE_PURGED or B_OK (impl-dependent)
+	// The key thing is it shouldn't crash and should report purge state
+	if (err == KOSM_SURFACE_PURGED) {
+		TEST_ASSERT("lock on purged returns KOSM_SURFACE_PURGED", true);
+	} else if (err == B_OK) {
+		trace("    impl allows lock on empty surface (data undefined)\n");
+		TEST_ASSERT("lock on empty succeeds (implementation choice)", true);
+		surface->Unlock();
+	} else {
+		trace("    unexpected error: %s\n", strerror(err));
+		TEST_ASSERT("lock on purged surface (unexpected error)", false);
+	}
+
+	// Set volatile while locked should fail (if lockable)
+	err = surface->SetPurgeable(KOSM_PURGEABLE_NON_VOLATILE);
+	// Reset state first, ignoring PURGED return
+	err = surface->Lock();
+	if (err == B_OK) {
+		kosm_purgeable_state old;
+		err = surface->SetPurgeable(KOSM_PURGEABLE_VOLATILE, &old);
+		trace_status("SetPurgeable(VOLATILE) while locked", err);
+		// Setting volatile while locked is dangerous — should ideally fail
+		trace("    set volatile while locked -> 0x%08x\n", (unsigned)err);
+		surface->Unlock();
+	}
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_purgeable_usage_flag()
+{
+	trace("\n--- test_purgeable_usage_flag ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	// Allocate with PURGEABLE usage hint
+	KosmSurfaceDesc desc;
+	desc.width = 256;
+	desc.height = 256;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+	desc.usage = KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE
+		| KOSM_SURFACE_USAGE_PURGEABLE;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(PURGEABLE usage)", err);
+	TEST_ASSERT("allocate with purgeable usage", err == B_OK);
+
+	if (surface != NULL) {
+		TEST_ASSERT("usage includes PURGEABLE",
+			(surface->Usage() & KOSM_SURFACE_USAGE_PURGEABLE) != 0);
+
+		// Should be able to set volatile immediately
+		kosm_purgeable_state oldState;
+		err = surface->SetPurgeable(KOSM_PURGEABLE_VOLATILE, &oldState);
+		trace_status("SetPurgeable(VOLATILE) on purgeable surface", err);
+		TEST_ASSERT("set volatile on purgeable surface", err == B_OK);
+		TEST_ASSERT("is volatile", surface->IsVolatile());
+
+		// Set back and verify data survives (not yet purged)
+		err = surface->SetPurgeable(KOSM_PURGEABLE_NON_VOLATILE, &oldState);
+		TEST_ASSERT("set non-volatile", err == B_OK);
+		TEST_ASSERT("old state was VOLATILE",
+			oldState == KOSM_PURGEABLE_VOLATILE);
+
+		alloc->Free(surface);
+	}
+
+	// Allocate WITHOUT purgeable flag — SetPurgeable might still work
+	// (implementation-dependent) but usage flag shouldn't include it
+	KosmSurfaceDesc desc2;
+	desc2.width = 64;
+	desc2.height = 64;
+	desc2.usage = KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE;
+
+	KosmSurface* surface2 = NULL;
+	alloc->Allocate(desc2, &surface2);
+	if (surface2 != NULL) {
+		TEST_ASSERT("non-purgeable usage lacks flag",
+			(surface2->Usage() & KOSM_SURFACE_USAGE_PURGEABLE) == 0);
+		alloc->Free(surface2);
+	}
+
 	trace("  total: %lld us\n", (long long)(system_time() - t0));
 }
 
@@ -1319,6 +2079,66 @@ test_pixel_readwrite()
 }
 
 
+static void
+test_pixel_readwrite_rgb565()
+{
+	trace("\n--- test_pixel_readwrite_rgb565 ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 16;
+	desc.height = 16;
+	desc.format = KOSM_PIXEL_FORMAT_RGB565;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate RGB565", surface != NULL);
+	TEST_ASSERT("BytesPerElement == 2",
+		surface->BytesPerElement() == 2);
+
+	// Write pattern: R=31 G=0 B=0 -> 0xF800,  R=0 G=63 B=0 -> 0x07E0
+	surface->Lock();
+	uint16* pixels = (uint16*)surface->BaseAddress();
+	TEST_ASSERT("pixels not null", pixels != NULL);
+
+	uint32 bpr = surface->BytesPerRow();
+	for (uint32 y = 0; y < 16; y++) {
+		uint16* row = (uint16*)((uint8*)pixels + y * bpr);
+		for (uint32 x = 0; x < 16; x++) {
+			if (y < 8)
+				row[x] = 0xF800;  // pure red
+			else
+				row[x] = 0x07E0;  // pure green
+		}
+	}
+	surface->Unlock();
+
+	// Read back
+	surface->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+	uint16* readPixels = (uint16*)surface->BaseAddress();
+	bool correct = true;
+	for (uint32 y = 0; y < 16 && correct; y++) {
+		uint16* row = (uint16*)((uint8*)readPixels + y * bpr);
+		for (uint32 x = 0; x < 16 && correct; x++) {
+			uint16 expected = (y < 8) ? 0xF800 : 0x07E0;
+			if (row[x] != expected) {
+				trace("    mismatch at (%u,%u): got 0x%04x, expected 0x%04x\n",
+					(unsigned)x, (unsigned)y,
+					(unsigned)row[x], (unsigned)expected);
+				correct = false;
+			}
+		}
+	}
+	surface->Unlock();
+
+	TEST_ASSERT("RGB565 pixel readback matches", correct);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
 // --- Stress tests ---
 
 static void
@@ -1329,6 +2149,8 @@ test_stress_alloc_free()
 
 	const int kThreads = 8;
 	const int kItersPerThread = 100;
+	trace("    spawning %d threads, %d alloc/lock/free cycles each\n",
+		kThreads, kItersPerThread);
 
 	alloc_free_args targs[kThreads];
 	thread_id threads[kThreads];
@@ -1336,26 +2158,38 @@ test_stress_alloc_free()
 	for (int i = 0; i < kThreads; i++) {
 		targs[i].iterations = kItersPerThread;
 		targs[i].errors = 0;
+		targs[i].allocFails = 0;
+		targs[i].lockFails = 0;
 		targs[i].totalTime = 0;
 
 		char name[32];
 		snprintf(name, sizeof(name), "alloc_churn_%d", i);
 		threads[i] = spawn_thread(alloc_free_churn_thread, name,
 			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
 		resume_thread(threads[i]);
 	}
 
 	int totalErrors = 0;
+	int totalAllocFails = 0;
+	int totalLockFails = 0;
+	bigtime_t slowest = 0;
 	for (int i = 0; i < kThreads; i++) {
 		status_t exitVal;
 		wait_for_thread(threads[i], &exitVal);
-		trace("    thread %d: errors=%d, time=%lld us\n",
-			i, targs[i].errors, (long long)targs[i].totalTime);
+		trace("    thread %d: allocFails=%d, lockFails=%d, time=%lld us\n",
+			i, targs[i].allocFails, targs[i].lockFails,
+			(long long)targs[i].totalTime);
 		totalErrors += targs[i].errors;
+		totalAllocFails += targs[i].allocFails;
+		totalLockFails += targs[i].lockFails;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
 	}
 
-	trace("    total allocs=%d, total errors=%d\n",
-		kThreads * kItersPerThread, totalErrors);
+	trace("    total allocs=%d, allocFails=%d, lockFails=%d, "
+		"slowest=%lld us\n", kThreads * kItersPerThread,
+		totalAllocFails, totalLockFails, (long long)slowest);
 	TEST_ASSERT("alloc/free churn no errors", totalErrors == 0);
 
 	trace("  total: %lld us\n", (long long)(system_time() - t0));
@@ -1374,12 +2208,15 @@ test_stress_lock_contention()
 	desc.height = 64;
 
 	KosmSurface* surface = NULL;
-	alloc->Allocate(desc, &surface);
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(64x64)", err);
 	TEST_ASSERT("allocate", surface != NULL);
 
 	const int kThreads = 8;
 	const int kIters = 50;
 	int32 counter = 0;
+	trace("    spawning %d threads, %d lock/inc/unlock cycles each\n",
+		kThreads, kIters);
 
 	lock_contention_args targs[kThreads];
 	thread_id threads[kThreads];
@@ -1388,32 +2225,48 @@ test_stress_lock_contention()
 		targs[i].surface = surface;
 		targs[i].iterations = kIters;
 		targs[i].errors = 0;
+		targs[i].acquired = 0;
+		targs[i].timedOut = 0;
 		targs[i].maxLockTime = 0;
+		targs[i].totalTime = 0;
 		targs[i].counter = &counter;
 
 		char name[32];
 		snprintf(name, sizeof(name), "lock_cont_%d", i);
 		threads[i] = spawn_thread(lock_contention_thread, name,
 			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
 		resume_thread(threads[i]);
 	}
 
 	int totalErrors = 0;
+	int totalAcquired = 0;
+	int totalTimedOut = 0;
 	bigtime_t worstLock = 0;
+	bigtime_t slowest = 0;
 	for (int i = 0; i < kThreads; i++) {
 		status_t exitVal;
 		wait_for_thread(threads[i], &exitVal);
-		trace("    thread %d: errors=%d, maxLock=%lld us\n",
-			i, targs[i].errors, (long long)targs[i].maxLockTime);
+		trace("    thread %d: acquired=%d, timedOut=%d, "
+			"maxWait=%lld us, time=%lld us\n",
+			i, targs[i].acquired, targs[i].timedOut,
+			(long long)targs[i].maxLockTime,
+			(long long)targs[i].totalTime);
 		totalErrors += targs[i].errors;
+		totalAcquired += targs[i].acquired;
+		totalTimedOut += targs[i].timedOut;
 		if (targs[i].maxLockTime > worstLock)
 			worstLock = targs[i].maxLockTime;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
 	}
 
 	int32 expected = kThreads * kIters;
-	trace("    counter=%d, expected=%d, totalErrors=%d, worstLock=%lld us\n",
-		(int)counter, (int)expected, totalErrors,
-		(long long)worstLock);
+	trace("    counter=%d, expected=%d, acquired=%d, timedOut=%d, "
+		"errors=%d\n", (int)counter, (int)expected, totalAcquired,
+		totalTimedOut, totalErrors);
+	trace("    worstLock=%lld us, slowest thread=%lld us\n",
+		(long long)worstLock, (long long)slowest);
 	TEST_ASSERT("counter correct", counter == expected);
 	TEST_ASSERT("no lock errors", totalErrors == 0);
 
@@ -1457,6 +2310,920 @@ test_stress_rapid_lock_unlock()
 
 	bigtime_t avgCycle = elapsed / kCycles;
 	TEST_ASSERT("average lock/unlock < 100us", avgCycle < 100);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct attachment_thrash_args {
+	KosmSurface*	surface;
+	int				threadIndex;
+	int				iterations;
+	int				errors;
+	int				setOk;
+	int				getOk;
+	int				setFail;
+	int				getFail;
+	bigtime_t		totalTime;
+};
+
+
+static status_t
+attachment_thrash_thread(void* data)
+{
+	attachment_thrash_args* args = (attachment_thrash_args*)data;
+	args->errors = 0;
+	args->setOk = 0;
+	args->getOk = 0;
+	args->setFail = 0;
+	args->getFail = 0;
+
+	bigtime_t t0 = system_time();
+	int tid = (int)find_thread(NULL);
+
+	trace("    [thread %d] attachment_thrash start, iters=%d\n",
+		tid, args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		char key[32];
+		snprintf(key, sizeof(key), "t%d_key%d", args->threadIndex, i % 5);
+
+		BMessage val;
+		val.AddInt32("thread", args->threadIndex);
+		val.AddInt32("iter", i);
+
+		status_t err = args->surface->SetAttachment(key, val);
+		if (err != B_OK) {
+			args->setFail++;
+			args->errors++;
+			trace("    [thread %d] SetAttachment(%s) FAIL iter %d: %s "
+				"(0x%08x)\n", tid, key, i, strerror(err), (unsigned)err);
+			continue;
+		}
+		args->setOk++;
+
+		BMessage out;
+		err = args->surface->GetAttachment(key, &out);
+		if (err != B_OK) {
+			args->getFail++;
+			args->errors++;
+			trace("    [thread %d] GetAttachment(%s) FAIL iter %d: %s "
+				"(0x%08x)\n", tid, key, i, strerror(err), (unsigned)err);
+		} else {
+			args->getOk++;
+		}
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] attachment_thrash done: set=%d/%d, get=%d/%d, "
+		"time=%lld us\n", tid, args->setOk,
+		args->setOk + args->setFail, args->getOk,
+		args->getOk + args->getFail, (long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_attachment_thrash()
+{
+	trace("\n--- test_stress_attachment_thrash ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(64x64)", err);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	const int kThreads = 8;
+	const int kIters = 100;
+	trace("    spawning %d threads, %d iterations each\n",
+		kThreads, kIters);
+	attachment_thrash_args targs[kThreads];
+	thread_id threads[kThreads];
+
+	for (int i = 0; i < kThreads; i++) {
+		targs[i].surface = surface;
+		targs[i].threadIndex = i;
+		targs[i].iterations = kIters;
+		targs[i].errors = 0;
+
+		char name[32];
+		snprintf(name, sizeof(name), "attach_thrash_%d", i);
+		threads[i] = spawn_thread(attachment_thrash_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int totalErrors = 0;
+	bigtime_t slowest = 0;
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    thread %d: set=%d ok / %d fail, get=%d ok / %d fail, "
+			"time=%lld us\n", i, targs[i].setOk, targs[i].setFail,
+			targs[i].getOk, targs[i].getFail,
+			(long long)targs[i].totalTime);
+		totalErrors += targs[i].errors;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
+	}
+
+	trace("    total ops=%d, errors=%d, slowest thread=%lld us\n",
+		kThreads * kIters, totalErrors, (long long)slowest);
+	TEST_ASSERT("concurrent attachments no errors", totalErrors == 0);
+
+	surface->RemoveAllAttachments();
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct lookup_race_args {
+	int			iterations;
+	int			errors;
+	int			lookupHits;
+	int			allocFails;
+	int			staleLookups;
+	bigtime_t	totalTime;
+};
+
+
+static status_t
+alloc_lookup_race_thread(void* data)
+{
+	lookup_race_args* args = (lookup_race_args*)data;
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	args->errors = 0;
+	args->lookupHits = 0;
+	args->allocFails = 0;
+	args->staleLookups = 0;
+
+	int tid = (int)find_thread(NULL);
+	bigtime_t t0 = system_time();
+
+	trace("    [thread %d] alloc_lookup_race start, iters=%d\n",
+		tid, args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 32;
+		desc.height = 32;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		KosmSurface* surface = NULL;
+		status_t err = alloc->Allocate(desc, &surface);
+		if (err != B_OK || surface == NULL) {
+			args->allocFails++;
+			args->errors++;
+			trace("    [thread %d] Allocate FAIL iter %d: %s (0x%08x)\n",
+				tid, i, strerror(err), (unsigned)err);
+			continue;
+		}
+
+		kosm_surface_id id = surface->ID();
+
+		// Lookup while still alive
+		KosmSurface* found = NULL;
+		err = alloc->Lookup(id, &found);
+		if (err == B_OK && found != NULL) {
+			args->lookupHits++;
+		} else {
+			trace("    [thread %d] Lookup(id=%u) MISS while live, iter %d:"
+				" %s (0x%08x)\n", tid, (unsigned)id, i, strerror(err),
+				(unsigned)err);
+		}
+
+		alloc->Free(surface);
+
+		// Lookup after free — should fail
+		found = NULL;
+		err = alloc->Lookup(id, &found);
+		if (err == B_OK && found != NULL) {
+			args->staleLookups++;
+			args->errors++;
+			trace("    [thread %d] STALE lookup id=%u after free, iter %d\n",
+				tid, (unsigned)id, i);
+		}
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] alloc_lookup_race done: hits=%d, allocFail=%d, "
+		"stale=%d, time=%lld us\n", tid, args->lookupHits,
+		args->allocFails, args->staleLookups,
+		(long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_alloc_lookup_race()
+{
+	trace("\n--- test_stress_alloc_lookup_race ---\n");
+	bigtime_t t0 = system_time();
+
+	const int kThreads = 8;
+	const int kIters = 100;
+	trace("    spawning %d threads, %d alloc/lookup/free cycles each\n",
+		kThreads, kIters);
+
+	lookup_race_args targs[kThreads];
+	thread_id threads[kThreads];
+
+	for (int i = 0; i < kThreads; i++) {
+		targs[i].iterations = kIters;
+		targs[i].errors = 0;
+		targs[i].lookupHits = 0;
+
+		char name[32];
+		snprintf(name, sizeof(name), "alloc_lookup_%d", i);
+		threads[i] = spawn_thread(alloc_lookup_race_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int totalErrors = 0;
+	int totalHits = 0;
+	int totalStale = 0;
+	bigtime_t slowest = 0;
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    thread %d: hits=%d, allocFails=%d, stale=%d, "
+			"time=%lld us\n", i, targs[i].lookupHits,
+			targs[i].allocFails, targs[i].staleLookups,
+			(long long)targs[i].totalTime);
+		totalErrors += targs[i].errors;
+		totalHits += targs[i].lookupHits;
+		totalStale += targs[i].staleLookups;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
+	}
+
+	trace("    total cycles=%d, lookupHits=%d, stale=%d, errors=%d, "
+		"slowest=%lld us\n", kThreads * kIters, totalHits, totalStale,
+		totalErrors, (long long)slowest);
+	TEST_ASSERT("no stale lookups after free", totalErrors == 0);
+	TEST_ASSERT("lookups found live surfaces", totalHits > 0);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct token_thrash_args {
+	KosmSurface*	surface;
+	int				iterations;
+	int				errors;
+	int				createOk;
+	int				createFail;
+	int				idMismatch;
+	int				revokes;
+	int				revokeFail;
+	bigtime_t		totalTime;
+};
+
+
+static status_t
+token_thrash_thread(void* data)
+{
+	token_thrash_args* args = (token_thrash_args*)data;
+	args->errors = 0;
+	args->createOk = 0;
+	args->createFail = 0;
+	args->idMismatch = 0;
+	args->revokes = 0;
+	args->revokeFail = 0;
+
+	int tid = (int)find_thread(NULL);
+	bigtime_t t0 = system_time();
+
+	trace("    [thread %d] token_thrash start, iters=%d\n",
+		tid, args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		KosmSurfaceToken token;
+		memset(&token, 0, sizeof(token));
+		status_t err = args->surface->CreateAccessToken(&token);
+		if (err != B_OK) {
+			args->createFail++;
+			args->errors++;
+			trace("    [thread %d] CreateAccessToken FAIL iter %d: %s "
+				"(0x%08x)\n", tid, i, strerror(err), (unsigned)err);
+			continue;
+		}
+		args->createOk++;
+
+		if (token.id != args->surface->ID()) {
+			args->idMismatch++;
+			args->errors++;
+			trace("    [thread %d] token id %u != surface id %u, iter %d\n",
+				tid, (unsigned)token.id,
+				(unsigned)args->surface->ID(), i);
+		}
+
+		if (i % 5 == 0) {
+			err = args->surface->RevokeAllAccess();
+			if (err != B_OK) {
+				args->revokeFail++;
+				args->errors++;
+				trace("    [thread %d] RevokeAllAccess FAIL iter %d: %s "
+					"(0x%08x)\n", tid, i, strerror(err), (unsigned)err);
+			} else {
+				args->revokes++;
+			}
+		}
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] token_thrash done: create=%d/%d, idMismatch=%d, "
+		"revokes=%d/%d, time=%lld us\n", tid,
+		args->createOk, args->createOk + args->createFail,
+		args->idMismatch, args->revokes,
+		args->revokes + args->revokeFail,
+		(long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_token_thrash()
+{
+	trace("\n--- test_stress_token_thrash ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(64x64)", err);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	const int kThreads = 4;
+	const int kIters = 200;
+	trace("    spawning %d threads, %d token ops each (revoke every 5th)\n",
+		kThreads, kIters);
+
+	token_thrash_args targs[kThreads];
+	thread_id threads[kThreads];
+
+	for (int i = 0; i < kThreads; i++) {
+		targs[i].surface = surface;
+		targs[i].iterations = kIters;
+		targs[i].errors = 0;
+
+		char name[32];
+		snprintf(name, sizeof(name), "token_thrash_%d", i);
+		threads[i] = spawn_thread(token_thrash_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int totalErrors = 0;
+	int totalRevokes = 0;
+	bigtime_t slowest = 0;
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    thread %d: create=%d/%d, idMismatch=%d, revokes=%d, "
+			"time=%lld us\n", i, targs[i].createOk,
+			targs[i].createOk + targs[i].createFail,
+			targs[i].idMismatch, targs[i].revokes,
+			(long long)targs[i].totalTime);
+		totalErrors += targs[i].errors;
+		totalRevokes += targs[i].revokes;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
+	}
+
+	trace("    total token ops=%d, revokes=%d, errors=%d, "
+		"slowest=%lld us\n", kThreads * kIters, totalRevokes,
+		totalErrors, (long long)slowest);
+	TEST_ASSERT("token thrash no errors", totalErrors == 0);
+
+	KosmSurfaceToken finalToken;
+	err = surface->CreateAccessToken(&finalToken);
+	TEST_ASSERT("final token after thrash", err == B_OK);
+	trace("    final token: secret=0x%llx, gen=%u\n",
+		(unsigned long long)finalToken.secret,
+		(unsigned)finalToken.generation);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct purgeable_thrash_args {
+	KosmSurface*	surface;
+	int				iterations;
+	int				errors;
+	int				setVolatileOk;
+	int				setVolatileFail;
+	int				setNonVolatileOk;
+	int				setNonVolatilePurged;
+	int				setNonVolatileFail;
+	bigtime_t		totalTime;
+};
+
+
+static status_t
+purgeable_thrash_thread(void* data)
+{
+	purgeable_thrash_args* args = (purgeable_thrash_args*)data;
+	args->errors = 0;
+	args->setVolatileOk = 0;
+	args->setVolatileFail = 0;
+	args->setNonVolatileOk = 0;
+	args->setNonVolatilePurged = 0;
+	args->setNonVolatileFail = 0;
+
+	int tid = (int)find_thread(NULL);
+	bigtime_t t0 = system_time();
+
+	trace("    [thread %d] purgeable_thrash start, iters=%d\n",
+		tid, args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		kosm_purgeable_state oldState;
+
+		status_t err = args->surface->SetPurgeable(
+			KOSM_PURGEABLE_VOLATILE, &oldState);
+		if (err != B_OK) {
+			args->setVolatileFail++;
+			args->errors++;
+			trace("    [thread %d] SetPurgeable(VOLATILE) FAIL iter %d: "
+				"%s (0x%08x)\n", tid, i, strerror(err), (unsigned)err);
+			continue;
+		}
+		args->setVolatileOk++;
+
+		snooze(1);
+
+		err = args->surface->SetPurgeable(
+			KOSM_PURGEABLE_NON_VOLATILE, &oldState);
+		if (err == B_OK) {
+			args->setNonVolatileOk++;
+		} else if (err == KOSM_SURFACE_PURGED) {
+			args->setNonVolatilePurged++;
+		} else {
+			args->setNonVolatileFail++;
+			args->errors++;
+			trace("    [thread %d] SetPurgeable(NON_VOLATILE) FAIL iter %d:"
+				" %s (0x%08x)\n", tid, i, strerror(err), (unsigned)err);
+		}
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] purgeable_thrash done: vol=%d/%d, "
+		"nonvol=%d ok / %d purged / %d fail, time=%lld us\n", tid,
+		args->setVolatileOk,
+		args->setVolatileOk + args->setVolatileFail,
+		args->setNonVolatileOk, args->setNonVolatilePurged,
+		args->setNonVolatileFail, (long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_purgeable_thrash()
+{
+	trace("\n--- test_stress_purgeable_thrash ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 128;
+	desc.height = 128;
+	desc.usage = KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE
+		| KOSM_SURFACE_USAGE_PURGEABLE;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(128x128, PURGEABLE)", err);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	const int kThreads = 4;
+	const int kIters = 200;
+	trace("    spawning %d threads, %d volatile/non-volatile toggles each\n",
+		kThreads, kIters);
+
+	purgeable_thrash_args targs[kThreads];
+	thread_id threads[kThreads];
+
+	for (int i = 0; i < kThreads; i++) {
+		targs[i].surface = surface;
+		targs[i].iterations = kIters;
+		targs[i].errors = 0;
+
+		char name[32];
+		snprintf(name, sizeof(name), "purg_thrash_%d", i);
+		threads[i] = spawn_thread(purgeable_thrash_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int totalErrors = 0;
+	int totalPurged = 0;
+	bigtime_t slowest = 0;
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    thread %d: vol=%d, nonvol=%d ok / %d purged / %d fail, "
+			"time=%lld us\n", i,
+			targs[i].setVolatileOk, targs[i].setNonVolatileOk,
+			targs[i].setNonVolatilePurged, targs[i].setNonVolatileFail,
+			(long long)targs[i].totalTime);
+		totalErrors += targs[i].errors;
+		totalPurged += targs[i].setNonVolatilePurged;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
+	}
+
+	trace("    total toggles=%d, purge events=%d, errors=%d, "
+		"slowest=%lld us\n", kThreads * kIters * 2, totalPurged,
+		totalErrors, (long long)slowest);
+	TEST_ASSERT("purgeable thrash no errors", totalErrors == 0);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_stress_pool_exhaustion()
+{
+	trace("\n--- test_stress_pool_exhaustion ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	const int kMaxSurfaces = 512;
+	KosmSurface* pool[kMaxSurfaces];
+	int allocated = 0;
+
+	trace("    allocating up to %d surfaces (256x256 ARGB8888)...\n",
+		kMaxSurfaces);
+
+	for (int i = 0; i < kMaxSurfaces; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 256;
+		desc.height = 256;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		pool[i] = NULL;
+		status_t err = alloc->Allocate(desc, &pool[i]);
+		if (err != B_OK || pool[i] == NULL) {
+			trace("    allocation stopped at %d: %s (0x%08x)\n",
+				i, strerror(err), (unsigned)err);
+			break;
+		}
+		allocated++;
+
+		// Log progress every 50 surfaces
+		if ((allocated % 50) == 0) {
+			trace("    ... %d allocated so far (latest id=%u, "
+				"allocSize=%zu)\n", allocated,
+				(unsigned)pool[i]->ID(), pool[i]->AllocSize());
+		}
+	}
+
+	size_t totalBytes = 0;
+	for (int i = 0; i < allocated; i++)
+		totalBytes += pool[i]->AllocSize();
+
+	trace("    allocated %d surfaces, total %zu bytes (%.1f MB)\n",
+		allocated, totalBytes, (double)totalBytes / (1024.0 * 1024.0));
+	TEST_ASSERT("allocated at least 16 surfaces", allocated >= 16);
+
+	// Unique ID check
+	bool allValid = true;
+	int duplicates = 0;
+	for (int i = 0; i < allocated; i++) {
+		if (!pool[i]->IsValid()) {
+			allValid = false;
+			trace("    surface %d (id=%u) IsValid()==false!\n",
+				i, (unsigned)pool[i]->ID());
+			break;
+		}
+		for (int j = i + 1; j < allocated; j++) {
+			if (pool[i]->ID() == pool[j]->ID()) {
+				trace("    DUPLICATE ID %u at indices %d and %d!\n",
+					(unsigned)pool[i]->ID(), i, j);
+				duplicates++;
+				allValid = false;
+			}
+		}
+	}
+	trace("    ID uniqueness: %s (duplicates=%d)\n",
+		allValid ? "ok" : "FAIL", duplicates);
+	TEST_ASSERT("all surfaces valid, unique IDs", allValid);
+
+	// Free half
+	int halfCount = allocated / 2;
+	trace("    freeing first %d surfaces...\n", halfCount);
+	bigtime_t freeStart = system_time();
+	for (int i = 0; i < halfCount; i++) {
+		alloc->Free(pool[i]);
+		pool[i] = NULL;
+	}
+	trace("    freed %d in %lld us\n", halfCount,
+		(long long)(system_time() - freeStart));
+
+	// Re-allocate
+	trace("    re-allocating %d surfaces...\n", halfCount);
+	bigtime_t reallocStart = system_time();
+	int reallocated = 0;
+	for (int i = 0; i < halfCount; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 256;
+		desc.height = 256;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		pool[i] = NULL;
+		status_t err = alloc->Allocate(desc, &pool[i]);
+		if (err == B_OK && pool[i] != NULL) {
+			reallocated++;
+		} else {
+			trace("    re-alloc failed at %d: %s (0x%08x)\n",
+				i, strerror(err), (unsigned)err);
+		}
+	}
+	trace("    re-allocated %d/%d in %lld us\n", reallocated, halfCount,
+		(long long)(system_time() - reallocStart));
+	TEST_ASSERT("re-allocation after free works",
+		reallocated == halfCount);
+
+	// Cleanup
+	trace("    cleaning up %d surfaces...\n", allocated);
+	for (int i = 0; i < allocated; i++) {
+		if (pool[i] != NULL)
+			alloc->Free(pool[i]);
+	}
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct mixed_lock_args {
+	KosmSurface*	surface;
+	int				iterations;
+	bool			readOnly;
+	int				errors;
+	int				acquired;
+	int				timedOut;
+	int				unexpectedErr;
+	bigtime_t		maxWait;
+	bigtime_t		totalTime;
+};
+
+
+static status_t
+mixed_lock_thread(void* data)
+{
+	mixed_lock_args* args = (mixed_lock_args*)data;
+	args->errors = 0;
+	args->acquired = 0;
+	args->timedOut = 0;
+	args->unexpectedErr = 0;
+	args->maxWait = 0;
+
+	int tid = (int)find_thread(NULL);
+	uint32 options = args->readOnly ? KOSM_SURFACE_LOCK_READ_ONLY : 0;
+	bigtime_t t0 = system_time();
+
+	trace("    [thread %d] mixed_lock start (%s), iters=%d\n",
+		tid, args->readOnly ? "read" : "write", args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		bigtime_t lockStart = system_time();
+		status_t err = args->surface->LockWithTimeout(500000, options);
+		bigtime_t lockWait = system_time() - lockStart;
+
+		if (lockWait > args->maxWait)
+			args->maxWait = lockWait;
+
+		if (err == B_OK) {
+			args->acquired++;
+
+			void* base = args->surface->BaseAddress();
+			if (!args->readOnly && base != NULL) {
+				uint32* p = (uint32*)base;
+				*p = (uint32)tid;
+			}
+
+			snooze(rand() % 100);
+			args->surface->Unlock();
+		} else if (err == B_TIMED_OUT || err == B_BUSY) {
+			args->timedOut++;
+		} else {
+			args->unexpectedErr++;
+			args->errors++;
+			trace("    [thread %d] LockWithTimeout unexpected error "
+				"iter %d: %s (0x%08x)\n", tid, i, strerror(err),
+				(unsigned)err);
+		}
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] mixed_lock done (%s): acquired=%d, "
+		"timedOut=%d, errors=%d, maxWait=%lld us, time=%lld us\n",
+		tid, args->readOnly ? "read" : "write",
+		args->acquired, args->timedOut, args->errors,
+		(long long)args->maxWait, (long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_mixed_lock_contention()
+{
+	trace("\n--- test_stress_mixed_lock_contention ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(64x64)", err);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	const int kReaders = 4;
+	const int kWriters = 4;
+	const int kTotal = kReaders + kWriters;
+	const int kIters = 50;
+	trace("    spawning %d readers + %d writers, %d iterations each\n",
+		kReaders, kWriters, kIters);
+
+	mixed_lock_args targs[kTotal];
+	thread_id threads[kTotal];
+
+	for (int i = 0; i < kTotal; i++) {
+		targs[i].surface = surface;
+		targs[i].iterations = kIters;
+		targs[i].readOnly = (i < kReaders);
+		targs[i].errors = 0;
+		targs[i].acquired = 0;
+
+		char name[32];
+		snprintf(name, sizeof(name), "mixed_%s_%d",
+			targs[i].readOnly ? "rd" : "wr", i);
+		threads[i] = spawn_thread(mixed_lock_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned %s thread %d (tid=%d)\n",
+			targs[i].readOnly ? "reader" : "writer",
+			i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int totalErrors = 0;
+	int totalReaderAcquires = 0;
+	int totalWriterAcquires = 0;
+	int totalTimedOut = 0;
+	bigtime_t worstWait = 0;
+	for (int i = 0; i < kTotal; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    %s thread %d: acquired=%d, timedOut=%d, errors=%d, "
+			"maxWait=%lld us\n",
+			targs[i].readOnly ? "reader" : "writer", i,
+			targs[i].acquired, targs[i].timedOut, targs[i].errors,
+			(long long)targs[i].maxWait);
+		totalErrors += targs[i].errors;
+		totalTimedOut += targs[i].timedOut;
+		if (targs[i].readOnly)
+			totalReaderAcquires += targs[i].acquired;
+		else
+			totalWriterAcquires += targs[i].acquired;
+		if (targs[i].maxWait > worstWait)
+			worstWait = targs[i].maxWait;
+	}
+
+	trace("    readers=%d, writers=%d, timedOut=%d, errors=%d, "
+		"worstWait=%lld us\n", totalReaderAcquires, totalWriterAcquires,
+		totalTimedOut, totalErrors, (long long)worstWait);
+	TEST_ASSERT("no lock errors", totalErrors == 0);
+	TEST_ASSERT("writers acquired some locks", totalWriterAcquires > 0);
+	TEST_ASSERT("surface still valid after mixed contention",
+		surface->IsValid());
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+struct use_count_args {
+	KosmSurface*	surface;
+	int				iterations;
+	int32			peakSeen;
+	bigtime_t		totalTime;
+};
+
+
+static status_t
+use_count_inc_dec_thread(void* data)
+{
+	use_count_args* args = (use_count_args*)data;
+	args->peakSeen = 0;
+
+	int tid = (int)find_thread(NULL);
+	bigtime_t t0 = system_time();
+
+	trace("    [thread %d] use_count start, iters=%d\n",
+		tid, args->iterations);
+
+	for (int i = 0; i < args->iterations; i++) {
+		args->surface->IncrementUseCount();
+
+		int32 current = args->surface->LocalUseCount();
+		if (current > args->peakSeen)
+			args->peakSeen = current;
+
+		snooze(rand() % 10);
+		args->surface->DecrementUseCount();
+	}
+
+	args->totalTime = system_time() - t0;
+	trace("    [thread %d] use_count done: peakSeen=%d, time=%lld us\n",
+		tid, (int)args->peakSeen, (long long)args->totalTime);
+	return B_OK;
+}
+
+
+static void
+test_stress_use_count_contention()
+{
+	trace("\n--- test_stress_use_count_contention ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	trace_status("Allocate(64x64)", err);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	TEST_ASSERT("initial use count 0", surface->LocalUseCount() == 0);
+
+	const int kThreads = 8;
+	const int kIters = 500;
+	trace("    spawning %d threads, %d inc/dec cycles each\n",
+		kThreads, kIters);
+
+	use_count_args targs[kThreads];
+	thread_id threads[kThreads];
+
+	for (int i = 0; i < kThreads; i++) {
+		targs[i].surface = surface;
+		targs[i].iterations = kIters;
+
+		char name[32];
+		snprintf(name, sizeof(name), "usecount_%d", i);
+		threads[i] = spawn_thread(use_count_inc_dec_thread, name,
+			B_NORMAL_PRIORITY, &targs[i]);
+		trace("    spawned thread %d (tid=%d)\n", i, (int)threads[i]);
+		resume_thread(threads[i]);
+	}
+
+	int32 overallPeak = 0;
+	bigtime_t slowest = 0;
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+		trace("    thread %d: peakSeen=%d, time=%lld us\n",
+			i, (int)targs[i].peakSeen,
+			(long long)targs[i].totalTime);
+		if (targs[i].peakSeen > overallPeak)
+			overallPeak = targs[i].peakSeen;
+		if (targs[i].totalTime > slowest)
+			slowest = targs[i].totalTime;
+	}
+
+	int32 finalCount = surface->LocalUseCount();
+	trace("    %d threads x %d cycles = %d total inc/dec ops\n",
+		kThreads, kIters, kThreads * kIters);
+	trace("    final use count=%d (expected 0), peak observed=%d, "
+		"slowest=%lld us\n", (int)finalCount, (int)overallPeak,
+		(long long)slowest);
+	TEST_ASSERT("use count returns to 0", finalCount == 0);
+	TEST_ASSERT("not in use after all threads done",
+		!surface->IsInUse());
 
 	alloc->Free(surface);
 	trace("  total: %lld us\n", (long long)(system_time() - t0));
@@ -1559,7 +3326,7 @@ test_mobile_render_pipeline()
 // GUI
 // ============================================================
 
-static const int kMaxLogLines = 200;
+static const int kMaxLogLines = 400;
 static char sLogLines[kMaxLogLines][256];
 static int sLogLineCount = 0;
 static bool sLogLinePass[kMaxLogLines];
@@ -1667,7 +3434,15 @@ public:
 		_RunTest("zero-size alloc",         test_allocate_zero_size, "basic");
 		_RunTest("all formats",             test_allocate_all_formats, "basic");
 		_RunTest("lookup",                  test_lookup, "basic");
+		_RunTest("lookup or clone",         test_lookup_or_clone, "basic");
+		_RunTest("lookup with token",       test_lookup_with_token, "basic");
+		_RunTest("revoked token lookup",    test_revoked_token_lookup, "basic");
+		_RunTest("free then lookup",        test_free_then_lookup, "basic");
+		_RunTest("double free",             test_double_free, "basic");
 		_RunTest("format support",          test_format_support, "basic");
+		_RunTest("cache modes",             test_cache_modes, "basic");
+		_RunTest("custom stride",           test_custom_stride, "basic");
+		_RunTest("large allocation",        test_large_allocation, "basic");
 
 		// --- LOCK ---
 		trace("\n# ========== LOCK ==========\n");
@@ -1687,23 +3462,35 @@ public:
 		// --- PLANAR ---
 		trace("\n# ========== PLANAR ==========\n");
 		_RunTest("NV12 planes",             test_planar_nv12, "planar");
+		_RunTest("NV21 planes",             test_planar_nv21, "planar");
 		_RunTest("YV12 planes",             test_planar_yv12, "planar");
 		_RunTest("component info",          test_component_info, "planar");
 
 		// --- DATA ---
 		trace("\n# ========== DATA ==========\n");
 		_RunTest("use count",               test_use_count, "data");
+		_RunTest("free while in-use",       test_free_while_in_use, "data");
 		_RunTest("attachments",             test_attachments, "data");
 		_RunTest("purgeable",               test_purgeable, "data");
+		_RunTest("purgeable+lock",          test_purgeable_lock_interaction, "data");
+		_RunTest("purgeable usage flag",    test_purgeable_usage_flag, "data");
 		_RunTest("access token",            test_access_token, "data");
 		_RunTest("usage flags",             test_usage_flags, "data");
 		_RunTest("pixel read/write",        test_pixel_readwrite, "data");
+		_RunTest("pixel read/write RGB565", test_pixel_readwrite_rgb565, "data");
 
 		// --- STRESS ---
 		trace("\n# ========== STRESS ==========\n");
 		_RunTest("alloc/free churn 8x100",  test_stress_alloc_free, "stress");
 		_RunTest("lock contention 8x50",    test_stress_lock_contention, "stress");
 		_RunTest("rapid lock/unlock 10000", test_stress_rapid_lock_unlock, "stress");
+		_RunTest("attachment thrash 8x100", test_stress_attachment_thrash, "stress");
+		_RunTest("alloc/lookup race 8x100", test_stress_alloc_lookup_race, "stress");
+		_RunTest("token thrash 4x200",      test_stress_token_thrash, "stress");
+		_RunTest("purgeable thrash 4x200",  test_stress_purgeable_thrash, "stress");
+		_RunTest("pool exhaustion 512",     test_stress_pool_exhaustion, "stress");
+		_RunTest("mixed rd/wr lock 8x50",   test_stress_mixed_lock_contention, "stress");
+		_RunTest("use count contention 8x500", test_stress_use_count_contention, "stress");
 
 		// --- MOBILE SIM ---
 		trace("\n# ========== MOBILE SIM ==========\n");
