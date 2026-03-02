@@ -231,6 +231,42 @@ void Gradient::Impl::build_colortable() const {
             colortable[i] = c.premultiplied().to_argb32();
         }
     }
+
+    // Apply AA margin at repeat/reflect boundaries to smooth the seam
+    // between the last and first gradient stop (ThorVG-style).
+    if (spread != GradientSpread::Pad && stops.size() >= 2) {
+        // Adaptive margin: wider when the color difference is large.
+        int margin = std::min(40, kColorTableSize / 20);
+
+        uint32_t first = colortable[0];
+        uint32_t last  = colortable[kColorTableSize - 1];
+
+        // Blend at the seam: smooth transition across the boundary.
+        for (int j = 0; j < margin; ++j) {
+            // frac goes from ~0.5 to 0.0 for first entries (blend towards 'last')
+            // and from 0.0 to ~0.5 for last entries (blend towards 'first').
+            uint32_t frac = static_cast<uint32_t>((margin - j) * 128 / margin);
+
+            // Blend start of table towards end color
+            {
+                uint32_t c = colortable[j];
+                uint32_t inv = 256 - frac;
+                uint32_t rb = (((c & 0x00FF00FF) * inv + (last & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+                uint32_t ag = ((((c >> 8) & 0x00FF00FF) * inv + ((last >> 8) & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+                colortable[j] = (ag << 8) | rb;
+            }
+
+            // Blend end of table towards start color
+            {
+                int idx = kColorTableSize - 1 - j;
+                uint32_t c = colortable[idx];
+                uint32_t inv = 256 - frac;
+                uint32_t rb = (((c & 0x00FF00FF) * inv + (first & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+                uint32_t ag = ((((c >> 8) & 0x00FF00FF) * inv + ((first >> 8) & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+                colortable[idx] = (ag << 8) | rb;
+            }
+        }
+    }
 }
 
 // ============================================================
