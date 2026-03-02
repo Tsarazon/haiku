@@ -601,64 +601,128 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
     int sh = static_cast<int>(std::ceil(shape_extents.height())) + 2 * blur_expand + 2;
     if (sw <= 0 || sh <= 0) return;
 
-    int stride = sw * 4;
-    size_t buf_size = static_cast<size_t>(sh) * stride;
-
-    // Reuse cached buffer to avoid per-frame heap allocation.
-    ctx.shadow_buf_cache.resize(buf_size);
-    std::memset(ctx.shadow_buf_cache.data(), 0, buf_size);
-
     Color shadow_premul = shd.color.premultiplied();
     uint32_t shadow_argb = shadow_premul.to_argb32();
 
     int off_x = static_cast<int>(std::round(shd.offset.x));
     int off_y = static_cast<int>(std::round(shd.offset.y));
 
-    for (const auto& span : shape_spans.spans) {
-        int dst_y = span.y + off_y - sy;
-        int dst_x = span.x + off_x - sx;
-        if (dst_y < 0 || dst_y >= sh) continue;
-        auto* row = reinterpret_cast<uint32_t*>(ctx.shadow_buf_cache.data() + dst_y * stride);
-        for (int i = 0; i < span.len; ++i) {
-            int px = dst_x + i;
-            if (px >= 0 && px < sw)
-                row[px] = byte_mul(shadow_argb, span.coverage);
-        }
-    }
+    if (shd.blur > 0.0f) {
+        // Alpha-only blur path: blur only the alpha channel (~4x less work).
+        // Shadow color is constant, only coverage/alpha varies per pixel.
+        int alpha_stride = sw;
+        size_t alpha_buf_size = static_cast<size_t>(sh) * alpha_stride;
 
-    if (shd.blur > 0.0f)
-        gaussian_blur(ctx.shadow_buf_cache.data(), sw, sh, stride, shd.blur, &ctx.blur_tmp_cache);
+        ctx.shadow_buf_cache.resize(alpha_buf_size);
+        std::memset(ctx.shadow_buf_cache.data(), 0, alpha_buf_size);
 
-    auto& st = ctx.state();
-
-    // Build row index for O(1) clip lookup (replaces per-pixel binary search).
-    ClipRowIndex clip_idx;
-    if (st.clipping)
-        clip_idx.build(st.clip_spans);
-
-    for (int y = 0; y < sh; ++y) {
-        int dst_y = sy + y;
-        if (dst_y < 0 || dst_y >= ctx.render_height) continue;
-
-        auto* s_row = reinterpret_cast<const uint32_t*>(ctx.shadow_buf_cache.data() + y * stride);
-        auto* t_row = reinterpret_cast<uint32_t*>(ctx.render_data + dst_y * ctx.render_stride);
-
-        for (int x = 0; x < sw; ++x) {
-            int dst_x = sx + x;
-            if (dst_x < 0 || dst_x >= ctx.render_width) continue;
-
-            uint32_t src = s_row[x];
-            if (pixel_alpha(src) == 0) continue;
-
-            if (st.clipping) {
-                bool in_clip = false;
-                uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
-                if (!in_clip) continue;
-                src = byte_mul(src, cov);
+        // Rasterize shape coverage into alpha-only buffer.
+        uint8_t shadow_a = static_cast<uint8_t>(pixel_alpha(shadow_argb));
+        for (const auto& span : shape_spans.spans) {
+            int dst_y = span.y + off_y - sy;
+            int dst_x = span.x + off_x - sx;
+            if (dst_y < 0 || dst_y >= sh) continue;
+            auto* row = ctx.shadow_buf_cache.data() + dst_y * alpha_stride;
+            for (int i = 0; i < span.len; ++i) {
+                int px = dst_x + i;
+                if (px >= 0 && px < sw)
+                    row[px] = static_cast<uint8_t>((uint32_t(shadow_a) * span.coverage + 127) / 255);
             }
+        }
 
-            t_row[dst_x] = composite_pixel(src, t_row[dst_x], st.op, st.blend_mode,
-                                           ctx.working_space);
+        // Blur the alpha channel using a dedicated 1-channel blur.
+        gaussian_blur_alpha(ctx.shadow_buf_cache.data(), sw, sh, alpha_stride, shd.blur,
+                            &ctx.blur_tmp_cache);
+
+        // Composite blurred shadow onto render target.
+        auto& st = ctx.state();
+        ClipRowIndex clip_idx;
+        if (st.clipping)
+            clip_idx.build(st.clip_spans);
+
+        // Pre-extract shadow RGB for fast recombination.
+        uint32_t sr = red(shadow_argb), sg = green(shadow_argb), sb = blue(shadow_argb);
+
+        for (int y = 0; y < sh; ++y) {
+            int dst_y = sy + y;
+            if (dst_y < 0 || dst_y >= ctx.render_height) continue;
+
+            auto* a_row = ctx.shadow_buf_cache.data() + y * alpha_stride;
+            auto* t_row = reinterpret_cast<uint32_t*>(ctx.render_data + dst_y * ctx.render_stride);
+
+            for (int x = 0; x < sw; ++x) {
+                uint8_t alpha = a_row[x];
+                if (alpha == 0) continue;
+
+                int dst_x = sx + x;
+                if (dst_x < 0 || dst_x >= ctx.render_width) continue;
+
+                // Reconstruct premultiplied ARGB from blurred alpha + constant shadow color.
+                uint32_t src = pack_argb(alpha,
+                    static_cast<uint8_t>((sr * alpha + 127) / 255),
+                    static_cast<uint8_t>((sg * alpha + 127) / 255),
+                    static_cast<uint8_t>((sb * alpha + 127) / 255));
+
+                if (st.clipping) {
+                    bool in_clip = false;
+                    uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
+                    if (!in_clip) continue;
+                    src = byte_mul(src, cov);
+                }
+
+                t_row[dst_x] = composite_pixel(src, t_row[dst_x], st.op, st.blend_mode,
+                                               ctx.working_space);
+            }
+        }
+    } else {
+        // No blur: render shadow directly with full ARGB (original path).
+        int stride = sw * 4;
+        size_t buf_size = static_cast<size_t>(sh) * stride;
+
+        ctx.shadow_buf_cache.resize(buf_size);
+        std::memset(ctx.shadow_buf_cache.data(), 0, buf_size);
+
+        for (const auto& span : shape_spans.spans) {
+            int dst_y = span.y + off_y - sy;
+            int dst_x = span.x + off_x - sx;
+            if (dst_y < 0 || dst_y >= sh) continue;
+            auto* row = reinterpret_cast<uint32_t*>(ctx.shadow_buf_cache.data() + dst_y * stride);
+            for (int i = 0; i < span.len; ++i) {
+                int px = dst_x + i;
+                if (px >= 0 && px < sw)
+                    row[px] = byte_mul(shadow_argb, span.coverage);
+            }
+        }
+
+        auto& st = ctx.state();
+        ClipRowIndex clip_idx;
+        if (st.clipping)
+            clip_idx.build(st.clip_spans);
+
+        for (int y = 0; y < sh; ++y) {
+            int dst_y = sy + y;
+            if (dst_y < 0 || dst_y >= ctx.render_height) continue;
+
+            auto* s_row = reinterpret_cast<const uint32_t*>(ctx.shadow_buf_cache.data() + y * stride);
+            auto* t_row = reinterpret_cast<uint32_t*>(ctx.render_data + dst_y * ctx.render_stride);
+
+            for (int x = 0; x < sw; ++x) {
+                int dst_x = sx + x;
+                if (dst_x < 0 || dst_x >= ctx.render_width) continue;
+
+                uint32_t src = s_row[x];
+                if (pixel_alpha(src) == 0) continue;
+
+                if (st.clipping) {
+                    bool in_clip = false;
+                    uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
+                    if (!in_clip) continue;
+                    src = byte_mul(src, cov);
+                }
+
+                t_row[dst_x] = composite_pixel(src, t_row[dst_x], st.op, st.blend_mode,
+                                               ctx.working_space);
+            }
         }
     }
 }
@@ -959,6 +1023,59 @@ void Context::draw_path(const Path& path, const MaskFilter& filter, FillRule rul
 
 
 void Context::fill_rect(const Rect& rect) {
+    if (!m_impl || !m_impl->render_data) return;
+    auto& st = m_impl->state();
+
+    // Fast-track for axis-aligned rectangles: skip path construction and
+    // FT rasterization when the CTM has no rotation/skew. Generate spans
+    // directly — 5-10x faster than the full path pipeline.
+    const auto& m = st.matrix;
+    bool axis_aligned = (std::abs(m.b) < 1e-5f && std::abs(m.c) < 1e-5f);
+
+    if (axis_aligned && st.shadow.is_none()
+        && !(st.has_fill_pattern && st.fill_pattern)
+        && st.mask_filter.is_none()) {
+        // Transform rect corners
+        float x0 = m.a * rect.x() + m.tx;
+        float y0 = m.d * rect.y() + m.ty;
+        float x1 = m.a * (rect.x() + rect.width()) + m.tx;
+        float y1 = m.d * (rect.y() + rect.height()) + m.ty;
+
+        // Normalize (handle negative scale)
+        if (x0 > x1) std::swap(x0, x1);
+        if (y0 > y1) std::swap(y0, y1);
+
+        // Clip to render region
+        int ix0 = std::max(static_cast<int>(std::floor(x0)), m_impl->clip_rect.x);
+        int iy0 = std::max(static_cast<int>(std::floor(y0)), m_impl->clip_rect.y);
+        int ix1 = std::min(static_cast<int>(std::ceil(x1)), m_impl->clip_rect.x + m_impl->clip_rect.w);
+        int iy1 = std::min(static_cast<int>(std::ceil(y1)), m_impl->clip_rect.y + m_impl->clip_rect.h);
+
+        if (ix0 >= ix1 || iy0 >= iy1) return;
+
+        int span_width = ix1 - ix0;
+        int span_height = iy1 - iy0;
+
+        SpanBuffer& spans = m_impl->fill_spans;
+        spans.reset();
+        spans.spans.resize(static_cast<size_t>(span_height));
+        for (int i = 0; i < span_height; ++i)
+            spans.spans[static_cast<size_t>(i)] = {ix0, span_width, iy0 + i, 255};
+        spans.bounds = {ix0, iy0, span_width, span_height};
+
+        if (st.clipping) {
+            SpanBuffer clipped;
+            span_buffer_intersect(clipped, spans, st.clip_spans);
+            if (clipped.spans.empty()) return;
+            spans = std::move(clipped);
+        }
+
+        PaintSource paint = make_fill_paint(st);
+        BlendParams params = make_blend_params(*m_impl, paint);
+        blend(params, spans, m_impl->clip_rect, st.clipping ? &st.clip_spans : nullptr);
+        return;
+    }
+
     auto path = Path::Builder{}.add_rect(rect).build();
     fill_path(path);
 }

@@ -724,6 +724,10 @@ uint32_t dither_pixel_srgb(uint32_t premul, int px, int py);
 void gaussian_blur(unsigned char* data, int width, int height, int stride, float radius,
                    std::vector<unsigned char>* tmp_buf = nullptr);
 
+// Alpha-only blur: ~4x faster for shadow rendering (1 channel vs 4).
+void gaussian_blur_alpha(unsigned char* data, int width, int height, int stride, float radius,
+                         std::vector<unsigned char>* tmp_buf = nullptr);
+
 void memfill32(uint32_t* dest, int length, uint32_t value);
 
 // -- Pixel format conversion --
