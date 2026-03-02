@@ -29,6 +29,7 @@
 #include <syscall_restart.h>
 #include <thread.h>
 #include <tracing.h>
+#include <kosm_ray.h>
 #include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 #include <vfs.h>

@@ -110,6 +110,34 @@ extern status_t		_kern_kosm_get_next_mutex_info(team_id team,
 						int32* cookie, kosm_mutex_info* info,
 						size_t size);
 
+/* kosm ray functions */
+extern status_t		_kern_kosm_create_ray(kosm_ray_id* endpoint0,
+						kosm_ray_id* endpoint1, uint32 flags);
+extern status_t		_kern_kosm_close_ray(kosm_ray_id id);
+extern status_t		_kern_kosm_ray_write(kosm_ray_id id,
+						const void* data, size_t dataSize,
+						const kosm_handle_t* handles, size_t handleCount,
+						uint32 flags);
+extern status_t		_kern_kosm_ray_write_etc(kosm_ray_id id,
+						const void* data, size_t dataSize,
+						const kosm_handle_t* handles, size_t handleCount,
+						uint32 flags, bigtime_t timeout);
+extern status_t		_kern_kosm_ray_read(kosm_ray_id id,
+						void* data, size_t* dataSize,
+						kosm_handle_t* handles, size_t* handleCount,
+						uint32 flags);
+extern status_t		_kern_kosm_ray_read_etc(kosm_ray_id id,
+						void* data, size_t* dataSize,
+						kosm_handle_t* handles, size_t* handleCount,
+						uint32 flags, bigtime_t timeout);
+extern status_t		_kern_kosm_ray_wait(kosm_ray_id id, uint32 signals,
+						uint32* observedSignals, uint32 flags,
+						bigtime_t timeout);
+extern status_t		_kern_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
+extern kosm_ray_id	_kern_kosm_get_bootstrap_ray(void);
+extern status_t		_kern_kosm_get_ray_info(kosm_ray_id id,
+						kosm_ray_info* info, size_t size);
+
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);
 extern status_t		_kern_delete_sem(sem_id id);

@@ -34,6 +34,12 @@ static const select_ops kSelectOps[] = {
 	{
 		select_thread,
 		deselect_thread
+	},
+
+	// B_OBJECT_TYPE_KOSM_RAY
+	{
+		kosm_select_ray,
+		kosm_deselect_ray
 	}
 };
 

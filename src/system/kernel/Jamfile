@@ -44,6 +44,7 @@ KernelMergeObject kernel_core.o :
 	real_time_clock.cpp
 	sem.cpp
 	kosm_mutex.cpp
+	kosm_ray.cpp
 	shutdown.cpp
 	signal.cpp
 	system_info.cpp

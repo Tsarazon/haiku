@@ -65,6 +65,97 @@ extern status_t			_kosm_get_next_mutex_info(team_id team, int32* cookie,
 	_kosm_get_next_mutex_info((team), (cookie), (info), sizeof(*(info)))
 
 
+/* KosmOS Ray — paired IPC channels */
+
+typedef int32 kosm_ray_id;
+
+/* Handle types for cross-process object passing */
+
+#define KOSM_HANDLE_RAY				0x01
+#define KOSM_HANDLE_MUTEX			0x02
+#define KOSM_HANDLE_AREA			0x03
+#define KOSM_HANDLE_SEM				0x04
+#define KOSM_HANDLE_FD				0x05
+
+typedef struct {
+	uint32			type;
+	int32			id;
+} kosm_handle_t;
+
+/* QoS classes */
+
+#define KOSM_QOS_DEFAULT			0
+#define KOSM_QOS_UTILITY			1
+#define KOSM_QOS_USER_INITIATED		2
+#define KOSM_QOS_USER_INTERACTIVE	3
+
+/* Wait signals for kosm_ray_wait() */
+
+#define KOSM_RAY_READABLE			0x0001
+#define KOSM_RAY_WRITABLE			0x0002
+#define KOSM_RAY_PEER_CLOSED		0x0004
+
+/* Flags for read/write */
+
+#define KOSM_RAY_PEEK				0x0100
+#define KOSM_RAY_COPY_HANDLES		0x0200
+
+/* Error codes */
+
+enum {
+	KOSM_RAY_PEER_CLOSED_ERROR		= B_ERRORS_END + 0x3000,
+	KOSM_RAY_INVALID_HANDLE,
+	KOSM_RAY_TOO_LARGE,
+	KOSM_RAY_TOO_MANY_HANDLES
+};
+
+typedef struct {
+	kosm_ray_id		ray;
+	team_id			team;
+	kosm_ray_id		peer;
+	uint32			queue_count;
+	uint32			flags;
+	uint8			qos_class;
+} kosm_ray_info;
+
+extern status_t			kosm_create_ray(kosm_ray_id* endpoint0,
+							kosm_ray_id* endpoint1, uint32 flags);
+extern status_t			kosm_close_ray(kosm_ray_id id);
+
+extern status_t			kosm_ray_write(kosm_ray_id id,
+							const void* data, size_t dataSize,
+							const kosm_handle_t* handles, size_t handleCount,
+							uint32 flags);
+extern status_t			kosm_ray_write_etc(kosm_ray_id id,
+							const void* data, size_t dataSize,
+							const kosm_handle_t* handles, size_t handleCount,
+							uint32 flags, bigtime_t timeout);
+
+extern status_t			kosm_ray_read(kosm_ray_id id,
+							void* data, size_t* dataSize,
+							kosm_handle_t* handles, size_t* handleCount,
+							uint32 flags);
+extern status_t			kosm_ray_read_etc(kosm_ray_id id,
+							void* data, size_t* dataSize,
+							kosm_handle_t* handles, size_t* handleCount,
+							uint32 flags, bigtime_t timeout);
+
+extern status_t			kosm_ray_wait(kosm_ray_id id, uint32 signals,
+							uint32* observedSignals, uint32 flags,
+							bigtime_t timeout);
+
+extern status_t			kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
+
+extern kosm_ray_id		kosm_get_bootstrap_ray(void);
+
+/* system private, use macro instead */
+extern status_t			_kosm_get_ray_info(kosm_ray_id id,
+							kosm_ray_info* info, size_t size);
+
+#define kosm_get_ray_info(id, info) \
+	_kosm_get_ray_info((id), (info), sizeof(*(info)))
+
+
 #ifdef __cplusplus
 }
 #endif

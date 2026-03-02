@@ -53,6 +53,7 @@
 #include <tracing.h>
 #include <user_mutex.h>
 #include <kosm_mutex.h>
+#include <kosm_ray.h>
 #include <user_runtime.h>
 #include <user_thread.h>
 #include <usergroup.h>
@@ -467,6 +468,7 @@ Team::Team(team_id id, bool kernel)
 	list_init(&sem_list);
 	list_init_etc(&port_list, port_team_link_offset());
 	list_init_etc(&kosm_mutex_list, kosm_mutex_team_link_offset());
+	list_init_etc(&kosm_ray_list, kosm_ray_team_link_offset());
 
 	user_data = 0;
 	user_data_area = -1;
@@ -522,6 +524,7 @@ Team::~Team()
 	delete_owned_ports(this);
 	sem_delete_owned_sems(this);
 	kosm_mutex_delete_owned(this);
+	kosm_ray_delete_owned(this);
 
 	DeleteUserTimers(false);
 
@@ -2029,6 +2032,7 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 	delete_owned_ports(team);
 	sem_delete_owned_sems(team);
 	kosm_mutex_delete_owned(team);
+	kosm_ray_delete_owned(team);
 	remove_images(team);
 	vfs_exec_io_context(team->io_context);
 	delete_user_mutex_context(team->user_mutex_context);

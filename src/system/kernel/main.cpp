@@ -58,6 +58,7 @@
 #include <user_debugger.h>
 #include <user_mutex.h>
 #include <kosm_mutex.h>
+#include <kosm_ray.h>
 #include <vfs.h>
 #include <vm/vm.h>
 #include <boot/kernel_args.h>
@@ -313,6 +314,9 @@ main2(void* /*unused*/)
 
 	TRACE("init kosm mutex\n");
 	kosm_mutex_init(&sKernelArgs);
+
+	TRACE("init kosm ray\n");
+	kosm_ray_init(&sKernelArgs);
 
 	TRACE("init system notifications\n");
 	system_notifications_init();
