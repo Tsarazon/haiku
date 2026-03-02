@@ -1,0 +1,19 @@
+/*
+ * KosmSurfaceTest.rdef
+ */
+
+resource app_signature "application/x-vnd.KosmOS-SurfaceTest";
+
+resource app_flags B_SINGLE_LAUNCH;
+
+resource app_version {
+	major  = 1,
+	middle = 0,
+	minor  = 0,
+
+	variety = B_APPV_FINAL,
+	internal = 0,
+
+	short_info = "KosmSurface Test",
+	long_info = "KosmOS Surface Kit Test Suite"
+};

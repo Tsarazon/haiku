@@ -1,0 +1,12 @@
+SubDir HAIKU_TOP src apps kosmsurfacetest ;
+
+UsePublicHeaders surface ;
+
+Application KosmSurfaceTest :
+	KosmSurfaceTest.cpp
+	:
+	be libsurface.so
+	[ TargetLibstdc++ ]
+	:
+	KosmSurfaceTest.rdef
+;

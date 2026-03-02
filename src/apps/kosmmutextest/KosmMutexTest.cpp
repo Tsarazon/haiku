@@ -254,6 +254,33 @@ struct pi_holder_args {
 };
 
 
+struct pi_waiter_args {
+	kosm_mutex_id	id;
+	volatile bool	started;
+	status_t		result;
+	bigtime_t		elapsed;
+};
+
+
+static status_t
+pi_waiter_thread_func(void* data)
+{
+	pi_waiter_args* args = (pi_waiter_args*)data;
+	args->started = true;
+	bigtime_t t0 = system_time();
+	args->result = kosm_acquire_mutex_etc(args->id, B_RELATIVE_TIMEOUT,
+		2000000);
+	args->elapsed = system_time() - t0;
+	trace("    [thread %d] pi_waiter: acquire -> %s (0x%08x), "
+		"elapsed=%lld us\n",
+		(int)find_thread(NULL), strerror(args->result),
+		(unsigned)args->result, (long long)args->elapsed);
+	if (args->result == B_OK)
+		kosm_release_mutex(args->id);
+	return B_OK;
+}
+
+
 static status_t
 pi_holder_thread_func(void* data)
 {
@@ -1227,19 +1254,20 @@ test_priority_inheritance()
 		snooze(1000);
 
 	// spawn high-pri thread that will block on the mutex
-	timed_acquire_args hiargs;
+	pi_waiter_args hiargs;
 	hiargs.id = id;
-	hiargs.flags = B_RELATIVE_TIMEOUT;
-	hiargs.timeout = 2000000; // 2 sec
+	hiargs.started = false;
 	hiargs.result = B_OK;
 	hiargs.elapsed = 0;
 
-	thread_id hiThread = spawn_thread(timed_acquire_thread_func,
+	thread_id hiThread = spawn_thread(pi_waiter_thread_func,
 		"pi_high", 25, &hiargs);
 	trace("    spawned high-pri thread %d (pri=25)\n", (int)hiThread);
 	resume_thread(hiThread);
 
-	// give time for the high-pri thread to block
+	// wait for the high-pri thread to start and block on acquire
+	while (!hiargs.started)
+		snooze(1000);
 	snooze(50000);
 
 	// now tell holder to check its priority and release
