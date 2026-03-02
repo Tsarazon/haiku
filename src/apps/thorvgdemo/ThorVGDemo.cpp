@@ -6,6 +6,13 @@
  * Showcases: gradients, shadows, strokes, transforms, bezier paths,
  *            dash patterns, opacity, per-corner radii, conic gradients.
  * Renders directly into BBitmap (no KosmSurface).
+ *
+ * Tracing focuses on KosmVG library performance and rendering correctness:
+ *   - Per-shape render timing and fill rate (pixels/us)
+ *   - Shadow overhead measurement
+ *   - Per-feature breakdown (gradient type, stroke, clip, etc.)
+ *   - Pixel correctness: verify rendered output at shape centers
+ *   - Frame timing: min/avg/p50/p95/p99/max with histogram
  */
 
 #include <Application.h>
@@ -29,6 +36,46 @@
 static const bigtime_t kPulseRate = 16667; // ~60 fps
 static const int kShapeCount = 8;
 static const int kTraceFrames = 1800; // trace first 1800 frames (~30 sec)
+
+// Shape feature tags for analysis
+enum ShapeFeature {
+	kFeatureRadialGrad	= 0x01,
+	kFeatureLinearGrad	= 0x02,
+	kFeatureConicGrad	= 0x04,
+	kFeatureSolidFill	= 0x08,
+	kFeatureShadow		= 0x10,
+	kFeatureStroke		= 0x20,
+	kFeatureDashStroke	= 0x40,
+	kFeatureBezier		= 0x80,
+	kFeatureRotation	= 0x100,
+	kFeatureOpacity		= 0x200,
+	kFeatureRoundRect	= 0x400
+};
+
+struct ShapeInfo {
+	const char*	name;
+	int			features;	// bitmask of ShapeFeature
+	float		areaFactor;	// multiplier: area ≈ factor * radius²
+};
+
+static const ShapeInfo kShapeInfo[] = {
+	// 0: circle — radial gradient + shadow
+	{"circle",    kFeatureRadialGrad | kFeatureShadow,           3.14159f},
+	// 1: rect — linear gradient + stroke
+	{"rect",      kFeatureLinearGrad | kFeatureStroke,            1.96f},  // (1.4r)²
+	// 2: triangle — solid fill + shadow + rotation
+	{"triangle",  kFeatureSolidFill | kFeatureShadow | kFeatureRotation, 1.30f},
+	// 3: star — solid fill + dashed stroke + rotation
+	{"star",      kFeatureSolidFill | kFeatureDashStroke | kFeatureRotation, 1.0f},
+	// 4: heart — bezier + radial gradient + opacity + rotation
+	{"heart",     kFeatureBezier | kFeatureRadialGrad | kFeatureOpacity | kFeatureRotation, 1.50f},
+	// 5: ellipse — linear gradient + rotation
+	{"ellipse",   kFeatureLinearGrad | kFeatureRotation,          2.65f},  // π*1.3*0.65
+	// 6: rrect — rounded rect + shadow + stroke
+	{"rrect",     kFeatureRoundRect | kFeatureShadow | kFeatureStroke, 2.25f}, // (1.5r)²
+	// 7: hexagon — conic gradient + rotation
+	{"hexagon",   kFeatureConicGrad | kFeatureRotation,           2.60f}   // 2.598*r²
+};
 
 // Enable fast gradient blend path (draws outside gradient range too)
 static const auto kGradExtend =
@@ -54,6 +101,12 @@ struct Shape {
 			case 6: return radius * 0.75f * 1.414f;	// rounded rect half-diagonal
 			default: return radius;
 		}
+	}
+
+	// Approximate pixel area for fill rate calculation
+	float ApproxArea() const
+	{
+		return kShapeInfo[type].areaFactor * radius * radius;
 	}
 
 	void Move(float dt, float width, float height)
@@ -137,9 +190,15 @@ public:
 			B_WILL_DRAW | B_FRAME_EVENTS | B_PULSE_NEEDED),
 		fBitmap(NULL),
 		fTraceFile(NULL),
-		fFrameNum(0)
+		fFrameNum(0),
+		fStatsCount(0),
+		fBgRenderAccum(0),
+		fPixelCheckPassed(0),
+		fPixelCheckFailed(0)
 	{
 		SetViewColor(B_TRANSPARENT_COLOR);
+		memset(fShapeRenderTime, 0, sizeof(fShapeRenderTime));
+		memset(fShapeRenderAccum, 0, sizeof(fShapeRenderAccum));
 		_InitShapes();
 		_OpenTrace();
 	}
@@ -147,7 +206,7 @@ public:
 	virtual ~KosmVGView()
 	{
 		if (fTraceFile) {
-			fprintf(fTraceFile, "# tracing done, %d frames\n", fFrameNum);
+			_WriteSummary();
 			fclose(fTraceFile);
 		}
 		delete fBitmap;
@@ -169,6 +228,11 @@ public:
 		bigtime_t t1 = system_time();
 		_Render();
 		bigtime_t t2 = system_time();
+
+		// Pixel correctness check (every 30 frames to keep overhead low)
+		if (fFrameNum % 30 == 0)
+			_CheckPixels();
+
 		Invalidate();
 		bigtime_t t3 = system_time();
 
@@ -182,8 +246,12 @@ public:
 			DrawBitmap(fBitmap, B_ORIGIN);
 		bigtime_t t1 = system_time();
 
+		bigtime_t elapsed = t1 - t0;
+		if (fStatsCount > 0 && fStatsCount <= kTraceFrames)
+			fDrawBitmapTimes[fStatsCount - 1] = elapsed;
+
 		if (fTraceFile && fFrameNum <= kTraceFrames)
-			fprintf(fTraceFile, "  draw_bitmap: %lld us\n", (long long)(t1 - t0));
+			fprintf(fTraceFile, "  blit: %lld us\n", (long long)elapsed);
 	}
 
 	virtual void FrameResized(float width, float height)
@@ -387,6 +455,7 @@ private:
 			fRenderStart = system_time();
 
 		// Background - radial gradient from center
+		bigtime_t bgStart = system_time();
 		{
 			float diag = sqrtf(w * w + h * h) / 2.0f;
 			kvg::Gradient::Stop stops[] = {
@@ -414,9 +483,19 @@ private:
 			ctx.restore_state();
 			_T(T, "bg_restore");
 		}
+		bigtime_t bgTime = system_time() - bgStart;
+		fBgRenderAccum += bgTime;
+
+		if (T) {
+			float bgArea = w * h;
+			float bgFillRate = bgTime > 0 ? bgArea / (float)bgTime : 0;
+			fprintf(fTraceFile, "  bg: %lld us  %.0f px  %.1f px/us\n",
+				(long long)bgTime, bgArea, bgFillRate);
+		}
 
 		// Draw each shape
 		for (int i = 0; i < kShapeCount; i++) {
+			bigtime_t shapeStart = system_time();
 			Shape& s = fShapes[i];
 			ctx.save_state();
 			ctx.translate_ctm(s.x, s.y);
@@ -707,6 +786,73 @@ private:
 
 			ctx.restore_state();
 			_T(T, "restore");
+
+			bigtime_t shapeTime = system_time() - shapeStart;
+			fShapeRenderTime[i] = shapeTime;
+			fShapeRenderAccum[i] += shapeTime;
+
+			if (T) {
+				float area = fShapes[i].ApproxArea();
+				float fillRate = shapeTime > 0
+					? area / (float)shapeTime : 0;
+				fprintf(fTraceFile, "  %s: %lld us  ~%.0f px  %.1f px/us\n",
+					kShapeInfo[s.type].name,
+					(long long)shapeTime, area, fillRate);
+			}
+		}
+	}
+
+	// Verify KosmVG actually rendered pixels at expected shape positions
+	void _CheckPixels()
+	{
+		if (fBitmap == NULL)
+			return;
+
+		int width = fBitmap->Bounds().IntegerWidth() + 1;
+		int height = fBitmap->Bounds().IntegerHeight() + 1;
+		int stride = fBitmap->BytesPerRow();
+		uint8* bits = (uint8*)fBitmap->Bits();
+		bool T = fTraceFile && fFrameNum <= kTraceFrames;
+
+		for (int i = 0; i < kShapeCount; i++) {
+			Shape& s = fShapes[i];
+			int px = (int)s.x;
+			int py = (int)s.y;
+
+			// Skip if center is outside bitmap
+			if (px < 0 || px >= width || py < 0 || py >= height)
+				continue;
+
+			// Read ARGB pixel at shape center
+			uint32 pixel = *(uint32*)(bits + py * stride + px * 4);
+			uint8 alpha = (pixel >> 24) & 0xFF;
+
+			if (alpha > 0) {
+				fPixelCheckPassed++;
+			} else {
+				fPixelCheckFailed++;
+				if (T) {
+					fprintf(fTraceFile,
+						"  *** PIXEL_EMPTY: %s[%d] at (%d,%d) = 0x%08x\n",
+						kShapeInfo[s.type].name, i, px, py, pixel);
+				}
+			}
+		}
+
+		// Check background pixel at (5,5) — should be non-transparent
+		if (5 < width && 5 < height) {
+			uint32 bgPixel = *(uint32*)(bits + 5 * stride + 5 * 4);
+			uint8 bgAlpha = (bgPixel >> 24) & 0xFF;
+			if (bgAlpha == 0) {
+				fPixelCheckFailed++;
+				if (T) {
+					fprintf(fTraceFile,
+						"  *** BG_EMPTY: pixel at (5,5) = 0x%08x\n",
+						bgPixel);
+				}
+			} else {
+				fPixelCheckPassed++;
+			}
 		}
 	}
 
@@ -718,41 +864,309 @@ private:
 		BPath path(desktop);
 		path.Append("kvg_trace.log");
 		fTraceFile = fopen(path.Path(), "w");
-		if (fTraceFile)
-			fprintf(fTraceFile, "# KosmVG frame trace (times in microseconds)\n");
+		if (fTraceFile) {
+			fprintf(fTraceFile,
+				"# KosmVG performance trace (times in microseconds)\n"
+				"# Shape features:\n");
+			for (int i = 0; i < kShapeCount; i++) {
+				fprintf(fTraceFile, "#   [%d] %s  area=%.0f px  features:",
+					i, kShapeInfo[i].name,
+					kShapeInfo[i].areaFactor
+						* fShapes[i].radius * fShapes[i].radius);
+				int f = kShapeInfo[i].features;
+				if (f & kFeatureRadialGrad)	fprintf(fTraceFile, " radial_grad");
+				if (f & kFeatureLinearGrad)	fprintf(fTraceFile, " linear_grad");
+				if (f & kFeatureConicGrad)	fprintf(fTraceFile, " conic_grad");
+				if (f & kFeatureSolidFill)	fprintf(fTraceFile, " solid_fill");
+				if (f & kFeatureShadow)		fprintf(fTraceFile, " shadow");
+				if (f & kFeatureStroke)		fprintf(fTraceFile, " stroke");
+				if (f & kFeatureDashStroke)	fprintf(fTraceFile, " dash_stroke");
+				if (f & kFeatureBezier)		fprintf(fTraceFile, " bezier");
+				if (f & kFeatureRotation)	fprintf(fTraceFile, " rotation");
+				if (f & kFeatureOpacity)	fprintf(fTraceFile, " opacity");
+				if (f & kFeatureRoundRect)	fprintf(fTraceFile, " round_rect");
+				fprintf(fTraceFile, "\n");
+			}
+			fprintf(fTraceFile, "#\n");
+		}
 	}
 
 	void _TraceFrame(bigtime_t t0, bigtime_t t1, bigtime_t t2, bigtime_t t3)
 	{
-		if (!fTraceFile || fFrameNum > kTraceFrames)
-			return;
-
 		bigtime_t update_us = t1 - t0;
 		bigtime_t render_us = t2 - t1;
-		bigtime_t inval_us  = t3 - t2;
 		bigtime_t total_us  = t3 - t0;
 
-		fprintf(fTraceFile, "frame %d: total=%lld  update=%lld  render=%lld  invalidate=%lld\n",
-			fFrameNum, (long long)total_us, (long long)update_us,
-			(long long)render_us, (long long)inval_us);
+		// Accumulate stats
+		if (fStatsCount < kTraceFrames) {
+			fFrameTimes[fStatsCount] = total_us;
+			fRenderTimes[fStatsCount] = render_us;
+			fUpdateTimes[fStatsCount] = update_us;
+			fStatsCount++;
+		}
+
+		if (!fTraceFile || fFrameNum > kTraceFrames) {
+			fFrameNum++;
+			return;
+		}
+
+		bigtime_t inval_us = t3 - t2;
+
+		fprintf(fTraceFile,
+			"frame %d: total=%lld  render=%lld  update=%lld  "
+			"invalidate=%lld\n",
+			fFrameNum, (long long)total_us, (long long)render_us,
+			(long long)update_us, (long long)inval_us);
 
 		// Flag slow frames (> 2x target)
 		if (total_us > kPulseRate * 2)
-			fprintf(fTraceFile, "  *** SLOW FRAME ***\n");
+			fprintf(fTraceFile, "  *** SLOW FRAME (%.1fx target) ***\n",
+				(float)total_us / kPulseRate);
 
 		fFrameNum++;
 
-		// Flush periodically so we see data even if app crashes
+		// Flush periodically
 		if ((fFrameNum % 60) == 0)
 			fflush(fTraceFile);
 	}
 
+	static int _CmpBigtime(const void* a, const void* b)
+	{
+		bigtime_t va = *(const bigtime_t*)a;
+		bigtime_t vb = *(const bigtime_t*)b;
+		return (va > vb) - (va < vb);
+	}
+
+	void _WriteTimingStats(const char* label, bigtime_t* data, int count)
+	{
+		if (count == 0) return;
+
+		bigtime_t sorted[kTraceFrames];
+		memcpy(sorted, data, count * sizeof(bigtime_t));
+		qsort(sorted, count, sizeof(bigtime_t), _CmpBigtime);
+
+		bigtime_t sum = 0;
+		for (int i = 0; i < count; i++)
+			sum += sorted[i];
+
+		bigtime_t avg = sum / count;
+		bigtime_t p50 = sorted[count / 2];
+		bigtime_t p95 = sorted[(int)(count * 0.95f)];
+		bigtime_t p99 = sorted[(int)(count * 0.99f)];
+
+		fprintf(fTraceFile,
+			"  %s: min=%lld  avg=%lld  p50=%lld  p95=%lld  "
+			"p99=%lld  max=%lld us\n",
+			label,
+			(long long)sorted[0], (long long)avg, (long long)p50,
+			(long long)p95, (long long)p99,
+			(long long)sorted[count - 1]);
+
+		int bins[7] = {};
+		const bigtime_t edges[] = {1000, 2000, 5000, 10000, 16667, 33333};
+		for (int i = 0; i < count; i++) {
+			int b = 6;
+			for (int e = 0; e < 6; e++) {
+				if (sorted[i] < edges[e]) { b = e; break; }
+			}
+			bins[b]++;
+		}
+		fprintf(fTraceFile,
+			"    histogram: <1ms=%d  1-2=%d  2-5=%d  5-10=%d  "
+			"10-16=%d  16-33=%d  >33ms=%d\n",
+			bins[0], bins[1], bins[2], bins[3], bins[4], bins[5], bins[6]);
+	}
+
+	void _WriteSummary()
+	{
+		fprintf(fTraceFile,
+			"\n"
+			"========================================\n"
+			"  KosmVG PERFORMANCE SUMMARY (%d frames)\n"
+			"========================================\n",
+			fFrameNum);
+
+		// --- Frame timing ---
+		fprintf(fTraceFile, "\n--- Frame Timing ---\n");
+		_WriteTimingStats("frame_total", fFrameTimes, fStatsCount);
+		_WriteTimingStats("render", fRenderTimes, fStatsCount);
+		_WriteTimingStats("update", fUpdateTimes, fStatsCount);
+		_WriteTimingStats("blit", fDrawBitmapTimes, fStatsCount);
+
+		if (fStatsCount > 0) {
+			bigtime_t sum = 0;
+			for (int i = 0; i < fStatsCount; i++)
+				sum += fFrameTimes[i];
+			float avgFps = fStatsCount / ((float)sum / 1000000.0f);
+			fprintf(fTraceFile, "  avg_fps: %.1f\n", avgFps);
+
+			// Render vs blit ratio
+			bigtime_t renderSum = 0, blitSum = 0;
+			for (int i = 0; i < fStatsCount; i++) {
+				renderSum += fRenderTimes[i];
+				blitSum += fDrawBitmapTimes[i];
+			}
+			fprintf(fTraceFile,
+				"  render_pct: %.1f%%  blit_pct: %.1f%%\n",
+				100.0f * renderSum / sum,
+				100.0f * blitSum / sum);
+		}
+
+		// --- Per-shape performance ---
+		fprintf(fTraceFile, "\n--- Per-Shape Render Cost ---\n");
+		fprintf(fTraceFile,
+			"  %-10s %8s %8s %10s  features\n",
+			"shape", "avg(us)", "px/us", "area(px)");
+
+		for (int i = 0; i < kShapeCount; i++) {
+			float avgTime = fFrameNum > 0
+				? (float)fShapeRenderAccum[i] / fFrameNum : 0;
+			float area = fShapes[i].ApproxArea();
+			float fillRate = avgTime > 0 ? area / avgTime : 0;
+
+			fprintf(fTraceFile, "  %-10s %8.1f %8.1f %10.0f ",
+				kShapeInfo[i].name, avgTime, fillRate, area);
+
+			// List features
+			int f = kShapeInfo[i].features;
+			if (f & kFeatureRadialGrad)	fprintf(fTraceFile, " radial");
+			if (f & kFeatureLinearGrad)	fprintf(fTraceFile, " linear");
+			if (f & kFeatureConicGrad)	fprintf(fTraceFile, " conic");
+			if (f & kFeatureSolidFill)	fprintf(fTraceFile, " solid");
+			if (f & kFeatureShadow)		fprintf(fTraceFile, " shadow");
+			if (f & kFeatureStroke)		fprintf(fTraceFile, " stroke");
+			if (f & kFeatureDashStroke)	fprintf(fTraceFile, " dash");
+			if (f & kFeatureBezier)		fprintf(fTraceFile, " bezier");
+			if (f & kFeatureRotation)	fprintf(fTraceFile, " rot");
+			if (f & kFeatureOpacity)	fprintf(fTraceFile, " opacity");
+			if (f & kFeatureRoundRect)	fprintf(fTraceFile, " rrect");
+			fprintf(fTraceFile, "\n");
+		}
+
+		// --- Shadow overhead ---
+		fprintf(fTraceFile, "\n--- Shadow Overhead ---\n");
+		// Shadow shapes: 0 (circle), 2 (triangle), 6 (rrect)
+		// Non-shadow shapes: 1 (rect), 3 (star), 5 (ellipse), 7 (hexagon)
+		float shadowAvg = 0, noShadowAvg = 0;
+		float shadowArea = 0, noShadowArea = 0;
+		int shadowIdx[] = {0, 2, 6};
+		int noShadowIdx[] = {1, 3, 5, 7};
+
+		for (int k = 0; k < 3; k++) {
+			int i = shadowIdx[k];
+			float t = fFrameNum > 0
+				? (float)fShapeRenderAccum[i] / fFrameNum : 0;
+			shadowAvg += t;
+			shadowArea += fShapes[i].ApproxArea();
+		}
+		for (int k = 0; k < 4; k++) {
+			int i = noShadowIdx[k];
+			float t = fFrameNum > 0
+				? (float)fShapeRenderAccum[i] / fFrameNum : 0;
+			noShadowAvg += t;
+			noShadowArea += fShapes[i].ApproxArea();
+		}
+
+		float shadowFillRate = shadowAvg > 0
+			? shadowArea / shadowAvg : 0;
+		float noShadowFillRate = noShadowAvg > 0
+			? noShadowArea / noShadowAvg : 0;
+
+		fprintf(fTraceFile,
+			"  with_shadow (3 shapes): avg=%.1f us  %.1f px/us\n"
+			"  no_shadow   (4 shapes): avg=%.1f us  %.1f px/us\n"
+			"  shadow_overhead: %.1fx slower per pixel\n",
+			shadowAvg, shadowFillRate,
+			noShadowAvg, noShadowFillRate,
+			noShadowFillRate > 0
+				? shadowFillRate > 0
+					? noShadowFillRate / shadowFillRate : 0
+				: 0);
+
+		// --- Gradient type comparison ---
+		fprintf(fTraceFile, "\n--- Gradient Fill Rate (px/us) ---\n");
+		// Radial: shapes 0, 4.  Linear: 1, 5.  Conic: 7.  Solid: 2, 3.
+		struct { const char* name; int idx[2]; int count; } gradTypes[] = {
+			{"radial",  {0, 4}, 2},
+			{"linear",  {1, 5}, 2},
+			{"conic",   {7, -1}, 1},
+			{"solid",   {2, 3}, 2}
+		};
+
+		for (int g = 0; g < 4; g++) {
+			float totalTime = 0, totalArea = 0;
+			for (int k = 0; k < gradTypes[g].count; k++) {
+				int i = gradTypes[g].idx[k];
+				totalTime += fFrameNum > 0
+					? (float)fShapeRenderAccum[i] / fFrameNum : 0;
+				totalArea += fShapes[i].ApproxArea();
+			}
+			float rate = totalTime > 0 ? totalArea / totalTime : 0;
+			fprintf(fTraceFile, "  %-8s: %.1f px/us  (%.1f us total)\n",
+				gradTypes[g].name, rate, totalTime);
+		}
+
+		// --- Background fill rate ---
+		fprintf(fTraceFile, "\n--- Background ---\n");
+		if (fFrameNum > 0 && fBitmap) {
+			float w = fBitmap->Bounds().IntegerWidth() + 1;
+			float h = fBitmap->Bounds().IntegerHeight() + 1;
+			float bgAvg = (float)fBgRenderAccum / fFrameNum;
+			float bgRate = bgAvg > 0 ? (w * h) / bgAvg : 0;
+			fprintf(fTraceFile,
+				"  canvas: %.0fx%.0f = %.0f px\n"
+				"  avg_time: %.1f us\n"
+				"  fill_rate: %.1f px/us\n",
+				w, h, w * h, bgAvg, bgRate);
+		}
+
+		// --- Pixel correctness ---
+		fprintf(fTraceFile, "\n--- Rendering Correctness ---\n");
+		int total = fPixelCheckPassed + fPixelCheckFailed;
+		fprintf(fTraceFile,
+			"  pixel_checks: %d total  %d passed  %d failed",
+			total, fPixelCheckPassed, fPixelCheckFailed);
+		if (total > 0) {
+			fprintf(fTraceFile, "  (%.1f%% pass rate)",
+				100.0f * fPixelCheckPassed / total);
+		}
+		fprintf(fTraceFile, "\n");
+		if (fPixelCheckFailed > 0) {
+			fprintf(fTraceFile,
+				"  *** KosmVG may have rendering bugs: "
+				"%d empty pixels at expected shape centers\n",
+				fPixelCheckFailed);
+		}
+
+		fprintf(fTraceFile,
+			"========================================\n");
+	}
+
+	// Rendering
 	BBitmap*						fBitmap;
 	std::optional<kvg::BitmapContext>	fCtx;
 	Shape							fShapes[kShapeCount];
 	FILE*							fTraceFile;
 	int								fFrameNum;
 	bigtime_t						fRenderStart;
+
+	// Frame statistics
+	bigtime_t						fFrameTimes[kTraceFrames];
+	bigtime_t						fRenderTimes[kTraceFrames];
+	bigtime_t						fUpdateTimes[kTraceFrames];
+	bigtime_t						fDrawBitmapTimes[kTraceFrames];
+	int								fStatsCount;
+
+	// Per-shape render timing
+	bigtime_t						fShapeRenderTime[kShapeCount];
+	bigtime_t						fShapeRenderAccum[kShapeCount];
+
+	// Background timing
+	bigtime_t						fBgRenderAccum;
+
+	// Pixel correctness
+	int								fPixelCheckPassed;
+	int								fPixelCheckFailed;
 };
 
 
