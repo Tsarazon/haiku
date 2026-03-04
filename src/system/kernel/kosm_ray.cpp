@@ -428,7 +428,7 @@ get_ray(kosm_ray_id id)
 /*!	Lock two endpoints in consistent order (lower id first) to avoid deadlock.
 	Both must be active. Returns B_OK with both locked, or error.
 */
-static status_t
+static status_t __attribute__((unused))
 lock_endpoint_pair(RayEndpoint* a, RayEndpoint* b)
 {
 	RayEndpoint* first = a->id < b->id ? a : b;
@@ -522,7 +522,7 @@ notify_peer_closed(RayEndpoint* ep)
 	peer->read_condition.NotifyAll();
 	peer->write_condition.NotifyAll(KOSM_RAY_PEER_CLOSED_ERROR);
 
-	notify_ray_select_events(peer, KOSM_RAY_PEER_CLOSED);
+	notify_ray_select_events(peer, B_EVENT_DISCONNECTED);
 }
 
 
@@ -693,19 +693,24 @@ transfer_handle(const kosm_handle_t* src, kosm_handle_t* dst,
 
 		case KOSM_HANDLE_AREA:
 		{
+			void* addr;
 			if (copyMode) {
 				// Clone the area into receiver's address space
-				area_id cloned = clone_area("transferred area", NULL,
-					B_ANY_ADDRESS, B_READ_AREA | B_WRITE_AREA, src->id);
+				area_id cloned = vm_clone_area(receiverTeam,
+					"transferred area", &addr, B_ANY_ADDRESS,
+					B_READ_AREA | B_WRITE_AREA | B_KERNEL_READ_AREA
+						| B_KERNEL_WRITE_AREA,
+					REGION_NO_PRIVATE_MAP, src->id, true);
 				if (cloned < 0)
 					return cloned;
 				dst->id = cloned;
 			} else {
-				// Move: transfer area ownership to receiver
-				status_t status = set_area_owner(src->id, receiverTeam);
-				if (status != B_OK)
-					return status;
-				dst->id = src->id;
+				// Move: transfer area to receiver's address space
+				area_id newArea = transfer_area(src->id, &addr,
+					B_ANY_ADDRESS, receiverTeam, true);
+				if (newArea < 0)
+					return newArea;
+				dst->id = newArea;
 			}
 			return B_OK;
 		}
@@ -764,11 +769,13 @@ rollback_handle(const kosm_handle_t* transferred, const kosm_handle_t* original,
 		case KOSM_HANDLE_AREA:
 		{
 			if (wasCopy) {
-				// Delete the clone we created
-				delete_area(transferred->id);
+				// Delete the clone we created in receiver's address space
+				vm_delete_area(receiverTeam, transferred->id, true);
 			} else {
-				// Move ownership back
-				set_area_owner(transferred->id, senderTeam);
+				// Move area back to sender (handle is being discarded)
+				void* addr;
+				transfer_area(transferred->id, &addr,
+					B_ANY_ADDRESS, senderTeam, true);
 			}
 			break;
 		}
@@ -1238,7 +1245,8 @@ kosm_select_ray(int32 id, struct select_info* info, bool kernel)
 	if (!kernel && ref->owner == team_get_kernel_team_id())
 		return B_NOT_ALLOWED;
 
-	info->selected_events &= B_EVENT_READ | B_EVENT_WRITE | B_EVENT_INVALID;
+	info->selected_events &= B_EVENT_READ | B_EVENT_WRITE | B_EVENT_INVALID
+		| B_EVENT_DISCONNECTED;
 
 	if (info->selected_events != 0) {
 		uint16 events = 0;
@@ -1257,7 +1265,7 @@ kosm_select_ray(int32 id, struct select_info* info, bool kernel)
 		}
 
 		if (ref->peer_closed)
-			events |= B_EVENT_INVALID;
+			events |= B_EVENT_DISCONNECTED;
 
 		if (events != 0)
 			notify_select_events(info, events);
@@ -1275,10 +1283,14 @@ kosm_deselect_ray(int32 id, struct select_info* info, bool kernel)
 	if (info->selected_events == 0)
 		return B_OK;
 
-	BReference<RayEndpoint> ref = get_locked_ray(id);
+	// Use get_ray() instead of get_locked_ray() so deselect works even
+	// when the endpoint state is kDeleted. This prevents stale select_info
+	// pointers from remaining in the list after common_wait_for_objects
+	// returns.
+	BReference<RayEndpoint> ref = get_ray(id);
 	if (ref == NULL)
 		return B_BAD_PORT_ID;
-	MutexLocker locker(ref->lock, true);
+	MutexLocker locker(ref->lock);
 
 	select_info** infoLocation = &ref->select_infos;
 	while (*infoLocation != NULL && *infoLocation != info)
@@ -1314,6 +1326,9 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	const kosm_handle_t* handles, size_t handleCount, uint32 flags,
 	bigtime_t timeout, bool hasTimeout, bool userCopy)
 {
+	TRACE(("kosm_ray_write(%" B_PRId32 ", data=%p, size=%zu, handles=%zu, "
+		"flags=0x%" B_PRIx32 ")\n", id, data, dataSize, handleCount, flags));
+
 	if (!sRaysActive || id < 0)
 		return B_BAD_PORT_ID;
 	if (dataSize > KOSM_RAY_MAX_DATA_SIZE)
@@ -1435,7 +1450,12 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	// Transfer handles
 	if (handleCount > 0) {
 		team_id receiverTeam = peer->owner;
+		TRACE(("kosm_ray_write: transferring %zu handles, sender=%" B_PRId32
+			" receiver=%" B_PRId32 " copy=%d\n",
+			handleCount, senderTeam, receiverTeam, (int)copyHandles));
 		for (size_t i = 0; i < handleCount; i++) {
+			TRACE(("  handle[%zu]: type=%u id=%" B_PRId32 "\n",
+				i, kernHandles[i].type, kernHandles[i].id));
 			status_t status = transfer_handle(&kernHandles[i],
 				&msg->handles[i], senderTeam, receiverTeam, copyHandles);
 			if (status != B_OK) {
@@ -1488,6 +1508,9 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 	kosm_handle_t* handles, size_t* handleCount, uint32 flags,
 	bigtime_t timeout, bool hasTimeout, bool userCopy)
 {
+	TRACE(("kosm_ray_read(%" B_PRId32 ", data=%p, flags=0x%" B_PRIx32 ")\n",
+		id, data, flags));
+
 	if (!sRaysActive || id < 0)
 		return B_BAD_PORT_ID;
 
@@ -1549,12 +1572,33 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 		return B_ERROR;
 	}
 
+	// Read buffer sizes from user before importance donation, so early
+	// returns on bad addresses don't need to revert the boost.
+	size_t maxData = 0;
+	if (dataSize != NULL) {
+		if (userCopy) {
+			if (user_memcpy(&maxData, dataSize, sizeof(size_t)) != B_OK)
+				return B_BAD_ADDRESS;
+		} else {
+			maxData = *dataSize;
+		}
+	}
+
+	size_t maxHandles = 0;
+	if (handleCount != NULL) {
+		if (userCopy) {
+			if (user_memcpy(&maxHandles, handleCount, sizeof(size_t)) != B_OK)
+				return B_BAD_ADDRESS;
+		} else {
+			maxHandles = *handleCount;
+		}
+	}
+
 	// Importance donation: boost reader to sender priority.
 	// Save original priority for restoration after processing.
 	int32 originalPriority = apply_importance_donation(msg);
 
 	// Copy data out
-	size_t maxData = dataSize != NULL ? *dataSize : 0;
 	size_t copyData = std::min(maxData, msg->data_size);
 
 	if (copyData > 0 && data != NULL) {
@@ -1577,7 +1621,6 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 	}
 
 	// Copy handles out
-	size_t maxHandles = handleCount != NULL ? *handleCount : 0;
 	size_t copyHandles = std::min(maxHandles, (size_t)msg->handle_count);
 
 	if (copyHandles > 0 && handles != NULL) {
@@ -1595,7 +1638,7 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 	}
 
 	if (handleCount != NULL) {
-		uint32 count = msg->handle_count;
+		size_t count = (size_t)msg->handle_count;
 		if (userCopy)
 			user_memcpy(handleCount, &count, sizeof(size_t));
 		else
@@ -1610,14 +1653,31 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 		ref->read_count--;
 		ref->total_count++;
 
-		// Notify peer that a slot freed up
-		if (ref->peer != NULL) {
-			notify_ray_select_events(ref.Get(), B_EVENT_WRITE);
-			ref->write_condition.NotifyOne();
-		}
+		// Grab peer reference while we hold our lock.
+		// We need to notify the peer's write_condition, but we can't
+		// access peer's select_infos without peer's lock, and we can't
+		// hold both locks simultaneously (deadlock risk).
+		BReference<RayEndpoint> peerNotify;
+		if (ref->peer != NULL)
+			peerNotify.SetTo(ref->peer);
 
 		locker.Unlock();
 		free_ray_message(msg);
+
+		// Notify the writing endpoint (our peer) that a slot freed up.
+		// The writer waits on its own endpoint's write_condition, which
+		// is the peer from the reader's perspective.
+		if (peerNotify != NULL) {
+			// ConditionVariable::NotifyOne is thread-safe (internal
+			// spinlock), no endpoint lock needed.
+			peerNotify->write_condition.NotifyOne();
+
+			// Select event notification traverses the select_infos
+			// linked list, which requires the endpoint's lock.
+			MutexLocker peerLocker(peerNotify->lock);
+			if (peerNotify->state == RayEndpoint::kActive)
+				notify_ray_select_events(peerNotify.Get(), B_EVENT_WRITE);
+		}
 
 		// Revert importance donation now that the message has been
 		// consumed and copied out. The boost covered the critical

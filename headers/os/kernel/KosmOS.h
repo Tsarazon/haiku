@@ -69,6 +69,10 @@ extern status_t			_kosm_get_next_mutex_info(team_id team, int32* cookie,
 
 typedef int32 kosm_ray_id;
 
+#define KOSM_RAY_MAX_HANDLES		64
+#define KOSM_RAY_MAX_DATA_SIZE		(256 * 1024)
+#define KOSM_RAY_MAX_QUEUE_MESSAGES	256
+
 /* Handle types for cross-process object passing */
 
 #define KOSM_HANDLE_RAY				0x01

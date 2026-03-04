@@ -5,6 +5,7 @@
 #ifndef _KERNEL_SELECT_OPS_H
 #define _KERNEL_SELECT_OPS_H
 
+#include <kosm_ray.h>
 
 struct select_ops {
 	status_t (*select)(int32 object, struct select_info* info, bool kernel);
