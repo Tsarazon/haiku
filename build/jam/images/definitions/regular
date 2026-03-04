@@ -140,6 +140,7 @@ rule HaikuImageGetSystemLibs
 			libspektr.so
 			libsurface.so
 			libtextencoding.so
+			libkosmrandom.so
 			libkosmvg.so
 			libplutovg.so
 			libthorvg.so
