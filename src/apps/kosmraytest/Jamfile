@@ -1,0 +1,10 @@
+SubDir HAIKU_TOP src apps kosmraytest ;
+
+Application KosmRayTest :
+	KosmRayTest.cpp
+	:
+	be
+	[ TargetLibstdc++ ]
+	:
+	KosmRayTest.rdef
+;
