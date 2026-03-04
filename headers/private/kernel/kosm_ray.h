@@ -8,14 +8,17 @@
 #include <KosmOS.h>
 
 struct kernel_args;
-struct Thread;
+
+#ifdef __cplusplus
+namespace BKernel {
+	struct Team;
+}
+using BKernel::Team;
+#else
 struct Team;
+#endif
 
 #define THREAD_BLOCK_TYPE_KOSM_RAY	0x4B52	/* 'KR' */
-
-#define KOSM_RAY_MAX_HANDLES		64
-#define KOSM_RAY_MAX_DATA_SIZE		(256 * 1024)
-#define KOSM_RAY_MAX_QUEUE_MESSAGES	256
 
 #ifdef __cplusplus
 extern "C" {

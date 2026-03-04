@@ -8,8 +8,18 @@
 #include <KosmOS.h>
 
 struct kernel_args;
+
+#ifdef __cplusplus
+namespace BKernel {
+	struct Thread;
+	struct Team;
+}
+using BKernel::Thread;
+using BKernel::Team;
+#else
 struct Thread;
 struct Team;
+#endif
 
 #define THREAD_BLOCK_TYPE_KOSM_MUTEX	0x4B4D
 
