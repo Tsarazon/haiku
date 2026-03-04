@@ -27,11 +27,17 @@
 #define KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD \
 	(KOSM_SURFACE_REGISTRY_MAX_ENTRIES / 4)
 
+#define KOSM_SURFACE_REGISTRY_MAGIC		0x4B535246u	/* 'KSRF' */
+#define KOSM_SURFACE_REGISTRY_VERSION	1u
+
 struct KosmSurfaceRegistryHeader {
 	kosm_mutex_id	lock;
 	int32			entryCount;
 	int32			tombstoneCount;
-	uint32			_reserved[5];
+	uint32			magic;
+	uint32			version;
+	uint32			entrySize;
+	uint32			_reserved[2];
 };
 
 struct KosmSurfaceRegistryEntry {
@@ -94,6 +100,7 @@ private:
 			status_t			_InitSharedArea();
 			status_t			_CreateSharedArea();
 			status_t			_CloneSharedArea(area_id sourceArea);
+			status_t			_ValidateHeader() const;
 
 			status_t			_Lock() const;
 			status_t			_Unlock() const;

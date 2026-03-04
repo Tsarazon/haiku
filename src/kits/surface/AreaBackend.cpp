@@ -14,6 +14,11 @@
 #include <string.h>
 
 
+// Maximum allocation size: 512 MB. Prevents overflow-induced
+// under-allocation without being so large as to exhaust address space.
+static const size_t kMaxAllocSize = 512UL * 1024 * 1024;
+
+
 class KosmAreaBackend : public KosmAllocationBackend {
 public:
 								KosmAreaBackend();
@@ -33,6 +38,9 @@ public:
 	virtual	bool				SupportsUsage(uint32 usage);
 
 private:
+	static	bool				_CheckMulOverflow(size_t a, size_t b,
+									size_t* result);
+
 	static	int32				sNextId;
 
 	static	const size_t		kStrideAlignment = 64;
@@ -58,6 +66,21 @@ KosmAreaBackend::~KosmAreaBackend()
 }
 
 
+/*static*/ bool
+KosmAreaBackend::_CheckMulOverflow(size_t a, size_t b, size_t* result)
+{
+	if (a == 0 || b == 0) {
+		*result = 0;
+		return false;
+	}
+	if (a > SIZE_MAX / b)
+		return true;
+
+	*result = a * b;
+	return false;
+}
+
+
 status_t
 KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 	KosmSurfaceBuffer** outBuffer)
@@ -70,6 +93,17 @@ KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 
 	if (desc.width > kMaxDimension || desc.height > kMaxDimension)
 		return B_BAD_VALUE;
+
+	// Validate custom stride if specified
+	if (desc.bytesPerRow != 0) {
+		uint32 bpe = kosm_planar_get_bytes_per_pixel(desc.format);
+		size_t minStride;
+		if (_CheckMulOverflow(desc.width, bpe, &minStride))
+			return B_BAD_VALUE;
+
+		if (desc.bytesPerRow < minStride)
+			return B_BAD_VALUE;
+	}
 
 	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
 	if (buffer == nullptr)
@@ -90,6 +124,42 @@ KosmAreaBackend::Allocate(const KosmSurfaceDesc& desc,
 		buffer->desc.bytesPerElement = buffer->planes[0].bytesPerElement;
 	if (buffer->desc.bytesPerRow == 0)
 		buffer->desc.bytesPerRow = buffer->planes[0].bytesPerRow;
+
+	// Apply custom stride: override plane 0 bytesPerRow and recalculate
+	// allocSize. Custom stride only affects plane 0 for packed formats;
+	// planar format sub-planes keep their computed stride.
+	if (desc.bytesPerRow != 0 && desc.bytesPerRow > buffer->planes[0].bytesPerRow) {
+		buffer->planes[0].bytesPerRow = desc.bytesPerRow;
+		buffer->desc.bytesPerRow = desc.bytesPerRow;
+
+		// Recalculate plane 0 contribution and shift subsequent planes
+		size_t plane0Size;
+		if (_CheckMulOverflow(buffer->planes[0].bytesPerRow,
+				buffer->planes[0].height, &plane0Size)) {
+			delete buffer;
+			return B_BAD_VALUE;
+		}
+
+		size_t total = plane0Size;
+		for (uint32 i = 1; i < buffer->planeCount; i++) {
+			buffer->planes[i].offset = total;
+			size_t planeSize;
+			if (_CheckMulOverflow(buffer->planes[i].bytesPerRow,
+					buffer->planes[i].height, &planeSize)) {
+				delete buffer;
+				return B_BAD_VALUE;
+			}
+			total += planeSize;
+		}
+
+		buffer->allocSize = total;
+	}
+
+	// Final overflow / sanity check
+	if (buffer->allocSize == 0 || buffer->allocSize > kMaxAllocSize) {
+		delete buffer;
+		return B_BAD_VALUE;
+	}
 
 	size_t areaSize = (buffer->allocSize + B_PAGE_SIZE - 1)
 		& ~(B_PAGE_SIZE - 1);

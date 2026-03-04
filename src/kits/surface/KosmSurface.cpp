@@ -18,6 +18,12 @@
 
 #define SURFACE_INVALID() (fData == nullptr || fData->buffer == nullptr)
 
+// Use acquire semantics for lockCount reads that guard access to
+// shared data (baseAddress, pixel contents). On x86 this compiles
+// to a plain load (TSO guarantees); on ARM64 it emits ldar.
+#define LOCK_COUNT_ACQUIRE(buf) \
+	__atomic_load_n(&(buf)->lockCount, __ATOMIC_ACQUIRE)
+
 
 KosmSurface::KosmSurface()
 	:
@@ -157,7 +163,7 @@ KosmSurface::BaseAddressOfPlane(uint32 planeIndex) const
 		return nullptr;
 	if (planeIndex >= fData->buffer->planeCount)
 		return nullptr;
-	if (atomic_get(&fData->buffer->lockCount) == 0)
+	if (LOCK_COUNT_ACQUIRE(fData->buffer) == 0)
 		return nullptr;
 
 	uint8* base = (uint8*)fData->buffer->baseAddress;
@@ -282,8 +288,14 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 	fData->buffer->lockCount--;
 
 	if (fData->buffer->lockCount == 0) {
-		if (!fData->buffer->lockedReadOnly)
+		if (!fData->buffer->lockedReadOnly) {
 			fData->buffer->seed++;
+
+			// A write cycle means valid content was produced.
+			// Clear the purged flag so subsequent NON_VOLATILE
+			// transitions don't falsely report KOSM_SURFACE_PURGED.
+			fData->buffer->contentsPurged = false;
+		}
 
 		fData->buffer->lockOwner = -1;
 		fData->buffer->lockedReadOnly = false;
@@ -303,7 +315,7 @@ KosmSurface::BaseAddress() const
 {
 	if (SURFACE_INVALID())
 		return nullptr;
-	if (atomic_get(&fData->buffer->lockCount) == 0)
+	if (LOCK_COUNT_ACQUIRE(fData->buffer) == 0)
 		return nullptr;
 	return fData->buffer->baseAddress;
 }
@@ -314,7 +326,7 @@ KosmSurface::Seed() const
 {
 	if (SURFACE_INVALID())
 		return 0;
-	return atomic_get((int32*)&fData->buffer->seed);
+	return __atomic_load_n((uint32*)&fData->buffer->seed, __ATOMIC_ACQUIRE);
 }
 
 
@@ -521,7 +533,7 @@ KosmSurface::IsLocked() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return atomic_get(&fData->buffer->lockCount) > 0;
+	return LOCK_COUNT_ACQUIRE(fData->buffer) > 0;
 }
 
 

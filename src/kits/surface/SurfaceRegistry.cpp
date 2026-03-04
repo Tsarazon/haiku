@@ -43,14 +43,22 @@ KosmSurfaceRegistry::_InitSharedArea()
 {
 	area_id existingArea = find_area(KOSM_SURFACE_REGISTRY_AREA_NAME);
 
-	if (existingArea >= 0)
-		return _CloneSharedArea(existingArea);
+	if (existingArea >= 0) {
+		status_t status = _CloneSharedArea(existingArea);
+		if (status != B_OK)
+			return status;
+		return _ValidateHeader();
+	}
 
 	status_t status = _CreateSharedArea();
 	if (status != B_OK) {
 		existingArea = find_area(KOSM_SURFACE_REGISTRY_AREA_NAME);
-		if (existingArea >= 0)
-			return _CloneSharedArea(existingArea);
+		if (existingArea >= 0) {
+			status = _CloneSharedArea(existingArea);
+			if (status != B_OK)
+				return status;
+			return _ValidateHeader();
+		}
 	}
 
 	return status;
@@ -74,6 +82,10 @@ KosmSurfaceRegistry::_CreateSharedArea()
 
 	fHeader = (KosmSurfaceRegistryHeader*)address;
 	fEntries = (KosmSurfaceRegistryEntry*)(fHeader + 1);
+
+	fHeader->magic = KOSM_SURFACE_REGISTRY_MAGIC;
+	fHeader->version = KOSM_SURFACE_REGISTRY_VERSION;
+	fHeader->entrySize = sizeof(KosmSurfaceRegistryEntry);
 
 	fHeader->lock = kosm_create_mutex(KOSM_SURFACE_REGISTRY_MUTEX_NAME,
 		KOSM_MUTEX_SHARED);
@@ -117,16 +129,30 @@ KosmSurfaceRegistry::_CloneSharedArea(area_id sourceArea)
 
 
 status_t
+KosmSurfaceRegistry::_ValidateHeader() const
+{
+	if (fHeader == nullptr)
+		return B_NO_INIT;
+
+	if (fHeader->magic != KOSM_SURFACE_REGISTRY_MAGIC)
+		return B_BAD_DATA;
+
+	if (fHeader->version != KOSM_SURFACE_REGISTRY_VERSION)
+		return B_BAD_DATA;
+
+	if (fHeader->entrySize != sizeof(KosmSurfaceRegistryEntry))
+		return B_BAD_DATA;
+
+	return B_OK;
+}
+
+
+status_t
 KosmSurfaceRegistry::_Lock() const
 {
 	status_t status = kosm_acquire_mutex(fHeader->lock);
 
 	if (status == KOSM_MUTEX_OWNER_DEAD) {
-		// Previous holder died while modifying the registry.
-		// The data may be inconsistent, but our open-addressing
-		// hash table is self-describing enough to survive: entries
-		// are either valid (non-zero id), empty (0), or tombstoned.
-		// Mark consistent and proceed.
 		kosm_mark_mutex_consistent(fHeader->lock);
 		return B_OK;
 	}
@@ -195,28 +221,42 @@ KosmSurfaceRegistry::_FindEmptySlot(kosm_surface_id id) const
 void
 KosmSurfaceRegistry::_Compact()
 {
-	KosmSurfaceRegistryEntry* temp = new(std::nothrow)
-		KosmSurfaceRegistryEntry[KOSM_SURFACE_REGISTRY_MAX_ENTRIES];
-	if (temp == nullptr)
-		return;
+	// Use a temporary area instead of heap allocation under mutex.
+	// Avoids blocking all processes if heap is under pressure.
 
-	memset(temp, 0,
-		sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES);
+	size_t tempSize = sizeof(KosmSurfaceRegistryEntry)
+		* KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
+	size_t areaSize = (tempSize + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
+
+	void* tempAddress = nullptr;
+	area_id tempArea = create_area("kosm_registry_compact", &tempAddress,
+		B_ANY_ADDRESS, areaSize, B_NO_LOCK, B_READ_AREA | B_WRITE_AREA);
+
+	if (tempArea < 0) {
+		// Cannot compact right now — not fatal, just means longer
+		// probe chains until next opportunity.
+		return;
+	}
+
+	KosmSurfaceRegistryEntry* temp
+		= (KosmSurfaceRegistryEntry*)tempAddress;
+	memset(temp, 0, tempSize);
 
 	for (int32 i = 0; i < KOSM_SURFACE_REGISTRY_MAX_ENTRIES; i++) {
 		const KosmSurfaceRegistryEntry& entry = fEntries[i];
 		if (entry.id != 0 && entry.id != KOSM_SURFACE_ID_TOMBSTONE) {
-			int32 newIndex = (entry.id - 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
+			int32 newIndex = (entry.id - 1)
+				% KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 			while (temp[newIndex].id != 0) {
-				newIndex = (newIndex + 1) % KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
+				newIndex = (newIndex + 1)
+					% KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 			}
 			temp[newIndex] = entry;
 		}
 	}
 
-	memcpy(fEntries, temp,
-		sizeof(KosmSurfaceRegistryEntry) * KOSM_SURFACE_REGISTRY_MAX_ENTRIES);
-	delete[] temp;
+	memcpy(fEntries, temp, tempSize);
+	delete_area(tempArea);
 
 	fHeader->tombstoneCount = 0;
 }
@@ -225,6 +265,11 @@ KosmSurfaceRegistry::_Compact()
 void
 KosmSurfaceRegistry::_PurgeDeadTeams()
 {
+	// Collect candidate indices first, then batch-check teams.
+	// Limits syscalls under mutex to only entries that are actually live.
+
+	int32 candidates[256];
+	int32 candidateCount = 0;
 	team_info info;
 
 	for (int32 i = 0; i < KOSM_SURFACE_REGISTRY_MAX_ENTRIES; i++) {
@@ -233,13 +278,24 @@ KosmSurfaceRegistry::_PurgeDeadTeams()
 			continue;
 
 		if (get_team_info(entry.ownerTeam, &info) != B_OK) {
-			entry.id = KOSM_SURFACE_ID_TOMBSTONE;
-			entry.globalUseCount = 0;
-			entry.ownerTeam = -1;
-			entry.sourceArea = -1;
-			fHeader->entryCount--;
-			fHeader->tombstoneCount++;
+			if (candidateCount < 256)
+				candidates[candidateCount++] = i;
 		}
+	}
+
+	for (int32 c = 0; c < candidateCount; c++) {
+		KosmSurfaceRegistryEntry& entry = fEntries[candidates[c]];
+		// Re-check: entry could have been modified between scan and purge
+		// (another thread may have unregistered it).
+		if (entry.id == 0 || entry.id == KOSM_SURFACE_ID_TOMBSTONE)
+			continue;
+
+		entry.id = KOSM_SURFACE_ID_TOMBSTONE;
+		entry.globalUseCount = 0;
+		entry.ownerTeam = -1;
+		entry.sourceArea = -1;
+		fHeader->entryCount--;
+		fHeader->tombstoneCount++;
 	}
 
 	if (fHeader->tombstoneCount > KOSM_SURFACE_REGISTRY_TOMBSTONE_THRESHOLD)
@@ -270,6 +326,8 @@ KosmSurfaceRegistry::_UnregisterLocked(int32 index)
 static uint64
 generate_secret()
 {
+	// TODO: Replace with /dev/urandom or arc4random for production.
+	// Current implementation is NOT cryptographically secure.
 	bigtime_t time = system_time();
 	static int32 sCounter = 0;
 	int32 counter = atomic_add(&sCounter, 1);

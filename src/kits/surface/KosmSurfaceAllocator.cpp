@@ -50,14 +50,25 @@ struct KosmSurfaceAllocator::Impl {
 static kosm_surface_id
 generate_surface_id()
 {
+	// Mix counter with system_time to produce non-sequential IDs.
+	// Not cryptographic, but prevents trivial enumeration.
 	static int32 sCounter = 0;
-	kosm_surface_id id;
+	int32 counter = atomic_add(&sCounter, 1) + 1;
+	uint32 mixed = (uint32)counter;
 
-	do {
-		id = (kosm_surface_id)(atomic_add(&sCounter, 1) + 1);
-	} while (id == 0 || id == KOSM_SURFACE_ID_TOMBSTONE);
+	// Stafford variant 13 (a reduced-round murmurhash finalizer)
+	mixed ^= mixed >> 16;
+	mixed *= 0x45d9f3bU;
+	mixed ^= mixed >> 16;
 
-	return id;
+	// Mix in low bits of system_time for cross-process unpredictability
+	mixed ^= (uint32)(system_time() & 0xFFFF);
+
+	// Ensure never 0 or tombstone
+	if (mixed == 0 || mixed == KOSM_SURFACE_ID_TOMBSTONE)
+		mixed = (uint32)counter;
+
+	return (kosm_surface_id)mixed;
 }
 
 
@@ -245,6 +256,15 @@ KosmSurfaceAllocator::LookupWithToken(const KosmSurfaceToken& token,
 
 	if (fImpl == nullptr)
 		return B_NO_INIT;
+
+	// Always validate the token against the registry first,
+	// even for locally-cached surfaces. This ensures revoked
+	// tokens are rejected.
+	status_t status = KosmSurfaceRegistry::Default()->ValidateToken(token);
+	if (status != B_OK) {
+		*outSurface = nullptr;
+		return B_NAME_NOT_FOUND;
+	}
 
 	BAutolock locker(fImpl->lock);
 
