@@ -1,7 +1,25 @@
 SubDir HAIKU_TOP src add-ons input_server filters ;
 
-SubInclude HAIKU_TOP src add-ons input_server filters minimize_all ;
-SubInclude HAIKU_TOP src add-ons input_server filters screen_saver ;
-SubInclude HAIKU_TOP src add-ons input_server filters shortcut_catcher ;
-SubInclude HAIKU_TOP src add-ons input_server filters switch_workspace ;
-SubInclude HAIKU_TOP src add-ons input_server filters padblocker ;
+UsePrivateHeaders app input interface screen_saver shared storage tracker ;
+UsePrivateSystemHeaders ;
+
+AddResources <input>filters : Filters.rdef ;
+
+Addon <input>filters :
+	FilterChain.cpp
+	InputBlocker.cpp
+	SystemShortcuts.cpp
+	WorkspaceSwitch.cpp
+	WindowManagement.cpp
+	ScreenLockFilter.cpp
+
+	# Shared sources from shortcut_catcher/
+	BitFieldTesters.cpp
+	CommandActuators.cpp
+	KeyInfos.cpp
+	ParseCommandLine.cpp
+
+	: input_server be game shared libscreensaver.so localestub
+	  [ TargetLibstdc++ ] [ TargetLibsupc++ ]
+;
+
