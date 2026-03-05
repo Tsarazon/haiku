@@ -1182,7 +1182,7 @@ BarTeamInfo::BarTeamInfo(const BarTeamInfo &info)
 	flags(info.flags),
 	sig(strdup(info.sig)),
 	name(strdup(info.name)),
-	icon(new BBitmap(*info.icon))
+	icon(info.icon != NULL ? new BBitmap(*info.icon) : NULL)
 {
 	_Init();
 }
@@ -1221,7 +1221,7 @@ WindowIconCache::WindowIconCache(int32 id, BBitmap* icon)
 WindowIconCache::WindowIconCache(const WindowIconCache &cache)
 	:
 	id(cache.id),
-	icon(new BBitmap(*cache.icon))
+	icon(cache.icon != NULL ? new BBitmap(*cache.icon) : NULL)
 {
 	_Init();
 }
