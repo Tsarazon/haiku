@@ -2,7 +2,7 @@ SubDir HAIKU_TOP src kits tracker ;
 
 AddSubDirSupportedPlatforms libbe_test ;
 
-UseHeaders [ FDirName $(HAIKU_TOP) src add-ons input_server filters shortcut_catcher ] ;
+UseHeaders [ FDirName $(HAIKU_TOP) src add-ons input_server filters ] ;
 UsePrivateHeaders interface mount shared storage support tracker ;
 UsePrivateSystemHeaders ;
 
@@ -20,7 +20,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 		AddResources $(libtracker) : TrackerIcons.rdef libtracker.rdef ;
 
 		SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src add-ons input_server
-			filters shortcut_catcher ] ;
+			filters ] ;
 		SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src kits tracker infowindow ] ;
 
 		SharedLibrary $(libtracker) :
@@ -99,14 +99,18 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			VirtualDirectoryWindow.cpp
 			WidgetAttributeText.cpp
 
+			KeyInfos.cpp
+
 			:
 			be localestub shared translation
 			[ TargetLibstdc++ ] [ TargetLibsupc++ ]
 			[ MultiArchDefaultGristFiles libcolumnlistview.a ]
-			[ MultiArchDefaultGristFiles libshortcuts_shared.a ]
 			;
 	}
 }
+
+SEARCH on [ FGristFiles KeyInfos.cpp ]
+	= [ FDirName $(HAIKU_TOP) src add-ons input_server filters ] ;
 
 SEARCH_SOURCE += [ FDirName $(HAIKU_TOP) src kits tracker infowindow ] ;
 

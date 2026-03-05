@@ -1,7 +1,9 @@
 SubDir HAIKU_TOP src preferences shortcuts ;
 
 UsePrivateHeaders interface ;
-UseHeaders [ FDirName $(HAIKU_TOP) src add-ons input_server filters shortcut_catcher ] ;
+
+local filterSources = [ FDirName $(HAIKU_TOP) src add-ons input_server filters ] ;
+UseHeaders $(filterSources) ;
 
 Application Shortcuts :
 	main.cpp
@@ -12,9 +14,21 @@ Application Shortcuts :
 	PopUpColumn.cpp
 	EditWindow.cpp
 
-	: be localestub tracker libshortcuts_shared.a libcolumnlistview.a [ TargetLibstdc++ ]
+	BitFieldTesters.cpp
+	CommandActuators.cpp
+	KeyInfos.cpp
+	ParseCommandLine.cpp
+
+	: be localestub tracker libcolumnlistview.a [ TargetLibstdc++ ]
 	: Shortcuts.rdef
 ;
+
+SEARCH on [ FGristFiles
+	BitFieldTesters.cpp
+	CommandActuators.cpp
+	KeyInfos.cpp
+	ParseCommandLine.cpp
+] = $(filterSources) ;
 
 
 DoCatalogs Shortcuts :

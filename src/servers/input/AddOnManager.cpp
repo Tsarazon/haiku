@@ -265,7 +265,6 @@ AddOnManager::_RegisterAddOns()
 
 	fHandler->AddAddOnDirectories("input_server/devices");
 	fHandler->AddAddOnDirectories("input_server/filters");
-	fHandler->AddAddOnDirectories("input_server/methods");
 }
 
 

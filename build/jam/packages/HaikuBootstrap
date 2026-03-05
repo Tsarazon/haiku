@@ -283,7 +283,7 @@ AddFilesToPackage add-ons input_server devices :
 	<input>devices
 	;
 AddFilesToPackage add-ons input_server filters :
-	switch_workspace
+	<input>filters
 	;
 
 AddFilesToPackage add-ons kernel network :

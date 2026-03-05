@@ -378,10 +378,7 @@ AddFilesToPackage add-ons input_server devices :
 	<input>devices
 	;
 AddFilesToPackage add-ons input_server filters :
-	padblocker
-	screen_saver
-	shortcut_catcher
-	switch_workspace
+	<input>filters
 	;
 
 AddFilesToPackage add-ons kernel network :
