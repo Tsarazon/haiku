@@ -351,6 +351,7 @@ public:
 static const size_t kTotalSpaceLimit = 64 * 1024 * 1024;
 
 static int32 sMaxRays = 8192;
+static int32 sMaxRaysPerTeam = 512;
 static int32 sUsedRays;
 
 static RayHashTable sRays;
@@ -991,6 +992,22 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 	if (team == NULL)
 		return B_BAD_TEAM_ID;
 	BReference<Team> teamRef(team, true);
+
+	// Per-team limit
+	{
+		const uint8 lockIndex = owner % kTeamListLockCount;
+		MutexLocker teamLocker(sTeamListLock[lockIndex]);
+		int32 count = 0;
+		for (RayEndpoint* ep = (RayEndpoint*)list_get_first_item(
+				&team->kosm_ray_list);
+				ep != NULL;
+				ep = (RayEndpoint*)list_get_next_item(
+					&team->kosm_ray_list, ep)) {
+			count++;
+		}
+		if (count + 2 > sMaxRaysPerTeam)
+			return B_NO_MORE_PORTS;
+	}
 
 	uint32 maxMsg = KOSM_RAY_MAX_QUEUE_MESSAGES;
 
@@ -1753,8 +1770,11 @@ kosm_ray_wait(kosm_ray_id id, uint32 signals, uint32* observedSignals,
 		if ((signals & KOSM_RAY_READABLE) != 0 && ref->read_count > 0)
 			observed |= KOSM_RAY_READABLE;
 
+		// Benign race: peer->read_count read without peer->lock
+		// (can only decrease concurrently, so worst case = spurious wait)
 		if ((signals & KOSM_RAY_WRITABLE) != 0
-			&& ref->peer != NULL && !ref->peer_closed)
+			&& ref->peer != NULL && !ref->peer_closed
+			&& ref->peer->read_count < ref->peer->max_messages)
 			observed |= KOSM_RAY_WRITABLE;
 
 		if ((signals & KOSM_RAY_PEER_CLOSED) != 0 && ref->peer_closed)
@@ -1769,8 +1789,13 @@ kosm_ray_wait(kosm_ray_id id, uint32 signals, uint32* observedSignals,
 		if ((waitFlags & B_RELATIVE_TIMEOUT) != 0 && timeout <= 0)
 			return B_WOULD_BLOCK;
 
+		// write_condition wakes on queue slot freed;
+		// read_condition wakes on data arrival / peer close
 		ConditionVariableEntry entry;
-		ref->read_condition.Add(&entry);
+		if (signals == KOSM_RAY_WRITABLE)
+			ref->write_condition.Add(&entry);
+		else
+			ref->read_condition.Add(&entry);
 
 		kosm_ray_id myId = ref->id;
 		locker.Unlock();
