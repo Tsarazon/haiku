@@ -36,7 +36,6 @@
 #include <syscall_process_info.h>
 #include <tracker_private.h>
 
-#include "KeyboardInputDevice.h"
 #include "TeamListItem.h"
 
 
@@ -257,7 +256,7 @@ void
 TeamMonitorWindow::MessageReceived(BMessage* msg)
 {
 	switch (msg->what) {
-		case SYSTEM_SHUTTING_DOWN:
+		case kMsgSystemShuttingDown:
 			fQuitting = true;
 			break;
 

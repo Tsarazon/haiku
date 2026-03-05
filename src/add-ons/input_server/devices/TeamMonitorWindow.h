@@ -53,6 +53,7 @@ private:
 			HashMap<HashKey32<int32>, TeamListItem*>	fItemMap;
 };
 
+static const uint32 kMsgSystemShuttingDown = 'TMsd';
 static const uint32 kMsgCtrlAltDelPressed = 'TMcp';
 static const uint32 kMsgDeselectAll = 'TMds';
 static const uint32 kMsgQuitFailed = 'TMqf';

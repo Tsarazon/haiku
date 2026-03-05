@@ -273,7 +273,7 @@ status_t
 InputDeviceManager::SystemShuttingDown()
 {
 	if (fTeamMonitorWindow)
-		fTeamMonitorWindow->PostMessage(SYSTEM_SHUTTING_DOWN);
+		fTeamMonitorWindow->PostMessage(kMsgSystemShuttingDown);
 
 	return B_OK;
 }

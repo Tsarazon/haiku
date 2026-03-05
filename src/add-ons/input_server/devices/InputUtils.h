@@ -8,6 +8,7 @@
 #include <InputServerDevice.h>
 #include <InterfaceDefs.h>
 #include <Keymap.h>
+#include <Autolock.h>
 #include <Locker.h>
 #include <Message.h>
 #include <OS.h>
