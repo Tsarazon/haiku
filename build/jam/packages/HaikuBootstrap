@@ -280,9 +280,7 @@ AddSymlinkToPackage add-ons Tracker
 	: /boot/system/apps/DiskUsage : DiskUsage-I ;
 
 AddFilesToPackage add-ons input_server devices :
-	<input>keyboard
-	<input>mouse
-	<input>tablet
+	<input>devices
 	;
 AddFilesToPackage add-ons input_server filters :
 	switch_workspace

@@ -375,10 +375,7 @@ AddSymlinkToPackage add-ons Tracker
 	: /boot/system/apps/DiskUsage : DiskUsage ;
 
 AddFilesToPackage add-ons input_server devices :
-	<input>keyboard
-	<input>mouse
-	<input>tablet
-	<input>virtio
+	<input>devices
 	;
 AddFilesToPackage add-ons input_server filters :
 	padblocker
@@ -386,7 +383,6 @@ AddFilesToPackage add-ons input_server filters :
 	shortcut_catcher
 	switch_workspace
 	;
-AddDirectoryToPackage add-ons input_server methods ;
 
 AddFilesToPackage add-ons kernel network :
 	<net>notifications
