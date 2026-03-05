@@ -1,7 +1,26 @@
 SubDir HAIKU_TOP src add-ons input_server devices ;
 
-SubInclude HAIKU_TOP src add-ons input_server devices keyboard ;
-SubInclude HAIKU_TOP src add-ons input_server devices mouse ;
-SubInclude HAIKU_TOP src add-ons input_server devices tablet ;
-SubInclude HAIKU_TOP src add-ons input_server devices virtio ;
-SubInclude HAIKU_TOP src add-ons input_server devices virtualkeyboard ;
+UsePrivateHeaders input interface shared tracker virtio ;
+UsePrivateSystemHeaders ;
+
+AddResources <input>devices : Devices.rdef ;
+
+Addon <input>devices :
+	InputDeviceCore.cpp
+	InputUtils.cpp
+	HWDevices.cpp
+	VirtioDevices.cpp
+
+	movement_maker.cpp
+
+	TeamMonitorWindow.cpp
+	TeamListItem.cpp
+
+	: input_server be shared localestub [ TargetLibsupc++ ]
+;
+
+DoCatalogs <input>devices :
+	x-vnd.Haiku-InputDevices
+	:
+	TeamMonitorWindow.cpp
+;
