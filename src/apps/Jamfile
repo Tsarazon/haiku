@@ -28,6 +28,7 @@ HaikuSubInclude icon-o-matic ;
 HaikuSubInclude installer ;
 HaikuSubInclude kosmmutextest ;
 HaikuSubInclude kosmraytest ;
+HaikuSubInclude InputTest ;
 HaikuSubInclude kosmsurfacetest ;
 HaikuSubInclude launchbox ;
 HaikuSubInclude login ;

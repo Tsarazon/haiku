@@ -1,0 +1,30 @@
+SubDir HAIKU_TOP src apps InputTest ;
+
+UsePrivateHeaders input interface shared ;
+UsePrivateSystemHeaders ;
+
+SubDirHdrs [ FDirName $(HAIKU_TOP) src add-ons input_server filters ] ;
+SubDirHdrs [ FDirName $(HAIKU_TOP) src add-ons input_server devices ] ;
+
+Application KosmInputTest :
+	KosmInputTest.cpp
+
+	# Compiled from filters add-on
+	BitFieldTesters.cpp
+	KeyInfos.cpp
+	ParseCommandLine.cpp
+
+	# Compiled from devices add-on
+	movement_maker.cpp
+
+	:
+	be shared [ TargetLibstdc++ ] [ TargetLibsupc++ ]
+	:
+	KosmInputTest.rdef
+;
+
+SEARCH on [ FGristFiles BitFieldTesters.cpp KeyInfos.cpp ParseCommandLine.cpp ]
+	= [ FDirName $(HAIKU_TOP) src add-ons input_server filters ] ;
+
+SEARCH on [ FGristFiles movement_maker.cpp ]
+	= [ FDirName $(HAIKU_TOP) src add-ons input_server devices ] ;
