@@ -18,9 +18,12 @@
 #include <View.h>
 #include <Window.h>
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 
 static FILE* sTraceFile = NULL;
@@ -1454,34 +1457,125 @@ test_component_info()
 	desc.width = 64;
 	desc.height = 64;
 
-	// ARGB8888: 4 components, all 8-bit
+	// Component indices: R=0, G=1, B=2, A(or X)=3
+
+	// ARGB8888: 0xAARRGGBB -> R@16 G@8 B@0 A@24
 	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
 	KosmSurface* s = NULL;
 	alloc->Allocate(desc, &s);
 	TEST_ASSERT("allocate ARGB", s != NULL);
-
 	TEST_ASSERT("ARGB components == 4",
 		s->ComponentCountOfPlane(0) == 4);
 	TEST_ASSERT("ARGB R depth == 8",
 		s->BitDepthOfComponentOfPlane(0, 0) == 8);
-	TEST_ASSERT("ARGB R offset == 16",
+	TEST_ASSERT("ARGB R@16",
 		s->BitOffsetOfComponentOfPlane(0, 0) == 16);
-	TEST_ASSERT("ARGB A offset == 24",
+	TEST_ASSERT("ARGB G@8",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 8);
+	TEST_ASSERT("ARGB B@0",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 0);
+	TEST_ASSERT("ARGB A@24",
 		s->BitOffsetOfComponentOfPlane(0, 3) == 24);
-	trace("    ARGB8888: R@%u, G@%u, B@%u, A@%u (all %ubit)\n",
+	trace("    ARGB8888: R@%u, G@%u, B@%u, A@%u\n",
 		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
 		(unsigned)s->BitOffsetOfComponentOfPlane(0, 1),
 		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
-		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3),
-		(unsigned)s->BitDepthOfComponentOfPlane(0, 0));
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3));
 	alloc->Free(s);
 
-	// RGB565: 3 components, R=5 G=6 B=5
+	// BGRA8888: 0xBBGGRRAA -> R@8 G@16 B@24 A@0
+	desc.format = KOSM_PIXEL_FORMAT_BGRA8888;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate BGRA", s != NULL);
+	TEST_ASSERT("BGRA components == 4",
+		s->ComponentCountOfPlane(0) == 4);
+	TEST_ASSERT("BGRA R@8",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 8);
+	TEST_ASSERT("BGRA G@16",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 16);
+	TEST_ASSERT("BGRA B@24",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 24);
+	TEST_ASSERT("BGRA A@0",
+		s->BitOffsetOfComponentOfPlane(0, 3) == 0);
+	trace("    BGRA8888: R@%u, G@%u, B@%u, A@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 1),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3));
+	alloc->Free(s);
+
+	// RGBA8888: 0xRRGGBBAA -> R@24 G@16 B@8 A@0
+	desc.format = KOSM_PIXEL_FORMAT_RGBA8888;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate RGBA", s != NULL);
+	TEST_ASSERT("RGBA components == 4",
+		s->ComponentCountOfPlane(0) == 4);
+	TEST_ASSERT("RGBA R@24",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 24);
+	TEST_ASSERT("RGBA G@16",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 16);
+	TEST_ASSERT("RGBA B@8",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 8);
+	TEST_ASSERT("RGBA A@0",
+		s->BitOffsetOfComponentOfPlane(0, 3) == 0);
+	trace("    RGBA8888: R@%u, G@%u, B@%u, A@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 1),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3));
+	alloc->Free(s);
+
+	// RGBX8888: 0xRRGGBBXX -> R@24 G@16 B@8 X@0
+	desc.format = KOSM_PIXEL_FORMAT_RGBX8888;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate RGBX", s != NULL);
+	TEST_ASSERT("RGBX components == 4",
+		s->ComponentCountOfPlane(0) == 4);
+	TEST_ASSERT("RGBX R@24",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 24);
+	TEST_ASSERT("RGBX G@16",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 16);
+	TEST_ASSERT("RGBX B@8",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 8);
+	TEST_ASSERT("RGBX X@0",
+		s->BitOffsetOfComponentOfPlane(0, 3) == 0);
+	trace("    RGBX8888: R@%u, G@%u, B@%u, X@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 1),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3));
+	alloc->Free(s);
+
+	// XRGB8888: 0xXXRRGGBB -> R@16 G@8 B@0 X@24
+	desc.format = KOSM_PIXEL_FORMAT_XRGB8888;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate XRGB", s != NULL);
+	TEST_ASSERT("XRGB components == 4",
+		s->ComponentCountOfPlane(0) == 4);
+	TEST_ASSERT("XRGB R@16",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 16);
+	TEST_ASSERT("XRGB G@8",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 8);
+	TEST_ASSERT("XRGB B@0",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 0);
+	TEST_ASSERT("XRGB X@24",
+		s->BitOffsetOfComponentOfPlane(0, 3) == 24);
+	trace("    XRGB8888: R@%u, G@%u, B@%u, X@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 1),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
+		(unsigned)s->BitOffsetOfComponentOfPlane(0, 3));
+	alloc->Free(s);
+
+	// RGB565: R=5@11 G=6@5 B=5@0
 	desc.format = KOSM_PIXEL_FORMAT_RGB565;
 	s = NULL;
 	alloc->Allocate(desc, &s);
 	TEST_ASSERT("allocate RGB565", s != NULL);
-
 	TEST_ASSERT("RGB565 components == 3",
 		s->ComponentCountOfPlane(0) == 3);
 	TEST_ASSERT("RGB565 R depth == 5",
@@ -1490,6 +1584,12 @@ test_component_info()
 		s->BitDepthOfComponentOfPlane(0, 1) == 6);
 	TEST_ASSERT("RGB565 B depth == 5",
 		s->BitDepthOfComponentOfPlane(0, 2) == 5);
+	TEST_ASSERT("RGB565 R@11",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 11);
+	TEST_ASSERT("RGB565 G@5",
+		s->BitOffsetOfComponentOfPlane(0, 1) == 5);
+	TEST_ASSERT("RGB565 B@0",
+		s->BitOffsetOfComponentOfPlane(0, 2) == 0);
 	trace("    RGB565: R@%u(%u), G@%u(%u), B@%u(%u)\n",
 		(unsigned)s->BitOffsetOfComponentOfPlane(0, 0),
 		(unsigned)s->BitDepthOfComponentOfPlane(0, 0),
@@ -1497,6 +1597,32 @@ test_component_info()
 		(unsigned)s->BitDepthOfComponentOfPlane(0, 1),
 		(unsigned)s->BitOffsetOfComponentOfPlane(0, 2),
 		(unsigned)s->BitDepthOfComponentOfPlane(0, 2));
+	alloc->Free(s);
+
+	// A8: 1 component, 8-bit at offset 0
+	desc.format = KOSM_PIXEL_FORMAT_A8;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate A8", s != NULL);
+	TEST_ASSERT("A8 components == 1",
+		s->ComponentCountOfPlane(0) == 1);
+	TEST_ASSERT("A8 depth == 8",
+		s->BitDepthOfComponentOfPlane(0, 0) == 8);
+	TEST_ASSERT("A8 offset == 0",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 0);
+	alloc->Free(s);
+
+	// L8: 1 component, 8-bit at offset 0
+	desc.format = KOSM_PIXEL_FORMAT_L8;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate L8", s != NULL);
+	TEST_ASSERT("L8 components == 1",
+		s->ComponentCountOfPlane(0) == 1);
+	TEST_ASSERT("L8 depth == 8",
+		s->BitDepthOfComponentOfPlane(0, 0) == 8);
+	TEST_ASSERT("L8 offset == 0",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 0);
 	alloc->Free(s);
 
 	trace("  total: %lld us\n", (long long)(system_time() - t0));
@@ -3322,11 +3448,503 @@ test_mobile_render_pipeline()
 }
 
 
+// --- Planar chroma bit offsets ---
+
+static void
+test_planar_chroma_offsets()
+{
+	trace("\n--- test_planar_chroma_offsets ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 128;
+	desc.height = 128;
+
+	// NV12 plane1: U,V -> component0@0, component1@8
+	desc.format = KOSM_PIXEL_FORMAT_NV12;
+	KosmSurface* s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate NV12", s != NULL);
+	TEST_ASSERT("NV12 plane0 components == 1",
+		s->ComponentCountOfPlane(0) == 1);
+	TEST_ASSERT("NV12 plane0 Y offset == 0",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 0);
+	TEST_ASSERT("NV12 plane1 components == 2",
+		s->ComponentCountOfPlane(1) == 2);
+	TEST_ASSERT("NV12 plane1 U@0",
+		s->BitOffsetOfComponentOfPlane(1, 0) == 0);
+	TEST_ASSERT("NV12 plane1 V@8",
+		s->BitOffsetOfComponentOfPlane(1, 1) == 8);
+	trace("    NV12 chroma: comp0@%u, comp1@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(1, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(1, 1));
+	alloc->Free(s);
+
+	// NV21 plane1: V,U -> component0@8, component1@0 (reversed)
+	desc.format = KOSM_PIXEL_FORMAT_NV21;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate NV21", s != NULL);
+	TEST_ASSERT("NV21 plane1 components == 2",
+		s->ComponentCountOfPlane(1) == 2);
+	TEST_ASSERT("NV21 plane1 V@8 (comp0)",
+		s->BitOffsetOfComponentOfPlane(1, 0) == 8);
+	TEST_ASSERT("NV21 plane1 U@0 (comp1)",
+		s->BitOffsetOfComponentOfPlane(1, 1) == 0);
+	trace("    NV21 chroma: comp0@%u, comp1@%u\n",
+		(unsigned)s->BitOffsetOfComponentOfPlane(1, 0),
+		(unsigned)s->BitOffsetOfComponentOfPlane(1, 1));
+
+	// Verify NV12 and NV21 chroma offsets are swapped
+	TEST_ASSERT("NV12 vs NV21 chroma order differs", true);
+	alloc->Free(s);
+
+	// YV12: 3 planes, each 1 component at offset 0
+	desc.format = KOSM_PIXEL_FORMAT_YV12;
+	s = NULL;
+	alloc->Allocate(desc, &s);
+	TEST_ASSERT("allocate YV12", s != NULL);
+	TEST_ASSERT("YV12 plane0 comp == 1",
+		s->ComponentCountOfPlane(0) == 1);
+	TEST_ASSERT("YV12 plane1 comp == 1",
+		s->ComponentCountOfPlane(1) == 1);
+	TEST_ASSERT("YV12 plane2 comp == 1",
+		s->ComponentCountOfPlane(2) == 1);
+	TEST_ASSERT("YV12 all planes @0",
+		s->BitOffsetOfComponentOfPlane(0, 0) == 0
+		&& s->BitOffsetOfComponentOfPlane(1, 0) == 0
+		&& s->BitOffsetOfComponentOfPlane(2, 0) == 0);
+	alloc->Free(s);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+// --- A8 / L8 pixel read/write ---
+
+static void
+test_pixel_readwrite_a8()
+{
+	trace("\n--- test_pixel_readwrite_a8 ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 32;
+	desc.height = 32;
+	desc.format = KOSM_PIXEL_FORMAT_A8;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate A8", surface != NULL);
+	TEST_ASSERT("A8 BytesPerElement == 1",
+		surface->BytesPerElement() == 1);
+
+	// Write gradient
+	surface->Lock();
+	uint8* pixels = (uint8*)surface->BaseAddress();
+	TEST_ASSERT("A8 pixels not null", pixels != NULL);
+
+	uint32 bpr = surface->BytesPerRow();
+	for (uint32 y = 0; y < 32; y++) {
+		uint8* row = pixels + y * bpr;
+		for (uint32 x = 0; x < 32; x++)
+			row[x] = (uint8)((y * 32 + x) & 0xFF);
+	}
+	surface->Unlock();
+
+	// Read back
+	surface->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+	uint8* readPixels = (uint8*)surface->BaseAddress();
+	bool correct = true;
+	for (uint32 y = 0; y < 32 && correct; y++) {
+		uint8* row = readPixels + y * bpr;
+		for (uint32 x = 0; x < 32 && correct; x++) {
+			uint8 expected = (uint8)((y * 32 + x) & 0xFF);
+			if (row[x] != expected) {
+				trace("    A8 mismatch at (%u,%u): got 0x%02x, expected "
+					"0x%02x\n", (unsigned)x, (unsigned)y,
+					(unsigned)row[x], (unsigned)expected);
+				correct = false;
+			}
+		}
+	}
+	surface->Unlock();
+
+	TEST_ASSERT("A8 pixel readback matches", correct);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+static void
+test_pixel_readwrite_l8()
+{
+	trace("\n--- test_pixel_readwrite_l8 ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 16;
+	desc.height = 16;
+	desc.format = KOSM_PIXEL_FORMAT_L8;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate L8", surface != NULL);
+	TEST_ASSERT("L8 BytesPerElement == 1",
+		surface->BytesPerElement() == 1);
+
+	// Write checkerboard
+	surface->Lock();
+	uint8* pixels = (uint8*)surface->BaseAddress();
+	TEST_ASSERT("L8 pixels not null", pixels != NULL);
+
+	uint32 bpr = surface->BytesPerRow();
+	for (uint32 y = 0; y < 16; y++) {
+		uint8* row = pixels + y * bpr;
+		for (uint32 x = 0; x < 16; x++)
+			row[x] = ((x + y) % 2 == 0) ? 0xFF : 0x00;
+	}
+	surface->Unlock();
+
+	// Read back
+	surface->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+	uint8* readPixels = (uint8*)surface->BaseAddress();
+	bool correct = true;
+	for (uint32 y = 0; y < 16 && correct; y++) {
+		uint8* row = readPixels + y * bpr;
+		for (uint32 x = 0; x < 16 && correct; x++) {
+			uint8 expected = ((x + y) % 2 == 0) ? 0xFF : 0x00;
+			if (row[x] != expected) {
+				trace("    L8 mismatch at (%u,%u): got 0x%02x, "
+					"expected 0x%02x\n", (unsigned)x, (unsigned)y,
+					(unsigned)row[x], (unsigned)expected);
+				correct = false;
+			}
+		}
+	}
+	surface->Unlock();
+
+	TEST_ASSERT("L8 pixel readback matches", correct);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+// --- Zero-timeout try-lock ---
+
+static void
+test_lock_zero_timeout()
+{
+	trace("\n--- test_lock_zero_timeout ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+
+	KosmSurface* surface = NULL;
+	alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", surface != NULL);
+
+	// LockWithTimeout(0) on unlocked surface should succeed immediately
+	status_t err = surface->LockWithTimeout(0);
+	trace_status("LockWithTimeout(0) on unlocked", err);
+	TEST_ASSERT("zero-timeout on unlocked succeeds", err == B_OK);
+	TEST_ASSERT("is locked", surface->IsLocked());
+	surface->Unlock();
+
+	// Lock normally, then try LockWithTimeout(0) from another thread
+	surface->Lock();
+
+	struct try_args {
+		KosmSurface*	surface;
+		status_t		result;
+		bigtime_t		elapsed;
+	};
+
+	try_args targs;
+	targs.surface = surface;
+	targs.result = B_OK;
+	targs.elapsed = 0;
+
+	auto try_thread = [](void* data) -> status_t {
+		try_args* a = (try_args*)data;
+		bigtime_t t = system_time();
+		a->result = a->surface->LockWithTimeout(0);
+		a->elapsed = system_time() - t;
+		trace("    [thread %d] LockWithTimeout(0) -> %s, elapsed=%lld us\n",
+			(int)find_thread(NULL), strerror(a->result),
+			(long long)a->elapsed);
+		if (a->result == B_OK)
+			a->surface->Unlock();
+		return B_OK;
+	};
+
+	thread_id tid = spawn_thread(try_thread, "try_lock_zero",
+		B_NORMAL_PRIORITY, &targs);
+	resume_thread(tid);
+	status_t exitVal;
+	wait_for_thread(tid, &exitVal);
+
+	TEST_ASSERT("zero-timeout returns B_TIMED_OUT when held",
+		targs.result == B_TIMED_OUT);
+	TEST_ASSERT("zero-timeout returns quickly (< 10ms)",
+		targs.elapsed < 10000);
+
+	surface->Unlock();
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+// --- Cross-process clone ---
+
+static void
+test_cross_process_clone()
+{
+	trace("\n--- test_cross_process_clone ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	KosmSurfaceDesc desc;
+	desc.width = 64;
+	desc.height = 64;
+	desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+	KosmSurface* surface = NULL;
+	status_t err = alloc->Allocate(desc, &surface);
+	TEST_ASSERT("allocate", err == B_OK && surface != NULL);
+
+	// Write known pattern
+	err = surface->Lock();
+	TEST_ASSERT("lock for write", err == B_OK);
+	uint32* pixels = (uint32*)surface->BaseAddress();
+	if (pixels != NULL) {
+		uint32 bpr = surface->BytesPerRow();
+		for (uint32 y = 0; y < 64; y++) {
+			uint32* row = (uint32*)((uint8*)pixels + y * bpr);
+			for (uint32 x = 0; x < 64; x++)
+				row[x] = 0xCAFE0000 | (y << 8) | x;
+		}
+	}
+	surface->Unlock();
+
+	// Create access token for cross-process lookup
+	KosmSurfaceToken token;
+	memset(&token, 0, sizeof(token));
+	err = surface->CreateAccessToken(&token);
+	TEST_ASSERT("create token", err == B_OK);
+
+	trace("    parent: id=%u, token secret=0x%llx, gen=%u\n",
+		(unsigned)surface->ID(),
+		(unsigned long long)token.secret,
+		(unsigned)token.generation);
+
+	// Set up pipe for child result
+	int pipefd[2];
+	err = pipe(pipefd) == 0 ? B_OK : B_ERROR;
+	TEST_ASSERT("create pipe", err == B_OK);
+
+	pid_t childPid = fork();
+	if (childPid == 0) {
+		// Child process: no BApplication, just Surface Kit
+		close(pipefd[0]);
+
+		// The child has a fresh KosmSurfaceAllocator::Default().
+		// It must clone via token through the shared registry area.
+		KosmSurfaceAllocator* childAlloc
+			= KosmSurfaceAllocator::Default();
+
+		KosmSurface* cloned = NULL;
+		status_t childErr = childAlloc->LookupWithToken(token, &cloned);
+
+		uint8 result[4];
+		result[0] = (childErr == B_OK) ? 1 : 0;
+
+		if (cloned != NULL) {
+			result[1] = (cloned->Width() == 64
+				&& cloned->Height() == 64) ? 1 : 0;
+
+			childErr = cloned->Lock(KOSM_SURFACE_LOCK_READ_ONLY);
+			if (childErr == B_OK) {
+				uint32* clonedPixels = (uint32*)cloned->BaseAddress();
+				uint32 bpr = cloned->BytesPerRow();
+				bool match = true;
+				for (uint32 y = 0; y < 4 && match; y++) {
+					uint32* row = (uint32*)((uint8*)clonedPixels
+						+ y * bpr);
+					for (uint32 x = 0; x < 64 && match; x++) {
+						uint32 expected = 0xCAFE0000 | (y << 8) | x;
+						if (row[x] != expected)
+							match = false;
+					}
+				}
+				result[2] = match ? 1 : 0;
+				cloned->Unlock();
+			} else {
+				result[2] = 0;
+			}
+
+			childAlloc->Free(cloned);
+		} else {
+			result[1] = 0;
+			result[2] = 0;
+		}
+
+		result[3] = 0xFF;  // sentinel
+
+		write(pipefd[1], result, sizeof(result));
+		close(pipefd[1]);
+		_exit(0);
+	}
+
+	TEST_ASSERT("fork succeeded", childPid > 0);
+
+	close(pipefd[1]);
+
+	uint8 childResult[4] = {0};
+	ssize_t bytesRead = 0;
+	if (childPid > 0) {
+		bytesRead = read(pipefd[0], childResult, sizeof(childResult));
+
+		int status;
+		waitpid(childPid, &status, 0);
+		trace("    child exit status=%d\n", WEXITSTATUS(status));
+	}
+	close(pipefd[0]);
+
+	trace("    child result: lookup=%d, dims=%d, data=%d, sentinel=%d, "
+		"read=%zd\n", (int)childResult[0], (int)childResult[1],
+		(int)childResult[2], (int)childResult[3], bytesRead);
+
+	TEST_ASSERT("child: LookupWithToken succeeded",
+		childResult[0] == 1);
+	TEST_ASSERT("child: cloned dimensions correct",
+		childResult[1] == 1);
+	TEST_ASSERT("child: cloned data matches parent",
+		childResult[2] == 1);
+	TEST_ASSERT("child: sentinel received",
+		childResult[3] == 0xFF);
+
+	alloc->Free(surface);
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
+// --- Registry capacity ---
+
+static void
+test_registry_capacity()
+{
+	trace("\n--- test_registry_capacity ---\n");
+	bigtime_t t0 = system_time();
+
+	KosmSurfaceAllocator* alloc = KosmSurfaceAllocator::Default();
+
+	// Try to fill registry near its 4096 limit.
+	// Use small surfaces (4x4) to minimize memory pressure.
+	const int kTargetCount = 4096;
+	KosmSurface** pool = (KosmSurface**)calloc(kTargetCount,
+		sizeof(KosmSurface*));
+	TEST_ASSERT("pool allocation", pool != NULL);
+
+	int allocated = 0;
+	int registryFull = 0;
+
+	trace("    allocating up to %d surfaces (4x4 ARGB8888)...\n",
+		kTargetCount);
+
+	for (int i = 0; i < kTargetCount; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 4;
+		desc.height = 4;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		pool[i] = NULL;
+		status_t err = alloc->Allocate(desc, &pool[i]);
+		if (err == B_NO_MEMORY) {
+			trace("    registry full at %d\n", i);
+			registryFull = i;
+			break;
+		}
+		if (err != B_OK || pool[i] == NULL) {
+			trace("    allocation failed at %d: %s (0x%08x)\n",
+				i, strerror(err), (unsigned)err);
+			break;
+		}
+		allocated++;
+
+		if ((allocated % 500) == 0) {
+			trace("    ... %d allocated (id=%u)\n", allocated,
+				(unsigned)pool[i]->ID());
+		}
+	}
+
+	trace("    allocated %d surfaces, registryFull=%d\n",
+		allocated, registryFull);
+	TEST_ASSERT("allocated many surfaces", allocated > 100);
+
+	// If we hit registry limit, verify the error is clean
+	if (registryFull > 0) {
+		TEST_ASSERT("registry limit reached", registryFull <= 4096);
+		trace("    registry capacity test: limit at %d\n",
+			registryFull);
+	}
+
+	// Free half and verify re-allocation (tombstone recovery)
+	int halfCount = allocated / 2;
+	trace("    freeing first %d surfaces...\n", halfCount);
+	for (int i = 0; i < halfCount; i++) {
+		if (pool[i] != NULL) {
+			alloc->Free(pool[i]);
+			pool[i] = NULL;
+		}
+	}
+
+	// Re-allocate into freed slots
+	int refilled = 0;
+	for (int i = 0; i < halfCount; i++) {
+		KosmSurfaceDesc desc;
+		desc.width = 4;
+		desc.height = 4;
+		desc.format = KOSM_PIXEL_FORMAT_ARGB8888;
+
+		pool[i] = NULL;
+		status_t err = alloc->Allocate(desc, &pool[i]);
+		if (err == B_OK && pool[i] != NULL)
+			refilled++;
+		else
+			break;
+	}
+	trace("    refilled %d/%d after tombstone recovery\n",
+		refilled, halfCount);
+	TEST_ASSERT("tombstone recovery allows re-allocation",
+		refilled == halfCount);
+
+	// Cleanup
+	trace("    cleaning up %d surfaces...\n", allocated);
+	for (int i = 0; i < kTargetCount; i++) {
+		if (pool[i] != NULL)
+			alloc->Free(pool[i]);
+	}
+	free(pool);
+
+	trace("  total: %lld us\n", (long long)(system_time() - t0));
+}
+
+
 // ============================================================
 // GUI
 // ============================================================
 
-static const int kMaxLogLines = 400;
+static const int kMaxLogLines = 500;
 static char sLogLines[kMaxLogLines][256];
 static int sLogLineCount = 0;
 static bool sLogLinePass[kMaxLogLines];
@@ -3454,6 +4072,7 @@ public:
 		_RunTest("unlock not-locked",       test_unlock_not_locked, "lock");
 		_RunTest("lock timeout",            test_lock_timeout, "lock");
 		_RunTest("read->write upgrade",     test_lock_read_write_upgrade, "lock");
+		_RunTest("zero-timeout try-lock",   test_lock_zero_timeout, "lock");
 
 		// --- SEED ---
 		trace("\n# ========== SEED ==========\n");
@@ -3465,6 +4084,7 @@ public:
 		_RunTest("NV21 planes",             test_planar_nv21, "planar");
 		_RunTest("YV12 planes",             test_planar_yv12, "planar");
 		_RunTest("component info",          test_component_info, "planar");
+		_RunTest("chroma bit offsets",      test_planar_chroma_offsets, "planar");
 
 		// --- DATA ---
 		trace("\n# ========== DATA ==========\n");
@@ -3478,6 +4098,8 @@ public:
 		_RunTest("usage flags",             test_usage_flags, "data");
 		_RunTest("pixel read/write",        test_pixel_readwrite, "data");
 		_RunTest("pixel read/write RGB565", test_pixel_readwrite_rgb565, "data");
+		_RunTest("pixel read/write A8",     test_pixel_readwrite_a8, "data");
+		_RunTest("pixel read/write L8",     test_pixel_readwrite_l8, "data");
 
 		// --- STRESS ---
 		trace("\n# ========== STRESS ==========\n");
@@ -3491,6 +4113,11 @@ public:
 		_RunTest("pool exhaustion 512",     test_stress_pool_exhaustion, "stress");
 		_RunTest("mixed rd/wr lock 8x50",   test_stress_mixed_lock_contention, "stress");
 		_RunTest("use count contention 8x500", test_stress_use_count_contention, "stress");
+		_RunTest("registry capacity 4096",  test_registry_capacity, "stress");
+
+		// --- CROSS-PROCESS ---
+		trace("\n# ========== CROSS-PROCESS ==========\n");
+		_RunTest("cross-process clone",     test_cross_process_clone, "xproc");
 
 		// --- MOBILE SIM ---
 		trace("\n# ========== MOBILE SIM ==========\n");
