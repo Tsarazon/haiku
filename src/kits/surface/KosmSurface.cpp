@@ -18,11 +18,30 @@
 
 #define SURFACE_INVALID() (fData == nullptr || fData->buffer == nullptr)
 
-// Use acquire semantics for lockCount reads that guard access to
-// shared data (baseAddress, pixel contents). On x86 this compiles
-// to a plain load (TSO guarantees); on ARM64 it emits ldar.
-#define LOCK_COUNT_ACQUIRE(buf) \
+// All accesses to lockCount and seed MUST go through atomic builtins.
+// Reads outside BLocker use acquire; reads under BLocker use relaxed
+// (the lock already provides ordering); writes under BLocker use
+// release so that unlocked readers see a consistent value.
+// On x86 (TSO) all variants compile to plain loads/stores.
+// On ARM64 acquire emits ldar, release emits stlr.
+
+#define LOCK_COUNT_LOAD(buf) \
 	__atomic_load_n(&(buf)->lockCount, __ATOMIC_ACQUIRE)
+
+#define LOCK_COUNT_LOAD_LOCKED(buf) \
+	__atomic_load_n(&(buf)->lockCount, __ATOMIC_RELAXED)
+
+#define LOCK_COUNT_STORE(buf, val) \
+	__atomic_store_n(&(buf)->lockCount, (val), __ATOMIC_RELEASE)
+
+#define SEED_LOAD(buf) \
+	__atomic_load_n(&(buf)->seed, __ATOMIC_ACQUIRE)
+
+#define SEED_LOAD_LOCKED(buf) \
+	__atomic_load_n(&(buf)->seed, __ATOMIC_RELAXED)
+
+#define SEED_STORE(buf, val) \
+	__atomic_store_n(&(buf)->seed, (val), __ATOMIC_RELEASE)
 
 
 KosmSurface::KosmSurface()
@@ -163,7 +182,7 @@ KosmSurface::BaseAddressOfPlane(uint32 planeIndex) const
 		return nullptr;
 	if (planeIndex >= fData->buffer->planeCount)
 		return nullptr;
-	if (LOCK_COUNT_ACQUIRE(fData->buffer) == 0)
+	if (LOCK_COUNT_LOAD(fData->buffer) == 0)
 		return nullptr;
 
 	uint8* base = (uint8*)fData->buffer->baseAddress;
@@ -219,8 +238,9 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 
 	thread_id currentThread = find_thread(nullptr);
 	bool readOnly = (options & KOSM_SURFACE_LOCK_READ_ONLY) != 0;
+	int32 lc = LOCK_COUNT_LOAD_LOCKED(fData->buffer);
 
-	if (fData->buffer->lockCount > 0) {
+	if (lc > 0) {
 		if (fData->buffer->lockOwner != currentThread)
 			return B_BUSY;
 
@@ -230,15 +250,15 @@ KosmSurface::Lock(uint32 options, uint32* outSeed)
 			return B_NOT_ALLOWED;
 		}
 
-		fData->buffer->lockCount++;
+		LOCK_COUNT_STORE(fData->buffer, lc + 1);
 	} else {
-		fData->buffer->lockCount = 1;
+		LOCK_COUNT_STORE(fData->buffer, 1);
 		fData->buffer->lockOwner = currentThread;
 		fData->buffer->lockedReadOnly = readOnly;
 	}
 
 	if (outSeed != nullptr)
-		*outSeed = fData->buffer->seed;
+		*outSeed = SEED_LOAD_LOCKED(fData->buffer);
 
 	return B_OK;
 }
@@ -251,6 +271,20 @@ KosmSurface::LockWithTimeout(bigtime_t timeout, uint32 options,
 	if (SURFACE_INVALID())
 		return B_BAD_VALUE;
 
+	// Lazy semaphore creation. CAS avoids double-create when
+	// multiple threads enter LockWithTimeout concurrently.
+	if (__atomic_load_n(&fData->buffer->waitSem, __ATOMIC_ACQUIRE) < 0) {
+		sem_id sem = create_sem(0, "kosm_surface_wait");
+		if (sem >= 0) {
+			sem_id expected = -1;
+			if (!__atomic_compare_exchange_n(&fData->buffer->waitSem,
+					&expected, sem, false,
+					__ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+				delete_sem(sem);
+			}
+		}
+	}
+
 	bigtime_t deadline = system_time() + timeout;
 
 	for (;;) {
@@ -262,8 +296,12 @@ KosmSurface::LockWithTimeout(bigtime_t timeout, uint32 options,
 		if (remaining <= 0)
 			return B_TIMED_OUT;
 
-		status = acquire_sem_etc(fData->buffer->waitSem, 1,
-			B_RELATIVE_TIMEOUT, remaining);
+		sem_id sem = __atomic_load_n(&fData->buffer->waitSem,
+			__ATOMIC_ACQUIRE);
+		if (sem < 0)
+			return B_NO_MEMORY;
+
+		status = acquire_sem_etc(sem, 1, B_RELATIVE_TIMEOUT, remaining);
 
 		if (status == B_TIMED_OUT)
 			return B_TIMED_OUT;
@@ -279,17 +317,21 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 
 	BAutolock locker(fData->buffer->lock);
 
-	if (fData->buffer->lockCount == 0)
+	int32 lc = LOCK_COUNT_LOAD_LOCKED(fData->buffer);
+
+	if (lc == 0)
 		return KOSM_SURFACE_NOT_LOCKED;
 
 	if (fData->buffer->lockOwner != find_thread(nullptr))
 		return B_NOT_ALLOWED;
 
-	fData->buffer->lockCount--;
+	lc--;
+	LOCK_COUNT_STORE(fData->buffer, lc);
 
-	if (fData->buffer->lockCount == 0) {
+	if (lc == 0) {
 		if (!fData->buffer->lockedReadOnly) {
-			fData->buffer->seed++;
+			uint32 s = SEED_LOAD_LOCKED(fData->buffer);
+			SEED_STORE(fData->buffer, s + 1);
 
 			// A write cycle means valid content was produced.
 			// Clear the purged flag so subsequent NON_VOLATILE
@@ -300,11 +342,16 @@ KosmSurface::Unlock(uint32 options, uint32* outSeed)
 		fData->buffer->lockOwner = -1;
 		fData->buffer->lockedReadOnly = false;
 
-		release_sem_etc(fData->buffer->waitSem, 1, B_RELEASE_ALL);
+		// Wake one waiter, not all. Avoids thundering herd when
+		// many threads contend on the same surface.
+		sem_id sem = __atomic_load_n(&fData->buffer->waitSem,
+			__ATOMIC_ACQUIRE);
+		if (sem >= 0)
+			release_sem(sem);
 	}
 
 	if (outSeed != nullptr)
-		*outSeed = fData->buffer->seed;
+		*outSeed = SEED_LOAD_LOCKED(fData->buffer);
 
 	return B_OK;
 }
@@ -315,7 +362,7 @@ KosmSurface::BaseAddress() const
 {
 	if (SURFACE_INVALID())
 		return nullptr;
-	if (LOCK_COUNT_ACQUIRE(fData->buffer) == 0)
+	if (LOCK_COUNT_LOAD(fData->buffer) == 0)
 		return nullptr;
 	return fData->buffer->baseAddress;
 }
@@ -326,7 +373,7 @@ KosmSurface::Seed() const
 {
 	if (SURFACE_INVALID())
 		return 0;
-	return __atomic_load_n((uint32*)&fData->buffer->seed, __ATOMIC_ACQUIRE);
+	return SEED_LOAD(fData->buffer);
 }
 
 
@@ -515,7 +562,11 @@ KosmSurface::IsVolatile() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return fData->buffer->purgeableState == KOSM_PURGEABLE_VOLATILE;
+
+	// Lockless read: use atomic load so ARM64 doesn't see stale cache.
+	kosm_purgeable_state state;
+	__atomic_load(&fData->buffer->purgeableState, &state, __ATOMIC_ACQUIRE);
+	return state == KOSM_PURGEABLE_VOLATILE;
 }
 
 
@@ -533,7 +584,7 @@ KosmSurface::IsLocked() const
 {
 	if (SURFACE_INVALID())
 		return false;
-	return LOCK_COUNT_ACQUIRE(fData->buffer) > 0;
+	return LOCK_COUNT_LOAD(fData->buffer) > 0;
 }
 
 

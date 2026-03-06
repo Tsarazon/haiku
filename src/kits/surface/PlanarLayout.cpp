@@ -232,53 +232,71 @@ kosm_planar_get_bit_depth(kosm_pixel_format format, uint32 planeIndex,
 }
 
 
+/*
+ * Bit offset of component within a 32-bit (or 16-bit) integer.
+ *
+ * Convention: format name = MSB-to-LSB order of the integer value.
+ * Component indices: R=0, G=1, B=2, A(or X)=3.
+ *
+ *   ARGB8888  0xAARRGGBB  →  R@16  G@8   B@0   A@24
+ *   BGRA8888  0xBBGGRRAA  →  R@8   G@16  B@24  A@0
+ *   RGBA8888  0xRRGGBBAA  →  R@24  G@16  B@8   A@0
+ *   RGBX8888  0xRRGGBBXX  →  R@24  G@16  B@8   X@0
+ *   XRGB8888  0xXXRRGGBB  →  R@16  G@8   B@0   X@24
+ *   RGB565    0bRRRRRGGGGGGBBBBB → R@11 G@5 B@0
+ */
 uint32
 kosm_planar_get_bit_offset(kosm_pixel_format format, uint32 planeIndex,
 	uint32 componentIndex)
 {
 	switch (format) {
+		// 0xAARRGGBB
 		case KOSM_PIXEL_FORMAT_ARGB8888:
 			switch (componentIndex) {
-				case 0: return 16;
-				case 1: return 8;
-				case 2: return 0;
-				case 3: return 24;
+				case 0: return 16;	// R
+				case 1: return 8;	// G
+				case 2: return 0;	// B
+				case 3: return 24;	// A
 			}
 			break;
 
+		// 0xBBGGRRAA
 		case KOSM_PIXEL_FORMAT_BGRA8888:
 			switch (componentIndex) {
-				case 0: return 16;
-				case 1: return 8;
-				case 2: return 0;
-				case 3: return 24;
+				case 0: return 8;	// R
+				case 1: return 16;	// G
+				case 2: return 24;	// B
+				case 3: return 0;	// A
 			}
 			break;
 
+		// 0xRRGGBBAA
 		case KOSM_PIXEL_FORMAT_RGBA8888:
 			switch (componentIndex) {
-				case 0: return 0;
-				case 1: return 8;
-				case 2: return 16;
-				case 3: return 24;
+				case 0: return 24;	// R
+				case 1: return 16;	// G
+				case 2: return 8;	// B
+				case 3: return 0;	// A
 			}
 			break;
 
+		// 0xRRGGBBXX
 		case KOSM_PIXEL_FORMAT_RGBX8888:
 			switch (componentIndex) {
-				case 0: return 0;
-				case 1: return 8;
-				case 2: return 16;
-				case 3: return 24;
+				case 0: return 24;	// R
+				case 1: return 16;	// G
+				case 2: return 8;	// B
+				case 3: return 0;	// X
 			}
 			break;
 
+		// 0xXXRRGGBB
 		case KOSM_PIXEL_FORMAT_XRGB8888:
 			switch (componentIndex) {
-				case 0: return 16;
-				case 1: return 8;
-				case 2: return 0;
-				case 3: return 24;
+				case 0: return 16;	// R
+				case 1: return 8;	// G
+				case 2: return 0;	// B
+				case 3: return 24;	// X
 			}
 			break;
 

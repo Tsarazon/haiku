@@ -21,7 +21,7 @@ KosmSurfaceBuffer::KosmSurfaceBuffer()
 	lockOwner(-1),
 	lockedReadOnly(false),
 	seed(0),
-	waitSem(create_sem(0, "kosm_surface_wait")),
+	waitSem(-1),
 	localUseCount(0),
 	purgeableState(KOSM_PURGEABLE_NON_VOLATILE),
 	contentsPurged(false),
@@ -33,6 +33,7 @@ KosmSurfaceBuffer::KosmSurfaceBuffer()
 
 KosmSurfaceBuffer::~KosmSurfaceBuffer()
 {
-	if (waitSem >= 0)
-		delete_sem(waitSem);
+	sem_id sem = __atomic_load_n(&waitSem, __ATOMIC_ACQUIRE);
+	if (sem >= 0)
+		delete_sem(sem);
 }

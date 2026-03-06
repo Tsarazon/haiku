@@ -9,6 +9,41 @@
 #include <string.h>
 
 
+// RAII guard for the registry's cross-process kosm_mutex.
+// Handles KOSM_MUTEX_OWNER_DEAD transparently.
+class RegistryLocker {
+public:
+	RegistryLocker(kosm_mutex_id mutex)
+		:
+		fMutex(mutex),
+		fLocked(false)
+	{
+		status_t status = kosm_acquire_mutex(mutex);
+		if (status == KOSM_MUTEX_OWNER_DEAD) {
+			kosm_mark_mutex_consistent(mutex);
+			fLocked = true;
+		} else if (status == B_OK) {
+			fLocked = true;
+		}
+	}
+
+	~RegistryLocker()
+	{
+		if (fLocked)
+			kosm_release_mutex(fMutex);
+	}
+
+	bool IsLocked() const { return fLocked; }
+
+private:
+	kosm_mutex_id	fMutex;
+	bool			fLocked;
+
+	RegistryLocker(const RegistryLocker&);
+	RegistryLocker& operator=(const RegistryLocker&);
+};
+
+
 KosmSurfaceRegistry*
 KosmSurfaceRegistry::Default()
 {
@@ -221,9 +256,6 @@ KosmSurfaceRegistry::_FindEmptySlot(kosm_surface_id id) const
 void
 KosmSurfaceRegistry::_Compact()
 {
-	// Use a temporary area instead of heap allocation under mutex.
-	// Avoids blocking all processes if heap is under pressure.
-
 	size_t tempSize = sizeof(KosmSurfaceRegistryEntry)
 		* KOSM_SURFACE_REGISTRY_MAX_ENTRIES;
 	size_t areaSize = (tempSize + B_PAGE_SIZE - 1) & ~(B_PAGE_SIZE - 1);
@@ -232,11 +264,8 @@ KosmSurfaceRegistry::_Compact()
 	area_id tempArea = create_area("kosm_registry_compact", &tempAddress,
 		B_ANY_ADDRESS, areaSize, B_NO_LOCK, B_READ_AREA | B_WRITE_AREA);
 
-	if (tempArea < 0) {
-		// Cannot compact right now — not fatal, just means longer
-		// probe chains until next opportunity.
+	if (tempArea < 0)
 		return;
-	}
 
 	KosmSurfaceRegistryEntry* temp
 		= (KosmSurfaceRegistryEntry*)tempAddress;
@@ -265,9 +294,6 @@ KosmSurfaceRegistry::_Compact()
 void
 KosmSurfaceRegistry::_PurgeDeadTeams()
 {
-	// Collect candidate indices first, then batch-check teams.
-	// Limits syscalls under mutex to only entries that are actually live.
-
 	int32 candidates[256];
 	int32 candidateCount = 0;
 	team_info info;
@@ -285,8 +311,6 @@ KosmSurfaceRegistry::_PurgeDeadTeams()
 
 	for (int32 c = 0; c < candidateCount; c++) {
 		KosmSurfaceRegistryEntry& entry = fEntries[candidates[c]];
-		// Re-check: entry could have been modified between scan and purge
-		// (another thread may have unregistered it).
 		if (entry.id == 0 || entry.id == KOSM_SURFACE_ID_TOMBSTONE)
 			continue;
 
@@ -345,26 +369,22 @@ KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindEmptySlot(id);
 	if (index < 0) {
 		_PurgeDeadTeams();
 		index = _FindEmptySlot(id);
 	}
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NO_MEMORY;
-	}
 
 	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
-	if (entry.id == id) {
-		_Unlock();
+	if (entry.id == id)
 		return KOSM_SURFACE_ID_EXISTS;
-	}
 
 	if (entry.id == KOSM_SURFACE_ID_TOMBSTONE)
 		fHeader->tombstoneCount--;
@@ -391,7 +411,6 @@ KosmSurfaceRegistry::Register(kosm_surface_id id, area_id sourceArea,
 
 	fHeader->entryCount++;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -405,25 +424,18 @@ KosmSurfaceRegistry::Unregister(kosm_surface_id id)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
-	if (fEntries[index].globalUseCount > 0) {
-		_Unlock();
+	if (fEntries[index].globalUseCount > 0)
 		return KOSM_SURFACE_IN_USE;
-	}
 
-	_UnregisterLocked(index);
-
-	_Unlock();
-	return B_OK;
+	return _UnregisterLocked(index);
 }
 
 
@@ -436,20 +448,15 @@ KosmSurfaceRegistry::ForceUnregister(kosm_surface_id id)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
-	_UnregisterLocked(index);
-
-	_Unlock();
-	return B_OK;
+	return _UnregisterLocked(index);
 }
 
 
@@ -462,19 +469,16 @@ KosmSurfaceRegistry::IncrementGlobalUseCount(kosm_surface_id id)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	fEntries[index].globalUseCount++;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -488,20 +492,17 @@ KosmSurfaceRegistry::DecrementGlobalUseCount(kosm_surface_id id)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	if (fEntries[index].globalUseCount > 0)
 		fEntries[index].globalUseCount--;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -515,16 +516,15 @@ KosmSurfaceRegistry::GlobalUseCount(kosm_surface_id id) const
 	if (fHeader == nullptr)
 		return 0;
 
-	if (_Lock() != B_OK)
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
 		return 0;
 
-	int32 result = 0;
 	int32 index = _FindSlot(id);
-	if (index >= 0)
-		result = fEntries[index].globalUseCount;
+	if (index < 0)
+		return 0;
 
-	_Unlock();
-	return result;
+	return fEntries[index].globalUseCount;
 }
 
 
@@ -546,24 +546,20 @@ KosmSurfaceRegistry::LookupInfo(kosm_surface_id id,
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
 	get_thread_info(find_thread(nullptr), &info);
-	if (entry.ownerTeam != info.team) {
-		_Unlock();
+	if (entry.ownerTeam != info.team)
 		return B_NOT_ALLOWED;
-	}
 
 	if (outDesc != nullptr) {
 		outDesc->width = entry.width;
@@ -583,7 +579,6 @@ KosmSurfaceRegistry::LookupInfo(kosm_surface_id id,
 	if (outPlaneCount != nullptr)
 		*outPlaneCount = entry.planeCount;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -598,30 +593,25 @@ KosmSurfaceRegistry::CreateAccessToken(kosm_surface_id id,
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
 	get_thread_info(find_thread(nullptr), &info);
-	if (entry.ownerTeam != info.team) {
-		_Unlock();
+	if (entry.ownerTeam != info.team)
 		return B_NOT_ALLOWED;
-	}
 
 	outToken->id = id;
 	outToken->secret = entry.accessSecret;
 	outToken->generation = entry.secretGeneration;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -635,25 +625,21 @@ KosmSurfaceRegistry::ValidateToken(const KosmSurfaceToken& token)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(token.id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	if (entry.accessSecret != token.secret
 		|| entry.secretGeneration != token.generation) {
-		_Unlock();
 		return B_NOT_ALLOWED;
 	}
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -667,29 +653,24 @@ KosmSurfaceRegistry::RevokeAllAccess(kosm_surface_id id)
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	thread_info info;
 	get_thread_info(find_thread(nullptr), &info);
-	if (entry.ownerTeam != info.team) {
-		_Unlock();
+	if (entry.ownerTeam != info.team)
 		return B_NOT_ALLOWED;
-	}
 
 	entry.accessSecret = generate_secret();
 	entry.secretGeneration++;
 
-	_Unlock();
 	return B_OK;
 }
 
@@ -705,21 +686,18 @@ KosmSurfaceRegistry::LookupInfoWithToken(const KosmSurfaceToken& token,
 	if (fHeader == nullptr)
 		return B_NO_INIT;
 
-	status_t status = _Lock();
-	if (status != B_OK)
-		return status;
+	RegistryLocker locker(fHeader->lock);
+	if (!locker.IsLocked())
+		return B_ERROR;
 
 	int32 index = _FindSlot(token.id);
-	if (index < 0) {
-		_Unlock();
+	if (index < 0)
 		return B_NAME_NOT_FOUND;
-	}
 
 	const KosmSurfaceRegistryEntry& entry = fEntries[index];
 
 	if (entry.accessSecret != token.secret
 		|| entry.secretGeneration != token.generation) {
-		_Unlock();
 		return B_NOT_ALLOWED;
 	}
 
@@ -741,6 +719,5 @@ KosmSurfaceRegistry::LookupInfoWithToken(const KosmSurfaceToken& token,
 	if (outPlaneCount != nullptr)
 		*outPlaneCount = entry.planeCount;
 
-	_Unlock();
 	return B_OK;
 }

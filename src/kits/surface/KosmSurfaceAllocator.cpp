@@ -24,6 +24,8 @@
 
 extern KosmAllocationBackend* kosm_create_area_backend();
 
+static const int kMaxIdRetries = 3;
+
 
 struct KosmSurfaceAllocator::Impl {
 	typedef HashMap<HashKey32<kosm_surface_id>, KosmSurface*> SurfaceMap;
@@ -114,19 +116,21 @@ KosmSurfaceAllocator::Allocate(const KosmSurfaceDesc& desc,
 	if (status != B_OK)
 		return status;
 
-	if (buffer->waitSem < 0) {
-		fImpl->backend->Free(buffer);
-		return B_NO_MEMORY;
-	}
-
 	buffer->isOriginal = true;
 
 	BAutolock locker(fImpl->lock);
 
-	buffer->id = generate_surface_id();
-	status = KosmSurfaceRegistry::Default()->Register(buffer->id,
-		buffer->areaId, buffer->desc, buffer->allocSize,
-		buffer->planeCount);
+	// Retry ID generation on collision. The hash mixer makes
+	// collisions unlikely, but not impossible.
+	status = KOSM_SURFACE_ID_EXISTS;
+	for (int attempt = 0;
+		attempt < kMaxIdRetries && status == KOSM_SURFACE_ID_EXISTS;
+		attempt++) {
+		buffer->id = generate_surface_id();
+		status = KosmSurfaceRegistry::Default()->Register(buffer->id,
+			buffer->areaId, buffer->desc, buffer->allocSize,
+			buffer->planeCount);
+	}
 
 	if (status != B_OK) {
 		fImpl->backend->Free(buffer);
@@ -343,11 +347,6 @@ KosmSurfaceAllocator::_CloneFromRegistry(kosm_surface_id id,
 	KosmSurfaceBuffer* buffer = new(std::nothrow) KosmSurfaceBuffer;
 	if (buffer == nullptr)
 		return B_NO_MEMORY;
-
-	if (buffer->waitSem < 0) {
-		delete buffer;
-		return B_NO_MEMORY;
-	}
 
 	buffer->id = id;
 	buffer->desc = desc;
