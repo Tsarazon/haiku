@@ -6,6 +6,7 @@
 #define _KERNEL_KOSM_RAY_H
 
 #include <KosmOS.h>
+#include <kosm_handle.h>
 
 struct kernel_args;
 
@@ -40,7 +41,6 @@ status_t		kosm_ray_set_bootstrap(team_id team, kosm_ray_id endpoint);
 /* Stats */
 int32			kosm_ray_max(void);
 int32			kosm_ray_used(void);
-off_t			kosm_ray_team_link_offset(void);
 
 /* Select integration */
 struct select_info;
@@ -48,6 +48,10 @@ status_t		kosm_select_ray(int32 id, struct select_info* info,
 					bool kernel);
 status_t		kosm_deselect_ray(int32 id, struct select_info* info,
 					bool kernel);
+
+/* Handle resolution for select_ops (resolves userspace handle to
+   kernel-internal ray ID). Returns negative error on invalid handle. */
+kosm_ray_id		kosm_ray_handle_to_id(kosm_handle_t handle);
 
 /* Syscalls */
 
@@ -80,6 +84,9 @@ status_t		_user_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 status_t		_user_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
 
 kosm_ray_id		_user_kosm_get_bootstrap_ray(void);
+
+status_t		_user_kosm_ray_set_bootstrap(team_id team,
+				kosm_ray_id endpoint);
 
 status_t		_user_kosm_get_ray_info(kosm_ray_id id,
 					kosm_ray_info* userInfo, size_t size);

@@ -65,15 +65,13 @@ extern status_t			_kosm_get_next_mutex_info(team_id team, int32* cookie,
 	_kosm_get_next_mutex_info((team), (cookie), (info), sizeof(*(info)))
 
 
-/* KosmOS Ray — paired IPC channels */
+/* Generic handle infrastructure */
 
-typedef int32 kosm_ray_id;
+typedef int32 kosm_handle_t;
 
-#define KOSM_RAY_MAX_HANDLES		64
-#define KOSM_RAY_MAX_DATA_SIZE		(256 * 1024)
-#define KOSM_RAY_MAX_QUEUE_MESSAGES	256
+#define KOSM_HANDLE_INVALID			0
 
-/* Handle types for cross-process object passing */
+/* Handle object types */
 
 #define KOSM_HANDLE_RAY				0x01
 #define KOSM_HANDLE_MUTEX			0x02
@@ -81,10 +79,45 @@ typedef int32 kosm_ray_id;
 #define KOSM_HANDLE_SEM				0x04
 #define KOSM_HANDLE_FD				0x05
 
+/* Handle rights (bitmask, passed to kosm_duplicate_handle) */
+
+#define KOSM_RIGHT_READ				0x0001
+#define KOSM_RIGHT_WRITE			0x0002
+#define KOSM_RIGHT_TRANSFER			0x0004
+#define KOSM_RIGHT_DUPLICATE		0x0008
+#define KOSM_RIGHT_WAIT				0x0010
+#define KOSM_RIGHT_MANAGE			0x0020
+#define KOSM_RIGHT_ALL				(KOSM_RIGHT_READ | KOSM_RIGHT_WRITE \
+									| KOSM_RIGHT_TRANSFER \
+									| KOSM_RIGHT_DUPLICATE \
+									| KOSM_RIGHT_WAIT | KOSM_RIGHT_MANAGE)
+
 typedef struct {
+	kosm_handle_t	handle;
 	uint32			type;
-	int32			id;
-} kosm_handle_t;
+	uint32			rights;
+} kosm_handle_info;
+
+/* Generic handle operations */
+
+extern status_t			kosm_close_handle(kosm_handle_t handle);
+extern kosm_handle_t	kosm_duplicate_handle(kosm_handle_t handle,
+							uint32 rights);
+extern status_t			_kosm_get_handle_info(kosm_handle_t handle,
+							kosm_handle_info* info);
+
+#define kosm_get_handle_info(handle, info) \
+	_kosm_get_handle_info((handle), (info))
+
+
+/* KosmOS Ray -- paired IPC channels */
+
+/* kosm_ray_id is a handle to a ray endpoint (per-process, opaque). */
+typedef int32 kosm_ray_id;
+
+#define KOSM_RAY_MAX_HANDLES		64
+#define KOSM_RAY_MAX_DATA_SIZE		(256 * 1024)
+#define KOSM_RAY_MAX_QUEUE_MESSAGES	256
 
 /* QoS classes */
 
@@ -151,6 +184,8 @@ extern status_t			kosm_ray_wait(kosm_ray_id id, uint32 signals,
 extern status_t			kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
 
 extern kosm_ray_id		kosm_get_bootstrap_ray(void);
+extern status_t			kosm_ray_set_bootstrap(team_id team,
+							kosm_ray_id endpoint);
 
 /* system private, use macro instead */
 extern status_t			_kosm_get_ray_info(kosm_ray_id id,

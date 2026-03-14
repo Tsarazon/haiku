@@ -2,17 +2,21 @@
  * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * KosmOS Ray — paired IPC channels.
+ * KosmOS Ray -- paired IPC channels.
  *
  * Design combines:
- *   Fuchsia Zircon: paired endpoints, handle passing, move semantics
+ *   Fuchsia Zircon: paired endpoints, handle passing, move semantics,
+ *                   per-process handle table (capability-based access)
  *   iOS/XNU Mach:   QoS propagation, importance donation
- *   Haiku:          team ownership, select, ConditionVariable, KDL, refcount
+ *   Haiku:          ConditionVariable, KDL, refcount, select
  *
- * INTEGRATION NOTE: Team struct must have the following field added:
- *   struct list  kosm_ray_list;   // list of RayEndpoints owned by team
- * Initialize with list_init(&team->kosm_ray_list) in Team constructor.
- * Call kosm_ray_delete_owned(team) in team cleanup (alongside delete_owned_ports).
+ * Access control: per-process handle table (see kosm_handle.h).
+ * Userspace never sees internal endpoint IDs. All operations go through
+ * handles, which are validated and rights-checked at the syscall boundary.
+ *
+ * INTEGRATION NOTE: Call kosm_ray_delete_owned(team) in team cleanup
+ * (alongside delete_owned_ports) to close endpoints and notify peers.
+ * The handle table (KosmHandleTable) must be destroyed separately.
  */
 
 
@@ -29,6 +33,7 @@
 #include <arch/int.h>
 #include <heap.h>
 #include <kernel.h>
+#include <kosm_handle.h>
 #include <kosm_mutex.h>
 #include <Notifications.h>
 #include <sem.h>
@@ -37,7 +42,6 @@
 #include <thread.h>
 #include <tracing.h>
 #include <util/AutoLock.h>
-#include <util/list.h>
 #include <vm/vm.h>
 #include <wait_for_objects.h>
 
@@ -52,15 +56,21 @@
 //#define RAY_TRACING
 
 
-// Locking (follows port.cpp model):
+// Locking:
 //
-// * sRaysLock: Protects the sRays hash table.
-// * sTeamListLock[]: Protects Team::kosm_ray_list. Index = team_id % count.
-// * RayEndpoint::lock: Protects all members except team_link, hash_link,
+// * sRaysLock: Protects the sRays hash table (kernel-internal index).
+// * RayEndpoint::lock: Protects all members except hash_link,
 //   lock, state, and id (immutable).
 // * RayEndpoint::state: Atomic linearization point for creation/deletion.
+// * KosmHandleTable::fLock: Protects per-team handle entries.
+//
+// Access control is handled by the per-process handle table. If a process
+// holds a handle to an endpoint, it has the right to operate on it
+// (subject to the rights mask on the handle). No ownership checks are
+// needed in the kernel functions themselves.
 //
 // Peer locking order: always lock lower id first to avoid deadlock.
+// Handle table locking order: lower address first.
 
 
 // #pragma mark - tracing
@@ -208,6 +218,19 @@ namespace {
 // ---- Message ----
 
 
+// Resolved handle stored in a message during transit.
+// At write time, sender's handles are resolved to objects/IDs.
+// At read time, objects are installed into the receiver's handle table.
+struct ray_msg_handle {
+	union {
+		KernelReferenceable*	object;		// ray, mutex (refcounted)
+		int32					legacy_id;	// area, sem (already transferred)
+	};
+	uint16		type;		// KOSM_HANDLE_RAY, etc.
+	uint32		rights;
+};
+
+
 struct ray_message : DoublyLinkedListLinkImpl<ray_message> {
 	size_t				data_size;
 	uint32				handle_count;
@@ -215,11 +238,13 @@ struct ray_message : DoublyLinkedListLinkImpl<ray_message> {
 	team_id				sender_team;
 	int32				sender_priority;
 	uint8				qos_class;
-	kosm_handle_t		handles[KOSM_RAY_MAX_HANDLES];
+	ray_msg_handle		handles[KOSM_RAY_MAX_HANDLES];
 	char				data[0];
 };
 
 typedef DoublyLinkedList<ray_message> MessageList;
+
+static void release_msg_handles(ray_message* msg);
 
 
 // ---- Endpoint ----
@@ -232,10 +257,13 @@ struct RayEndpoint : public KernelReferenceable {
 		kDeleted
 	};
 
-	struct list_link	team_link;
 	RayEndpoint*		hash_link;
 	kosm_ray_id			id;
+
+	// Diagnostic/tracking only. Updated on handle transfer.
+	// NOT used for access control (handle table provides that).
 	team_id				owner;
+
 	mutex				lock;
 	int32				state;
 
@@ -275,8 +303,10 @@ struct RayEndpoint : public KernelReferenceable {
 
 	virtual ~RayEndpoint()
 	{
-		while (ray_message* msg = messages.RemoveHead())
+		while (ray_message* msg = messages.RemoveHead()) {
+			release_msg_handles(msg);
 			free(msg);
+		}
 
 		mutex_destroy(&lock);
 	}
@@ -351,28 +381,12 @@ public:
 static const size_t kTotalSpaceLimit = 64 * 1024 * 1024;
 
 static int32 sMaxRays = 8192;
-static int32 sMaxRaysPerTeam = 512;
 static int32 sUsedRays;
 
 static RayHashTable sRays;
 static kosm_ray_id sNextRayID = 1;
 static bool sRaysActive = false;
 static rw_lock sRaysLock = RW_LOCK_INITIALIZER("kosm rays");
-
-enum {
-	kTeamListLockCount = 8
-};
-
-static mutex sTeamListLock[kTeamListLockCount] = {
-	MUTEX_INITIALIZER("kosm ray team 1"),
-	MUTEX_INITIALIZER("kosm ray team 2"),
-	MUTEX_INITIALIZER("kosm ray team 3"),
-	MUTEX_INITIALIZER("kosm ray team 4"),
-	MUTEX_INITIALIZER("kosm ray team 5"),
-	MUTEX_INITIALIZER("kosm ray team 6"),
-	MUTEX_INITIALIZER("kosm ray team 7"),
-	MUTEX_INITIALIZER("kosm ray team 8")
-};
 
 static int32 sTotalSpaceUsed;
 
@@ -412,16 +426,6 @@ get_locked_ray(kosm_ray_id id)
 	} else
 		ref.Unset();
 
-	return ref;
-}
-
-
-static BReference<RayEndpoint>
-get_ray(kosm_ray_id id)
-{
-	BReference<RayEndpoint> ref;
-	ReadLocker locker(sRaysLock);
-	ref.SetTo(sRays.Lookup(id));
 	return ref;
 }
 
@@ -559,250 +563,337 @@ free_ray_message(ray_message* msg)
 }
 
 
-// ---- Handle transfer ----
+// ---- Handle transfer (via handle table) ----
 
 
-/*!	Validate that a handle refers to a real kernel object accessible
-	by the given team. Returns B_OK if valid.
+static void rollback_resolved_handle(ray_msg_handle* resolved,
+	KosmHandleTable* senderTable, bool wasCopy);
+
+
+/*!	Resolve sender's handles into the message's internal format.
+	For move mode: handles are removed from the sender's table.
+	For copy mode: handles remain in the sender's table.
+
+	Type-specific operations (area clone/transfer) are performed here
+	so the message contains objects ready for the receiver.
+
+	On partial failure, already-resolved handles are rolled back.
 */
 static status_t
-validate_handle(const kosm_handle_t* handle, team_id team)
+resolve_sender_handles(const kosm_handle_t* userHandles, size_t handleCount,
+	ray_msg_handle* resolved, KosmHandleTable* senderTable,
+	team_id receiverTeam, bool copyMode)
 {
-	switch (handle->type) {
-		case KOSM_HANDLE_RAY:
-		{
-			BReference<RayEndpoint> ref = get_ray(handle->id);
-			if (ref == NULL || ref->state != RayEndpoint::kActive)
-				return KOSM_RAY_INVALID_HANDLE;
-			if (ref->owner != team)
-				return B_NOT_ALLOWED;
-			return B_OK;
-		}
+	for (size_t i = 0; i < handleCount; i++) {
+		kosm_handle_t handle = userHandles[i];
+		uint16 type;
+		uint32 rights;
 
-		case KOSM_HANDLE_MUTEX:
-		{
-			// Validate via kosm_mutex info — if we can get info, it exists
-			kosm_mutex_info info;
-			status_t status = _kosm_get_mutex_info(handle->id, &info,
-				sizeof(info));
-			if (status != B_OK)
-				return KOSM_RAY_INVALID_HANDLE;
-			if (info.team != team)
-				return B_NOT_ALLOWED;
-			return B_OK;
-		}
-
-		case KOSM_HANDLE_AREA:
-		{
-			// Validate via area_info — standard Haiku area for now,
-			// kosm_area will replace when ready
-			area_info info;
-			status_t status = get_area_info(handle->id, &info);
-			if (status != B_OK)
-				return KOSM_RAY_INVALID_HANDLE;
-			if (info.team != team)
-				return B_NOT_ALLOWED;
-			return B_OK;
-		}
-
-		case KOSM_HANDLE_SEM:
-		{
-			sem_info info;
-			status_t status = _get_sem_info(handle->id, &info,
-				sizeof(info));
-			if (status != B_OK)
-				return KOSM_RAY_INVALID_HANDLE;
-			if (info.team != team)
-				return B_NOT_ALLOWED;
-			return B_OK;
-		}
-
-		case KOSM_HANDLE_FD:
-		{
-			// fd transfer not yet supported
-			return B_NOT_SUPPORTED;
-		}
-
-		default:
+		status_t status = senderTable->GetInfo(handle, &type, &rights);
+		if (status != B_OK) {
+			// Rollback already-resolved handles
+			for (size_t j = 0; j < i; j++)
+				rollback_resolved_handle(&resolved[j], senderTable, copyMode);
 			return KOSM_RAY_INVALID_HANDLE;
-	}
-}
+		}
 
+		if (!copyMode && (rights & KOSM_RIGHT_TRANSFER) == 0) {
+			for (size_t j = 0; j < i; j++)
+				rollback_resolved_handle(&resolved[j], senderTable, copyMode);
+			return B_NOT_ALLOWED;
+		}
 
-/*!	Move a handle from sender to receiver.
-	For move semantics: the handle is removed from the sender's namespace.
-	For copy semantics (KOSM_RAY_COPY_HANDLES): sender retains the handle.
+		resolved[i].type = type;
+		resolved[i].rights = rights;
 
-	Returns the new handle ID in the receiver's namespace via dst.
-*/
-static status_t
-transfer_handle(const kosm_handle_t* src, kosm_handle_t* dst,
-	team_id senderTeam, team_id receiverTeam, bool copyMode)
-{
-	dst->type = src->type;
-
-	switch (src->type) {
-		case KOSM_HANDLE_RAY:
-		{
-			BReference<RayEndpoint> ref = get_locked_ray(src->id);
-			if (ref == NULL)
-				return KOSM_RAY_INVALID_HANDLE;
-			MutexLocker locker(ref->lock, true);
-
-			if (!copyMode) {
-				const uint8 oldLock = senderTeam % kTeamListLockCount;
-				const uint8 newLock = receiverTeam % kTeamListLockCount;
-
-				locker.Unlock();
-
-				uint8 firstLock = std::min(oldLock, newLock);
-				uint8 secondLock = std::max(oldLock, newLock);
-
-				MutexLocker firstLocker(sTeamListLock[firstLock]);
-				MutexLocker secondLocker;
-				if (firstLock != secondLock)
-					secondLocker.SetTo(sTeamListLock[secondLock], false);
-
-				locker.SetTo(ref->lock, false);
-				if (ref->state != RayEndpoint::kActive)
+		switch (type) {
+			case KOSM_HANDLE_RAY:
+			case KOSM_HANDLE_MUTEX:
+			{
+				// Refcounted kernel object
+				KernelReferenceable* object;
+				if (copyMode) {
+					status = senderTable->Lookup(handle, type,
+						KOSM_RIGHT_DUPLICATE, &object);
+					// Lookup acquires a reference for the message
+				} else {
+					status = senderTable->Remove(handle, &object);
+					// Remove transfers reference to us
+				}
+				if (status != B_OK) {
+					for (size_t j = 0; j < i; j++)
+						rollback_resolved_handle(&resolved[j],
+							senderTable, copyMode);
 					return KOSM_RAY_INVALID_HANDLE;
+				}
+				resolved[i].object = object;
 
-				list_remove_link(&ref->team_link);
-
-				Team* newTeam = Team::Get(receiverTeam);
-				if (newTeam == NULL)
-					return B_BAD_TEAM_ID;
-				BReference<Team> teamRef(newTeam, true);
-
-				list_add_item(&newTeam->kosm_ray_list, ref.Get());
-				ref->owner = receiverTeam;
+				// Update diagnostic owner for rays
+				if (type == KOSM_HANDLE_RAY && !copyMode) {
+					RayEndpoint* ep =
+						static_cast<RayEndpoint*>(object);
+					MutexLocker epLocker(ep->lock);
+					ep->owner = receiverTeam;
+				}
+				break;
 			}
 
-			dst->id = src->id;
-			return B_OK;
-		}
+			case KOSM_HANDLE_AREA:
+			{
+				int32 areaID;
+				if (copyMode) {
+					status = senderTable->LookupLegacy(handle,
+						KOSM_HANDLE_AREA, KOSM_RIGHT_DUPLICATE, &areaID);
+				} else {
+					status = senderTable->RemoveLegacy(handle, &areaID);
+				}
+				if (status != B_OK) {
+					for (size_t j = 0; j < i; j++)
+						rollback_resolved_handle(&resolved[j],
+							senderTable, copyMode);
+					return KOSM_RAY_INVALID_HANDLE;
+				}
 
-		case KOSM_HANDLE_MUTEX:
-		{
-			// Mutexes are shared by ID — no ownership transfer needed,
-			// both teams access by the same global kosm_mutex_id.
-			// In copy mode, nothing changes. In move mode, we could
-			// transfer team ownership, but kosm_mutex is global anyway.
-			dst->id = src->id;
-			return B_OK;
-		}
-
-		case KOSM_HANDLE_AREA:
-		{
-			void* addr;
-			if (copyMode) {
-				// Clone the area into receiver's address space
-				area_id cloned = vm_clone_area(receiverTeam,
-					"transferred area", &addr, B_ANY_ADDRESS,
-					B_READ_AREA | B_WRITE_AREA | B_KERNEL_READ_AREA
-						| B_KERNEL_WRITE_AREA,
-					REGION_NO_PRIVATE_MAP, src->id, true);
-				if (cloned < 0)
-					return cloned;
-				dst->id = cloned;
-			} else {
-				// Move: transfer area to receiver's address space
-				area_id newArea = transfer_area(src->id, &addr,
-					B_ANY_ADDRESS, receiverTeam, true);
-				if (newArea < 0)
-					return newArea;
-				dst->id = newArea;
+				void* addr;
+				if (copyMode) {
+					area_id cloned = vm_clone_area(receiverTeam,
+						"transferred area", &addr, B_ANY_ADDRESS,
+						B_READ_AREA | B_WRITE_AREA | B_KERNEL_READ_AREA
+							| B_KERNEL_WRITE_AREA,
+						REGION_NO_PRIVATE_MAP, areaID, true);
+					if (cloned < 0) {
+						for (size_t j = 0; j < i; j++)
+							rollback_resolved_handle(&resolved[j],
+								senderTable, copyMode);
+						return cloned;
+					}
+					resolved[i].legacy_id = cloned;
+				} else {
+					area_id newArea = transfer_area(areaID, &addr,
+						B_ANY_ADDRESS, receiverTeam, true);
+					if (newArea < 0) {
+						// Transfer failed, rollback: re-insert into sender
+						senderTable->InsertLegacy(areaID,
+							KOSM_HANDLE_AREA, rights);
+						for (size_t j = 0; j < i; j++)
+							rollback_resolved_handle(&resolved[j],
+								senderTable, copyMode);
+						return newArea;
+					}
+					resolved[i].legacy_id = newArea;
+				}
+				break;
 			}
-			return B_OK;
-		}
 
-		case KOSM_HANDLE_SEM:
-		{
-			// Semaphores, like mutexes, are accessed by global ID.
-			// Transfer ownership so receiver team owns the sem.
-			if (!copyMode) {
-				status_t status = set_sem_owner(src->id, receiverTeam);
-				if (status != B_OK)
-					return status;
+			case KOSM_HANDLE_SEM:
+			{
+				int32 semID;
+				if (copyMode) {
+					status = senderTable->LookupLegacy(handle,
+						KOSM_HANDLE_SEM, KOSM_RIGHT_DUPLICATE, &semID);
+				} else {
+					status = senderTable->RemoveLegacy(handle, &semID);
+				}
+				if (status != B_OK) {
+					for (size_t j = 0; j < i; j++)
+						rollback_resolved_handle(&resolved[j],
+							senderTable, copyMode);
+					return KOSM_RAY_INVALID_HANDLE;
+				}
+
+				if (!copyMode) {
+					status = set_sem_owner(semID, receiverTeam);
+					if (status != B_OK) {
+						senderTable->InsertLegacy(semID,
+							KOSM_HANDLE_SEM, rights);
+						for (size_t j = 0; j < i; j++)
+							rollback_resolved_handle(&resolved[j],
+								senderTable, copyMode);
+						return status;
+					}
+				}
+				resolved[i].legacy_id = semID;
+				break;
 			}
-			dst->id = src->id;
-			return B_OK;
-		}
 
-		case KOSM_HANDLE_FD:
-		{
-			// File descriptor transfer across teams.
-			// Uses the kernel VFS layer to duplicate fd from sender's
-			// table into receiver's table, similar to Unix SCM_RIGHTS.
-			//
-			// NOTE: requires vfs_dup_foreign_fd() — a new VFS function
-			// that duplicates an fd from one team's table to another's.
-			// Until implemented, fd transfer is not available.
-			// TODO: implement vfs_dup_foreign_fd()
-			return B_NOT_SUPPORTED;
-		}
+			case KOSM_HANDLE_FD:
+				// TODO: implement vfs_dup_foreign_fd()
+				for (size_t j = 0; j < i; j++)
+					rollback_resolved_handle(&resolved[j],
+						senderTable, copyMode);
+				return B_NOT_SUPPORTED;
 
-		default:
-			return KOSM_RAY_INVALID_HANDLE;
+			default:
+				for (size_t j = 0; j < i; j++)
+					rollback_resolved_handle(&resolved[j],
+						senderTable, copyMode);
+				return KOSM_RAY_INVALID_HANDLE;
+		}
 	}
+
+	return B_OK;
 }
 
 
-/*!	Reverse a handle transfer — used for rollback on partial failure.
-	Moves the handle back from receiver to sender.
+/*!	Install resolved handles into the receiver's handle table.
+	Called at read time. Returns new handle values via outHandles.
+*/
+static status_t
+install_receiver_handles(const ray_msg_handle* resolved, size_t handleCount,
+	kosm_handle_t* outHandles, KosmHandleTable* receiverTable)
+{
+	for (size_t i = 0; i < handleCount; i++) {
+		kosm_handle_t newHandle;
+
+		switch (resolved[i].type) {
+			case KOSM_HANDLE_RAY:
+			case KOSM_HANDLE_MUTEX:
+			{
+				// Insert transfers the message's reference to the table.
+				// Insert acquires its own reference; we release the message's
+				// reference afterward.
+				newHandle = receiverTable->Insert(resolved[i].object,
+					resolved[i].type, resolved[i].rights);
+				if (newHandle < 0) {
+					// Table full. Already-installed handles remain
+					// (receiver can close them). Release remaining.
+					for (size_t j = i; j < handleCount; j++) {
+						if (resolved[j].type == KOSM_HANDLE_RAY
+							|| resolved[j].type == KOSM_HANDLE_MUTEX) {
+							resolved[j].object->ReleaseReference();
+						}
+					}
+					return (status_t)newHandle;
+				}
+				// Release the message's reference (table now holds one)
+				resolved[i].object->ReleaseReference();
+				break;
+			}
+
+			case KOSM_HANDLE_AREA:
+			case KOSM_HANDLE_SEM:
+			{
+				newHandle = receiverTable->InsertLegacy(
+					resolved[i].legacy_id, resolved[i].type,
+					resolved[i].rights);
+				if (newHandle < 0)
+					return (status_t)newHandle;
+				break;
+			}
+
+			default:
+				return KOSM_RAY_INVALID_HANDLE;
+		}
+
+		outHandles[i] = newHandle;
+	}
+
+	return B_OK;
+}
+
+
+/*!	Rollback a single resolved handle on send failure.
 */
 static void
-rollback_handle(const kosm_handle_t* transferred, const kosm_handle_t* original,
-	team_id senderTeam, team_id receiverTeam, bool wasCopy)
+rollback_resolved_handle(ray_msg_handle* resolved,
+	KosmHandleTable* senderTable, bool wasCopy)
 {
-	switch (transferred->type) {
+	switch (resolved->type) {
 		case KOSM_HANDLE_RAY:
-		{
-			if (!wasCopy) {
-				// Move it back to sender
-				kosm_handle_t back;
-				transfer_handle(transferred, &back, receiverTeam,
-					senderTeam, false);
+		case KOSM_HANDLE_MUTEX:
+			if (wasCopy) {
+				// Just release the extra reference we acquired
+				resolved->object->ReleaseReference();
+			} else {
+				// Re-insert into sender's table (restores the handle)
+				kosm_handle_t h = senderTable->Insert(resolved->object,
+					resolved->type, resolved->rights);
+				if (h < 0) {
+					// Cannot re-insert; release reference as fallback
+					resolved->object->ReleaseReference();
+				}
+				// Insert acquires its own ref; we still hold the
+				// message's ref, so release it.
+				resolved->object->ReleaseReference();
 			}
 			break;
-		}
 
 		case KOSM_HANDLE_AREA:
-		{
 			if (wasCopy) {
-				// Delete the clone we created in receiver's address space
-				vm_delete_area(receiverTeam, transferred->id, true);
+				// Delete the clone we created
+				vm_delete_area(B_SYSTEM_TEAM, resolved->legacy_id, true);
 			} else {
-				// Move area back to sender (handle is being discarded)
-				void* addr;
-				transfer_area(transferred->id, &addr,
-					B_ANY_ADDRESS, senderTeam, true);
+				// Re-insert as legacy handle
+				senderTable->InsertLegacy(resolved->legacy_id,
+					KOSM_HANDLE_AREA, resolved->rights);
 			}
 			break;
-		}
 
 		case KOSM_HANDLE_SEM:
-		{
-			if (!wasCopy)
-				set_sem_owner(transferred->id, senderTeam);
-			break;
-		}
-
-		case KOSM_HANDLE_FD:
-			// fd transfer not yet implemented, nothing to rollback
-			break;
-
-		case KOSM_HANDLE_MUTEX:
-			// No-op: mutexes are global, no ownership change
+			if (!wasCopy) {
+				senderTable->InsertLegacy(resolved->legacy_id,
+					KOSM_HANDLE_SEM, resolved->rights);
+			}
 			break;
 
 		default:
 			break;
+	}
+}
+
+
+/*!	Release handles stored in an undelivered message (e.g. peer closed).
+*/
+static void
+release_msg_handles(ray_message* msg)
+{
+	for (uint32 i = 0; i < msg->handle_count; i++) {
+		ray_msg_handle* h = &msg->handles[i];
+		switch (h->type) {
+			case KOSM_HANDLE_RAY:
+			case KOSM_HANDLE_MUTEX:
+				if (h->object != NULL)
+					h->object->ReleaseReference();
+				break;
+			case KOSM_HANDLE_AREA:
+				// Area was already transferred; delete it
+				vm_delete_area(B_SYSTEM_TEAM, h->legacy_id, true);
+				break;
+			case KOSM_HANDLE_SEM:
+				// Sem ownership was transferred; can't easily undo
+				break;
+			default:
+				break;
+		}
 	}
 }
 
 
 // ---- Importance donation ----
+//
+// TECH DEBT: Current implementation is a direct priority override, not
+// true Mach-style importance donation. Known limitations:
+//
+// 1. No propagation through chains (A -> B -> C). If server B forwards
+//    a request to server C, the donation from client A does not follow.
+//
+// 2. Manual revert. The boost is reverted explicitly after message
+//    processing. If the reader receives two messages with different
+//    sender priorities back-to-back, the first revert_importance_donation
+//    may drop priority below what the second message requires.
+//
+// 3. No multi-donor tracking. With multiple concurrent donors, the
+//    effective priority should be max(all active donations), but we
+//    only track one sender_priority per message.
+//
+// Proper fix: turnstile-based donation integrated with LAVD scheduler.
+// The turnstile would track all active donors per thread, compute
+// effective priority as max(base, max(donors)), and automatically
+// revert when the boosted section completes. This requires LAVD to
+// expose a "temporary boost" API distinct from QoS classes.
+//
+// Do NOT build scheduler integration on the current mechanism. It will
+// be replaced.
 
 
 /*!	Apply importance donation: boost the reading thread to the priority
@@ -988,26 +1079,9 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 	if (!sRaysActive)
 		return B_NOT_INITIALIZED;
 
-	Team* team = Team::Get(owner);
-	if (team == NULL)
+	KosmHandleTable* table = KosmHandleTable::TableFor(owner);
+	if (table == NULL)
 		return B_BAD_TEAM_ID;
-	BReference<Team> teamRef(team, true);
-
-	// Per-team limit
-	{
-		const uint8 lockIndex = owner % kTeamListLockCount;
-		MutexLocker teamLocker(sTeamListLock[lockIndex]);
-		int32 count = 0;
-		for (RayEndpoint* ep = (RayEndpoint*)list_get_first_item(
-				&team->kosm_ray_list);
-				ep != NULL;
-				ep = (RayEndpoint*)list_get_next_item(
-					&team->kosm_ray_list, ep)) {
-			count++;
-		}
-		if (count + 2 > sMaxRaysPerTeam)
-			return B_NO_MORE_PORTS;
-	}
 
 	uint32 maxMsg = KOSM_RAY_MAX_QUEUE_MESSAGES;
 
@@ -1028,7 +1102,7 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 		ep1.SetTo(e, true);
 	}
 
-	// Check limit
+	// Check global limit
 	const int32 previouslyUsed = atomic_add(&sUsedRays, 2);
 	if (previouslyUsed + 2 > sMaxRays) {
 		atomic_add(&sUsedRays, -2);
@@ -1041,7 +1115,7 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 	ep1->peer = ep0.Get();
 	ep1->peer_ref.SetTo(ep0.Get());
 
-	// Insert into hash table
+	// Insert into hash table (kernel-internal index by ray ID)
 	{
 		WriteLocker locker(sRaysLock);
 
@@ -1063,15 +1137,31 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 		sRays.Insert(ep1);
 	}
 
-	// Insert into team list
-	{
-		const uint8 lockIndex = owner % kTeamListLockCount;
-		MutexLocker teamLocker(sTeamListLock[lockIndex]);
+	// Insert into per-process handle table
+	kosm_handle_t h0 = table->Insert(ep0.Get(), KOSM_HANDLE_RAY,
+		KOSM_RIGHT_RAY_DEFAULT);
+	if (h0 < 0) {
+		// Undo hash table insertion
+		WriteLocker locker(sRaysLock);
+		sRays.Remove(ep0);
+		sRays.Remove(ep1);
+		ep0->ReleaseReference();
+		ep1->ReleaseReference();
+		atomic_add(&sUsedRays, -2);
+		return (status_t)h0;
+	}
 
-		ep0->AcquireReference();
-		ep1->AcquireReference();
-		list_add_item(&team->kosm_ray_list, ep0.Get());
-		list_add_item(&team->kosm_ray_list, ep1.Get());
+	kosm_handle_t h1 = table->Insert(ep1.Get(), KOSM_HANDLE_RAY,
+		KOSM_RIGHT_RAY_DEFAULT);
+	if (h1 < 0) {
+		table->Remove(h0);
+		WriteLocker locker(sRaysLock);
+		sRays.Remove(ep0);
+		sRays.Remove(ep1);
+		ep0->ReleaseReference();
+		ep1->ReleaseReference();
+		atomic_add(&sUsedRays, -2);
+		return (status_t)h1;
 	}
 
 	// Activate (linearization point)
@@ -1083,20 +1173,27 @@ kosm_create_ray_etc(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1,
 	if (old0 != RayEndpoint::kUnused || old1 != RayEndpoint::kUnused)
 		panic("kosm_ray: state modified during creation!\n");
 
-	*endpoint0 = ep0->id;
-	*endpoint1 = ep1->id;
+	// Return handles, not internal IDs
+	*endpoint0 = h0;
+	*endpoint1 = h1;
 
 	T(Create(ep0->id, ep1->id, owner));
 
 	sNotificationService.Notify(RAY_ADDED, ep0->id);
 	sNotificationService.Notify(RAY_ADDED, ep1->id);
 
-	TRACE(("kosm_create_ray: created pair %" B_PRId32 " <-> %" B_PRId32 "\n",
-		ep0->id, ep1->id));
+	TRACE(("kosm_create_ray: created pair %" B_PRId32 " <-> %" B_PRId32
+		" (handles %" B_PRId32 ", %" B_PRId32 ")\n",
+		ep0->id, ep1->id, h0, h1));
 	return B_OK;
 }
 
 
+/*!	Close a ray endpoint by internal ID.
+	Called when the last handle to this endpoint is removed from any
+	handle table. Access control is handled by the handle table layer;
+	this function assumes the caller has verified access.
+*/
 status_t
 kosm_close_ray_internal(kosm_ray_id id)
 {
@@ -1105,7 +1202,11 @@ kosm_close_ray_internal(kosm_ray_id id)
 	if (!sRaysActive || id < 0)
 		return B_BAD_PORT_ID;
 
-	BReference<RayEndpoint> ref = get_ray(id);
+	BReference<RayEndpoint> ref;
+	{
+		ReadLocker locker(sRaysLock);
+		ref.SetTo(sRays.Lookup(id));
+	}
 	if (ref == NULL)
 		return B_BAD_PORT_ID;
 
@@ -1130,14 +1231,6 @@ kosm_close_ray_internal(kosm_ray_id id)
 		ref->ReleaseReference();
 	}
 
-	// Remove from team list
-	{
-		const uint8 lockIndex = ref->owner % kTeamListLockCount;
-		MutexLocker teamLocker(sTeamListLock[lockIndex]);
-		list_remove_link(&ref->team_link);
-		ref->ReleaseReference();
-	}
-
 	uninit_ray(ref);
 	atomic_add(&sUsedRays, -1);
 
@@ -1147,6 +1240,11 @@ kosm_close_ray_internal(kosm_ray_id id)
 }
 
 
+/*!	Clean up all ray endpoints when a team exits.
+	Called from team cleanup path. The handle table destructor releases
+	handle references, but we also need to close the ray endpoints
+	themselves (notify peers, remove from hash, release messages).
+*/
 void
 kosm_ray_delete_owned(Team* team)
 {
@@ -1158,67 +1256,90 @@ kosm_ray_delete_owned(Team* team)
 		sBootstrapRays[team->id] = -1;
 	}
 
-	list deletionList;
-	list_init_etc(&deletionList, kosm_ray_team_link_offset());
-
-	const uint8 lockIndex = team->id % kTeamListLockCount;
-	MutexLocker teamLocker(sTeamListLock[lockIndex]);
-
-	RayEndpoint* ep = (RayEndpoint*)list_get_first_item(&team->kosm_ray_list);
-	while (ep != NULL) {
-		RayEndpoint* next =
-			(RayEndpoint*)list_get_next_item(&team->kosm_ray_list, ep);
-
-		if (delete_ray_logical(ep) == B_OK) {
-			list_remove_link(&ep->team_link);
-			list_add_item(&deletionList, ep);
+	// Walk the hash table and close any endpoints owned by this team.
+	// Repeat until no more are found, since closing one endpoint does
+	// not affect iteration over others.
+	// This is O(total_endpoints * owned_count) but team exit is not hot.
+	for (;;) {
+		BReference<RayEndpoint> found;
+		{
+			ReadLocker locker(sRaysLock);
+			for (RayHashTable::Iterator it = sRays.GetIterator();
+				RayEndpoint* ep = it.Next();) {
+				if (ep->owner == team->id
+					&& ep->state == RayEndpoint::kActive) {
+					found.SetTo(ep);
+					break;
+				}
+			}
 		}
 
-		ep = next;
-	}
+		if (found == NULL)
+			break;
 
-	teamLocker.Unlock();
+		if (delete_ray_logical(found) != B_OK)
+			continue;
 
-	// Notify peers
-	for (RayEndpoint* ep = (RayEndpoint*)list_get_first_item(&deletionList);
-		ep != NULL;
-		ep = (RayEndpoint*)list_get_next_item(&deletionList, ep)) {
-		notify_peer_closed(ep);
-		MutexLocker locker(ep->lock);
-		ep->peer = NULL;
-		ep->peer_ref.Unset();
-	}
+		notify_peer_closed(found);
 
-	// Remove from hash
-	{
-		WriteLocker locker(sRaysLock);
-		for (RayEndpoint* ep =
-			(RayEndpoint*)list_get_first_item(&deletionList);
-			ep != NULL;
-			ep = (RayEndpoint*)list_get_next_item(&deletionList, ep)) {
-			sRays.Remove(ep);
-			ep->ReleaseReference();
+		{
+			MutexLocker locker(found->lock);
+			found->peer = NULL;
+			found->peer_ref.Unset();
 		}
-	}
 
-	// Uninit and release team list references
-	while (RayEndpoint* ep =
-		(RayEndpoint*)list_remove_head_item(&deletionList)) {
+		{
+			WriteLocker locker(sRaysLock);
+			sRays.Remove(found);
+			found->ReleaseReference();
+		}
+
+		uninit_ray(found);
 		atomic_add(&sUsedRays, -1);
-		uninit_ray(ep);
-		ep->ReleaseReference();
 	}
 }
 
 
+/*!	Transfer a ray handle to another team as its bootstrap ray.
+	The handle is moved from the caller's table to the target team's table.
+	The target team retrieves it via kosm_get_bootstrap_ray().
+*/
 status_t
-kosm_ray_set_bootstrap(team_id team, kosm_ray_id endpoint)
+kosm_ray_set_bootstrap(team_id targetTeam, kosm_handle_t handle)
 {
-	if (team < 0 || team >= kMaxTeams)
+	if (targetTeam < 0 || targetTeam >= kMaxTeams)
 		return B_BAD_TEAM_ID;
 
+	KosmHandleTable* sourceTable = KosmHandleTable::TableForCurrent();
+	if (sourceTable == NULL)
+		return B_NOT_INITIALIZED;
+
+	KosmHandleTable* targetTable = KosmHandleTable::TableFor(targetTeam);
+	if (targetTable == NULL)
+		return B_BAD_TEAM_ID;
+
+	// Transfer handle from caller to target
+	kosm_handle_t newHandle;
+	status_t status = sourceTable->Transfer(handle, targetTable, &newHandle);
+	if (status != B_OK)
+		return status;
+
+	// Update diagnostic owner on the endpoint
+	{
+		KernelReferenceable* object;
+		status = targetTable->Lookup(newHandle, KOSM_HANDLE_RAY, 0, &object);
+		if (status == B_OK) {
+			RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+			MutexLocker epLocker(ep->lock);
+			ep->owner = targetTeam;
+			epLocker.Unlock();
+			object->ReleaseReference();
+		}
+	}
+
+	// Record the handle value for kosm_get_bootstrap_ray()
 	WriteLocker locker(sRaysLock);
-	sBootstrapRays[team] = endpoint;
+	sBootstrapRays[targetTeam] = newHandle;
 	return B_OK;
 }
 
@@ -1237,14 +1358,10 @@ kosm_ray_used(void)
 }
 
 
-off_t
-kosm_ray_team_link_offset(void)
-{
-	RayEndpoint* ep = (RayEndpoint*)0;
-	return (off_t)&ep->team_link;
-}
-
-
+/*!	Register select events for a ray endpoint.
+	Called from wait_for_objects infrastructure with the internal ray ID.
+	Access control is handled at the syscall layer via handle table.
+*/
 status_t
 kosm_select_ray(int32 id, struct select_info* info, bool kernel)
 {
@@ -1258,9 +1375,6 @@ kosm_select_ray(int32 id, struct select_info* info, bool kernel)
 
 	if (ref->state != RayEndpoint::kActive)
 		return B_BAD_PORT_ID;
-
-	if (!kernel && ref->owner == team_get_kernel_team_id())
-		return B_NOT_ALLOWED;
 
 	info->selected_events &= B_EVENT_READ | B_EVENT_WRITE | B_EVENT_INVALID
 		| B_EVENT_DISCONNECTED;
@@ -1300,11 +1414,15 @@ kosm_deselect_ray(int32 id, struct select_info* info, bool kernel)
 	if (info->selected_events == 0)
 		return B_OK;
 
-	// Use get_ray() instead of get_locked_ray() so deselect works even
-	// when the endpoint state is kDeleted. This prevents stale select_info
-	// pointers from remaining in the list after common_wait_for_objects
-	// returns.
-	BReference<RayEndpoint> ref = get_ray(id);
+	// Use a direct hash lookup (not get_locked_ray) so deselect works
+	// even when the endpoint state is kDeleted. This prevents stale
+	// select_info pointers from remaining in the list after
+	// common_wait_for_objects returns.
+	BReference<RayEndpoint> ref;
+	{
+		ReadLocker hashLocker(sRaysLock);
+		ref.SetTo(sRays.Lookup(id));
+	}
 	if (ref == NULL)
 		return B_BAD_PORT_ID;
 	MutexLocker locker(ref->lock);
@@ -1316,6 +1434,55 @@ kosm_deselect_ray(int32 id, struct select_info* info, bool kernel)
 	if (*infoLocation == info)
 		*infoLocation = info->next;
 
+	return B_OK;
+}
+
+
+kosm_ray_id
+kosm_ray_handle_to_id(kosm_handle_t handle)
+{
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	KernelReferenceable* object;
+	status_t status = table->Lookup(handle, KOSM_HANDLE_RAY,
+		KOSM_RIGHT_WAIT, &object);
+	if (status != B_OK)
+		return status;
+
+	RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+	kosm_ray_id id = ep->id;
+	object->ReleaseReference();
+	return id;
+}
+
+
+// ---- Handle resolution helper ----
+
+
+/*!	Look up a ray handle and return the endpoint with a reference.
+	Returns B_OK with the endpoint's internal ID in *outInternalId.
+	Used by both public kernel API and syscall wrappers.
+*/
+static status_t
+resolve_ray_handle(kosm_ray_id handle, uint32 requiredRights,
+	BReference<RayEndpoint>* outRef, kosm_ray_id* outInternalId)
+{
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	KernelReferenceable* object;
+	status_t status = table->Lookup(handle, KOSM_HANDLE_RAY,
+		requiredRights, &object);
+	if (status != B_OK)
+		return status;
+
+	RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+	outRef->SetTo(ep, true);	// takes over reference from Lookup
+	if (outInternalId != NULL)
+		*outInternalId = ep->id;
 	return B_OK;
 }
 
@@ -1332,9 +1499,28 @@ kosm_create_ray(kosm_ray_id* endpoint0, kosm_ray_id* endpoint1, uint32 flags)
 
 
 status_t
-kosm_close_ray(kosm_ray_id id)
+kosm_close_ray(kosm_ray_id handle)
 {
-	return kosm_close_ray_internal(id);
+	// Kernel-space close: translate handle to internal ID, then close.
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	KernelReferenceable* object;
+	uint16 type;
+	status_t status = table->Remove(handle, &object, &type);
+	if (status != B_OK)
+		return status;
+	if (type != KOSM_HANDLE_RAY) {
+		object->ReleaseReference();
+		return B_BAD_VALUE;
+	}
+
+	RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+	kosm_ray_id internalId = ep->id;
+	object->ReleaseReference();
+
+	return kosm_close_ray_internal(internalId);
 }
 
 
@@ -1364,7 +1550,7 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 		timeout += system_time();
 	}
 
-	// Get our endpoint
+	// Get our endpoint (by internal ID, already validated by syscall layer)
 	BReference<RayEndpoint> ref = get_locked_ray(id);
 	if (ref == NULL)
 		return B_BAD_PORT_ID;
@@ -1376,7 +1562,7 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	RayEndpoint* peer = ref->peer;
 	team_id senderTeam = ref->owner;
 
-	// Copy handles from userspace if needed
+	// Copy handle values from userspace if needed
 	kosm_handle_t kernHandles[KOSM_RAY_MAX_HANDLES];
 	if (handleCount > 0 && handles != NULL) {
 		if (userCopy) {
@@ -1388,13 +1574,6 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 			memcpy(kernHandles, handles,
 				handleCount * sizeof(kosm_handle_t));
 		}
-
-		// Validate all handles before transfer
-		for (size_t i = 0; i < handleCount; i++) {
-			status_t status = validate_handle(&kernHandles[i], senderTeam);
-			if (status != B_OK)
-				return status;
-		}
 	}
 
 	// Wait for space in peer's queue if full.
@@ -1404,10 +1583,7 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	// (reader consuming under peer->lock), so worst case we see a
 	// stale-high value and get a spurious WOULD_BLOCK or unnecessary
 	// wait iteration. We re-check after re-acquiring the lock.
-	// Acquiring peer->lock here would violate the id-ordered locking
-	// protocol and risk deadlock.
 	// Hold a reference to peer so it stays alive across unlock/relock.
-	// BReference ctor acquires automatically.
 	BReference<RayEndpoint> peerRef(peer);
 
 	while (peer->read_count >= peer->max_messages) {
@@ -1464,45 +1640,35 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 		}
 	}
 
-	// Transfer handles
+	// Resolve handles via sender's handle table.
+	// This removes/copies handles from the sender's table and stores
+	// resolved objects in the message for the receiver to install.
 	if (handleCount > 0) {
+		KosmHandleTable* senderTable =
+			KosmHandleTable::TableFor(senderTeam);
+		if (senderTable == NULL) {
+			free_ray_message(msg);
+			return B_NOT_INITIALIZED;
+		}
+
 		team_id receiverTeam = peer->owner;
-		TRACE(("kosm_ray_write: transferring %zu handles, sender=%" B_PRId32
-			" receiver=%" B_PRId32 " copy=%d\n",
-			handleCount, senderTeam, receiverTeam, (int)copyHandles));
-		for (size_t i = 0; i < handleCount; i++) {
-			TRACE(("  handle[%zu]: type=%u id=%" B_PRId32 "\n",
-				i, kernHandles[i].type, kernHandles[i].id));
-			status_t status = transfer_handle(&kernHandles[i],
-				&msg->handles[i], senderTeam, receiverTeam, copyHandles);
-			if (status != B_OK) {
-				// Rollback already-transferred handles
-				for (size_t j = 0; j < i; j++) {
-					rollback_handle(&msg->handles[j], &kernHandles[j],
-						senderTeam, receiverTeam, copyHandles);
-				}
-				free_ray_message(msg);
-				T(Write(id, dataSize, handleCount, ref->qos_class, status));
-				return status;
-			}
+		status_t status = resolve_sender_handles(kernHandles, handleCount,
+			msg->handles, senderTable, receiverTeam, copyHandles);
+		if (status != B_OK) {
+			free_ray_message(msg);
+			T(Write(id, dataSize, handleCount, ref->qos_class, status));
+			return status;
 		}
 	}
 
 	// Enqueue in peer's message list
-	// We need to lock peer briefly to enqueue
 	locker.Unlock();
 
 	MutexLocker peerLocker(peer->lock);
 	if (peer->state != RayEndpoint::kActive) {
 		// Peer died between our unlock and this lock.
-		// Rollback already-transferred handles before discarding.
-		if (handleCount > 0) {
-			team_id receiverTeam = peer->owner;
-			for (size_t i = 0; i < handleCount; i++) {
-				rollback_handle(&msg->handles[i], &kernHandles[i],
-					senderTeam, receiverTeam, copyHandles);
-			}
-		}
+		// Release handles stored in the message.
+		release_msg_handles(msg);
 		free_ray_message(msg);
 		T(Write(id, dataSize, handleCount, ref->qos_class, B_BAD_PORT_ID));
 		return B_BAD_PORT_ID;
@@ -1544,7 +1710,7 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 		timeout += system_time();
 	}
 
-	// Get endpoint
+	// Get endpoint (by internal ID, already validated by syscall layer)
 	BReference<RayEndpoint> ref = get_locked_ray(id);
 	if (ref == NULL)
 		return B_BAD_PORT_ID;
@@ -1637,20 +1803,39 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 			*dataSize = msg->data_size;
 	}
 
-	// Copy handles out
-	size_t copyHandles = std::min(maxHandles, (size_t)msg->handle_count);
+	// Install handles into receiver's handle table.
+	// This converts resolved objects into per-process handle values.
+	size_t installCount = std::min(maxHandles, (size_t)msg->handle_count);
+	kosm_handle_t newHandles[KOSM_RAY_MAX_HANDLES];
 
-	if (copyHandles > 0 && handles != NULL) {
-		if (userCopy) {
-			status_t status = user_memcpy(handles, msg->handles,
-				copyHandles * sizeof(kosm_handle_t));
-			if (status != B_OK) {
-				revert_importance_donation(originalPriority);
-				return status;
+	if (installCount > 0) {
+		KosmHandleTable* receiverTable =
+			KosmHandleTable::TableForCurrent();
+		if (receiverTable == NULL) {
+			revert_importance_donation(originalPriority);
+			return B_NOT_INITIALIZED;
+		}
+
+		status_t status = install_receiver_handles(msg->handles,
+			installCount, newHandles, receiverTable);
+		if (status != B_OK) {
+			revert_importance_donation(originalPriority);
+			return status;
+		}
+
+		// Copy new handle values to user
+		if (handles != NULL) {
+			if (userCopy) {
+				status = user_memcpy(handles, newHandles,
+					installCount * sizeof(kosm_handle_t));
+				if (status != B_OK) {
+					revert_importance_donation(originalPriority);
+					return status;
+				}
+			} else {
+				memcpy(handles, newHandles,
+					installCount * sizeof(kosm_handle_t));
 			}
-		} else {
-			memcpy(handles, msg->handles,
-				copyHandles * sizeof(kosm_handle_t));
 		}
 	}
 
@@ -1712,46 +1897,74 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 
 
 status_t
-kosm_ray_write(kosm_ray_id id, const void* data, size_t dataSize,
+kosm_ray_write(kosm_ray_id handle, const void* data, size_t dataSize,
 	const kosm_handle_t* handles, size_t handleCount, uint32 flags)
 {
-	return kosm_ray_write_internal(id, data, dataSize, handles, handleCount,
-		flags, 0, false, false);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WRITE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_write_internal(internalId, data, dataSize, handles,
+		handleCount, flags, 0, false, false);
 }
 
 
 status_t
-kosm_ray_write_etc(kosm_ray_id id, const void* data, size_t dataSize,
+kosm_ray_write_etc(kosm_ray_id handle, const void* data, size_t dataSize,
 	const kosm_handle_t* handles, size_t handleCount, uint32 flags,
 	bigtime_t timeout)
 {
-	return kosm_ray_write_internal(id, data, dataSize, handles, handleCount,
-		flags, timeout, true, false);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WRITE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_write_internal(internalId, data, dataSize, handles,
+		handleCount, flags, timeout, true, false);
 }
 
 
 status_t
-kosm_ray_read(kosm_ray_id id, void* data, size_t* dataSize,
+kosm_ray_read(kosm_ray_id handle, void* data, size_t* dataSize,
 	kosm_handle_t* handles, size_t* handleCount, uint32 flags)
 {
-	return kosm_ray_read_internal(id, data, dataSize, handles, handleCount,
-		flags, 0, false, false);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_READ,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_read_internal(internalId, data, dataSize, handles,
+		handleCount, flags, 0, false, false);
 }
 
 
 status_t
-kosm_ray_read_etc(kosm_ray_id id, void* data, size_t* dataSize,
+kosm_ray_read_etc(kosm_ray_id handle, void* data, size_t* dataSize,
 	kosm_handle_t* handles, size_t* handleCount, uint32 flags,
 	bigtime_t timeout)
 {
-	return kosm_ray_read_internal(id, data, dataSize, handles, handleCount,
-		flags, timeout, true, false);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_READ,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_read_internal(internalId, data, dataSize, handles,
+		handleCount, flags, timeout, true, false);
 }
 
 
-status_t
-kosm_ray_wait(kosm_ray_id id, uint32 signals, uint32* observedSignals,
-	uint32 flags, bigtime_t timeout)
+static status_t
+kosm_ray_wait_internal(kosm_ray_id id, uint32 signals,
+	uint32* observedSignals, uint32 flags, bigtime_t timeout)
 {
 	if (!sRaysActive || id < 0)
 		return B_BAD_PORT_ID;
@@ -1813,8 +2026,8 @@ kosm_ray_wait(kosm_ray_id id, uint32 signals, uint32* observedSignals,
 }
 
 
-status_t
-kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass)
+static status_t
+kosm_ray_set_qos_internal(kosm_ray_id id, uint8 qosClass)
 {
 	if (qosClass > KOSM_QOS_USER_INTERACTIVE)
 		return B_BAD_VALUE;
@@ -1826,6 +2039,36 @@ kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass)
 
 	ref->qos_class = qosClass;
 	return B_OK;
+}
+
+
+status_t
+kosm_ray_wait(kosm_ray_id handle, uint32 signals, uint32* observedSignals,
+	uint32 flags, bigtime_t timeout)
+{
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WAIT,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_wait_internal(internalId, signals, observedSignals,
+		flags, timeout);
+}
+
+
+status_t
+kosm_ray_set_qos(kosm_ray_id handle, uint8 qosClass)
+{
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_MANAGE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_set_qos_internal(internalId, qosClass);
 }
 
 
@@ -1858,6 +2101,12 @@ fill_ray_info(RayEndpoint* ep, kosm_ray_info* info, size_t size)
 
 
 // ---- Syscalls ----
+//
+// All syscalls take per-process handles (opaque int32), translate them
+// to internal RayEndpoint* via the handle table, then call internal
+// functions with the endpoint's kernel-internal ID.
+// Access control is implicit: if you have the handle, you may use it.
+// Rights on the handle further restrict operations.
 
 
 status_t
@@ -1869,15 +2118,30 @@ _user_kosm_create_ray(kosm_ray_id* userEndpoint0, kosm_ray_id* userEndpoint1,
 	if (!IS_USER_ADDRESS(userEndpoint0) || !IS_USER_ADDRESS(userEndpoint1))
 		return B_BAD_ADDRESS;
 
-	kosm_ray_id ep0, ep1;
-	status_t status = kosm_create_ray(&ep0, &ep1, flags);
+	// kosm_create_ray returns handles (not internal IDs) in the new model
+	kosm_ray_id h0, h1;
+	status_t status = kosm_create_ray(&h0, &h1, flags);
 	if (status != B_OK)
 		return status;
 
-	if (user_memcpy(userEndpoint0, &ep0, sizeof(kosm_ray_id)) < B_OK
-		|| user_memcpy(userEndpoint1, &ep1, sizeof(kosm_ray_id)) < B_OK) {
-		kosm_close_ray(ep0);
-		kosm_close_ray(ep1);
+	if (user_memcpy(userEndpoint0, &h0, sizeof(kosm_ray_id)) < B_OK
+		|| user_memcpy(userEndpoint1, &h1, sizeof(kosm_ray_id)) < B_OK) {
+		// Close via handle table
+		KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+		if (table != NULL) {
+			KernelReferenceable* obj0;
+			KernelReferenceable* obj1;
+			if (table->Remove(h0, &obj0) == B_OK) {
+				RayEndpoint* ep = static_cast<RayEndpoint*>(obj0);
+				kosm_close_ray_internal(ep->id);
+				obj0->ReleaseReference();
+			}
+			if (table->Remove(h1, &obj1) == B_OK) {
+				RayEndpoint* ep = static_cast<RayEndpoint*>(obj1);
+				kosm_close_ray_internal(ep->id);
+				obj1->ReleaseReference();
+			}
+		}
 		return B_BAD_ADDRESS;
 	}
 
@@ -1886,14 +2150,33 @@ _user_kosm_create_ray(kosm_ray_id* userEndpoint0, kosm_ray_id* userEndpoint1,
 
 
 status_t
-_user_kosm_close_ray(kosm_ray_id id)
+_user_kosm_close_ray(kosm_ray_id handle)
 {
-	return kosm_close_ray(id);
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	// Remove handle from table, get the endpoint object
+	KernelReferenceable* object;
+	uint16 type;
+	status_t status = table->Remove(handle, &object, &type);
+	if (status != B_OK)
+		return status;
+	if (type != KOSM_HANDLE_RAY) {
+		object->ReleaseReference();
+		return B_BAD_VALUE;
+	}
+
+	RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+	kosm_ray_id internalId = ep->id;
+	object->ReleaseReference();
+
+	return kosm_close_ray_internal(internalId);
 }
 
 
 status_t
-_user_kosm_ray_write(kosm_ray_id id, const void* userData, size_t dataSize,
+_user_kosm_ray_write(kosm_ray_id handle, const void* userData, size_t dataSize,
 	const kosm_handle_t* userHandles, size_t handleCount, uint32 flags)
 {
 	if (userData != NULL && !IS_USER_ADDRESS(userData))
@@ -1901,24 +2184,38 @@ _user_kosm_ray_write(kosm_ray_id id, const void* userData, size_t dataSize,
 	if (userHandles != NULL && !IS_USER_ADDRESS(userHandles))
 		return B_BAD_ADDRESS;
 
-	return kosm_ray_write_internal(id, userData, dataSize, userHandles,
-		handleCount, flags, 0, false, true);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WRITE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_write_internal(internalId, userData, dataSize,
+		userHandles, handleCount, flags, 0, false, true);
 }
 
 
 status_t
-_user_kosm_ray_write_etc(kosm_ray_id id, const void* userData, size_t dataSize,
-	const kosm_handle_t* userHandles, size_t handleCount, uint32 flags,
-	bigtime_t timeout)
+_user_kosm_ray_write_etc(kosm_ray_id handle, const void* userData,
+	size_t dataSize, const kosm_handle_t* userHandles, size_t handleCount,
+	uint32 flags, bigtime_t timeout)
 {
 	if (userData != NULL && !IS_USER_ADDRESS(userData))
 		return B_BAD_ADDRESS;
 	if (userHandles != NULL && !IS_USER_ADDRESS(userHandles))
 		return B_BAD_ADDRESS;
 
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WRITE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
 	syscall_restart_handle_timeout_pre(flags, timeout);
 
-	status_t status = kosm_ray_write_internal(id, userData, dataSize,
+	status = kosm_ray_write_internal(internalId, userData, dataSize,
 		userHandles, handleCount, flags | B_CAN_INTERRUPT,
 		timeout, true, true);
 
@@ -1927,7 +2224,7 @@ _user_kosm_ray_write_etc(kosm_ray_id id, const void* userData, size_t dataSize,
 
 
 status_t
-_user_kosm_ray_read(kosm_ray_id id, void* userData, size_t* userDataSize,
+_user_kosm_ray_read(kosm_ray_id handle, void* userData, size_t* userDataSize,
 	kosm_handle_t* userHandles, size_t* userHandleCount, uint32 flags)
 {
 	if (userData != NULL && !IS_USER_ADDRESS(userData))
@@ -1939,15 +2236,22 @@ _user_kosm_ray_read(kosm_ray_id id, void* userData, size_t* userDataSize,
 	if (userHandleCount != NULL && !IS_USER_ADDRESS(userHandleCount))
 		return B_BAD_ADDRESS;
 
-	return kosm_ray_read_internal(id, userData, userDataSize, userHandles,
-		userHandleCount, flags, 0, false, true);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_READ,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_read_internal(internalId, userData, userDataSize,
+		userHandles, userHandleCount, flags, 0, false, true);
 }
 
 
 status_t
-_user_kosm_ray_read_etc(kosm_ray_id id, void* userData, size_t* userDataSize,
-	kosm_handle_t* userHandles, size_t* userHandleCount, uint32 flags,
-	bigtime_t timeout)
+_user_kosm_ray_read_etc(kosm_ray_id handle, void* userData,
+	size_t* userDataSize, kosm_handle_t* userHandles,
+	size_t* userHandleCount, uint32 flags, bigtime_t timeout)
 {
 	if (userData != NULL && !IS_USER_ADDRESS(userData))
 		return B_BAD_ADDRESS;
@@ -1958,9 +2262,16 @@ _user_kosm_ray_read_etc(kosm_ray_id id, void* userData, size_t* userDataSize,
 	if (userHandleCount != NULL && !IS_USER_ADDRESS(userHandleCount))
 		return B_BAD_ADDRESS;
 
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_READ,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
 	syscall_restart_handle_timeout_pre(flags, timeout);
 
-	status_t status = kosm_ray_read_internal(id, userData, userDataSize,
+	status = kosm_ray_read_internal(internalId, userData, userDataSize,
 		userHandles, userHandleCount, flags | B_CAN_INTERRUPT,
 		timeout, true, true);
 
@@ -1969,7 +2280,7 @@ _user_kosm_ray_read_etc(kosm_ray_id id, void* userData, size_t* userDataSize,
 
 
 status_t
-_user_kosm_ray_wait(kosm_ray_id id, uint32 signals,
+_user_kosm_ray_wait(kosm_ray_id handle, uint32 signals,
 	uint32* userObservedSignals, uint32 flags, bigtime_t timeout)
 {
 	if (userObservedSignals != NULL
@@ -1977,10 +2288,17 @@ _user_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 		return B_BAD_ADDRESS;
 	}
 
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WAIT,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
 	syscall_restart_handle_timeout_pre(flags, timeout);
 
 	uint32 observed = 0;
-	status_t status = kosm_ray_wait(id, signals, &observed,
+	status = kosm_ray_wait_internal(internalId, signals, &observed,
 		flags | B_CAN_INTERRUPT, timeout);
 
 	if (status == B_OK && userObservedSignals != NULL) {
@@ -1995,9 +2313,16 @@ _user_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 
 
 status_t
-_user_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass)
+_user_kosm_ray_set_qos(kosm_ray_id handle, uint8 qosClass)
 {
-	return kosm_ray_set_qos(id, qosClass);
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_MANAGE,
+		&ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_ray_set_qos_internal(internalId, qosClass);
 }
 
 
@@ -2009,20 +2334,51 @@ _user_kosm_get_bootstrap_ray(void)
 
 
 status_t
-_user_kosm_get_ray_info(kosm_ray_id id, kosm_ray_info* userInfo, size_t size)
+_user_kosm_ray_set_bootstrap(team_id targetTeam, kosm_ray_id handle)
+{
+	// kosm_ray_set_bootstrap handles everything via handle table transfer.
+	// The caller must hold a handle with TRANSFER right.
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	// Verify the handle is a ray with transfer rights before calling
+	uint16 type;
+	uint32 rights;
+	status_t status = table->GetInfo(handle, &type, &rights);
+	if (status != B_OK)
+		return status;
+	if (type != KOSM_HANDLE_RAY)
+		return B_BAD_VALUE;
+	if ((rights & KOSM_RIGHT_TRANSFER) == 0)
+		return B_NOT_ALLOWED;
+
+	return kosm_ray_set_bootstrap(targetTeam, handle);
+}
+
+
+status_t
+_user_kosm_get_ray_info(kosm_ray_id handle, kosm_ray_info* userInfo,
+	size_t size)
 {
 	if (userInfo == NULL || size != sizeof(kosm_ray_info))
 		return B_BAD_VALUE;
 	if (!IS_USER_ADDRESS(userInfo))
 		return B_BAD_ADDRESS;
 
-	BReference<RayEndpoint> ref = get_locked_ray(id);
-	if (ref == NULL)
-		return B_BAD_PORT_ID;
-	MutexLocker locker(ref->lock, true);
+	BReference<RayEndpoint> ref;
+	status_t status = resolve_ray_handle(handle, 0, &ref, NULL);
+	if (status != B_OK)
+		return status;
+
+	MutexLocker locker(ref->lock);
 
 	kosm_ray_info info;
 	fill_ray_info(ref.Get(), &info, size);
+	// Store the handle value (not internal id) in the info struct
+	info.ray = handle;
+
+	locker.Unlock();
 
 	if (user_memcpy(userInfo, &info, sizeof(kosm_ray_info)) < B_OK)
 		return B_BAD_ADDRESS;

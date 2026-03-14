@@ -83,6 +83,13 @@ kosm_get_bootstrap_ray(void)
 
 
 status_t
+kosm_ray_set_bootstrap(team_id team, kosm_ray_id endpoint)
+{
+	return _kern_kosm_ray_set_bootstrap(team, endpoint);
+}
+
+
+status_t
 _kosm_get_ray_info(kosm_ray_id id, kosm_ray_info *info, size_t size)
 {
 	return _kern_kosm_get_ray_info(id, info, size);
