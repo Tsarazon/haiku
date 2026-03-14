@@ -53,6 +53,7 @@
 #include <tracing.h>
 #include <user_mutex.h>
 #include <kosm_mutex.h>
+#include <kosm_handle.h>
 #include <kosm_ray.h>
 #include <user_runtime.h>
 #include <user_thread.h>
@@ -468,7 +469,7 @@ Team::Team(team_id id, bool kernel)
 	list_init(&sem_list);
 	list_init_etc(&port_list, port_team_link_offset());
 	list_init_etc(&kosm_mutex_list, kosm_mutex_team_link_offset());
-	list_init_etc(&kosm_ray_list, kosm_ray_team_link_offset());
+	kosm_handle_table = NULL;
 
 	user_data = 0;
 	user_data_area = -1;
@@ -525,6 +526,8 @@ Team::~Team()
 	sem_delete_owned_sems(this);
 	kosm_mutex_delete_owned(this);
 	kosm_ray_delete_owned(this);
+	delete kosm_handle_table;
+	kosm_handle_table = NULL;
 
 	DeleteUserTimers(false);
 
@@ -569,6 +572,13 @@ Team::Create(team_id id, const char* name, bool kernel)
 
 	// finish initialization (arch specifics)
 	if (arch_team_init_team_struct(team, kernel) != B_OK)
+		return NULL;
+
+	// Allocate per-process handle table
+	team->kosm_handle_table = new(std::nothrow) KosmHandleTable();
+	if (team->kosm_handle_table == NULL)
+		return NULL;
+	if (team->kosm_handle_table->Init() != B_OK)
 		return NULL;
 
 	if (!kernel) {
@@ -2033,6 +2043,8 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 	sem_delete_owned_sems(team);
 	kosm_mutex_delete_owned(team);
 	kosm_ray_delete_owned(team);
+	delete team->kosm_handle_table;
+	team->kosm_handle_table = NULL;
 	remove_images(team);
 	vfs_exec_io_context(team->io_context);
 	delete_user_mutex_context(team->user_mutex_context);
@@ -2051,6 +2063,11 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 		exit_thread(status);
 		return status;
 	}
+
+	// Recreate handle table for the new program image
+	team->kosm_handle_table = new(std::nothrow) KosmHandleTable();
+	if (team->kosm_handle_table != NULL)
+		team->kosm_handle_table->Init();
 
 	user_debug_finish_after_exec();
 

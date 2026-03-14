@@ -58,6 +58,7 @@
 #include <user_debugger.h>
 #include <user_mutex.h>
 #include <kosm_mutex.h>
+#include <kosm_handle.h>
 #include <kosm_ray.h>
 #include <vfs.h>
 #include <vm/vm.h>
@@ -311,6 +312,9 @@ main2(void* /*unused*/)
 
 	TRACE("init user mutex\n");
 	user_mutex_init();
+
+	TRACE("init kosm handle table\n");
+	kosm_handle_init(&sKernelArgs);
 
 	TRACE("init kosm mutex\n");
 	kosm_mutex_init(&sKernelArgs);

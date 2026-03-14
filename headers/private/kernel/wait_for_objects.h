@@ -19,6 +19,10 @@ typedef struct select_info {
 	struct select_sync*			sync;
 	int32						events;
 	uint16						selected_events;
+	int32						resolved_object;
+		// Used by kosm handle-aware select ops to store the
+		// kernel-internal object ID resolved from a userspace handle.
+		// Non-kosm object types ignore this field.
 } select_info;
 
 

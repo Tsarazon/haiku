@@ -68,6 +68,7 @@ struct VMAddressSpace;
 struct user_mutex_context;		// defined in user_mutex.cpp
 struct xsi_sem_context;			// defined in xsi_semaphore.cpp
 struct kosm_mutex_entry;		// defined in kosm_mutex.cpp
+class KosmHandleTable;			// defined in kosm_handle.cpp
 
 namespace Scheduler {
 	struct ThreadData;
@@ -488,7 +489,7 @@ struct Team : TeamThreadIteratorEntry<team_id>, KernelReferenceable,
 	struct list		sem_list;		// protected by sSemsSpinlock
 	struct list		port_list;		// protected by sPortsLock
 	struct list		kosm_mutex_list;	// protected by sMutexListSpinlock
-	struct list		kosm_ray_list;		// protected by sTeamListLock[]
+	KosmHandleTable* kosm_handle_table;	// per-process capability table
 	struct arch_team arch_info;
 
 	addr_t			user_data;

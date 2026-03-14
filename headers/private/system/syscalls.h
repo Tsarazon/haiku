@@ -110,6 +110,13 @@ extern status_t		_kern_kosm_get_next_mutex_info(team_id team,
 						int32* cookie, kosm_mutex_info* info,
 						size_t size);
 
+/* kosm handle functions */
+extern status_t		_kern_kosm_close_handle(kosm_handle_t handle);
+extern kosm_handle_t	_kern_kosm_duplicate_handle(kosm_handle_t handle,
+							uint32 rights);
+extern status_t		_kern_kosm_handle_get_info(kosm_handle_t handle,
+							kosm_handle_info* info);
+
 /* kosm ray functions */
 extern status_t		_kern_kosm_create_ray(kosm_ray_id* endpoint0,
 						kosm_ray_id* endpoint1, uint32 flags);
@@ -135,6 +142,8 @@ extern status_t		_kern_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 						bigtime_t timeout);
 extern status_t		_kern_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
 extern kosm_ray_id	_kern_kosm_get_bootstrap_ray(void);
+extern status_t		_kern_kosm_ray_set_bootstrap(team_id team,
+						kosm_ray_id endpoint);
 extern status_t		_kern_kosm_get_ray_info(kosm_ray_id id,
 						kosm_ray_info* info, size_t size);
 
