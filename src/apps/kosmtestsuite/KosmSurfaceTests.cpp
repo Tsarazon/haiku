@@ -2,46 +2,18 @@
  * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * GUI test application for KosmSurface / Surface Kit.
- * Runs all tests on launch, displays results in a BView,
- * writes detailed trace log to ~/Desktop/kosm_surface_trace.log.
+ * KosmSurface test functions for the unified test suite.
  */
 
 
-#include <Application.h>
-#include <FindDirectory.h>
-#include <Font.h>
+#include "TestCommon.h"
+
 #include <KosmSurface.hpp>
 #include <KosmSurfaceAllocator.hpp>
-#include <Message.h>
-#include <Path.h>
-#include <View.h>
-#include <Window.h>
 
 #include <errno.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
-
-
-static FILE* sTraceFile = NULL;
-static int sPassCount = 0;
-static int sFailCount = 0;
-
-
-static void
-trace(const char* fmt, ...)
-{
-	if (sTraceFile == NULL)
-		return;
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(sTraceFile, fmt, args);
-	va_end(args);
-	fflush(sTraceFile);
-}
 
 
 static void
@@ -50,23 +22,6 @@ trace_status(const char* func, status_t result)
 	trace("    %s -> %s (0x%08x)\n", func, strerror(result),
 		(unsigned)result);
 }
-
-
-#define TEST_ASSERT(name, condition) \
-	do { \
-		bigtime_t _t0 = system_time(); \
-		bool _ok = (condition); \
-		bigtime_t _dt = system_time() - _t0; \
-		if (_ok) { \
-			trace("  PASS: %s  (%lld us)\n", name, (long long)_dt); \
-			sPassCount++; \
-		} else { \
-			trace("  FAIL: %s  (line %d, %lld us)\n", \
-				name, __LINE__, (long long)_dt); \
-			sFailCount++; \
-		} \
-	} while (0)
-
 
 // ============================================================
 // Thread helpers
@@ -3940,220 +3895,81 @@ test_registry_capacity()
 }
 
 
-// ============================================================
-// GUI
-// ============================================================
-
-static const int kMaxLogLines = 500;
-static char sLogLines[kMaxLogLines][256];
-static int sLogLineCount = 0;
-static bool sLogLinePass[kMaxLogLines];
 
 
-static void
-log_line(const char* text, bool pass)
-{
-	if (sLogLineCount < kMaxLogLines) {
-		strlcpy(sLogLines[sLogLineCount], text,
-			sizeof(sLogLines[0]));
-		sLogLinePass[sLogLineCount] = pass;
-		sLogLineCount++;
-	}
-}
+// Suite registration
 
-
-class ResultView : public BView {
-public:
-	ResultView(BRect frame)
-		: BView(frame, "results", B_FOLLOW_ALL_SIDES,
-			B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE)
-	{
-	}
-
-	void Draw(BRect updateRect)
-	{
-		SetLowColor(255, 255, 255);
-		FillRect(Bounds(), B_SOLID_LOW);
-
-		BFont font(be_fixed_font);
-		font.SetSize(11);
-		SetFont(&font);
-
-		float lineHeight = 14;
-		float y = 20;
-
-		for (int i = 0; i < sLogLineCount; i++) {
-			if (sLogLinePass[i])
-				SetHighColor(0, 128, 0);
-			else
-				SetHighColor(200, 0, 0);
-			DrawString(sLogLines[i], BPoint(10, y));
-			y += lineHeight;
-		}
-	}
+static const TestEntry sSurfaceTests[] = {
+	// Basic
+	{ "allocate/free",           test_allocate_free,           "Basic" },
+	{ "zero-size alloc",         test_allocate_zero_size,      "Basic" },
+	{ "all formats",             test_allocate_all_formats,    "Basic" },
+	{ "lookup",                  test_lookup,                  "Basic" },
+	{ "lookup or clone",         test_lookup_or_clone,         "Basic" },
+	{ "lookup with token",       test_lookup_with_token,       "Basic" },
+	{ "revoked token lookup",    test_revoked_token_lookup,    "Basic" },
+	{ "free then lookup",        test_free_then_lookup,        "Basic" },
+	{ "double free",             test_double_free,             "Basic" },
+	{ "format support",          test_format_support,          "Basic" },
+	{ "cache modes",             test_cache_modes,             "Basic" },
+	{ "custom stride",           test_custom_stride,           "Basic" },
+	{ "large allocation",        test_large_allocation,        "Basic" },
+	// Lock
+	{ "lock/unlock",             test_lock_unlock,             "Lock" },
+	{ "read-only lock",          test_lock_read_only,          "Lock" },
+	{ "recursive lock",          test_lock_recursive,          "Lock" },
+	{ "cross-thread lock",       test_lock_other_thread,       "Lock" },
+	{ "unlock not-owner",        test_unlock_not_owner,        "Lock" },
+	{ "unlock not-locked",       test_unlock_not_locked,       "Lock" },
+	{ "lock timeout",            test_lock_timeout,            "Lock" },
+	{ "read->write upgrade",     test_lock_read_write_upgrade, "Lock" },
+	{ "zero-timeout try-lock",   test_lock_zero_timeout,       "Lock" },
+	// Seed
+	{ "seed tracking",           test_seed,                    "Seed" },
+	// Planar
+	{ "NV12 planes",             test_planar_nv12,             "Planar" },
+	{ "NV21 planes",             test_planar_nv21,             "Planar" },
+	{ "YV12 planes",             test_planar_yv12,             "Planar" },
+	{ "component info",          test_component_info,          "Planar" },
+	{ "chroma bit offsets",      test_planar_chroma_offsets,   "Planar" },
+	// Data
+	{ "use count",               test_use_count,               "Data" },
+	{ "free while in-use",       test_free_while_in_use,       "Data" },
+	{ "attachments",             test_attachments,             "Data" },
+	{ "purgeable",               test_purgeable,               "Data" },
+	{ "purgeable+lock",          test_purgeable_lock_interaction, "Data" },
+	{ "purgeable usage flag",    test_purgeable_usage_flag,    "Data" },
+	{ "access token",            test_access_token,            "Data" },
+	{ "usage flags",             test_usage_flags,             "Data" },
+	{ "pixel read/write",        test_pixel_readwrite,         "Data" },
+	{ "pixel read/write RGB565", test_pixel_readwrite_rgb565,  "Data" },
+	{ "pixel read/write A8",     test_pixel_readwrite_a8,      "Data" },
+	{ "pixel read/write L8",     test_pixel_readwrite_l8,      "Data" },
+	// Stress
+	{ "alloc/free churn 8x100",  test_stress_alloc_free,       "STRESS" },
+	{ "lock contention 8x50",    test_stress_lock_contention,  "STRESS" },
+	{ "rapid lock/unlock 10000", test_stress_rapid_lock_unlock, "STRESS" },
+	{ "attachment thrash 8x100", test_stress_attachment_thrash, "STRESS" },
+	{ "alloc/lookup race 8x100", test_stress_alloc_lookup_race, "STRESS" },
+	{ "token thrash 4x200",      test_stress_token_thrash,     "STRESS" },
+	{ "purgeable thrash 4x200",  test_stress_purgeable_thrash, "STRESS" },
+	{ "pool exhaustion 512",     test_stress_pool_exhaustion,  "STRESS" },
+	{ "mixed rd/wr lock 8x50",   test_stress_mixed_lock_contention, "STRESS" },
+	{ "use count contention 8x500", test_stress_use_count_contention, "STRESS" },
+	{ "registry capacity 4096",  test_registry_capacity,       "STRESS" },
+	// Cross-process
+	{ "cross-process clone",     test_cross_process_clone,     "Cross-Process" },
+	// Mobile Sim
+	{ "render pipeline 60fps",   test_mobile_render_pipeline,  "MOBILE SIM" },
 };
 
 
-typedef void (*test_func_t)();
-
-static void
-_RunTest(const char* label, test_func_t func, const char* category)
+TestSuite
+get_surface_test_suite()
 {
-	int passBefore = sPassCount;
-	int failBefore = sFailCount;
-
-	func();
-
-	int checks = (sPassCount - passBefore) + (sFailCount - failBefore);
-	int fails = sFailCount - failBefore;
-	char line[256];
-	if (fails == 0) {
-		snprintf(line, sizeof(line),
-			"[%s] PASS: %s  (%d checks)", category, label, checks);
-		log_line(line, true);
-		trace("  [%s] PASS: %s  (%d checks)\n", category, label, checks);
-	} else {
-		snprintf(line, sizeof(line),
-			"[%s] FAIL: %s  (%d pass, %d fail)",
-			category, label, sPassCount - passBefore, fails);
-		log_line(line, false);
-		trace("  [%s] FAIL: %s  (%d pass, %d fail)\n",
-			category, label, sPassCount - passBefore, fails);
-	}
-}
-
-
-class TestApp : public BApplication {
-public:
-	TestApp()
-		: BApplication("application/x-vnd.KosmOS-SurfaceTest")
-	{
-	}
-
-	void ReadyToRun()
-	{
-		// Open trace file
-		BPath path;
-		find_directory(B_DESKTOP_DIRECTORY, &path);
-		path.Append("kosm_surface_trace.log");
-		sTraceFile = fopen(path.Path(), "w");
-
-		trace("# KosmSurface test trace\n");
-		trace("# date: %s %s\n", __DATE__, __TIME__);
-		trace("# system_time at start: %lld us\n",
-			(long long)system_time());
-		trace("# main thread: %d, team: %d\n",
-			(int)find_thread(NULL), (int)getpid());
-		trace("#\n");
-
-		// --- BASIC ---
-		trace("\n# ========== BASIC ==========\n");
-		_RunTest("allocate/free",           test_allocate_free, "basic");
-		_RunTest("zero-size alloc",         test_allocate_zero_size, "basic");
-		_RunTest("all formats",             test_allocate_all_formats, "basic");
-		_RunTest("lookup",                  test_lookup, "basic");
-		_RunTest("lookup or clone",         test_lookup_or_clone, "basic");
-		_RunTest("lookup with token",       test_lookup_with_token, "basic");
-		_RunTest("revoked token lookup",    test_revoked_token_lookup, "basic");
-		_RunTest("free then lookup",        test_free_then_lookup, "basic");
-		_RunTest("double free",             test_double_free, "basic");
-		_RunTest("format support",          test_format_support, "basic");
-		_RunTest("cache modes",             test_cache_modes, "basic");
-		_RunTest("custom stride",           test_custom_stride, "basic");
-		_RunTest("large allocation",        test_large_allocation, "basic");
-
-		// --- LOCK ---
-		trace("\n# ========== LOCK ==========\n");
-		_RunTest("lock/unlock",             test_lock_unlock, "lock");
-		_RunTest("read-only lock",          test_lock_read_only, "lock");
-		_RunTest("recursive lock",          test_lock_recursive, "lock");
-		_RunTest("cross-thread lock",       test_lock_other_thread, "lock");
-		_RunTest("unlock not-owner",        test_unlock_not_owner, "lock");
-		_RunTest("unlock not-locked",       test_unlock_not_locked, "lock");
-		_RunTest("lock timeout",            test_lock_timeout, "lock");
-		_RunTest("read->write upgrade",     test_lock_read_write_upgrade, "lock");
-		_RunTest("zero-timeout try-lock",   test_lock_zero_timeout, "lock");
-
-		// --- SEED ---
-		trace("\n# ========== SEED ==========\n");
-		_RunTest("seed tracking",           test_seed, "seed");
-
-		// --- PLANAR ---
-		trace("\n# ========== PLANAR ==========\n");
-		_RunTest("NV12 planes",             test_planar_nv12, "planar");
-		_RunTest("NV21 planes",             test_planar_nv21, "planar");
-		_RunTest("YV12 planes",             test_planar_yv12, "planar");
-		_RunTest("component info",          test_component_info, "planar");
-		_RunTest("chroma bit offsets",      test_planar_chroma_offsets, "planar");
-
-		// --- DATA ---
-		trace("\n# ========== DATA ==========\n");
-		_RunTest("use count",               test_use_count, "data");
-		_RunTest("free while in-use",       test_free_while_in_use, "data");
-		_RunTest("attachments",             test_attachments, "data");
-		_RunTest("purgeable",               test_purgeable, "data");
-		_RunTest("purgeable+lock",          test_purgeable_lock_interaction, "data");
-		_RunTest("purgeable usage flag",    test_purgeable_usage_flag, "data");
-		_RunTest("access token",            test_access_token, "data");
-		_RunTest("usage flags",             test_usage_flags, "data");
-		_RunTest("pixel read/write",        test_pixel_readwrite, "data");
-		_RunTest("pixel read/write RGB565", test_pixel_readwrite_rgb565, "data");
-		_RunTest("pixel read/write A8",     test_pixel_readwrite_a8, "data");
-		_RunTest("pixel read/write L8",     test_pixel_readwrite_l8, "data");
-
-		// --- STRESS ---
-		trace("\n# ========== STRESS ==========\n");
-		_RunTest("alloc/free churn 8x100",  test_stress_alloc_free, "stress");
-		_RunTest("lock contention 8x50",    test_stress_lock_contention, "stress");
-		_RunTest("rapid lock/unlock 10000", test_stress_rapid_lock_unlock, "stress");
-		_RunTest("attachment thrash 8x100", test_stress_attachment_thrash, "stress");
-		_RunTest("alloc/lookup race 8x100", test_stress_alloc_lookup_race, "stress");
-		_RunTest("token thrash 4x200",      test_stress_token_thrash, "stress");
-		_RunTest("purgeable thrash 4x200",  test_stress_purgeable_thrash, "stress");
-		_RunTest("pool exhaustion 512",     test_stress_pool_exhaustion, "stress");
-		_RunTest("mixed rd/wr lock 8x50",   test_stress_mixed_lock_contention, "stress");
-		_RunTest("use count contention 8x500", test_stress_use_count_contention, "stress");
-		_RunTest("registry capacity 4096",  test_registry_capacity, "stress");
-
-		// --- CROSS-PROCESS ---
-		trace("\n# ========== CROSS-PROCESS ==========\n");
-		_RunTest("cross-process clone",     test_cross_process_clone, "xproc");
-
-		// --- MOBILE SIM ---
-		trace("\n# ========== MOBILE SIM ==========\n");
-		_RunTest("render pipeline 60fps",   test_mobile_render_pipeline, "mobile");
-
-		// Final summary
-		trace("\n# ================================\n");
-		trace("# FINAL: %d passed, %d failed\n", sPassCount, sFailCount);
-		trace("# total time: %lld us\n",
-			(long long)(system_time()));
-		trace("# ================================\n");
-
-		char summary[128];
-		snprintf(summary, sizeof(summary),
-			"TOTAL: %d passed, %d failed", sPassCount, sFailCount);
-		log_line(summary, sFailCount == 0);
-
-		if (sTraceFile != NULL) {
-			fclose(sTraceFile);
-			sTraceFile = NULL;
-		}
-
-		// Show results window
-		BRect frame(100, 100, 700, 100 + sLogLineCount * 14 + 40);
-		BWindow* window = new BWindow(frame, "KosmSurface Test Results",
-			B_TITLED_WINDOW, B_QUIT_ON_WINDOW_CLOSE);
-		window->AddChild(new ResultView(window->Bounds()));
-		window->Show();
-	}
-};
-
-
-int
-main()
-{
-	TestApp app;
-	app.Run();
-	return 0;
+	TestSuite suite;
+	suite.name = "KosmSurface";
+	suite.tests = sSurfaceTests;
+	suite.count = sizeof(sSurfaceTests) / sizeof(sSurfaceTests[0]);
+	return suite;
 }

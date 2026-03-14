@@ -103,10 +103,8 @@ SYSTEM_DEMOS += [ FFilterByBuildFeatures
 	Pulse
 	Sudoku
 	ThorVGDemo
-	KosmMutexTest
-	KosmRayTest
 	KosmInputTest
-	KosmSurfaceTest
+	KosmTestSuite
 	BreakoutGame
 ] ;
 
