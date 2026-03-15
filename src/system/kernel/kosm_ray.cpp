@@ -34,6 +34,7 @@
 #include <heap.h>
 #include <kernel.h>
 #include <kosm_handle.h>
+#include <vm/kosm_dot.h>
 #include <kosm_mutex.h>
 #include <Notifications.h>
 #include <sem.h>
@@ -223,7 +224,7 @@ namespace {
 // At read time, objects are installed into the receiver's handle table.
 struct ray_msg_handle {
 	union {
-		KernelReferenceable*	object;		// ray, mutex (refcounted)
+		KernelReferenceable*	object;		// ray, mutex, dot (refcounted)
 		int32					legacy_id;	// area, sem (already transferred)
 	};
 	uint16		type;		// KOSM_HANDLE_RAY, etc.
@@ -255,6 +256,7 @@ release_msg_handles(ray_message* msg)
 		switch (h->type) {
 			case KOSM_HANDLE_RAY:
 			case KOSM_HANDLE_MUTEX:
+			case KOSM_HANDLE_DOT:
 				if (h->object != NULL)
 					h->object->ReleaseReference();
 				break;
@@ -632,6 +634,7 @@ resolve_sender_handles(const kosm_handle_t* userHandles, size_t handleCount,
 		switch (type) {
 			case KOSM_HANDLE_RAY:
 			case KOSM_HANDLE_MUTEX:
+			case KOSM_HANDLE_DOT:
 			{
 				// Refcounted kernel object
 				KernelReferenceable* object;
@@ -771,6 +774,7 @@ install_receiver_handles(const ray_msg_handle* resolved, size_t handleCount,
 		switch (resolved[i].type) {
 			case KOSM_HANDLE_RAY:
 			case KOSM_HANDLE_MUTEX:
+			case KOSM_HANDLE_DOT:
 			{
 				// Insert transfers the message's reference to the table.
 				// Insert acquires its own reference; we release the message's
@@ -782,7 +786,8 @@ install_receiver_handles(const ray_msg_handle* resolved, size_t handleCount,
 					// (receiver can close them). Release remaining.
 					for (size_t j = i; j < handleCount; j++) {
 						if (resolved[j].type == KOSM_HANDLE_RAY
-							|| resolved[j].type == KOSM_HANDLE_MUTEX) {
+							|| resolved[j].type == KOSM_HANDLE_MUTEX
+							|| resolved[j].type == KOSM_HANDLE_DOT) {
 							resolved[j].object->ReleaseReference();
 						}
 					}
@@ -824,6 +829,7 @@ rollback_resolved_handle(ray_msg_handle* resolved,
 	switch (resolved->type) {
 		case KOSM_HANDLE_RAY:
 		case KOSM_HANDLE_MUTEX:
+		case KOSM_HANDLE_DOT:
 			if (wasCopy) {
 				// Just release the extra reference we acquired
 				resolved->object->ReleaseReference();

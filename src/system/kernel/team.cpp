@@ -53,6 +53,7 @@
 #include <tracing.h>
 #include <user_mutex.h>
 #include <kosm_mutex.h>
+#include <vm/kosm_dot.h>
 #include <kosm_handle.h>
 #include <kosm_ray.h>
 #include <user_runtime.h>
@@ -526,7 +527,11 @@ Team::~Team()
 	delete_owned_ports(this);
 	sem_delete_owned_sems(this);
 	// Handle table first: releases per-process handle references on
-	// refcounted objects (KosmMutexObject, KosmRayEndpoint).
+	// refcounted objects (KosmMutexObject, RayEndpoint, KosmDotObject).
+	// For dots: kosm_dot_team_gone() already unmapped this team's
+	// mappings (called from team_delete_team / exec_team). If this
+	// was the last handle to a dot, KosmDotObject destructor triggers
+	// kosm_dot_destroy() which cleans up the dot struct.
 	// Then subsystem cleanup removes slots and releases slot refs.
 	delete kosm_handle_table;
 	kosm_handle_table = NULL;
@@ -2041,7 +2046,16 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 	user_debug_prepare_for_exec();
 
 	delete_team_user_data(team);
+	// Unmap all kosm_dot mappings BEFORE vm_delete_areas.
+	// kosm_dot_team_gone needs the address space alive to unmap pages
+	// via translation map. If called after vm_delete_areas, the aspace
+	// is still alive (exec doesn't destroy it) but areas are gone,
+	// which is fine since kosm_dots don't use VMArea.
+	kosm_dot_team_gone(team->id);
 	vm_delete_areas(team->address_space, false);
+	// Clean up per-aspace tree (AVL tree of address->dot mappings).
+	// Safe after vm_delete_areas — the tree is independent of VMArea.
+	kosm_dot_aspace_gone(team->address_space->ID());
 	xsi_sem_undo(team);
 	delete_owned_ports(team);
 	sem_delete_owned_sems(team);
@@ -3380,7 +3394,21 @@ team_delete_team(Team* team, port_id debuggerPort)
 	delete_realtime_sem_context(team->realtime_sem_context);
 	xsi_sem_undo(team);
 	remove_images(team);
+
+	// Unmap all kosm_dot mappings for this team BEFORE the address space
+	// is destroyed. kosm_dot_team_gone needs the address space alive to
+	// unmap pages via translation map and unreserve VA ranges.
+	// The handle table destructor (in ~Team) will later release
+	// KosmDotObject refs. If this was the last handle, kosm_dot_destroy()
+	// runs — but this team's mappings are already gone, so it only
+	// affects other teams' mappings (whose aspaces are still alive).
+	kosm_dot_team_gone(team->id);
+
 	team->address_space->RemoveAndPut();
+
+	// Clean up per-aspace tree. Uses team_id (not aspace pointer),
+	// so safe after RemoveAndPut.
+	kosm_dot_aspace_gone(team->id);
 
 	team->ReleaseReference();
 

@@ -17,6 +17,7 @@
 
 #include <heap.h>
 #include <kernel.h>
+#include <vm/kosm_dot.h>
 #include <kosm_mutex.h>
 #include <kosm_ray.h>
 #include <team.h>
@@ -79,6 +80,7 @@ KosmHandleTable::~KosmHandleTable()
 			switch (entry->type) {
 				case KOSM_HANDLE_RAY:
 				case KOSM_HANDLE_MUTEX:
+				case KOSM_HANDLE_DOT:
 					// Refcounted objects: release reference
 					if (entry->object != NULL)
 						entry->object->ReleaseReference();
@@ -411,7 +413,8 @@ KosmHandleTable::Remove(kosm_handle_t handle,
 		// Caller takes ownership of the reference
 	} else {
 		// Release the reference held by the handle
-		if (type == KOSM_HANDLE_RAY || type == KOSM_HANDLE_MUTEX)
+		if (type == KOSM_HANDLE_RAY || type == KOSM_HANDLE_MUTEX
+			|| type == KOSM_HANDLE_DOT)
 			object->ReleaseReference();
 	}
 
@@ -481,7 +484,8 @@ KosmHandleTable::Duplicate(kosm_handle_t handle, uint32 newRights)
 		return newHandle;
 
 	uint32 newIndex = _IndexOf(newHandle);
-	if (type == KOSM_HANDLE_RAY || type == KOSM_HANDLE_MUTEX) {
+	if (type == KOSM_HANDLE_RAY || type == KOSM_HANDLE_MUTEX
+		|| type == KOSM_HANDLE_DOT) {
 		fEntries[newIndex].object = object;
 		object->AcquireReference();
 	} else {
@@ -641,6 +645,19 @@ _user_kosm_close_handle(kosm_handle_t handle)
 			kosm_mutex_id internalId = mobj->internal_id;
 			object->ReleaseReference();
 			return kosm_delete_mutex_internal(internalId);
+		}
+
+		case KOSM_HANDLE_DOT:
+		{
+			KernelReferenceable* object;
+			status = table->Remove(handle, &object);
+			if (status != B_OK)
+				return status;
+			int32 internalId = kosm_dot_object_id(object);
+			team_id team = thread_get_current_thread()->team->id;
+			kosm_dot_close_for_team(internalId, team);
+			object->ReleaseReference();
+			return B_OK;
 		}
 
 		case KOSM_HANDLE_AREA:

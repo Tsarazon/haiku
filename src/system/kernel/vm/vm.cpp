@@ -55,6 +55,8 @@
 #include <vm/VMArea.h>
 #include <vm/VMCache.h>
 
+#include <vm/kosm_dot.h>
+
 #include "VMAddressSpaceLocking.h"
 #include "VMAnonymousCache.h"
 #include "VMAnonymousNoSwapCache.h"
@@ -3983,6 +3985,10 @@ vm_init(kernel_args* args)
 
 	vm_cache_init_post_heap();
 
+	// Initialize kosm_dot subsystem (slab caches, hash tables, tag counters).
+	// Must be after slab_init_post_area and vm_cache_init_post_heap.
+	kosm_dot_init();
+
 	return err;
 }
 
@@ -4007,6 +4013,10 @@ vm_init_post_sem(kernel_args* args)
 	heap_init_post_sem();
 #endif
 
+	// Initialize kosm_dot post-sem: low_resource_handler for purgeable
+	// dot purging, KDL debugger commands (kosm_dots, kosm_dot, kosm_purge).
+	kosm_dot_init_post_sem();
+
 	return B_OK;
 }
 
@@ -4016,6 +4026,7 @@ vm_init_post_thread(kernel_args* args)
 {
 	vm_page_init_post_thread(args);
 	slab_init_post_thread();
+	kosm_dot_init_post_thread();
 	return heap_init_post_thread();
 }
 
@@ -4397,6 +4408,15 @@ vm_soft_fault(VMAddressSpace* addressSpace, addr_t originalAddress,
 		// get the area the fault was in
 		VMArea* area = addressSpace->LookupArea(address);
 		if (area == NULL) {
+			// KosmOS hook: check if this address belongs to a kosm_dot.
+			// kosm_dot_fault handles its own page tables, cache, and
+			// wired counts independently of VMArea.
+			status = kosm_dot_fault(addressSpace,
+				address, isWrite, isExecute, isUser);
+			if (status != B_BAD_ADDRESS)
+				break;  // kosm_dot handled it (success or error)
+
+			// Not a kosm_dot address — fall through to original error
 			if (logFaults) {
 				dprintf("vm_soft_fault: va 0x%lx not covered by area in address "
 					"space\n", originalAddress);
