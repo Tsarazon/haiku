@@ -244,7 +244,32 @@ struct ray_message : DoublyLinkedListLinkImpl<ray_message> {
 
 typedef DoublyLinkedList<ray_message> MessageList;
 
-static void release_msg_handles(ray_message* msg);
+
+/*!	Release handles stored in an undelivered message (e.g. peer closed).
+*/
+static void
+release_msg_handles(ray_message* msg)
+{
+	for (uint32 i = 0; i < msg->handle_count; i++) {
+		ray_msg_handle* h = &msg->handles[i];
+		switch (h->type) {
+			case KOSM_HANDLE_RAY:
+			case KOSM_HANDLE_MUTEX:
+				if (h->object != NULL)
+					h->object->ReleaseReference();
+				break;
+			case KOSM_HANDLE_AREA:
+				// Area was already transferred; delete it
+				vm_delete_area(B_SYSTEM_TEAM, h->legacy_id, true);
+				break;
+			case KOSM_HANDLE_SEM:
+				// Sem ownership was transferred; can't easily undo
+				break;
+			default:
+				break;
+		}
+	}
+}
 
 
 // ---- Endpoint ----
@@ -392,12 +417,8 @@ static int32 sTotalSpaceUsed;
 
 static RayNotificationService sNotificationService;
 
-// Bootstrap rays per team.
-// TODO: move this into the Team struct (add kosm_bootstrap_ray field).
-// Using a static array for now to avoid modifying Team until all KosmOS
-// primitives are finalized. Protected by sRaysLock.
-static const int32 kMaxTeams = 4096;
-static kosm_ray_id sBootstrapRays[kMaxTeams];
+// Bootstrap rays are stored in the Team struct (team->kosm_bootstrap_ray).
+// No static array needed — works for any team_id range.
 
 
 // ---- Helpers ----
@@ -842,33 +863,6 @@ rollback_resolved_handle(ray_msg_handle* resolved,
 }
 
 
-/*!	Release handles stored in an undelivered message (e.g. peer closed).
-*/
-static void
-release_msg_handles(ray_message* msg)
-{
-	for (uint32 i = 0; i < msg->handle_count; i++) {
-		ray_msg_handle* h = &msg->handles[i];
-		switch (h->type) {
-			case KOSM_HANDLE_RAY:
-			case KOSM_HANDLE_MUTEX:
-				if (h->object != NULL)
-					h->object->ReleaseReference();
-				break;
-			case KOSM_HANDLE_AREA:
-				// Area was already transferred; delete it
-				vm_delete_area(B_SYSTEM_TEAM, h->legacy_id, true);
-				break;
-			case KOSM_HANDLE_SEM:
-				// Sem ownership was transferred; can't easily undo
-				break;
-			default:
-				break;
-		}
-	}
-}
-
-
 // ---- Importance donation ----
 //
 // TECH DEBT: Current implementation is a direct priority override, not
@@ -1051,8 +1045,6 @@ kosm_ray_init(kernel_args* args)
 		panic("Failed to init kosm_ray hash table!");
 		return B_NO_MEMORY;
 	}
-
-	memset(sBootstrapRays, -1, sizeof(sBootstrapRays));
 
 	add_debugger_command_etc("kosm_rays", &dump_ray_list,
 		"List all active kosm_ray endpoints",
@@ -1251,10 +1243,7 @@ kosm_ray_delete_owned(Team* team)
 	TRACE(("kosm_ray_delete_owned(team = %" B_PRId32 ")\n", team->id));
 
 	// Clear bootstrap ray for this team
-	if (team->id >= 0 && team->id < kMaxTeams) {
-		WriteLocker bootstrapLocker(sRaysLock);
-		sBootstrapRays[team->id] = -1;
-	}
+	team->kosm_bootstrap_ray = -1;
 
 	// Walk the hash table and close any endpoints owned by this team.
 	// Repeat until no more are found, since closing one endpoint does
@@ -1307,14 +1296,18 @@ kosm_ray_delete_owned(Team* team)
 status_t
 kosm_ray_set_bootstrap(team_id targetTeam, kosm_handle_t handle)
 {
-	if (targetTeam < 0 || targetTeam >= kMaxTeams)
-		return B_BAD_TEAM_ID;
-
 	KosmHandleTable* sourceTable = KosmHandleTable::TableForCurrent();
 	if (sourceTable == NULL)
 		return B_NOT_INITIALIZED;
 
-	KosmHandleTable* targetTable = KosmHandleTable::TableFor(targetTeam);
+	// Hold reference to target team through the entire operation
+	// to prevent use-after-free on the handle table pointer.
+	Team* target = Team::Get(targetTeam);
+	if (target == NULL)
+		return B_BAD_TEAM_ID;
+	BReference<Team> targetRef(target, true);
+
+	KosmHandleTable* targetTable = target->kosm_handle_table;
 	if (targetTable == NULL)
 		return B_BAD_TEAM_ID;
 
@@ -1337,9 +1330,10 @@ kosm_ray_set_bootstrap(team_id targetTeam, kosm_handle_t handle)
 		}
 	}
 
-	// Record the handle value for kosm_get_bootstrap_ray()
-	WriteLocker locker(sRaysLock);
-	sBootstrapRays[targetTeam] = newHandle;
+	// Record the handle value for kosm_get_bootstrap_ray().
+	// No lock needed: parent writes before resume_thread (memory barrier),
+	// child reads after being scheduled.
+	target->kosm_bootstrap_ray = newHandle;
 	return B_OK;
 }
 
@@ -1644,8 +1638,12 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	// This removes/copies handles from the sender's table and stores
 	// resolved objects in the message for the receiver to install.
 	if (handleCount > 0) {
+		// Use current team's table directly — avoids TableFor() which
+		// releases the Team reference and leaves a dangling pointer.
+		// The sender is always the current team (handle was validated
+		// by resolve_ray_handle at the syscall boundary).
 		KosmHandleTable* senderTable =
-			KosmHandleTable::TableFor(senderTeam);
+			KosmHandleTable::TableForCurrent();
 		if (senderTable == NULL) {
 			free_ray_message(msg);
 			return B_NOT_INITIALIZED;
@@ -1672,6 +1670,15 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 		free_ray_message(msg);
 		T(Write(id, dataSize, handleCount, ref->qos_class, B_BAD_PORT_ID));
 		return B_BAD_PORT_ID;
+	}
+
+	// Recheck queue capacity under peer->lock.
+	// The initial check was under ref->lock (sender's lock), so concurrent
+	// writers on the same endpoint could all pass it before any enqueued.
+	if (peer->read_count >= peer->max_messages) {
+		release_msg_handles(msg);
+		free_ray_message(msg);
+		return B_WOULD_BLOCK;
 	}
 
 	peer->messages.Add(msg);
@@ -2075,12 +2082,11 @@ kosm_ray_set_qos(kosm_ray_id handle, uint8 qosClass)
 kosm_ray_id
 kosm_get_bootstrap_ray_internal(void)
 {
-	team_id team = team_get_current_team_id();
-	if (team < 0 || team >= kMaxTeams)
+	Thread* thread = thread_get_current_thread();
+	if (thread == NULL || thread->team == NULL)
 		return B_BAD_TEAM_ID;
 
-	ReadLocker locker(sRaysLock);
-	kosm_ray_id id = sBootstrapRays[team];
+	kosm_ray_id id = thread->team->kosm_bootstrap_ray;
 
 	if (id < 0)
 		return B_NAME_NOT_FOUND;

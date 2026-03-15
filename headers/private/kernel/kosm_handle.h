@@ -38,8 +38,8 @@
 
 
 #include <KosmOS.h>
-#include <Referenceable.h>
 #include <util/AutoLock.h>
+#include <util/KernelReferenceable.h>
 
 
 struct kernel_args;

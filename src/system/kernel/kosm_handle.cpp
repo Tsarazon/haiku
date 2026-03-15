@@ -294,6 +294,14 @@ KosmHandleTable::LookupAny(kosm_handle_t handle, uint32 requiredRights,
 		*outType = entry->type;
 
 	if (outObject != NULL) {
+		// Legacy types (area, sem, fd) store an int32 in the union,
+		// not a pointer. Dereferencing would be a kernel panic.
+		if (entry->type == KOSM_HANDLE_AREA
+			|| entry->type == KOSM_HANDLE_SEM
+			|| entry->type == KOSM_HANDLE_FD) {
+			*outObject = NULL;
+			return B_BAD_VALUE;
+		}
 		entry->object->AcquireReference();
 		*outObject = entry->object;
 	}

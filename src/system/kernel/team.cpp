@@ -470,6 +470,7 @@ Team::Team(team_id id, bool kernel)
 	list_init_etc(&port_list, port_team_link_offset());
 	list_init_etc(&kosm_mutex_list, kosm_mutex_team_link_offset());
 	kosm_handle_table = NULL;
+	kosm_bootstrap_ray = -1;
 
 	user_data = 0;
 	user_data_area = -1;
@@ -524,10 +525,13 @@ Team::~Team()
 		vfs_put_io_context(io_context);
 	delete_owned_ports(this);
 	sem_delete_owned_sems(this);
-	kosm_mutex_delete_owned(this);
-	kosm_ray_delete_owned(this);
+	// Handle table first: releases per-process handle references on
+	// refcounted objects (KosmMutexObject, KosmRayEndpoint).
+	// Then subsystem cleanup removes slots and releases slot refs.
 	delete kosm_handle_table;
 	kosm_handle_table = NULL;
+	kosm_mutex_delete_owned(this);
+	kosm_ray_delete_owned(this);
 
 	DeleteUserTimers(false);
 
@@ -2041,10 +2045,11 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 	xsi_sem_undo(team);
 	delete_owned_ports(team);
 	sem_delete_owned_sems(team);
-	kosm_mutex_delete_owned(team);
-	kosm_ray_delete_owned(team);
+	// Handle table first (see ~Team for rationale).
 	delete team->kosm_handle_table;
 	team->kosm_handle_table = NULL;
+	kosm_mutex_delete_owned(team);
+	kosm_ray_delete_owned(team);
 	remove_images(team);
 	vfs_exec_io_context(team->io_context);
 	delete_user_mutex_context(team->user_mutex_context);
@@ -2066,8 +2071,13 @@ exec_team(const char* path, char**& _flatArgs, size_t flatArgsSize,
 
 	// Recreate handle table for the new program image
 	team->kosm_handle_table = new(std::nothrow) KosmHandleTable();
-	if (team->kosm_handle_table != NULL)
-		team->kosm_handle_table->Init();
+	if (team->kosm_handle_table == NULL
+		|| team->kosm_handle_table->Init() != B_OK) {
+		free_team_arg(teamArgs);
+		exit_thread(B_NO_MEMORY);
+		return B_NO_MEMORY;
+	}
+	team->kosm_bootstrap_ray = -1;
 
 	user_debug_finish_after_exec();
 
@@ -2144,6 +2154,11 @@ fork_team(void)
 	// create a new team
 	// TODO: this is very similar to load_image_internal() - maybe we can do
 	// something about it :)
+	//
+	// Design decision: kosm handles are NOT inherited on fork.
+	// Team::Create gives the child an empty handle table.
+	// Parent must explicitly transfer handles via kosm_ray_set_bootstrap.
+	// This matches the Zircon capability model (no implicit inheritance).
 
 	// create the main thread object
 	Thread* thread;

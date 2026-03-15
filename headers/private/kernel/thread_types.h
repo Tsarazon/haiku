@@ -490,6 +490,7 @@ struct Team : TeamThreadIteratorEntry<team_id>, KernelReferenceable,
 	struct list		port_list;		// protected by sPortsLock
 	struct list		kosm_mutex_list;	// protected by sMutexListSpinlock
 	KosmHandleTable* kosm_handle_table;	// per-process capability table
+	int32			kosm_bootstrap_ray;	// handle set by parent via set_bootstrap
 	struct arch_team arch_info;
 
 	addr_t			user_data;
