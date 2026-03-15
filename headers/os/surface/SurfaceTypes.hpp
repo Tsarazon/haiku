@@ -52,10 +52,10 @@ enum kosm_purgeable_state {
 };
 
 enum {
-	KOSM_CACHE_DEFAULT			= 0,
-	KOSM_CACHE_INHIBIT			= 1,
-	KOSM_CACHE_WRITE_THROUGH	= 2,
-	KOSM_CACHE_WRITE_COMBINE	= 3
+	KOSM_SURFACE_CACHE_DEFAULT			= 0,
+	KOSM_SURFACE_CACHE_INHIBIT			= 1,
+	KOSM_SURFACE_CACHE_WRITE_THROUGH	= 2,
+	KOSM_SURFACE_CACHE_WRITE_COMBINE	= 3
 };
 
 struct KosmSurfaceDesc {
@@ -75,7 +75,7 @@ struct KosmSurfaceDesc {
 		usage(KOSM_SURFACE_USAGE_CPU_READ | KOSM_SURFACE_USAGE_CPU_WRITE),
 		bytesPerElement(0),
 		bytesPerRow(0),
-		cacheMode(KOSM_CACHE_DEFAULT)
+		cacheMode(KOSM_SURFACE_CACHE_DEFAULT)
 	{
 	}
 };
