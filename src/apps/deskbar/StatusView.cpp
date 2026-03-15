@@ -207,6 +207,9 @@ TReplicantTray::AttachedToWindow()
 #endif
 #endif
 	ResizeToPreferred();
+
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		SetViewColor(kTaskbarColor);
 }
 
 
@@ -985,6 +988,9 @@ TReplicantTray::AddIcon(BMessage* archive, int32* id, const entry_ref* addOn)
 	BView* view;
 	fShelf->ReplicantAt(count - 1, &view, (uint32*)id, NULL);
 
+	if (view != NULL && fBarView != NULL && fBarView->AcrossBottom())
+		view->SetViewColor(B_TRANSPARENT_COLOR);
+
 	if (view != NULL && originalBounds != view->Bounds()) {
 		// The replicant changed its size when added to the window, so we need
 		// to recompute all over again (it's already done once via
@@ -1368,7 +1374,10 @@ TDragRegion::AttachedToWindow()
 
 	CalculateRegions();
 
-	SetViewUIColor(B_MENU_BACKGROUND_COLOR, 1.1);
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		SetViewColor(kTaskbarColor);
+	else
+		SetViewUIColor(B_MENU_BACKGROUND_COLOR, 1.1);
 
 	ResizeToPreferred();
 }
@@ -1402,7 +1411,14 @@ TDragRegion::Draw(BRect updateRect)
 	rgb_color dark = tint_color(menuColor, B_DARKEN_2_TINT);
 
 	BRect frame(Bounds());
-	BeginLineArray(4);
+
+	if (fBarView->AcrossBottom()) {
+		SetHighColor(kTaskbarColor);
+		FillRect(frame);
+		return;
+	}
+
+	BeginLineArray(3);
 
 	if (fBarView->Vertical()) {
 		// vertical expando full or mini state, draw 2 lines at the top
@@ -1413,14 +1429,11 @@ TDragRegion::Draw(BRect updateRect)
 		AddLine(BPoint(frame.left + 1, frame.bottom),
 			BPoint(frame.right - 1, frame.bottom), hilite);
 	} else {
-		// mini-mode or horizontal, draw hilight along top left and bottom
+		// mini-mode or horizontal, draw hilight along top, left, and bottom
 		AddLine(frame.LeftTop(), frame.RightTop(), hilite);
 		AddLine(BPoint(frame.left, frame.top + 1), frame.LeftBottom(), hilite);
-		if (!fBarView->Vertical()) {
-			// only draw bottom hilight in horizontal mode
-			AddLine(BPoint(frame.left + 1, frame.bottom - 3),
-				BPoint(frame.right - 1, frame.bottom - 3), hilite);
-		}
+		AddLine(BPoint(frame.left + 1, frame.bottom - 3),
+			BPoint(frame.right - 1, frame.bottom - 3), hilite);
 	}
 
 	EndLineArray();
@@ -1430,7 +1443,7 @@ TDragRegion::Draw(BRect updateRect)
 void
 TDragRegion::DrawAfterChildren(BRect updateRect)
 {
-	if (fDragLocation != kDontDrawDragRegion || fDragLocation != kNoDragRegion)
+	if (fDragLocation != kDontDrawDragRegion && fDragLocation != kNoDragRegion)
 		DrawDragger();
 }
 
@@ -1438,6 +1451,9 @@ TDragRegion::DrawAfterChildren(BRect updateRect)
 void
 TDragRegion::DrawDragger()
 {
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		return;
+
 	BRect dragRegion(DragRegion());
 
 	rgb_color menuColor = ViewColor();

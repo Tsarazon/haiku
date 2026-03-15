@@ -80,6 +80,7 @@ public:
 								void* state, bool both = false);
 
 	const	BBitmap*		FetchTeamIcon();
+			TBarView*		BarView() const { return fBarView; }
 
 private:
 			TBarView*		fBarView;

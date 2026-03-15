@@ -80,6 +80,20 @@ TSeparatorItem::Draw()
 
 	BRect frame(Frame());
 	frame.right = frame.left + kSepItemWidth;
+
+	// check if parent is in bottom taskbar mode
+	TBarMenuBar* barMenu = dynamic_cast<TBarMenuBar*>(menu);
+	if (barMenu != NULL) {
+		TBarView* barView = barMenu->BarView();
+		if (barView != NULL && barView->AcrossBottom()) {
+			menu->PushState();
+			menu->SetHighColor(kTaskbarColor);
+			menu->FillRect(frame);
+			menu->PopState();
+			return;
+		}
+	}
+
 	rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
 
 	menu->PushState();
@@ -154,9 +168,13 @@ TBarMenuBar::SmartResize(float width, float height)
 	} else
 		ResizeTo(width, height);
 
-	if (fSeparatorItem != NULL)
-		fDeskbarMenuItem->SetContentSize(width - kSepItemWidth, height);
-	else {
+	if (fSeparatorItem != NULL) {
+		if (fBarView != NULL && fBarView->AcrossBottom()) {
+			// taskbar: fixed start button width
+			fDeskbarMenuItem->SetContentSize(kStartButtonWidth, height);
+		} else
+			fDeskbarMenuItem->SetContentSize(width - kSepItemWidth, height);
+	} else {
 		int32 count = CountItems();
 		if (fDeskbarMenuItem != NULL)
 			fDeskbarMenuItem->SetContentSize(floorf(width / count), height);

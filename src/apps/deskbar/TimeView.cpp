@@ -170,7 +170,11 @@ TTimeView::Draw(BRect /*updateRect*/)
 	SetHighColor(ViewColor());
 	SetLowColor(ViewColor());
 	FillRect(Bounds());
-	SetHighUIColor(B_MENU_ITEM_TEXT_COLOR);
+
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		SetHighColor(kTaskbarText);
+	else
+		SetHighUIColor(B_MENU_ITEM_TEXT_COLOR);
 
 	DrawString(fCurrentTimeStr, fTimeLocation);
 

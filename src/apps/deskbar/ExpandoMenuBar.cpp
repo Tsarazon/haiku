@@ -114,6 +114,11 @@ TExpandoMenuBar::AttachedToWindow()
 
 	fTeamList.MakeEmpty();
 
+	if (fBarView != NULL && fBarView->AcrossBottom()) {
+		SetViewColor(kTaskbarColor);
+		SetLowColor(kTaskbarColor);
+	}
+
 	if (Vertical())
 		StartMonitoringWindows();
 }
@@ -365,6 +370,8 @@ TExpandoMenuBar::MouseMoved(BPoint where, uint32 code, const BMessage* message)
 				SetToolTip((const char*)NULL);
 			} else if (item != fLastMousedOverItem) {
 				if ((static_cast<TBarApp*>(be_app)->Settings()->hideLabels
+						&& teamItem != NULL)
+					|| (fBarView != NULL && fBarView->AcrossBottom()
 						&& teamItem != NULL)
 					|| strcasecmp(item->TruncatedLabel(), item->Label()) > 0) {
 					SetToolTip(item->Label());
@@ -734,6 +741,23 @@ TExpandoMenuBar::CheckItemSizes(int32 delta, bool reset)
 	if (fBarView == NULL || Vertical())
 		return;
 
+	if (fBarView->AcrossBottom()) {
+		// taskbar: fixed-width square items
+		float itemWidth = kTaskbarHeight
+			+ be_control_look->ComposeSpacing(kIconPadding);
+		SetMaxContentWidth(itemWidth);
+		int32 itemCount = CountItems();
+		for (int32 index = 0; ; index++) {
+			TTeamMenuItem* item = (TTeamMenuItem*)ItemAt(index);
+			if (item == NULL)
+				break;
+			item->SetOverrideWidth(itemWidth);
+		}
+		InvalidateLayout();
+		ResizeTo(itemWidth * itemCount, Frame().Height());
+		return;
+	}
+
 	// minimum two items before size overrun can occur
 	int32 itemCount = CountItems();
 	if (itemCount < 2)
@@ -791,6 +815,9 @@ TExpandoMenuBar::CheckItemSizes(int32 delta, bool reset)
 float
 TExpandoMenuBar::MinHorizontalItemWidth()
 {
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		return kTaskbarHeight + be_control_look->ComposeSpacing(kIconPadding);
+
 	const int32 iconSize = static_cast<TBarApp*>(be_app)->TeamIconSize();
 	const float iconPadding = be_control_look->ComposeSpacing(kIconPadding);
 	float iconOnlyWidth = iconSize + iconPadding;
@@ -807,6 +834,9 @@ TExpandoMenuBar::MinHorizontalItemWidth()
 float
 TExpandoMenuBar::MaxHorizontalItemWidth()
 {
+	if (fBarView != NULL && fBarView->AcrossBottom())
+		return kTaskbarHeight + be_control_look->ComposeSpacing(kIconPadding);
+
 	const int32 iconSize = static_cast<TBarApp*>(be_app)->TeamIconSize();
 	const float iconPadding = be_control_look->ComposeSpacing(kIconPadding);
 	float iconOnlyWidth = iconSize + iconPadding;
@@ -848,8 +878,14 @@ TExpandoMenuBar::DrawBackground(BRect updateRect)
 	if (Vertical())
 		return;
 
-	SetHighColor(tint_color(ui_color(B_MENU_BACKGROUND_COLOR), 1.22));
-	StrokeLine(Bounds().RightTop(), Bounds().RightBottom());
+	if (fBarView != NULL && fBarView->AcrossBottom()) {
+		// taskbar: solid dark fill, no edge separator
+		SetHighColor(kTaskbarColor);
+		FillRect(updateRect);
+	} else {
+		SetHighColor(tint_color(ui_color(B_MENU_BACKGROUND_COLOR), 1.22));
+		StrokeLine(Bounds().RightTop(), Bounds().RightBottom());
+	}
 }
 
 

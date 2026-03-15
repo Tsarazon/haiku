@@ -218,8 +218,15 @@ TTeamMenuItem::GetContentSize(float* width, float* height)
 			else
 				*width = gMinimumWindowWidth - (gDragRegionWidth + kGutter) * 2;
 		} else if (!fBarView->Vertical()) {
-			TExpandoMenuBar* menu = static_cast<TExpandoMenuBar*>(Menu());
-			*width = menu->MaxHorizontalItemWidth();
+			if (fBarView->AcrossBottom()) {
+				// taskbar: square items
+				const float iconPadding
+					= be_control_look->ComposeSpacing(kIconPadding);
+				*width = kTaskbarHeight + iconPadding;
+			} else {
+				TExpandoMenuBar* menu = static_cast<TExpandoMenuBar*>(Menu());
+				*width = menu->MaxHorizontalItemWidth();
+			}
 		} else
 			*width = static_cast<TBarApp*>(be_app)->Settings()->width;
 	}
@@ -257,16 +264,42 @@ TTeamMenuItem::Draw()
 		be_control_look->DrawMenuBarBackground(menu, frame, frame,
 			menuColor, flags, borders);
 	} else {
-		if (flags & BControlLook::B_ACTIVATED)
-			menu->SetHighColor(tint_color(menuColor, B_DARKEN_3_TINT));
-		else
-			menu->SetHighColor(tint_color(menuColor, 1.22));
-		borders |= BControlLook::B_BOTTOM_BORDER;
-		menu->StrokeLine(frame.LeftTop(), frame.LeftBottom());
-		frame.left++;
+		if (fBarView->AcrossBottom()) {
+			// flat taskbar style
+			rgb_color bgColor = kTaskbarColor;
+			if (_IsSelected() && canHandle)
+				bgColor = kTaskbarHover;
 
-		be_control_look->DrawButtonBackground(menu, frame, frame,
-			menuColor, flags, borders);
+			menu->SetHighColor(bgColor);
+			menu->FillRect(frame);
+
+			// persistent thin accent bar for all running apps
+			menu->SetHighColor(kAccentColor);
+			BRect runIndicator(frame.left + 4,
+				frame.bottom - kAccentBarRunning + 1,
+				frame.right - 4, frame.bottom);
+			menu->FillRect(runIndicator);
+
+			// wider accent bar on hover
+			if (_IsSelected() && canHandle) {
+				BRect accent(frame.left + 2,
+					frame.bottom - kAccentBarHeight + 1,
+					frame.right - 2, frame.bottom);
+				menu->FillRect(accent);
+			}
+		} else {
+			// horizontal top: existing BControlLook style
+			if (flags & BControlLook::B_ACTIVATED)
+				menu->SetHighColor(tint_color(menuColor, B_DARKEN_3_TINT));
+			else
+				menu->SetHighColor(tint_color(menuColor, 1.22));
+			borders |= BControlLook::B_BOTTOM_BORDER;
+			menu->StrokeLine(frame.LeftTop(), frame.LeftBottom());
+			frame.left++;
+
+			be_control_look->DrawButtonBackground(menu, frame, frame,
+				menuColor, flags, borders);
+		}
 	}
 
 	menu->MovePenTo(ContentLocation());
@@ -281,6 +314,29 @@ TTeamMenuItem::DrawContent()
 {
 	BMenu* menu = Menu();
 	BRect frame = Frame();
+
+	if (fIcon != NULL && fBarView->AcrossBottom()) {
+		// taskbar: centered scaled icon, no label
+		if (fIcon->ColorSpace() == B_RGBA32) {
+			menu->SetDrawingMode(B_OP_ALPHA);
+			menu->SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
+		} else
+			menu->SetDrawingMode(B_OP_OVER);
+
+		BRect iconBounds = fIcon->Bounds();
+		float targetSize = floorf(kTaskbarHeight * 0.55f);
+		BRect destRect(0, 0, targetSize, targetSize);
+
+		float offsetx = frame.left
+			+ floorf((frame.Width() - targetSize) / 2);
+		float offsety = frame.top
+			+ floorf((frame.Height() - targetSize) / 2)
+			- ceilf(kAccentBarHeight / 2);
+		destRect.OffsetTo(offsetx, offsety);
+
+		menu->DrawBitmapAsync(fIcon, iconBounds, destRect);
+		return;
+	}
 
 	if (fIcon != NULL) {
 		if (fIcon->ColorSpace() == B_RGBA32) {

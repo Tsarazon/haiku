@@ -63,6 +63,17 @@ const float kStatusHeight = 22.0f;
 const float kHiddenDimension = 1.0f;
 const float kMaxPreventHidingDist = 80.0f;
 
+// Windows 10 taskbar style constants (horizontal bottom expando)
+const float kTaskbarHeight      = 40.0f;
+const float kStartButtonWidth   = 48.0f;
+const float kAccentBarHeight    = 3.0f;
+const float kAccentBarRunning   = 1.0f;
+
+const rgb_color kTaskbarColor   = {30, 30, 30, 255};
+const rgb_color kAccentColor    = {0, 120, 215, 255};
+const rgb_color kTaskbarHover   = {45, 45, 45, 255};
+const rgb_color kTaskbarText    = {255, 255, 255, 255};
+
 
 class BShelf;
 class TBarApp;

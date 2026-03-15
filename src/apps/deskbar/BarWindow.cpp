@@ -709,14 +709,20 @@ TBarWindow::SetSizeLimits()
 					kGutter + fBarView->ReplicantTray()->MaxReplicantHeight() + kGutter);
 			} else {
 				// horizontal expando-mode
-				const int32 max
-					= be_control_look->ComposeIconSize(kMaximumIconSize).IntegerWidth() + 1;
-				const float iconPadding
-					= be_control_look->ComposeSpacing(kIconPadding);
+				if (fBarView->AcrossBottom()) {
+					// bottom taskbar: fixed height
+					minWidth = maxWidth = screenFrame.Width();
+					minHeight = maxHeight = kTaskbarHeight;
+				} else {
+					const int32 max
+						= be_control_look->ComposeIconSize(kMaximumIconSize).IntegerWidth() + 1;
+					const float iconPadding
+						= be_control_look->ComposeSpacing(kIconPadding);
 
-				minWidth = maxWidth = screenFrame.Width();
-				minHeight = kMenuBarHeight - 1;
-				maxHeight = max + iconPadding / 2;
+					minWidth = maxWidth = screenFrame.Width();
+					minHeight = kMenuBarHeight - 1;
+					maxHeight = max + iconPadding / 2;
+				}
 			}
 		}
 

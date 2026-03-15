@@ -19,6 +19,8 @@
 #include <Screen.h>
 #include <Window.h>
 
+#include "BarView.h"
+
 
 const int kDefaultScrollStep = 19;
 const int kScrollerDimension = 12;
@@ -426,6 +428,13 @@ TInlineScrollView::DetachedFromWindow()
 void
 TInlineScrollView::Draw(BRect updateRect)
 {
+	TBarView* barView = dynamic_cast<TBarView*>(Parent());
+	if (barView != NULL && barView->AcrossBottom()) {
+		SetHighColor(kTaskbarColor);
+		FillRect(updateRect);
+		return;
+	}
+
 	BRect frame = Bounds();
 	be_control_look->DrawButtonBackground(this, frame, updateRect,
 		ui_color(B_MENU_BACKGROUND_COLOR));

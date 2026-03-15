@@ -228,7 +228,13 @@ TBarView::AttachedToWindow()
 
 	fBarWindow = dynamic_cast<TBarWindow*>(Window());
 
-	SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	if (AcrossBottom()) {
+		SetViewColor(kTaskbarColor);
+		if (fInlineScrollView != NULL)
+			fInlineScrollView->SetViewColor(kTaskbarColor);
+	} else {
+		SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	}
 	SetFont(be_plain_font);
 
 	fMouseFilter = new BarViewMessageFilter(this);
@@ -264,8 +270,10 @@ TBarView::Draw(BRect)
 	SetHighColor(hilite);
 	if (AcrossTop())
 		StrokeLine(bounds.LeftBottom(), bounds.RightBottom());
-	else if (AcrossBottom())
-		StrokeLine(bounds.LeftTop(), bounds.RightTop());
+	else if (AcrossBottom()) {
+		SetHighColor(kTaskbarColor);
+		FillRect(bounds);
+	}
 
 	if (fVertical && fState == kExpandoState) {
 		SetHighColor(hilite);
@@ -474,10 +482,15 @@ TBarView::PlaceDeskbarMenu()
 			height = std::max(fTabHeight,
 				kGutter + fReplicantTray->MaxReplicantHeight() + kGutter);
 		} else {
-			width = gMinimumWindowWidth / 2
-				+ be_control_look->ComposeSpacing(kIconPadding);
-			height = std::max(TeamMenuItemHeight(),
-				kGutter + fReplicantTray->MaxReplicantHeight() + kGutter);
+			if (AcrossBottom()) {
+				width = kStartButtonWidth;
+				height = kTaskbarHeight;
+			} else {
+				width = gMinimumWindowWidth / 2
+					+ be_control_look->ComposeSpacing(kIconPadding);
+				height = std::max(TeamMenuItemHeight(),
+					kGutter + fReplicantTray->MaxReplicantHeight() + kGutter);
+			}
 		}
 	}
 	menuFrame.bottom = menuFrame.top + height;
@@ -618,7 +631,7 @@ TBarView::PlaceApplicationBar()
 	} else {
 		// top or bottom
 		expandoFrame.top = 0;
-		expandoFrame.bottom = TeamMenuItemHeight();
+		expandoFrame.bottom = AcrossBottom() ? kTaskbarHeight : TeamMenuItemHeight();
 		expandoFrame.left = screenFrame.left + fBarMenuBar->Frame().Width();
 		expandoFrame.right = screenFrame.right - fDragRegion->Frame().Width() - 1;
 	}
@@ -679,8 +692,13 @@ TBarView::GetPreferredWindowSize(BRect screenFrame, float* width,
 				+ fBarMenuBar->Frame().Width() + 1;
 		} else {
 			// horizontal top or bottom
-			windowHeight = std::max(TeamMenuItemHeight(),
-				kGutter + fReplicantTray->MaxReplicantHeight() + kGutter);
+			if (AcrossBottom()) {
+				// bottom taskbar: fixed height
+				windowHeight = kTaskbarHeight;
+			} else {
+				windowHeight = std::max(TeamMenuItemHeight(),
+					kGutter + fReplicantTray->MaxReplicantHeight() + kGutter);
+			}
 			windowWidth = screenFrame.Width();
 		}
 	}
@@ -788,6 +806,36 @@ TBarView::_ChangeState(BMessage* message)
 	fVertical = vertical;
 	fLeft = left;
 	fTop = top;
+
+	if (AcrossBottom()) {
+		SetViewColor(kTaskbarColor);
+		if (fDragRegion != NULL)
+			fDragRegion->SetViewColor(kTaskbarColor);
+		if (fReplicantTray != NULL)
+			fReplicantTray->SetViewColor(kTaskbarColor);
+		if (fBarMenuBar != NULL)
+			fBarMenuBar->SetViewColor(kTaskbarColor);
+		if (fInlineScrollView != NULL)
+			fInlineScrollView->SetViewColor(kTaskbarColor);
+		if (fExpandoMenuBar != NULL) {
+			fExpandoMenuBar->SetViewColor(kTaskbarColor);
+			fExpandoMenuBar->SetLowColor(kTaskbarColor);
+		}
+	} else {
+		SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+		if (fDragRegion != NULL)
+			fDragRegion->SetViewUIColor(B_MENU_BACKGROUND_COLOR, 1.1);
+		if (fReplicantTray != NULL)
+			fReplicantTray->AdoptParentColors();
+		if (fBarMenuBar != NULL)
+			fBarMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+		if (fInlineScrollView != NULL)
+			fInlineScrollView->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+		if (fExpandoMenuBar != NULL) {
+			fExpandoMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+			fExpandoMenuBar->SetLowUIColor(B_MENU_BACKGROUND_COLOR);
+		}
+	}
 
 	if (stateChanged || vertSwap) {
 		be_app->PostMessage(kStateChanged);
@@ -1263,6 +1311,9 @@ TBarView::IconFrame(const char* name) const
 float
 TBarView::TeamMenuItemHeight() const
 {
+	if (AcrossBottom())
+		return kTaskbarHeight;
+
 	const int32 iconSize = fBarApp->TeamIconSize();
 	const float iconPadding = be_control_look->ComposeSpacing(kIconPadding);
 	float iconOnlyHeight = iconSize + iconPadding / 2;

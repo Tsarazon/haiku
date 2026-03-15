@@ -94,7 +94,6 @@ TBarMenuTitle::Draw()
 		return;
 
 	BRect frame(Frame());
-	rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
 
 	menu->PushState();
 
@@ -102,12 +101,20 @@ TBarMenuTitle::Draw()
 	if (frame.right > windowBounds.right)
 		frame.right = windowBounds.right;
 
-	// fill in background
-	if (IsSelected()) {
-		be_control_look->DrawMenuItemBackground(menu, frame, frame, base,
-			BControlLook::B_ACTIVATED);
-	} else
-		be_control_look->DrawButtonBackground(menu, frame, frame, base);
+	if (fBarView != NULL && fBarView->AcrossBottom()) {
+		// taskbar: flat dark background
+		rgb_color bgColor = IsSelected() ? kTaskbarHover : kTaskbarColor;
+		menu->SetHighColor(bgColor);
+		menu->FillRect(frame);
+	} else {
+		// existing BControlLook style
+		rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
+		if (IsSelected()) {
+			be_control_look->DrawMenuItemBackground(menu, frame, frame, base,
+				BControlLook::B_ACTIVATED);
+		} else
+			be_control_look->DrawButtonBackground(menu, frame, frame, base);
+	}
 
 	menu->MovePenTo(ContentLocation());
 	DrawContent();
@@ -136,7 +143,7 @@ TBarMenuTitle::DrawContent()
 
 	// cut-off the leaf
 	bool isLeafMenu = dynamic_cast<TDeskbarMenu*>(fMenu) != NULL;
-	if (isLeafMenu)
+	if (isLeafMenu && fBarView != NULL && !fBarView->AcrossBottom())
 		iconRect.OffsetBy(widthOffset, frame.Height() - iconRect.Height() + 2);
 	else
 		iconRect.OffsetBy(widthOffset, heightOffset);
