@@ -78,6 +78,7 @@ typedef int32 kosm_handle_t;
 #define KOSM_HANDLE_AREA			0x03
 #define KOSM_HANDLE_SEM				0x04
 #define KOSM_HANDLE_FD				0x05
+#define KOSM_HANDLE_DOT				0x06
 
 /* Handle rights (bitmask, passed to kosm_duplicate_handle) */
 
@@ -193,6 +194,177 @@ extern status_t			_kosm_get_ray_info(kosm_ray_id id,
 
 #define kosm_get_ray_info(id, info) \
 	_kosm_get_ray_info((id), (info), sizeof(*(info)))
+
+
+/* kosm_dot -- independent memory region */
+/*
+ * kosm_dot is a fully independent VM primitive, parallel to Haiku area.
+ * It owns its own VMCache, manages its own page fault path, and
+ * reserves address ranges in VMAddressSpace independently of VMArea.
+ *
+ * Access is through per-process handles (kosm_dot_id is a handle, not
+ * a global ID). Handles are transferred between processes via kosm_ray.
+ * Closing a handle unmaps that process's mapping; the dot lives until
+ * the last handle is closed.
+ */
+
+typedef int32 kosm_dot_id;
+
+/* Creation flags */
+
+#define KOSM_DOT_LAZY				0x0000
+#define KOSM_DOT_WIRED				0x0001
+#define KOSM_DOT_CONTIGUOUS			0x0002
+#define KOSM_DOT_DEVICE				0x0004
+
+#define KOSM_DOT_PURGEABLE			0x0100
+#define KOSM_DOT_NOCLEAR			0x0200
+#define KOSM_DOT_GUARD				0x0400
+#define KOSM_DOT_STACK				0x0800
+#define KOSM_DOT_RECLAIMABLE		0x1000
+#define KOSM_DOT_FILE				0x2000
+
+/* Protection bits (own namespace, independent of Haiku) */
+
+#define KOSM_PROT_NONE				0x00
+#define KOSM_PROT_READ				0x01
+#define KOSM_PROT_WRITE				0x02
+#define KOSM_PROT_EXEC				0x04
+
+/* Cache policy hints */
+
+#define KOSM_CACHE_DEFAULT			0
+#define KOSM_CACHE_WRITECOMBINE		1
+#define KOSM_CACHE_UNCACHED			2
+#define KOSM_CACHE_WRITETHROUGH		3
+#define KOSM_CACHE_DEVICE			4
+
+/* Purgeable states */
+
+#define KOSM_PURGE_NONVOLATILE		0
+#define KOSM_PURGE_VOLATILE			1
+#define KOSM_PURGE_EMPTY			2
+
+/* Memory tags for per-subsystem accounting */
+
+#define KOSM_TAG_NONE				0
+#define KOSM_TAG_GRAPHICS			1
+#define KOSM_TAG_UI					2
+#define KOSM_TAG_MEDIA				3
+#define KOSM_TAG_NETWORK			4
+#define KOSM_TAG_APP				5
+#define KOSM_TAG_HEAP				6
+#define KOSM_TAG_STACK				7
+#define KOSM_TAG_USER_BASE			0x1000
+
+/* Error codes */
+
+enum {
+	KOSM_DOT_WAS_PURGED				= B_ERRORS_END + 0x4000,
+	KOSM_DOT_NOT_PURGEABLE,
+	KOSM_DOT_BAD_CACHE_POLICY,
+	KOSM_DOT_ALREADY_MAPPED,
+	KOSM_DOT_NOT_MAPPED,
+	KOSM_DOT_NOT_WIRED,
+	KOSM_DOT_WOULD_FAULT
+};
+
+/* kosm_dot info */
+
+typedef struct {
+	kosm_dot_id		kosm_dot;
+	team_id			team;
+	char			name[B_OS_NAME_LENGTH];
+	void*			address;
+	size_t			size;
+	uint32			protection;
+	uint32			flags;
+	uint8			cache_policy;
+	uint8			purgeable_state;
+	uint16			_reserved0;
+	uint32			tag;
+	phys_addr_t		phys_base;
+	size_t			resident_size;
+	size_t			wired_size;
+} kosm_dot_info;
+
+/*
+ * All kosm_dot functions take per-process handles, not global IDs.
+ * Handles are obtained via kosm_create_dot() or received via kosm_ray.
+ * Permissions are controlled by handle rights (KOSM_RIGHT_*).
+ *
+ * For device mappings: physicalAddress = physical base of the range.
+ * For anonymous memory: physicalAddress = 0.
+ */
+extern kosm_dot_id		kosm_create_dot(const char* name,
+							void** address, uint32 addressSpec,
+							size_t size, uint32 protection,
+							uint32 flags, uint32 tag,
+							phys_addr_t physicalAddress);
+
+extern status_t			kosm_delete_dot(kosm_dot_id handle);
+
+/* Map into current process (handle obtained via ray transfer) */
+
+extern status_t			kosm_map_dot(kosm_dot_id handle,
+							void** address, uint32 addressSpec,
+							uint32 protection);
+
+extern status_t			kosm_unmap_dot(kosm_dot_id handle);
+
+/* Protection & cache policy (requires KOSM_RIGHT_MANAGE) */
+
+extern status_t			kosm_protect_dot(kosm_dot_id handle,
+							uint32 newProtection);
+
+extern status_t			kosm_dot_set_cache_policy(kosm_dot_id handle,
+							uint8 cachePolicy);
+
+/* Purgeable memory (requires KOSM_RIGHT_MANAGE) */
+
+extern status_t			kosm_dot_mark_volatile(kosm_dot_id handle,
+							uint8* oldState);
+
+extern status_t			kosm_dot_mark_nonvolatile(kosm_dot_id handle,
+							uint8* oldState);
+
+/* Physical access / DMA (requires KOSM_RIGHT_WRITE) */
+
+extern status_t			kosm_dot_wire(kosm_dot_id handle,
+							size_t offset, size_t size);
+
+extern status_t			kosm_dot_unwire(kosm_dot_id handle,
+							size_t offset, size_t size);
+
+extern status_t			kosm_dot_get_phys(kosm_dot_id handle,
+							size_t offset,
+							phys_addr_t* physicalAddress);
+
+/* File-backed dots (KOSM_DOT_FILE) */
+
+extern kosm_dot_id		kosm_create_dot_file(int fd, off_t fileOffset,
+							const char* name,
+							void** address, uint32 addressSpec,
+							size_t size, uint32 protection,
+							uint32 flags, uint32 tag);
+
+extern status_t			kosm_dot_sync(kosm_dot_id handle,
+							size_t offset, size_t size);
+
+/* system private, use macros instead */
+
+extern status_t			_kosm_get_dot_info(kosm_dot_id handle,
+							kosm_dot_info* info, size_t size);
+
+extern status_t			_kosm_get_next_dot_info(team_id team,
+							int32* cookie,
+							kosm_dot_info* info, size_t size);
+
+#define kosm_get_dot_info(handle, info) \
+	_kosm_get_dot_info((handle), (info), sizeof(*(info)))
+
+#define kosm_get_next_dot_info(team, cookie, info) \
+	_kosm_get_next_dot_info((team), (cookie), (info), sizeof(*(info)))
 
 
 #ifdef __cplusplus

@@ -25,6 +25,8 @@ KernelMergeObject kernel_vm.o :
 	VMTranslationMap.cpp
 	VMUserAddressSpace.cpp
 	VMUserArea.cpp
+	kosm_dot.cpp
+	KosmDotPurgeableCache.cpp
 
 	: $(TARGET_KERNEL_PIC_CCFLAGS)
 ;

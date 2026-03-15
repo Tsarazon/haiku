@@ -147,6 +147,44 @@ extern status_t		_kern_kosm_ray_set_bootstrap(team_id team,
 extern status_t		_kern_kosm_get_ray_info(kosm_ray_id id,
 						kosm_ray_info* info, size_t size);
 
+/* kosm dot functions (all IDs are per-process handles) */
+extern kosm_dot_id	_kern_kosm_create_dot(const char* name,
+						void** address, uint32 addressSpec,
+						size_t size, uint32 protection,
+						uint32 flags, uint32 tag,
+						phys_addr_t physicalAddress);
+extern status_t		_kern_kosm_delete_dot(kosm_dot_id handle);
+extern status_t		_kern_kosm_map_dot(kosm_dot_id handle,
+						void** address, uint32 addressSpec,
+						uint32 protection);
+extern status_t		_kern_kosm_unmap_dot(kosm_dot_id handle);
+extern status_t		_kern_kosm_protect_dot(kosm_dot_id handle,
+						uint32 newProtection);
+extern status_t		_kern_kosm_dot_set_cache_policy(kosm_dot_id handle,
+						uint8 cachePolicy);
+extern status_t		_kern_kosm_dot_mark_volatile(kosm_dot_id handle,
+						uint8* oldState);
+extern status_t		_kern_kosm_dot_mark_nonvolatile(kosm_dot_id handle,
+						uint8* oldState);
+extern status_t		_kern_kosm_dot_wire(kosm_dot_id handle,
+						size_t offset, size_t size);
+extern status_t		_kern_kosm_dot_unwire(kosm_dot_id handle,
+						size_t offset, size_t size);
+extern status_t		_kern_kosm_dot_get_phys(kosm_dot_id handle,
+						size_t offset, phys_addr_t* physicalAddress);
+extern status_t		_kern_kosm_get_dot_info(kosm_dot_id handle,
+						kosm_dot_info* info, size_t size);
+extern status_t		_kern_kosm_get_next_dot_info(team_id team,
+						int32* cookie, kosm_dot_info* info,
+						size_t size);
+extern kosm_dot_id	_kern_kosm_create_dot_file(int fd, off_t fileOffset,
+						const char* name,
+						void** address, uint32 addressSpec,
+						size_t size, uint32 protection,
+						uint32 flags, uint32 tag);
+extern status_t		_kern_kosm_dot_sync(kosm_dot_id handle,
+						size_t offset, size_t size);
+
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);
 extern status_t		_kern_delete_sem(sem_id id);

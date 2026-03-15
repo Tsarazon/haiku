@@ -37,6 +37,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			kosm_handle.c
 			kosm_mutex.c
 			kosm_ray.c
+			kosm_dot.c
 			stack_protector.cpp
 			system_info.cpp
 			system_revision.c
