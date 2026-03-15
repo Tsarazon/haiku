@@ -59,6 +59,7 @@ off_t			kosm_mutex_team_link_offset(void);
 
 /* Internal functions operating on slot IDs (not handles).
    Used after handle resolution or from kernel code. */
+status_t		kosm_delete_mutex_internal(kosm_mutex_id internalId);
 status_t		kosm_try_acquire_mutex_internal(kosm_mutex_id internalId,
 					uint32 flags);
 status_t		kosm_acquire_mutex_internal(kosm_mutex_id internalId,

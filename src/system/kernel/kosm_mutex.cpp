@@ -525,8 +525,8 @@ kosm_mutex_init(kernel_args* args)
 }
 
 
-static status_t
-delete_mutex_internal(kosm_mutex_id id)
+status_t
+kosm_delete_mutex_internal(kosm_mutex_id id)
 {
 	if (!sMutexesActive)
 		return KOSM_MUTEX_NO_MORE;
@@ -654,7 +654,7 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		KOSM_HANDLE_MUTEX, KOSM_RIGHT_MUTEX_DEFAULT);
 	if (handle < 0) {
 		// Failed to insert handle. Delete the mutex we just created.
-		delete_mutex_internal(id);
+		kosm_delete_mutex_internal(id);
 		return (kosm_mutex_id)handle;
 	}
 
@@ -834,7 +834,7 @@ kosm_create_mutex(const char* name, uint32 flags)
 status_t
 kosm_delete_mutex(kosm_mutex_id id)
 {
-	return delete_mutex_internal(id);
+	return kosm_delete_mutex_internal(id);
 }
 
 
@@ -1311,7 +1311,7 @@ _user_kosm_delete_mutex(kosm_mutex_id handle)
 	if (table != NULL)
 		table->Remove(handle);
 
-	return delete_mutex_internal(internalId);
+	return kosm_delete_mutex_internal(internalId);
 }
 
 

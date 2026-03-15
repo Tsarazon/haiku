@@ -17,6 +17,8 @@
 
 #include <heap.h>
 #include <kernel.h>
+#include <kosm_mutex.h>
+#include <kosm_ray.h>
 #include <team.h>
 #include <thread.h>
 #include <vm/vm.h>
@@ -358,6 +360,23 @@ KosmHandleTable::GetInfo(kosm_handle_t handle, uint16* outType,
 }
 
 
+kosm_handle_t
+KosmHandleTable::FindHandleForObject(KernelReferenceable* object,
+	uint16 expectedType)
+{
+	MutexLocker locker(fLock);
+
+	for (uint32 i = 1; i < fCapacity; i++) {
+		KosmHandleEntry* entry = &fEntries[i];
+		if (entry->type != expectedType)
+			continue;
+		if (entry->object == object)
+			return _MakeHandle(i, entry->generation);
+	}
+	return KOSM_HANDLE_INVALID;
+}
+
+
 status_t
 KosmHandleTable::Remove(kosm_handle_t handle,
 	KernelReferenceable** outObject, uint16* outType)
@@ -600,8 +619,29 @@ _user_kosm_close_handle(kosm_handle_t handle)
 
 	switch (type) {
 		case KOSM_HANDLE_RAY:
+		{
+			KernelReferenceable* object;
+			status = table->Remove(handle, &object);
+			if (status != B_OK)
+				return status;
+			// Extract internal ID before releasing our reference,
+			// then close.  Matches _user_kosm_close_ray ordering.
+			kosm_ray_id internalId = kosm_ray_object_id(object);
+			object->ReleaseReference();
+			return kosm_close_ray_internal(internalId);
+		}
+
 		case KOSM_HANDLE_MUTEX:
-			return table->Remove(handle);
+		{
+			KernelReferenceable* object;
+			status = table->Remove(handle, &object);
+			if (status != B_OK)
+				return status;
+			KosmMutexObject* mobj = static_cast<KosmMutexObject*>(object);
+			kosm_mutex_id internalId = mobj->internal_id;
+			object->ReleaseReference();
+			return kosm_delete_mutex_internal(internalId);
+		}
 
 		case KOSM_HANDLE_AREA:
 		case KOSM_HANDLE_SEM:

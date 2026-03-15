@@ -272,6 +272,19 @@ release_msg_handles(ray_message* msg)
 }
 
 
+// Space accounting (needed by free_ray_message, used in ~RayEndpoint)
+static int32 sTotalSpaceUsed;
+
+
+static void
+free_ray_message(ray_message* msg)
+{
+	const size_t size = sizeof(ray_message) + msg->data_size;
+	free(msg);
+	atomic_add(&sTotalSpaceUsed, -size);
+}
+
+
 // ---- Endpoint ----
 
 
@@ -330,7 +343,7 @@ struct RayEndpoint : public KernelReferenceable {
 	{
 		while (ray_message* msg = messages.RemoveHead()) {
 			release_msg_handles(msg);
-			free(msg);
+			free_ray_message(msg);
 		}
 
 		mutex_destroy(&lock);
@@ -412,8 +425,6 @@ static RayHashTable sRays;
 static kosm_ray_id sNextRayID = 1;
 static bool sRaysActive = false;
 static rw_lock sRaysLock = RW_LOCK_INITIALIZER("kosm rays");
-
-static int32 sTotalSpaceUsed;
 
 static RayNotificationService sNotificationService;
 
@@ -572,15 +583,6 @@ allocate_ray_message(size_t dataSize, uint32 handleCount)
 	msg->data_size = dataSize;
 	msg->handle_count = handleCount;
 	return msg;
-}
-
-
-static void
-free_ray_message(ray_message* msg)
-{
-	const size_t size = sizeof(ray_message) + msg->data_size;
-	free(msg);
-	atomic_add(&sTotalSpaceUsed, -size);
 }
 
 
@@ -1232,6 +1234,14 @@ kosm_close_ray_internal(kosm_ray_id id)
 }
 
 
+kosm_ray_id
+kosm_ray_object_id(KernelReferenceable* object)
+{
+	RayEndpoint* ep = static_cast<RayEndpoint*>(object);
+	return ep->id;
+}
+
+
 /*!	Clean up all ray endpoints when a team exits.
 	Called from team cleanup path. The handle table destructor releases
 	handle references, but we also need to close the ray endpoints
@@ -1804,15 +1814,24 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 	}
 
 	if (dataSize != NULL) {
-		if (userCopy)
-			user_memcpy(dataSize, &msg->data_size, sizeof(size_t));
-		else
+		if (userCopy) {
+			if (user_memcpy(dataSize, &msg->data_size,
+				sizeof(size_t)) != B_OK) {
+				revert_importance_donation(originalPriority);
+				return B_BAD_ADDRESS;
+			}
+		} else {
 			*dataSize = msg->data_size;
+		}
 	}
 
 	// Install handles into receiver's handle table.
 	// This converts resolved objects into per-process handle values.
-	size_t installCount = std::min(maxHandles, (size_t)msg->handle_count);
+	// Peek mode does NOT consume handles (Zircon/Mach semantics):
+	// the user sees handleCount but must do a real read to get them.
+	size_t originalHandleCount = (size_t)msg->handle_count;
+	size_t installCount = peekOnly
+		? 0 : std::min(maxHandles, originalHandleCount);
 	kosm_handle_t newHandles[KOSM_RAY_MAX_HANDLES];
 
 	if (installCount > 0) {
@@ -1830,76 +1849,74 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 			return status;
 		}
 
-		// Copy new handle values to user
-		if (handles != NULL) {
-			if (userCopy) {
-				status = user_memcpy(handles, newHandles,
-					installCount * sizeof(kosm_handle_t));
-				if (status != B_OK) {
-					revert_importance_donation(originalPriority);
-					return status;
-				}
-			} else {
-				memcpy(handles, newHandles,
-					installCount * sizeof(kosm_handle_t));
-			}
-		}
+		// Mark handles as consumed so a failed user_memcpy below
+		// cannot cause double-install on a subsequent read attempt.
+		msg->handle_count = 0;
 	}
 
-	if (handleCount != NULL) {
-		size_t count = (size_t)msg->handle_count;
-		if (userCopy)
-			user_memcpy(handleCount, &count, sizeof(size_t));
-		else
-			*handleCount = count;
-	}
-
-	T(Read(id, msg->data_size, msg->handle_count,
+	T(Read(id, msg->data_size, originalHandleCount,
 		msg->sender_priority, B_OK));
 
+	// Point of no return for non-peek: dequeue the message before
+	// user_memcpy of handle values.  If user_memcpy fails after this,
+	// handles are in the receiver's table but the user won't know
+	// their values (acceptable: userspace gave a bad pointer).
+	BReference<RayEndpoint> peerNotify;
 	if (!peekOnly) {
 		ref->messages.RemoveHead();
 		ref->read_count--;
 		ref->total_count++;
 
-		// Grab peer reference while we hold our lock.
-		// We need to notify the peer's write_condition, but we can't
-		// access peer's select_infos without peer's lock, and we can't
-		// hold both locks simultaneously (deadlock risk).
-		BReference<RayEndpoint> peerNotify;
 		if (ref->peer != NULL)
 			peerNotify.SetTo(ref->peer);
+	}
 
-		locker.Unlock();
+	locker.Unlock();
+
+	// Copy handle values to user (after dequeue — no UAF on retry)
+	status_t result = B_OK;
+
+	if (installCount > 0 && handles != NULL) {
+		if (userCopy) {
+			if (user_memcpy(handles, newHandles,
+				installCount * sizeof(kosm_handle_t)) != B_OK) {
+				result = B_BAD_ADDRESS;
+			}
+		} else {
+			memcpy(handles, newHandles,
+				installCount * sizeof(kosm_handle_t));
+		}
+	}
+
+	if (handleCount != NULL && result == B_OK) {
+		if (userCopy) {
+			if (user_memcpy(handleCount, &originalHandleCount,
+				sizeof(size_t)) != B_OK) {
+				result = B_BAD_ADDRESS;
+			}
+		} else {
+			*handleCount = originalHandleCount;
+		}
+	}
+
+	if (!peekOnly) {
 		free_ray_message(msg);
 
 		// Notify the writing endpoint (our peer) that a slot freed up.
-		// The writer waits on its own endpoint's write_condition, which
-		// is the peer from the reader's perspective.
 		if (peerNotify != NULL) {
-			// ConditionVariable::NotifyOne is thread-safe (internal
-			// spinlock), no endpoint lock needed.
 			peerNotify->write_condition.NotifyOne();
 
-			// Select event notification traverses the select_infos
-			// linked list, which requires the endpoint's lock.
 			MutexLocker peerLocker(peerNotify->lock);
 			if (peerNotify->state == RayEndpoint::kActive)
 				notify_ray_select_events(peerNotify.Get(), B_EVENT_WRITE);
 		}
-
-		// Revert importance donation now that the message has been
-		// consumed and copied out. The boost covered the critical
-		// section (dequeue + memcpy) to ensure the reader runs at
-		// sender priority while handling the message data.
-		revert_importance_donation(originalPriority);
 	} else {
-		// Peek: notify next reader, revert boost (no message consumed)
+		// Peek: notify next reader (no message consumed)
 		ref->read_condition.NotifyOne();
-		revert_importance_donation(originalPriority);
 	}
 
-	return B_OK;
+	revert_importance_donation(originalPriority);
+	return result;
 }
 
 
@@ -2383,6 +2400,21 @@ _user_kosm_get_ray_info(kosm_ray_id handle, kosm_ray_info* userInfo,
 	fill_ray_info(ref.Get(), &info, size);
 	// Store the handle value (not internal id) in the info struct
 	info.ray = handle;
+
+	// Resolve peer's internal ID to a handle in our table.
+	// The peer may not have a handle in our table (e.g., after transfer
+	// to another process), in which case we return KOSM_HANDLE_INVALID.
+	if (ref->peer != NULL) {
+		KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+		if (table != NULL) {
+			info.peer = table->FindHandleForObject(ref->peer,
+				KOSM_HANDLE_RAY);
+		} else {
+			info.peer = KOSM_HANDLE_INVALID;
+		}
+	} else {
+		info.peer = KOSM_HANDLE_INVALID;
+	}
 
 	locker.Unlock();
 

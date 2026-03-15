@@ -61,7 +61,9 @@ using BKernel::Team;
 
 #define KOSM_RIGHT_RAY_DEFAULT		KOSM_RIGHT_ALL
 #define KOSM_RIGHT_MUTEX_DEFAULT	(KOSM_RIGHT_READ | KOSM_RIGHT_WRITE \
-									| KOSM_RIGHT_TRANSFER | KOSM_RIGHT_MANAGE)
+									| KOSM_RIGHT_TRANSFER \
+									| KOSM_RIGHT_DUPLICATE \
+									| KOSM_RIGHT_MANAGE)
 
 
 /* Handle table limits */
@@ -150,6 +152,13 @@ public:
 	status_t				Transfer(kosm_handle_t handle,
 								KosmHandleTable* target,
 								kosm_handle_t* outHandle);
+
+	// Reverse lookup: find handle for a given object pointer.
+	// O(n) scan — use only in non-hot paths (e.g., get_ray_info).
+	// Returns KOSM_HANDLE_INVALID if the object is not in this table.
+	kosm_handle_t			FindHandleForObject(
+								KernelReferenceable* object,
+								uint16 expectedType);
 
 	uint32					Count() const { return fCount; }
 	mutex*					Lock() { return &fLock; }

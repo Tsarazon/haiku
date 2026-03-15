@@ -42,6 +42,13 @@ status_t		kosm_ray_set_bootstrap(team_id team, kosm_ray_id endpoint);
 int32			kosm_ray_max(void);
 int32			kosm_ray_used(void);
 
+/* Internal: close endpoint by kernel ID (used by close_handle) */
+status_t		kosm_close_ray_internal(kosm_ray_id id);
+
+/* Extract the internal ray ID from a KernelReferenceable* obtained
+   from the handle table.  Does not modify refcounts. */
+kosm_ray_id		kosm_ray_object_id(KernelReferenceable* object);
+
 /* Select integration */
 struct select_info;
 status_t		kosm_select_ray(int32 id, struct select_info* info,
