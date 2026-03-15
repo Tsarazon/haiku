@@ -40,8 +40,9 @@ get_tupel(uint32 id)
 void
 dump_block_run(const char *prefix, const block_run &run, const char *postfix)
 {
-	Print("%s(%" B_PRId32 ", %d, %d)%s\n", prefix, run.allocation_group,
-		run.start, run.length, postfix);
+	Print("%s(%" B_PRId32 ", %d, %d)%s\n", prefix ? prefix : "",
+		run.allocation_group, run.start, run.length,
+		postfix ? postfix : "");
 }
 
 

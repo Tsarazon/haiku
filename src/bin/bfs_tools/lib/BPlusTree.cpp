@@ -186,7 +186,7 @@ status_t BPlusTree::SetTo(BPositionIO *stream,bool allowDuplicates)
 			| BFS_S_DOUBLE_INDEX);
 	
 		if (header.data_type > BPLUSTREE_DOUBLE_TYPE
-			|| (dataStream->Mode() & BFS_S_INDEX_DIR) && toMode[header.data_type] != mode
+			|| ((dataStream->Mode() & BFS_S_INDEX_DIR) && toMode[header.data_type] != mode)
 			|| !dataStream->IsDirectory())
 			return fStatus = B_BAD_TYPE;
 
@@ -265,7 +265,7 @@ BPlusTree::Validate(bool verbose)
 
 		bplustree_node *node;
 		if ((node = fCache.Get(info.offset)) == NULL
-			|| !info.free && !CheckNode(node)) {
+			|| (!info.free && !CheckNode(node))) {
 			if (verbose) {
 				fprintf(stderr,"  B+Tree: Could not get data at position %"
 					B_PRIdOFF " (referenced by node at %" B_PRIdOFF ")\n",
@@ -581,7 +581,7 @@ status_t BPlusTree::FindKey(bplustree_node *node,uint8 *key,uint16 keyLength,uin
 	{
 		uint16 i = (first + last) >> 1;
 
-		uint16 searchLength;
+		uint16 searchLength = 0;
 		uint8 *searchKey = node->KeyAt(i,&searchLength);
 		
 		int32 cmp = CompareKeys(key,keyLength,searchKey,searchLength);
@@ -1096,7 +1096,7 @@ bplustree_node *BPlusTree::Node(off_t nodeOffset,bool check)
 	// the super node is always in memory, and shouldn't
 	// never be taken out of the cache
 	if (nodeOffset > fHeader->maximum_size /*- fNodeSize*/
-		|| nodeOffset <= 0 && nodeOffset != BPLUSTREE_NULL
+		|| (nodeOffset <= 0 && nodeOffset != BPLUSTREE_NULL)
 		|| (nodeOffset % fNodeSize) != 0)
 		return NULL;
 

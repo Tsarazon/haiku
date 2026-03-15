@@ -360,7 +360,7 @@ BTree::Path::Move(int level, int step)
 	fSlots[level] += step;
 	if (fSlots[level] < 0)
 		return -1;
-	if (fSlots[level] >= fNodes[level]->ItemCount())
+	if ((uint32)fSlots[level] >= fNodes[level]->ItemCount())
 		return 1;
 	return 0;
 }
@@ -371,7 +371,7 @@ BTree::Path::GetEntry(int slot, btrfs_key* _key, void** _value, uint32* _size,
 	uint32* _offset)
 {
 	BTree::Node* leaf = fNodes[0];
-	if (slot < 0 || slot >= leaf->ItemCount())
+	if (slot < 0 || (uint32)slot >= leaf->ItemCount())
 		return B_ENTRY_NOT_FOUND;
 
 	if (_key != NULL)
@@ -706,7 +706,7 @@ BTree::InsertEntries(Transaction& transaction, Path* path,
 	if (slot < B_OK)
 		return slot;
 
-	uint32 upperLimit;
+	uint32 upperLimit = 0;
 	if (slot > 0) {
 		path->GetEntry(slot - 1, NULL, NULL, NULL, &upperLimit);
 	} else
@@ -739,7 +739,7 @@ BTree::RemoveEntries(Transaction& transaction, Path* path,
 	int slot = status;
 	int length = -sizeof(btrfs_entry) * num;
 	for (int i = 0; i < num; i++) {
-		uint32 itemSize;
+		uint32 itemSize = 0;
 		path->GetEntry(slot + i, NULL, &_data[i], &itemSize);
 		length -= itemSize;
 	}
@@ -806,7 +806,7 @@ BTree::NextLeaf(Path* path) const
 	// iterate to the root until satisfy the condition
 	while (true) {
 		node = path->GetNode(level, &slot);
-		if (node == NULL || slot < node->ItemCount() - 1)
+		if (node == NULL || slot < (int)node->ItemCount() - 1)
 			break;
 		level++;
 	}

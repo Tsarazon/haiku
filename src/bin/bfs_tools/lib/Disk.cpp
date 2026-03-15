@@ -528,10 +528,10 @@ Disk::DetermineBlockSize()
 		}
 
 		if (inode->magic1 != INODE_MAGIC1
-			|| inode->inode_size != 1024
+			|| (inode->inode_size != 1024
 			&& inode->inode_size != 2048
 			&& inode->inode_size != 4096
-			&& inode->inode_size != 8192)
+			&& inode->inode_size != 8192))
 			continue;
 
 		inodesFound++;

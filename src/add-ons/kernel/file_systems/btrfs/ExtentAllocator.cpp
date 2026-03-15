@@ -60,6 +60,7 @@ CachedExtent::Info() const
 		extentType = "free data extent";
 	else if (IsAllocated() == true && IsData() == true)
 		extentType = "allocated data extent";
+	(void)extentType;
 
 	TRACE("%s at %" B_PRIu64 " length %" B_PRIu64 " refCount %i\n",
 		extentType, offset, length, refCount);

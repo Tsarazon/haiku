@@ -204,7 +204,7 @@ Hashtable::MakeEmpty(int8 keyMode,int8 valueMode)
 			switch (keyMode) {
 				case HASH_EMPTY_DELETE:
 					// TODO: destructors are not called!
-					delete (void*)entry->key;
+					::operator delete(const_cast<void*>(entry->key));
 					break;
 				case HASH_EMPTY_FREE:
 					free((void*)entry->key);
@@ -213,7 +213,7 @@ Hashtable::MakeEmpty(int8 keyMode,int8 valueMode)
 			switch (valueMode) {
 				case HASH_EMPTY_DELETE:
 					// TODO: destructors are not called!
-					delete entry->value;
+					::operator delete(entry->value);
 					break;
 				case HASH_EMPTY_FREE:
 					free(entry->value);
