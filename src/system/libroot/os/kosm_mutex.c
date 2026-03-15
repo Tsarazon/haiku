@@ -16,9 +16,9 @@ kosm_create_mutex(const char *name, uint32 flags)
 
 
 status_t
-kosm_delete_mutex(kosm_mutex_id id)
+kosm_delete_mutex(kosm_mutex_id handle)
 {
-	return _kern_kosm_delete_mutex(id);
+	return _kern_kosm_delete_mutex(handle);
 }
 
 
@@ -30,44 +30,44 @@ kosm_find_mutex(const char *name)
 
 
 status_t
-kosm_acquire_mutex(kosm_mutex_id id)
+kosm_acquire_mutex(kosm_mutex_id handle)
 {
-	return _kern_kosm_acquire_mutex(id);
+	return _kern_kosm_acquire_mutex(handle);
 }
 
 
 status_t
-kosm_try_acquire_mutex(kosm_mutex_id id)
+kosm_try_acquire_mutex(kosm_mutex_id handle)
 {
-	return _kern_kosm_try_acquire_mutex(id);
+	return _kern_kosm_try_acquire_mutex(handle);
 }
 
 
 status_t
-kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
+kosm_acquire_mutex_etc(kosm_mutex_id handle, uint32 flags, bigtime_t timeout)
 {
-	return _kern_kosm_acquire_mutex_etc(id, flags, timeout);
+	return _kern_kosm_acquire_mutex_etc(handle, flags, timeout);
 }
 
 
 status_t
-kosm_release_mutex(kosm_mutex_id id)
+kosm_release_mutex(kosm_mutex_id handle)
 {
-	return _kern_kosm_release_mutex(id);
+	return _kern_kosm_release_mutex(handle);
 }
 
 
 status_t
-kosm_mark_mutex_consistent(kosm_mutex_id id)
+kosm_mark_mutex_consistent(kosm_mutex_id handle)
 {
-	return _kern_kosm_mark_mutex_consistent(id);
+	return _kern_kosm_mark_mutex_consistent(handle);
 }
 
 
 status_t
-_kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info *info, size_t size)
+_kosm_get_mutex_info(kosm_mutex_id handle, kosm_mutex_info *info, size_t size)
 {
-	return _kern_kosm_get_mutex_info(id, info, size);
+	return _kern_kosm_get_mutex_info(handle, info, size);
 }
 
 

@@ -33,6 +33,7 @@
 #include <thread.h>
 
 #include <kosm_mutex.h>
+#include <kosm_handle.h>
 #include <util/AutoLock.h>
 #include <util/DoublyLinkedList.h>
 #include <vm/vm_page.h>
@@ -98,6 +99,10 @@ struct kosm_mutex_entry {
 
 	// Name hash chain (protected by sMutexListSpinlock).
 	struct kosm_mutex_entry*	hash_next;
+
+	// Handle table integration. Non-NULL when the slot is active.
+	// Owns one reference ("slot ref") while active.
+	KosmMutexObject*			handle_object;
 };
 
 
@@ -324,37 +329,20 @@ uninit_mutex_locked(struct kosm_mutex_entry& entry, char** _name,
 	entry.u.used.name = NULL;
 	entry.u.used.holder_ptr = NULL;
 
+	// Release the slot's reference on the handle object.
+	// Handle table entries hold their own references independently.
+	KosmMutexObject* obj = entry.handle_object;
+	entry.handle_object = NULL;
+
 	locker.Unlock();
+
+	if (obj != NULL)
+		obj->ReleaseReference();
 
 	SpinLocker listLocker(sMutexListSpinlock);
 	name_hash_remove(&entry);
 	free_mutex_slot(id % sMaxMutexes, id + sMaxMutexes);
 	atomic_add(&sUsedMutexes, -1);
-}
-
-
-/*!	Check whether the calling userland thread belongs to the mutex's
-	owner team or to the team that currently holds the mutex.
-	Returns B_NOT_ALLOWED on mismatch.
-	Must be called with entry->lock held.
-*/
-static inline status_t
-check_team_permission(struct kosm_mutex_entry& entry)
-{
-	team_id callerTeam = team_get_current_team_id();
-	if (entry.u.used.owner_team != callerTeam) {
-		// Also allow the holder's team (for KOSM_MUTEX_SHARED across
-		// processes — the holder might be in a different team).
-		if (entry.u.used.holder_ptr != NULL
-			&& entry.u.used.holder_ptr->team->id == callerTeam) {
-			return B_OK;
-		}
-		// Shared mutexes are accessible from any team
-		if ((entry.u.used.creation_flags & KOSM_MUTEX_SHARED) != 0)
-			return B_OK;
-		return B_NOT_ALLOWED;
-	}
-	return B_OK;
 }
 
 
@@ -514,6 +502,7 @@ kosm_mutex_init(kernel_args* args)
 		sMutexes[i].next_held = NULL;
 		sMutexes[i].prev_held_ptr = NULL;
 		sMutexes[i].hash_next = NULL;
+		sMutexes[i].handle_object = NULL;
 		free_mutex_slot(i, i);
 	}
 
@@ -536,6 +525,44 @@ kosm_mutex_init(kernel_args* args)
 }
 
 
+static status_t
+delete_mutex_internal(kosm_mutex_id id)
+{
+	if (!sMutexesActive)
+		return KOSM_MUTEX_NO_MORE;
+	if (id < 0)
+		return B_BAD_VALUE;
+
+	int32 slot = id % sMaxMutexes;
+
+	InterruptsLocker interruptsLocker;
+	SpinLocker listLocker(sMutexListSpinlock);
+	SpinLocker entryLocker(sMutexes[slot].lock);
+
+	if (sMutexes[slot].id != id)
+		return B_BAD_VALUE;
+
+	if (sMutexes[slot].u.used.owner_team >= 0) {
+		list_remove_link(&sMutexes[slot].u.used.team_link);
+		sMutexes[slot].u.used.owner_team = -1;
+	}
+
+	listLocker.Unlock();
+
+	char* name;
+	uninit_mutex_locked(sMutexes[slot], &name, entryLocker);
+
+	SpinLocker schedulerLocker(thread_get_current_thread()->scheduler_lock);
+	scheduler_reschedule_if_necessary_locked();
+	schedulerLocker.Unlock();
+
+	interruptsLocker.Unlock();
+
+	free(name);
+	return B_OK;
+}
+
+
 kosm_mutex_id
 kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 {
@@ -549,6 +576,10 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 	if (team == NULL)
 		return B_BAD_TEAM_ID;
 	BReference<Team> teamReference(team, true);
+
+	KosmHandleTable* table = team->kosm_handle_table;
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
 
 	size_t nameLength = strlen(name) + 1;
 	nameLength = min_c(nameLength, (size_t)B_OS_NAME_LENGTH);
@@ -583,6 +614,23 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		entry->hash_next = NULL;
 		id = entry->id;
 
+		// Create the refcounted handle object (slot ref).
+		KosmMutexObject* obj = new(std::nothrow) KosmMutexObject(id);
+		if (obj == NULL) {
+			// Undo slot allocation
+			entry->id = -1;
+			entry->u.used.name = NULL;
+			entryLocker.Unlock();
+
+			// Re-add to free list
+			free_mutex_slot(id % sMaxMutexes, id);
+			listLocker.Unlock();
+			free(tempName);
+			return B_NO_MEMORY;
+		}
+		entry->handle_object = obj;
+		// obj starts with refcount 1 (the "slot ref")
+
 		name_hash_insert(entry);
 		list_add_item(&team->kosm_mutex_list, &entry->u.used.team_link);
 
@@ -594,62 +642,26 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 			name, owner, id));
 	}
 
-	if (entry == NULL)
-		free(tempName);
-
-	return id;
-}
-
-
-static status_t
-delete_mutex_internal(kosm_mutex_id id, bool checkPermission)
-{
-	if (!sMutexesActive)
-		return KOSM_MUTEX_NO_MORE;
-	if (id < 0)
-		return B_BAD_VALUE;
-
-	int32 slot = id % sMaxMutexes;
-
-	InterruptsLocker interruptsLocker;
-	SpinLocker listLocker(sMutexListSpinlock);
-	SpinLocker entryLocker(sMutexes[slot].lock);
-
-	if (sMutexes[slot].id != id)
-		return B_BAD_VALUE;
-
-	if (checkPermission
-		&& sMutexes[slot].u.used.owner_team == team_get_kernel_team_id()) {
-		dprintf("thread %" B_PRId32 " tried to delete kernel kosm_mutex "
-			"%" B_PRId32 "\n", thread_get_current_thread_id(), id);
-		return B_NOT_ALLOWED;
-	}
-
-	if (checkPermission) {
-		status_t perm = check_team_permission(sMutexes[slot]);
-		if (perm != B_OK)
-			return perm;
-	}
-
-	if (sMutexes[slot].u.used.owner_team >= 0) {
-		list_remove_link(&sMutexes[slot].u.used.team_link);
-		sMutexes[slot].u.used.owner_team = -1;
-	}
-
 	listLocker.Unlock();
 
-	char* name;
-	uninit_mutex_locked(sMutexes[slot], &name, entryLocker);
+	if (entry == NULL) {
+		free(tempName);
+		return KOSM_MUTEX_NO_MORE;
+	}
 
-	SpinLocker schedulerLocker(thread_get_current_thread()->scheduler_lock);
-	scheduler_reschedule_if_necessary_locked();
-	schedulerLocker.Unlock();
+	// Insert into per-process handle table (outside spinlocks).
+	kosm_handle_t handle = table->Insert(entry->handle_object,
+		KOSM_HANDLE_MUTEX, KOSM_RIGHT_MUTEX_DEFAULT);
+	if (handle < 0) {
+		// Failed to insert handle. Delete the mutex we just created.
+		delete_mutex_internal(id);
+		return (kosm_mutex_id)handle;
+	}
 
-	interruptsLocker.Unlock();
-
-	free(name);
-	return B_OK;
+	return handle;
 }
+
+
 
 
 /*!	Called when a thread is being destroyed. Releases all mutexes held
@@ -768,6 +780,47 @@ kosm_mutex_team_link_offset(void)
 }
 
 
+//	#pragma mark - Handle resolution
+
+
+/*!	Resolve a per-process handle to an internal slot ID.
+	Validates that the KosmMutexObject still refers to a live slot.
+	Returns B_OK with the internal ID, or error.
+*/
+status_t
+kosm_mutex_resolve_handle(kosm_handle_t handle, uint32 requiredRights,
+	kosm_mutex_id* outInternalId)
+{
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	KernelReferenceable* object;
+	status_t status = table->Lookup(handle, KOSM_HANDLE_MUTEX,
+		requiredRights, &object);
+	if (status != B_OK)
+		return status;
+
+	KosmMutexObject* mutexObj = static_cast<KosmMutexObject*>(object);
+	kosm_mutex_id internalId = mutexObj->internal_id;
+	object->ReleaseReference();
+
+	// Validate the slot is still alive and matches.
+	// The slot could have been recycled (unlikely but possible).
+	int32 slot = internalId % sMaxMutexes;
+	if (slot < 0 || slot >= sMaxMutexes)
+		return B_BAD_VALUE;
+
+	// Lightweight check: slot ID matches. The caller will do a full
+	// check under the entry spinlock in the internal function.
+	if (sMutexes[slot].id != internalId)
+		return B_BAD_VALUE;
+
+	*outInternalId = internalId;
+	return B_OK;
+}
+
+
 //	#pragma mark - Public Kernel API
 
 
@@ -781,12 +834,14 @@ kosm_create_mutex(const char* name, uint32 flags)
 status_t
 kosm_delete_mutex(kosm_mutex_id id)
 {
-	return delete_mutex_internal(id, false);
+	return delete_mutex_internal(id);
 }
 
 
 /*!	Find a mutex by name using the hash table.
 	O(1) average case instead of O(n) linear scan.
+	Returns the internal slot ID. Caller must insert into their handle
+	table if they need a handle.
 */
 kosm_mutex_id
 kosm_find_mutex(const char* name)
@@ -814,15 +869,31 @@ kosm_find_mutex(const char* name)
 status_t
 kosm_acquire_mutex(kosm_mutex_id id)
 {
-	return kosm_acquire_mutex_etc(id, 0, 0);
+	return kosm_acquire_mutex_internal(id, 0, 0);
+}
+
+
+status_t
+kosm_release_mutex(kosm_mutex_id id)
+{
+	return kosm_release_mutex_internal(id);
+}
+
+
+status_t
+kosm_mark_mutex_consistent(kosm_mutex_id id)
+{
+	return kosm_mark_mutex_consistent_internal(id);
 }
 
 
 /*!	Fast-path trylock. Avoids the scheduler_lock / signal check overhead
-	of kosm_acquire_mutex_etc() when the mutex is contended.
+	of kosm_acquire_mutex_internal() when the mutex is contended.
+	Operates on internal slot ID. Access control is handled by the
+	handle table layer before calling this function.
 */
 status_t
-kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
+kosm_try_acquire_mutex_internal(kosm_mutex_id id, uint32 flags)
 {
 	int32 slot = id % sMaxMutexes;
 
@@ -838,17 +909,6 @@ kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
 		return B_BAD_VALUE;
 
 	struct kosm_mutex_entry& entry = sMutexes[slot];
-
-	if ((flags & B_CHECK_PERMISSION) != 0
-		&& entry.u.used.owner_team == team_get_kernel_team_id()) {
-		return B_NOT_ALLOWED;
-	}
-
-	if ((flags & B_CHECK_PERMISSION) != 0) {
-		status_t perm = check_team_permission(entry);
-		if (perm != B_OK)
-			return perm;
-	}
 
 	Thread* thread = thread_get_current_thread();
 	thread_id currentThread = thread->id;
@@ -884,7 +944,7 @@ kosm_try_acquire_mutex_etc(kosm_mutex_id id, uint32 flags)
 
 
 status_t
-kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
+kosm_acquire_mutex_internal(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 {
 	int32 slot = id % sMaxMutexes;
 
@@ -908,19 +968,6 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 	}
 
 	struct kosm_mutex_entry& entry = sMutexes[slot];
-
-	if ((flags & B_CHECK_PERMISSION) != 0
-		&& entry.u.used.owner_team == team_get_kernel_team_id()) {
-		dprintf("thread %" B_PRId32 " tried to acquire kernel kosm_mutex "
-			"%" B_PRId32 "\n", thread_get_current_thread_id(), id);
-		return B_NOT_ALLOWED;
-	}
-
-	if ((flags & B_CHECK_PERMISSION) != 0) {
-		status_t perm = check_team_permission(entry);
-		if (perm != B_OK)
-			return perm;
-	}
 
 	Thread* thread = thread_get_current_thread();
 	thread_id currentThread = thread->id;
@@ -1017,7 +1064,7 @@ kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags, bigtime_t timeout)
 
 
 status_t
-kosm_release_mutex(kosm_mutex_id id)
+kosm_release_mutex_internal(kosm_mutex_id id)
 {
 	int32 slot = id % sMaxMutexes;
 
@@ -1105,17 +1152,14 @@ kosm_release_mutex(kosm_mutex_id id)
 			entryLocker.Unlock();
 
 			// PI: recalculate own priority (may still hold other
-			// PI mutexes)
-			bool doReschedule = (entry.u.used.creation_flags
-				& B_DO_NOT_RESCHEDULE) == 0;
-
-			if (isPI || doReschedule) {
+			// PI mutexes). Always reschedule after ownership transfer
+			// to give the new holder a chance to run promptly.
+			{
 				Thread* self = thread_get_current_thread();
 				SpinLocker selfSchedLocker(self->scheduler_lock);
 				if (isPI)
 					pi_recalculate_locked(self);
-				if (doReschedule)
-					scheduler_reschedule_if_necessary_locked();
+				scheduler_reschedule_if_necessary_locked();
 			}
 
 			return B_OK;
@@ -1144,7 +1188,7 @@ kosm_release_mutex(kosm_mutex_id id)
 
 
 status_t
-kosm_mark_mutex_consistent(kosm_mutex_id id)
+kosm_mark_mutex_consistent_internal(kosm_mutex_id id)
 {
 	if (!sMutexesActive)
 		return KOSM_MUTEX_NO_MORE;
@@ -1229,6 +1273,11 @@ _kosm_get_next_mutex_info(team_id team, int32* _cookie,
 
 
 //	#pragma mark - Syscalls
+//
+//	All syscalls take per-process handles (opaque int32), resolve them
+//	to internal slot IDs via the handle table, then call internal
+//	functions. Access control is implicit: holding a valid handle with
+//	the required rights grants access.
 
 
 kosm_mutex_id
@@ -1249,12 +1298,27 @@ _user_kosm_create_mutex(const char* userName, uint32 flags)
 
 
 status_t
-_user_kosm_delete_mutex(kosm_mutex_id id)
+_user_kosm_delete_mutex(kosm_mutex_id handle)
 {
-	return delete_mutex_internal(id, true);
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_MANAGE,
+		&internalId);
+	if (status != B_OK)
+		return status;
+
+	// Remove the handle from the caller's table first.
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table != NULL)
+		table->Remove(handle);
+
+	return delete_mutex_internal(internalId);
 }
 
 
+/*!	Find a mutex by name. If found, inserts a handle into the caller's
+	table and returns the handle. This gives the caller capability-based
+	access to the mutex.
+*/
 kosm_mutex_id
 _user_kosm_find_mutex(const char* userName)
 {
@@ -1267,102 +1331,108 @@ _user_kosm_find_mutex(const char* userName)
 		return B_BAD_ADDRESS;
 	}
 
-	return kosm_find_mutex(name);
+	kosm_mutex_id internalId = kosm_find_mutex(name);
+	if (internalId < 0)
+		return internalId;
+
+	// Look up the slot to get the handle_object.
+	int32 slot = internalId % sMaxMutexes;
+
+	InterruptsSpinLocker entryLocker(sMutexes[slot].lock);
+	if (sMutexes[slot].id != internalId)
+		return B_BAD_VALUE;
+
+	KosmMutexObject* obj = sMutexes[slot].handle_object;
+	if (obj == NULL)
+		return B_BAD_VALUE;
+
+	entryLocker.Unlock();
+
+	// Insert a new handle into the caller's table.
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	kosm_handle_t handle = table->Insert(obj, KOSM_HANDLE_MUTEX,
+		KOSM_RIGHT_MUTEX_DEFAULT);
+	return handle;
 }
 
 
 status_t
-_user_kosm_acquire_mutex(kosm_mutex_id id)
+_user_kosm_acquire_mutex(kosm_mutex_id handle)
 {
-	status_t error = kosm_acquire_mutex_etc(id,
-		B_CAN_INTERRUPT | B_CHECK_PERMISSION, 0);
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_WRITE,
+		&internalId);
+	if (status != B_OK)
+		return status;
 
-	return syscall_restart_handle_post(error);
+	status = kosm_acquire_mutex_internal(internalId, B_CAN_INTERRUPT, 0);
+	return syscall_restart_handle_post(status);
 }
 
 
 status_t
-_user_kosm_try_acquire_mutex(kosm_mutex_id id)
+_user_kosm_try_acquire_mutex(kosm_mutex_id handle)
 {
-	return kosm_try_acquire_mutex_etc(id, B_CHECK_PERMISSION);
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_WRITE,
+		&internalId);
+	if (status != B_OK)
+		return status;
+
+	return kosm_try_acquire_mutex_internal(internalId, 0);
 }
 
 
 status_t
-_user_kosm_acquire_mutex_etc(kosm_mutex_id id, uint32 flags,
+_user_kosm_acquire_mutex_etc(kosm_mutex_id handle, uint32 flags,
 	bigtime_t timeout)
 {
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_WRITE,
+		&internalId);
+	if (status != B_OK)
+		return status;
+
 	syscall_restart_handle_timeout_pre(flags, timeout);
 
-	status_t error = kosm_acquire_mutex_etc(id,
-		flags | B_CAN_INTERRUPT | B_CHECK_PERMISSION, timeout);
+	status = kosm_acquire_mutex_internal(internalId,
+		flags | B_CAN_INTERRUPT, timeout);
 
-	return syscall_restart_handle_timeout_post(error, timeout);
+	return syscall_restart_handle_timeout_post(status, timeout);
 }
 
 
 status_t
-_user_kosm_release_mutex(kosm_mutex_id id)
+_user_kosm_release_mutex(kosm_mutex_id handle)
 {
-	if (id < 0)
-		return B_BAD_VALUE;
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_WRITE,
+		&internalId);
+	if (status != B_OK)
+		return status;
 
-	int32 slot = id % sMaxMutexes;
-
-	// Verify thread belongs to a team that should have access
-	{
-		InterruptsLocker _;
-		SpinLocker entryLocker(sMutexes[slot].lock);
-
-		if (sMutexes[slot].id != id)
-			return B_BAD_VALUE;
-
-		// The holder_thread check inside kosm_release_mutex is the
-		// primary guard.  This team check prevents a thread in a
-		// foreign process from releasing if thread IDs happen to
-		// collide after recycling.
-		struct kosm_mutex_entry& entry = sMutexes[slot];
-		if (entry.u.used.holder_thread == thread_get_current_thread_id()) {
-			status_t perm = check_team_permission(entry);
-			if (perm != B_OK)
-				return perm;
-		}
-	}
-
-	return kosm_release_mutex(id);
+	return kosm_release_mutex_internal(internalId);
 }
 
 
 status_t
-_user_kosm_mark_mutex_consistent(kosm_mutex_id id)
+_user_kosm_mark_mutex_consistent(kosm_mutex_id handle)
 {
-	if (id < 0)
-		return B_BAD_VALUE;
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_MANAGE,
+		&internalId);
+	if (status != B_OK)
+		return status;
 
-	int32 slot = id % sMaxMutexes;
-
-	// Verify team permission before forwarding
-	{
-		InterruptsLocker _;
-		SpinLocker entryLocker(sMutexes[slot].lock);
-
-		if (sMutexes[slot].id != id)
-			return B_BAD_VALUE;
-
-		struct kosm_mutex_entry& entry = sMutexes[slot];
-		if (entry.u.used.holder_thread == thread_get_current_thread_id()) {
-			status_t perm = check_team_permission(entry);
-			if (perm != B_OK)
-				return perm;
-		}
-	}
-
-	return kosm_mark_mutex_consistent(id);
+	return kosm_mark_mutex_consistent_internal(internalId);
 }
 
 
 status_t
-_user_kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info* userInfo,
+_user_kosm_get_mutex_info(kosm_mutex_id handle, kosm_mutex_info* userInfo,
 	size_t size)
 {
 	kosm_mutex_info info;
@@ -1370,7 +1440,13 @@ _user_kosm_get_mutex_info(kosm_mutex_id id, kosm_mutex_info* userInfo,
 	if (userInfo == NULL || !IS_USER_ADDRESS(userInfo))
 		return B_BAD_ADDRESS;
 
-	status_t status = _kosm_get_mutex_info(id, &info, size);
+	kosm_mutex_id internalId;
+	status_t status = kosm_mutex_resolve_handle(handle, KOSM_RIGHT_READ,
+		&internalId);
+	if (status != B_OK)
+		return status;
+
+	status = _kosm_get_mutex_info(internalId, &info, size);
 
 	if (status == B_OK && user_memcpy(userInfo, &info, size) < B_OK)
 		return B_BAD_ADDRESS;

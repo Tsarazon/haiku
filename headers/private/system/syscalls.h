@@ -94,17 +94,17 @@ extern status_t		_kern_mutex_sem_acquire(int32* sem, const char* name,
 						uint32 flags, bigtime_t timeout);
 extern status_t		_kern_mutex_sem_release(int32* sem, uint32 flags);
 
-/* kosm robust mutex functions */
+/* kosm robust mutex functions (all IDs are per-process handles) */
 extern kosm_mutex_id	_kern_kosm_create_mutex(const char* name, uint32 flags);
-extern status_t		_kern_kosm_delete_mutex(kosm_mutex_id id);
+extern status_t		_kern_kosm_delete_mutex(kosm_mutex_id handle);
 extern kosm_mutex_id	_kern_kosm_find_mutex(const char* name);
-extern status_t		_kern_kosm_acquire_mutex(kosm_mutex_id id);
-extern status_t		_kern_kosm_try_acquire_mutex(kosm_mutex_id id);
-extern status_t		_kern_kosm_acquire_mutex_etc(kosm_mutex_id id,
+extern status_t		_kern_kosm_acquire_mutex(kosm_mutex_id handle);
+extern status_t		_kern_kosm_try_acquire_mutex(kosm_mutex_id handle);
+extern status_t		_kern_kosm_acquire_mutex_etc(kosm_mutex_id handle,
 						uint32 flags, bigtime_t timeout);
-extern status_t		_kern_kosm_release_mutex(kosm_mutex_id id);
-extern status_t		_kern_kosm_mark_mutex_consistent(kosm_mutex_id id);
-extern status_t		_kern_kosm_get_mutex_info(kosm_mutex_id id,
+extern status_t		_kern_kosm_release_mutex(kosm_mutex_id handle);
+extern status_t		_kern_kosm_mark_mutex_consistent(kosm_mutex_id handle);
+extern status_t		_kern_kosm_get_mutex_info(kosm_mutex_id handle,
 						kosm_mutex_info* info, size_t size);
 extern status_t		_kern_kosm_get_next_mutex_info(team_id team,
 						int32* cookie, kosm_mutex_info* info,
