@@ -385,6 +385,11 @@ get_current_iframe(Thread* thread)
 	}
 
 
+// iframe is placed on the stack by interrupt/exception entry with proper
+// alignment. All fields are uint64 on x86_64 and uint32 on x86_32, so
+// members are naturally aligned despite the _PACKED attribute.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Waddress-of-packed-member"
 static addr_t*
 find_debug_variable(const char* variableName, bool& settable)
 {
@@ -415,6 +420,7 @@ find_debug_variable(const char* variableName, bool& settable)
 
 	return NULL;
 }
+#pragma GCC diagnostic pop
 
 
 static int

@@ -22,7 +22,6 @@ SimpleTest forkbenchTest :
 
 SubDirHdrs $(HAIKU_TOP) headers private kernel ;
 
-BinCommand atomic_bench :
-	atomic_bench.cpp
+StdBinCommands atomic_bench.cpp
 	: be kernel $(TARGET_LIBSTDC++)
 ;
