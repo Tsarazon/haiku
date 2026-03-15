@@ -12,6 +12,9 @@
 #include <time.h>
 
 
+extern "C" void _kern_debug_output(const char* message);
+
+
 // Global state
 FILE*	sTraceFile = NULL;
 int		sPassCount = 0;
@@ -23,13 +26,39 @@ int		sLineCount = 0;
 void
 trace(const char* fmt, ...)
 {
-	if (sTraceFile == NULL)
-		return;
+	char buf[512];
 	va_list ap;
 	va_start(ap, fmt);
-	vfprintf(sTraceFile, fmt, ap);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
 	va_end(ap);
-	fflush(sTraceFile);
+
+	// Write to trace file
+	if (sTraceFile != NULL) {
+		fputs(buf, sTraceFile);
+		fflush(sTraceFile);
+	}
+
+	// Write to kernel serial debug output (visible in QEMU -serial)
+	_kern_debug_output(buf);
+}
+
+
+void
+debug_trace(const char* fmt, ...)
+{
+	// Same as trace() — kept for compatibility
+	char buf[512];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
+	if (sTraceFile != NULL) {
+		fputs(buf, sTraceFile);
+		fflush(sTraceFile);
+	}
+
+	_kern_debug_output(buf);
 }
 
 
@@ -252,6 +281,14 @@ public:
 		root->AddChild(surfaceBtn);
 		buttonX += buttonW + 10 + gap;
 
+		BButton* dotBtn = new BButton(
+			BRect(buttonX, buttonY,
+				buttonX + buttonW, buttonY + buttonH),
+			"dot", "Dot",
+			new BMessage(kMsgRunDot), B_FOLLOW_LEFT | B_FOLLOW_TOP);
+		root->AddChild(dotBtn);
+		buttonX += buttonW + gap;
+
 		BButton* allBtn = new BButton(
 			BRect(buttonX, buttonY,
 				buttonX + buttonW, buttonY + buttonH),
@@ -287,6 +324,9 @@ public:
 			case kMsgRunSurface:
 				_Run(get_surface_test_suite);
 				break;
+			case kMsgRunDot:
+				_Run(get_dot_test_suite);
+				break;
 			case kMsgRunAll:
 				_RunAll();
 				break;
@@ -303,14 +343,34 @@ private:
 	{
 		reset_results();
 		close_trace();
-		open_trace("kosm_test_trace.log");
+
+		TestSuite suite = getter();
+
+		char safeName[64];
+		size_t j = 0;
+		for (size_t i = 0; suite.name[i] != '\0'
+				&& j < sizeof(safeName) - 1; i++) {
+			char c = suite.name[i];
+			if (c == ' ')
+				safeName[j++] = '_';
+			else if (c >= 'A' && c <= 'Z')
+				safeName[j++] = c - 'A' + 'a';
+			else
+				safeName[j++] = c;
+		}
+		safeName[j] = '\0';
+
+		char filename[128];
+		snprintf(filename, sizeof(filename),
+			"kosm_test_trace_%s.log", safeName);
+
+		open_trace(filename);
 
 		bigtime_t t0 = system_time();
-		TestSuite suite = getter();
 		_RunSuite(suite);
 		bigtime_t totalTime = system_time() - t0;
 
-		_LogSummary(totalTime);
+		_LogSummary(suite.name, filename, totalTime);
 		close_trace();
 		fResultView->Refresh();
 	}
@@ -319,7 +379,7 @@ private:
 	{
 		reset_results();
 		close_trace();
-		open_trace("kosm_test_trace.log");
+		open_trace("kosm_test_trace_all.log");
 
 		bigtime_t t0 = system_time();
 
@@ -327,32 +387,40 @@ private:
 			get_ray_test_suite(),
 			get_mutex_test_suite(),
 			get_surface_test_suite(),
+			get_dot_test_suite(),
 		};
 
-		for (int i = 0; i < 3; i++) {
+		for (int i = 0; i < 4; i++) {
 			log_line("");
 			_RunSuite(suites[i]);
 		}
 
 		bigtime_t totalTime = system_time() - t0;
 
-		_LogSummary(totalTime);
+		_LogSummary(NULL, "kosm_test_trace_all.log", totalTime);
 		close_trace();
 		fResultView->Refresh();
 	}
 
-	void _LogSummary(bigtime_t totalTime)
+	void _LogSummary(const char* suiteName, const char* filename,
+		bigtime_t totalTime)
 	{
 		log_line("");
-		log_line("=== Results: %d passed, %d failed (%lld us total) ===",
-			sPassCount, sFailCount, (long long)totalTime);
+		if (suiteName != NULL) {
+			log_line("=== %s: %d passed, %d failed (%lld us) ===",
+				suiteName, sPassCount, sFailCount,
+				(long long)totalTime);
+		} else {
+			log_line("=== Results: %d passed, %d failed (%lld us) ===",
+				sPassCount, sFailCount, (long long)totalTime);
+		}
 
 		trace("\n# ================================\n");
 		trace("# FINAL: %d passed, %d failed\n", sPassCount, sFailCount);
 		trace("# total time: %lld us\n", (long long)totalTime);
 		trace("# ================================\n");
 
-		log_line("Trace: ~/Desktop/kosm_test_trace.log");
+		log_line("Trace: ~/Desktop/%s", filename);
 	}
 
 	ResultView*		fResultView;

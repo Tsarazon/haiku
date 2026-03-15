@@ -44,6 +44,9 @@ void	trace(const char* fmt, ...);
 void	trace_call(const char* func, status_t result);
 void	trace_call_id(const char* func, int32 result);
 
+// Trace to both log file AND kernel serial debug output (QEMU console)
+void	debug_trace(const char* fmt, ...);
+
 // Log line to GUI display
 void	log_line(const char* fmt, ...);
 
@@ -93,6 +96,7 @@ void	run_test(const TestEntry& entry);
 TestSuite	get_ray_test_suite();
 TestSuite	get_mutex_test_suite();
 TestSuite	get_surface_test_suite();
+TestSuite	get_dot_test_suite();
 
 
 // Trace file management
@@ -105,6 +109,7 @@ enum {
 	kMsgRunRay		= 'rRAY',
 	kMsgRunMutex	= 'rMTX',
 	kMsgRunSurface	= 'rSRF',
+	kMsgRunDot		= 'rDOT',
 	kMsgRunAll		= 'rALL',
 };
 
