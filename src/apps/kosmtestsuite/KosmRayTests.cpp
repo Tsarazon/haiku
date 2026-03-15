@@ -492,8 +492,7 @@ test_max_handles()
 		char name[32];
 		snprintf(name, sizeof(name), "htest_%d", i);
 		mutexes[i] = kosm_create_mutex(name, 0);
-		handles[i].type = KOSM_HANDLE_MUTEX;
-		handles[i].id = mutexes[i];
+		handles[i] = mutexes[i];
 	}
 
 	uint8 msg = 0x42;
@@ -750,9 +749,7 @@ test_handle_ray_move()
 	kosm_ray_id bep0, bep1;
 	kosm_create_ray(&bep0, &bep1, 0);
 
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_RAY;
-	h.id = bep0;
+	kosm_handle_t h = bep0;
 
 	uint8 msg = 0x01;
 	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1, 0);
@@ -765,10 +762,13 @@ test_handle_ray_move()
 	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
-	TEST_ASSERT("handle type is RAY", recvH.type == KOSM_HANDLE_RAY);
-	TEST_ASSERT("handle id matches", recvH.id == bep0);
 
-	kosm_close_ray(bep0);
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info", kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type is RAY", hinfo.type == KOSM_HANDLE_RAY);
+
+	// bep0 was moved — use recvH to close the received endpoint
+	kosm_close_ray(recvH);
 	kosm_close_ray(bep1);
 	kosm_close_ray(ep0);
 	kosm_close_ray(ep1);
@@ -785,9 +785,7 @@ test_handle_mutex()
 	kosm_mutex_id mid = kosm_create_mutex("ray_handle_test", 0);
 	TEST_ASSERT("create mutex", mid >= 0);
 
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_MUTEX;
-	h.id = mid;
+	kosm_handle_t h = mid;
 
 	uint8 msg = 0x02;
 	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1,
@@ -801,8 +799,10 @@ test_handle_mutex()
 	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
-	TEST_ASSERT("handle type MUTEX", recvH.type == KOSM_HANDLE_MUTEX);
-	TEST_ASSERT("handle id matches", recvH.id == mid);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info", kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type MUTEX", hinfo.type == KOSM_HANDLE_MUTEX);
 
 	kosm_delete_mutex(mid);
 	kosm_close_ray(ep0);
@@ -822,9 +822,7 @@ test_handle_area_move()
 		B_PAGE_SIZE, B_NO_LOCK, B_READ_AREA | B_WRITE_AREA);
 	TEST_ASSERT("create area", aid >= 0);
 
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_AREA;
-	h.id = aid;
+	kosm_handle_t h = aid;
 
 	uint8 msg = 0x03;
 	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1,
@@ -838,11 +836,14 @@ test_handle_area_move()
 	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
-	TEST_ASSERT("handle type AREA", recvH.type == KOSM_HANDLE_AREA);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info", kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type AREA", hinfo.type == KOSM_HANDLE_AREA);
 
 	delete_area(aid);
-	if (recvH.id != aid)
-		delete_area(recvH.id);
+	// recvH is a cloned area handle — close it to clean up
+	kosm_close_handle(recvH);
 	kosm_close_ray(ep0);
 	kosm_close_ray(ep1);
 }
@@ -858,9 +859,7 @@ test_handle_sem_move()
 	sem_id sid = create_sem(1, "ray_sem_test");
 	TEST_ASSERT("create sem", sid >= 0);
 
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_SEM;
-	h.id = sid;
+	kosm_handle_t h = sid;
 
 	uint8 msg = 0x04;
 	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1,
@@ -874,8 +873,10 @@ test_handle_sem_move()
 	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
-	TEST_ASSERT("handle type SEM", recvH.type == KOSM_HANDLE_SEM);
-	TEST_ASSERT("handle id matches", recvH.id == sid);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info", kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type SEM", hinfo.type == KOSM_HANDLE_SEM);
 
 	delete_sem(sid);
 	kosm_close_ray(ep0);
@@ -887,19 +888,10 @@ static void
 test_handle_fd_not_supported()
 {
 	trace("\n--- test_handle_fd_not_supported ---\n");
-	kosm_ray_id ep0, ep1;
-	kosm_create_ray(&ep0, &ep1, 0);
-
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_FD;
-	h.id = 1;
-
-	uint8 msg = 0x05;
-	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1, 0);
-	TEST_ASSERT("FD handle not supported", s != B_OK);
-
-	kosm_close_ray(ep0);
-	kosm_close_ray(ep1);
+	// FD handles are not yet implemented (TODO in kernel).
+	// Verify that KOSM_HANDLE_FD type is defined but no API
+	// exists to create one — this is a placeholder test.
+	TEST_ASSERT("KOSM_HANDLE_FD defined", KOSM_HANDLE_FD == 0x05);
 }
 
 
@@ -910,18 +902,16 @@ test_handle_invalid()
 	kosm_ray_id ep0, ep1;
 	kosm_create_ray(&ep0, &ep1, 0);
 
-	kosm_handle_t h;
-	h.type = 0xFF;
-	h.id = 1;
-
+	// KOSM_HANDLE_INVALID (0) should fail
+	kosm_handle_t h = KOSM_HANDLE_INVALID;
 	uint8 msg = 0x06;
 	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1, 0);
-	TEST_ASSERT("unknown handle type fails", s != B_OK);
+	TEST_ASSERT("invalid handle (0) fails", s != B_OK);
 
-	h.type = KOSM_HANDLE_MUTEX;
-	h.id = 999999;
+	// Non-existent handle value should fail
+	h = 999999;
 	s = kosm_ray_write(ep0, &msg, 1, &h, 1, 0);
-	TEST_ASSERT("bad handle id fails", s != B_OK);
+	TEST_ASSERT("non-existent handle fails", s != B_OK);
 
 	kosm_close_ray(ep0);
 	kosm_close_ray(ep1);
@@ -981,9 +971,7 @@ test_copy_handles()
 	kosm_mutex_id mid = kosm_create_mutex("copy_test", 0);
 	TEST_ASSERT("create mutex", mid >= 0);
 
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_MUTEX;
-	h.id = mid;
+	kosm_handle_t h = mid;
 
 	uint8 msg = 0x10;
 	kosm_ray_write(ep0, &msg, 1, &h, 1, KOSM_RAY_COPY_HANDLES);
@@ -998,7 +986,10 @@ test_copy_handles()
 	size_t rhc = 1;
 	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
 	TEST_ASSERT("read succeeds", s == B_OK);
-	TEST_ASSERT("handle type correct", recvH.type == KOSM_HANDLE_MUTEX);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info", kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type correct", hinfo.type == KOSM_HANDLE_MUTEX);
 
 	kosm_delete_mutex(mid);
 	kosm_close_ray(ep0);
@@ -1714,8 +1705,9 @@ test_cross_process_handle_transfer()
 	trace("\n--- test_cross_process_handle_transfer ---\n");
 
 	// Parent creates transport ray + a second ray pair.
-	// Sends one endpoint of the second pair as a handle to child.
-	// Then communicates through the transferred ray.
+	// Transfers transport1 to child via bootstrap.
+	// Sends data1 as a handle through transport (move mode).
+	// Then communicates through the transferred data ray.
 	kosm_ray_id transport0, transport1;
 	status_t s = kosm_create_ray(&transport0, &transport1, 0);
 	TEST_ASSERT("create transport pair", s == B_OK);
@@ -1724,27 +1716,41 @@ test_cross_process_handle_transfer()
 	s = kosm_create_ray(&data0, &data1, 0);
 	TEST_ASSERT("create data pair", s == B_OK);
 
-	int pipefd[2];
-	TEST_ASSERT("create pipe", pipe(pipefd) == 0);
+	int syncfd[2], resultfd[2];
+	TEST_ASSERT("sync pipe", pipe(syncfd) == 0);
+	TEST_ASSERT("result pipe", pipe(resultfd) == 0);
 
 	pid_t child = fork();
 	if (child == 0) {
-		close(pipefd[0]);
+		close(syncfd[1]);
+		close(resultfd[0]);
 		uint8 result[3] = {0};
 
-		// Read handle from transport
+		// Wait for bootstrap
+		uint8 sync;
+		read(syncfd[0], &sync, 1);
+		close(syncfd[0]);
+
+		// Get transport endpoint via bootstrap
+		kosm_ray_id myTransport = kosm_get_bootstrap_ray();
+
+		// Read handle from transport (handle transfer gives us data1)
 		uint8 msg;
 		size_t sz = 1;
 		kosm_handle_t h;
 		size_t hc = 1;
-		status_t err = kosm_ray_read_etc(transport1, &msg, &sz,
+		status_t err = kosm_ray_read_etc(myTransport, &msg, &sz,
 			&h, &hc, B_RELATIVE_TIMEOUT, 2000000);
-		result[0] = (err == B_OK && hc == 1
-			&& h.type == KOSM_HANDLE_RAY) ? 1 : 0;
+
+		kosm_handle_info hinfo;
+		bool typeOK = (err == B_OK && hc == 1
+			&& kosm_get_handle_info(h, &hinfo) == B_OK
+			&& hinfo.type == KOSM_HANDLE_RAY);
+		result[0] = typeOK ? 1 : 0;
 
 		if (result[0]) {
-			// Use the received ray endpoint to communicate
-			kosm_ray_id receivedRay = (kosm_ray_id)h.id;
+			// Use the received handle directly as ray endpoint
+			kosm_ray_id receivedRay = h;
 			uint32 val = 0;
 			size_t vsz = sizeof(val);
 			size_t vhc = 0;
@@ -1760,23 +1766,30 @@ test_cross_process_handle_transfer()
 			kosm_close_ray(receivedRay);
 		}
 
-		write(pipefd[1], result, sizeof(result));
-		close(pipefd[1]);
-		kosm_close_ray(transport0);
-		kosm_close_ray(transport1);
+		write(resultfd[1], result, sizeof(result));
+		close(resultfd[1]);
+		kosm_close_ray(myTransport);
 		_exit(0);
 	}
 
 	TEST_ASSERT("fork succeeded", child > 0);
-	close(pipefd[1]);
+	close(syncfd[0]);
+	close(resultfd[1]);
 
-	// Parent: send data1 endpoint to child via transport
-	kosm_handle_t h;
-	h.type = KOSM_HANDLE_RAY;
-	h.id = data1;
+	// Transfer transport1 to child via bootstrap
+	s = kosm_ray_set_bootstrap(child, transport1);
+	trace("    set_bootstrap -> %s\n", strerror(s));
+	TEST_ASSERT("set bootstrap", s == B_OK);
+
+	// Signal child
+	uint8 sync = 1;
+	write(syncfd[1], &sync, 1);
+	close(syncfd[1]);
+
+	// Send data1 endpoint to child via transport (move, not copy)
+	kosm_handle_t h = data1;
 	uint8 msg = 0x01;
-	s = kosm_ray_write(transport0, &msg, 1, &h, 1,
-		KOSM_RAY_COPY_HANDLES);
+	s = kosm_ray_write(transport0, &msg, 1, &h, 1, 0);
 	TEST_ASSERT("send ray handle to child", s == B_OK);
 
 	// Write through data0, child reads on transferred data1
@@ -1797,8 +1810,8 @@ test_cross_process_handle_transfer()
 
 	// Collect child results
 	uint8 childResult[3] = {0};
-	read(pipefd[0], childResult, sizeof(childResult));
-	close(pipefd[0]);
+	read(resultfd[0], childResult, sizeof(childResult));
+	close(resultfd[0]);
 
 	int status;
 	waitpid(child, &status, 0);
@@ -1814,9 +1827,9 @@ test_cross_process_handle_transfer()
 		childResult[2] == 1);
 
 	kosm_close_ray(transport0);
-	kosm_close_ray(transport1);
+	// transport1 transferred to child, child closed it
 	kosm_close_ray(data0);
-	kosm_close_ray(data1);
+	// data1 moved to child via handle transfer, child closed it
 }
 
 
@@ -1827,9 +1840,9 @@ test_cross_process_permission()
 {
 	trace("\n--- test_cross_process_permission ---\n");
 
-	// Child creates a ray pair and reports IDs via pipe.
-	// Parent tries to use those IDs — should fail because
-	// they belong to the child's team.
+	// Child creates a ray pair and reports handle values via pipe.
+	// Parent tries to use those handle values — should fail because
+	// handles are per-process (not in parent's handle table).
 	int pipefd[2];
 	TEST_ASSERT("create pipe", pipe(pipefd) == 0);
 
@@ -1905,34 +1918,52 @@ test_team_death_peer_closed()
 {
 	trace("\n--- test_team_death_peer_closed ---\n");
 
-	// Parent keeps ep0, child inherits ep1. Child exits without
-	// closing ep1. Kernel should clean up and parent should see
-	// PEER_CLOSED on ep0.
+	// Parent keeps ep0, transfers ep1 to child via bootstrap.
+	// Child exits without closing ep1. Kernel cleanup should
+	// destroy ep1, and parent should see PEER_CLOSED on ep0.
 	kosm_ray_id ep0, ep1;
 	status_t s = kosm_create_ray(&ep0, &ep1, 0);
 	TEST_ASSERT("create", s == B_OK);
 
+	int syncfd[2];
+	TEST_ASSERT("sync pipe", pipe(syncfd) == 0);
+
 	pid_t child = fork();
 	if (child == 0) {
-		// Close parent's endpoint, keep ep1 open, then exit
-		kosm_close_ray(ep0);
+		close(syncfd[1]);
+
+		// Wait for bootstrap
+		uint8 sync;
+		read(syncfd[0], &sync, 1);
+		close(syncfd[0]);
+
+		// Get our endpoint (don't need to use it)
+		kosm_get_bootstrap_ray();
+
 		snooze(50000);
-		// Exit WITHOUT closing ep1 — kernel must reclaim
+		// Exit WITHOUT closing — kernel must reclaim
 		_exit(0);
 	}
 
 	TEST_ASSERT("fork succeeded", child > 0);
+	close(syncfd[0]);
 
-	// Close our copy of ep1 so the child is the sole owner
-	kosm_close_ray(ep1);
+	// Transfer ep1 to child via bootstrap
+	s = kosm_ray_set_bootstrap(child, ep1);
+	TEST_ASSERT("set bootstrap", s == B_OK);
+
+	// Signal child
+	uint8 sync = 1;
+	write(syncfd[1], &sync, 1);
+	close(syncfd[1]);
 
 	// Wait for child to die
 	int status;
 	waitpid(child, &status, 0);
 	trace("    child exited (status=%d)\n", WEXITSTATUS(status));
 
-	// Now ep0's peer (ep1) was owned only by child.
-	// After child death, write should get PEER_CLOSED.
+	// ep1 was in child's handle table; kernel cleanup closed it.
+	// Write to ep0 should get PEER_CLOSED.
 	uint32 val = 123;
 	s = kosm_ray_write(ep0, &val, sizeof(val), NULL, 0, 0);
 	trace("    write after child death -> %s (0x%08lx)\n",
@@ -1966,26 +1997,46 @@ test_team_death_drain_then_closed()
 {
 	trace("\n--- test_team_death_drain_then_closed ---\n");
 
-	// Child writes 5 messages on ep0, then exits without closing.
-	// Parent should drain all 5, then get PEER_CLOSED.
+	// Child gets ep0 via bootstrap, writes 5 messages, then exits
+	// without closing. Parent drains all 5 from ep1, then gets
+	// PEER_CLOSED.
 	kosm_ray_id ep0, ep1;
 	status_t s = kosm_create_ray(&ep0, &ep1, 0);
 	TEST_ASSERT("create", s == B_OK);
 
+	int syncfd[2];
+	TEST_ASSERT("sync pipe", pipe(syncfd) == 0);
+
 	pid_t child = fork();
 	if (child == 0) {
-		kosm_close_ray(ep1);
+		close(syncfd[1]);
+
+		// Wait for bootstrap
+		uint8 sync;
+		read(syncfd[0], &sync, 1);
+		close(syncfd[0]);
+
+		kosm_ray_id myEp = kosm_get_bootstrap_ray();
 
 		for (int i = 0; i < 5; i++) {
 			uint32 val = (uint32)(i + 500);
-			kosm_ray_write(ep0, &val, sizeof(val), NULL, 0, 0);
+			kosm_ray_write(myEp, &val, sizeof(val), NULL, 0, 0);
 		}
-		// Exit without closing ep0
+		// Exit without closing — kernel must reclaim
 		_exit(0);
 	}
 
 	TEST_ASSERT("fork succeeded", child > 0);
-	kosm_close_ray(ep0);
+	close(syncfd[0]);
+
+	// Transfer ep0 to child via bootstrap
+	s = kosm_ray_set_bootstrap(child, ep0);
+	TEST_ASSERT("set bootstrap", s == B_OK);
+
+	// Signal child
+	uint8 sync = 1;
+	write(syncfd[1], &sync, 1);
+	close(syncfd[1]);
 
 	int status;
 	waitpid(child, &status, 0);
@@ -2024,23 +2075,40 @@ test_team_death_unblocks_wait()
 {
 	trace("\n--- test_team_death_unblocks_wait ---\n");
 
-	// Parent waits on KOSM_RAY_READABLE. Child holds the peer
-	// and dies. Parent should be woken with PEER_CLOSED.
+	// Parent waits on KOSM_RAY_READABLE on ep1. Child owns ep0
+	// (via bootstrap) and dies. Parent should be woken with
+	// PEER_CLOSED.
 	kosm_ray_id ep0, ep1;
 	status_t s = kosm_create_ray(&ep0, &ep1, 0);
 	TEST_ASSERT("create", s == B_OK);
 
+	int syncfd[2];
+	TEST_ASSERT("sync pipe", pipe(syncfd) == 0);
+
 	pid_t child = fork();
 	if (child == 0) {
-		// Child owns ep0, keeps it alive briefly then dies
-		kosm_close_ray(ep1);
+		close(syncfd[1]);
+
+		uint8 sync;
+		read(syncfd[0], &sync, 1);
+		close(syncfd[0]);
+
+		// Get our endpoint, keep it alive briefly, then die
+		kosm_get_bootstrap_ray();
 		snooze(100000);
-		// Die without closing ep0
 		_exit(0);
 	}
 
 	TEST_ASSERT("fork succeeded", child > 0);
-	kosm_close_ray(ep0);
+	close(syncfd[0]);
+
+	// Transfer ep0 to child
+	s = kosm_ray_set_bootstrap(child, ep0);
+	TEST_ASSERT("set bootstrap", s == B_OK);
+
+	uint8 sync = 1;
+	write(syncfd[1], &sync, 1);
+	close(syncfd[1]);
 
 	// Parent: wait for READABLE or PEER_CLOSED on ep1
 	uint32 observed = 0;
@@ -2071,20 +2139,38 @@ test_team_death_select_integration()
 	trace("\n--- test_team_death_select_integration ---\n");
 
 	// Parent uses wait_for_objects (select) on ep1.
-	// Child owns ep0 and dies. B_EVENT_DISCONNECTED should fire.
+	// Child owns ep0 (via bootstrap) and dies.
+	// B_EVENT_DISCONNECTED should fire.
 	kosm_ray_id ep0, ep1;
 	status_t s = kosm_create_ray(&ep0, &ep1, 0);
 	TEST_ASSERT("create", s == B_OK);
 
+	int syncfd[2];
+	TEST_ASSERT("sync pipe", pipe(syncfd) == 0);
+
 	pid_t child = fork();
 	if (child == 0) {
-		kosm_close_ray(ep1);
+		close(syncfd[1]);
+
+		uint8 sync;
+		read(syncfd[0], &sync, 1);
+		close(syncfd[0]);
+
+		kosm_get_bootstrap_ray();
 		snooze(100000);
 		_exit(0);
 	}
 
 	TEST_ASSERT("fork succeeded", child > 0);
-	kosm_close_ray(ep0);
+	close(syncfd[0]);
+
+	// Transfer ep0 to child
+	s = kosm_ray_set_bootstrap(child, ep0);
+	TEST_ASSERT("set bootstrap", s == B_OK);
+
+	uint8 sync = 1;
+	write(syncfd[1], &sync, 1);
+	close(syncfd[1]);
 
 	object_wait_info info;
 	info.object = ep1;

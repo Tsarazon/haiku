@@ -1078,6 +1078,21 @@ test_cross_process_shared_mutex()
 		close(pipefd[0]);
 		uint8 result[3] = {0};
 
+		// Delete inherited COW copy and clone parent's area
+		area_id myArea = area_for((void*)shared);
+		if (myArea >= 0)
+			delete_area(myArea);
+
+		volatile int32* childShared = NULL;
+		area_id cloned = clone_area("xproc_shared_clone",
+			(void**)&childShared, B_ANY_ADDRESS,
+			B_READ_AREA | B_WRITE_AREA, aid);
+		if (cloned < 0) {
+			write(pipefd[1], result, sizeof(result));
+			close(pipefd[1]);
+			_exit(1);
+		}
+
 		// Find mutex by name
 		kosm_mutex_id childId = kosm_find_mutex("xproc_shared_test");
 		result[0] = (childId >= 0) ? 1 : 0;
@@ -1090,9 +1105,9 @@ test_cross_process_shared_mutex()
 				status_t err = kosm_acquire_mutex_etc(childId,
 					B_RELATIVE_TIMEOUT, 1000000);
 				if (err != B_OK) { errors++; continue; }
-				int32 val = *shared;
+				int32 val = *childShared;
 				snooze(1);
-				*shared = val + 1;
+				*childShared = val + 1;
 				kosm_release_mutex(childId);
 			}
 			result[1] = (errors == 0) ? 1 : 0;
@@ -1102,6 +1117,7 @@ test_cross_process_shared_mutex()
 
 		write(pipefd[1], result, sizeof(result));
 		close(pipefd[1]);
+		delete_area(cloned);
 		_exit(0);
 	}
 
