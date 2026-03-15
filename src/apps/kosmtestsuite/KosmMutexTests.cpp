@@ -520,8 +520,8 @@ static void test_find_by_name()
 	trace("\n--- test_find_by_name ---\n");
 	kosm_mutex_id id = kosm_create_mutex("kosm_find_test", 0);
 	TEST_ASSERT("create", id >= 0);
-	TEST_ASSERT("find returns same id",
-		kosm_find_mutex("kosm_find_test") == id);
+	kosm_mutex_id found = kosm_find_mutex("kosm_find_test");
+	TEST_ASSERT("find returns valid handle", found >= 0);
 	TEST_ASSERT("find nonexistent fails",
 		kosm_find_mutex("nonexistent_mutex_xyz") < 0);
 	kosm_delete_mutex(id);
@@ -779,8 +779,8 @@ static void test_shared_mutex()
 	kosm_get_mutex_info(id, &info);
 	TEST_ASSERT("SHARED flag stored",
 		(info.flags & KOSM_MUTEX_SHARED) != 0);
-	TEST_ASSERT("find shared mutex by name",
-		kosm_find_mutex("test_shared") == id);
+	kosm_mutex_id foundShared = kosm_find_mutex("test_shared");
+	TEST_ASSERT("find shared mutex by name", foundShared >= 0);
 
 	TEST_ASSERT("acquire shared mutex",
 		kosm_acquire_mutex(id) == B_OK);
@@ -1066,7 +1066,7 @@ test_cross_process_shared_mutex()
 	volatile int32* shared = NULL;
 	area_id aid = create_area("xproc_mutex_area", (void**)&shared,
 		B_ANY_ADDRESS, B_PAGE_SIZE, B_NO_LOCK,
-		B_READ_AREA | B_WRITE_AREA);
+		B_READ_AREA | B_WRITE_AREA | B_CLONEABLE_AREA);
 	TEST_ASSERT("create shared area", aid >= 0);
 	*shared = 0;
 

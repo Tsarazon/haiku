@@ -588,6 +588,14 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		return B_NO_MEMORY;
 	strlcpy(tempName, name, nameLength);
 
+	// Pre-allocate handle object BEFORE disabling interrupts.
+	// object_cache_alloc (via new) requires interrupts enabled.
+	KosmMutexObject* obj = new(std::nothrow) KosmMutexObject(-1);
+	if (obj == NULL) {
+		free(tempName);
+		return B_NO_MEMORY;
+	}
+
 	InterruptsSpinLocker listLocker(sMutexListSpinlock);
 
 	struct kosm_mutex_entry* entry = sFreeMutexesHead;
@@ -614,20 +622,8 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 		entry->hash_next = NULL;
 		id = entry->id;
 
-		// Create the refcounted handle object (slot ref).
-		KosmMutexObject* obj = new(std::nothrow) KosmMutexObject(id);
-		if (obj == NULL) {
-			// Undo slot allocation
-			entry->id = -1;
-			entry->u.used.name = NULL;
-			entryLocker.Unlock();
-
-			// Re-add to free list
-			free_mutex_slot(id % sMaxMutexes, id);
-			listLocker.Unlock();
-			free(tempName);
-			return B_NO_MEMORY;
-		}
+		// Set the real ID now that we know it.
+		obj->internal_id = id;
 		entry->handle_object = obj;
 		// obj starts with refcount 1 (the "slot ref")
 
@@ -646,6 +642,7 @@ kosm_create_mutex_etc(const char* name, uint32 flags, team_id owner)
 
 	if (entry == NULL) {
 		free(tempName);
+		obj->ReleaseReference();
 		return KOSM_MUTEX_NO_MORE;
 	}
 
@@ -1448,8 +1445,12 @@ _user_kosm_get_mutex_info(kosm_mutex_id handle, kosm_mutex_info* userInfo,
 
 	status = _kosm_get_mutex_info(internalId, &info, size);
 
-	if (status == B_OK && user_memcpy(userInfo, &info, size) < B_OK)
-		return B_BAD_ADDRESS;
+	if (status == B_OK) {
+		// Return the caller's handle, not the internal slot ID.
+		info.mutex = handle;
+		if (user_memcpy(userInfo, &info, size) < B_OK)
+			return B_BAD_ADDRESS;
+	}
 
 	return status;
 }
@@ -1472,6 +1473,28 @@ _user_kosm_get_next_mutex_info(team_id team, int32* userCookie,
 	status_t status = _kosm_get_next_mutex_info(team, &cookie, &info, size);
 
 	if (status == B_OK) {
+		// Translate internal ID to caller's handle value.
+		KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+		if (table != NULL) {
+			int32 slot = info.mutex % sMaxMutexes;
+			KosmMutexObject* obj = NULL;
+			{
+				InterruptsSpinLocker entryLocker(sMutexes[slot].lock);
+				if (sMutexes[slot].id == info.mutex) {
+					obj = sMutexes[slot].handle_object;
+					if (obj != NULL)
+						obj->AcquireReference();
+				}
+			}
+			if (obj != NULL) {
+				kosm_handle_t handle = table->FindHandleForObject(
+					obj, KOSM_HANDLE_MUTEX);
+				if (handle >= 0)
+					info.mutex = handle;
+				obj->ReleaseReference();
+			}
+		}
+
 		if (user_memcpy(userInfo, &info, size) < B_OK)
 			return B_BAD_ADDRESS;
 		if (user_memcpy(userCookie, &cookie, sizeof(int32)) < B_OK)
