@@ -1597,8 +1597,7 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 	BReference<RayEndpoint> peerRef(peer);
 
 	while (peer->read_count >= peer->max_messages) {
-		if (!hasTimeout || ((waitFlags & B_RELATIVE_TIMEOUT) != 0
-			&& timeout <= 0)) {
+		if ((waitFlags & B_RELATIVE_TIMEOUT) != 0 && timeout <= 0) {
 			return B_WOULD_BLOCK;
 		}
 
@@ -1675,37 +1674,94 @@ kosm_ray_write_internal(kosm_ray_id id, const void* data, size_t dataSize,
 		}
 	}
 
-	// Enqueue in peer's message list
-	locker.Unlock();
+	// Enqueue in peer's message list. If the queue is full on recheck
+	// (another writer squeezed in between our wait and enqueue), retry
+	// instead of destroying the message. This prevents loss of move-mode
+	// handles which have already been removed from the sender's table.
+	for (;;) {
+		locker.Unlock();
 
-	MutexLocker peerLocker(peer->lock);
-	if (peer->state != RayEndpoint::kActive) {
-		// Peer died between our unlock and this lock.
-		// Release handles stored in the message.
-		release_msg_handles(msg);
-		free_ray_message(msg);
-		T(Write(id, dataSize, handleCount, ref->qos_class, B_BAD_PORT_ID));
-		return B_BAD_PORT_ID;
+		MutexLocker peerLocker(peer->lock);
+		if (peer->state != RayEndpoint::kActive) {
+			// Peer died — handles are irrecoverably lost.
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			T(Write(id, dataSize, handleCount, ref->qos_class,
+				B_BAD_PORT_ID));
+			return B_BAD_PORT_ID;
+		}
+
+		// Got a slot — enqueue and return success.
+		if (peer->read_count < peer->max_messages) {
+			peer->messages.Add(msg);
+			peer->read_count++;
+
+			T(Write(id, dataSize, handleCount, msg->qos_class, B_OK));
+
+			notify_ray_select_events(peer, B_EVENT_READ);
+			peer->read_condition.NotifyOne();
+			return B_OK;
+		}
+
+		// Queue full on recheck. Wait for space and retry.
+		peerLocker.Unlock();
+
+		BReference<RayEndpoint> newRef = get_locked_ray(id);
+		if (newRef == NULL || newRef.Get() != ref.Get()) {
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return B_BAD_PORT_ID;
+		}
+		locker.SetTo(newRef->lock, true);
+
+		if (ref->peer_closed || ref->peer == NULL) {
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return KOSM_RAY_PEER_CLOSED_ERROR;
+		}
+		peer = ref->peer;
+
+		// Non-blocking mode: cannot retry, must fail.
+		// Move-mode handles are lost (inherent to resolve-before-enqueue).
+		if ((waitFlags & B_RELATIVE_TIMEOUT) != 0 && timeout <= 0) {
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return B_WOULD_BLOCK;
+		}
+
+		ConditionVariableEntry entry;
+		ref->write_condition.Add(&entry);
+
+		kosm_ray_id myId = ref->id;
+		locker.Unlock();
+
+		status_t waitStatus = entry.Wait(waitFlags, timeout);
+
+		newRef = get_locked_ray(myId);
+		if (newRef == NULL || newRef.Get() != ref.Get()) {
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return B_BAD_PORT_ID;
+		}
+		locker.SetTo(newRef->lock, true);
+
+		if (ref->peer_closed || ref->peer == NULL) {
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return KOSM_RAY_PEER_CLOSED_ERROR;
+		}
+
+		if (waitStatus != B_OK) {
+			// Timeout or interrupt. Move-mode handles are lost
+			// (same as initial wait timeout — inherent to the design).
+			release_msg_handles(msg);
+			free_ray_message(msg);
+			return waitStatus;
+		}
+
+		peer = ref->peer;
+		// Loop back to try enqueue under peer->lock again.
 	}
-
-	// Recheck queue capacity under peer->lock.
-	// The initial check was under ref->lock (sender's lock), so concurrent
-	// writers on the same endpoint could all pass it before any enqueued.
-	if (peer->read_count >= peer->max_messages) {
-		release_msg_handles(msg);
-		free_ray_message(msg);
-		return B_WOULD_BLOCK;
-	}
-
-	peer->messages.Add(msg);
-	peer->read_count++;
-
-	T(Write(id, dataSize, handleCount, msg->qos_class, B_OK));
-
-	notify_ray_select_events(peer, B_EVENT_READ);
-	peer->read_condition.NotifyOne();
-
-	return B_OK;
 }
 
 
@@ -1744,8 +1800,7 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 		if (ref->peer_closed)
 			return KOSM_RAY_PEER_CLOSED_ERROR;
 
-		if (!hasTimeout || ((waitFlags & B_RELATIVE_TIMEOUT) != 0
-			&& timeout <= 0)) {
+		if ((waitFlags & B_RELATIVE_TIMEOUT) != 0 && timeout <= 0) {
 			return B_WOULD_BLOCK;
 		}
 
@@ -1851,6 +1906,36 @@ kosm_ray_read_internal(kosm_ray_id id, void* data, size_t* dataSize,
 		status_t status = install_receiver_handles(msg->handles,
 			installCount, newHandles, receiverTable);
 		if (status != B_OK) {
+			// Partial failure: handles 0..i-1 are installed in the
+			// receiver's table (their message references released).
+			// Handles i..N had their references released by the error
+			// path in install_receiver_handles. All object pointers in
+			// msg->handles are now stale.
+			//
+			// Mark handles consumed and dequeue the message to prevent
+			// a subsequent read from calling install_receiver_handles
+			// on dangling pointers (UAF). Already-installed handles
+			// remain in the receiver's table — they are valid handles,
+			// receiver can discover and close them.
+			msg->handle_count = 0;
+
+			if (!peekOnly) {
+				ref->messages.RemoveHead();
+				ref->read_count--;
+				ref->total_count++;
+
+				BReference<RayEndpoint> peerNotifyOnFail;
+				if (ref->peer != NULL)
+					peerNotifyOnFail.SetTo(ref->peer);
+
+				locker.Unlock();
+
+				free_ray_message(msg);
+
+				if (peerNotifyOnFail != NULL)
+					peerNotifyOnFail->write_condition.NotifyOne();
+			}
+
 			revert_importance_donation(originalPriority);
 			return status;
 		}
