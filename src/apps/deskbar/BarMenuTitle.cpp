@@ -102,8 +102,10 @@ TBarMenuTitle::Draw()
 		frame.right = windowBounds.right;
 
 	if (fBarView != NULL && fBarView->AcrossBottom()) {
-		// taskbar: flat dark background
-		rgb_color bgColor = IsSelected() ? kTaskbarHover : kTaskbarColor;
+		// taskbar: flat background
+		rgb_color base = ui_color(B_MENU_BACKGROUND_COLOR);
+		rgb_color bgColor = IsSelected() ? tint_color(base, B_DARKEN_1_TINT)
+			: base;
 		menu->SetHighColor(bgColor);
 		menu->FillRect(frame);
 	} else {

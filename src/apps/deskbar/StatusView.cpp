@@ -208,8 +208,6 @@ TReplicantTray::AttachedToWindow()
 #endif
 	ResizeToPreferred();
 
-	if (fBarView != NULL && fBarView->AcrossBottom())
-		SetViewColor(kTaskbarColor);
 }
 
 
@@ -988,9 +986,6 @@ TReplicantTray::AddIcon(BMessage* archive, int32* id, const entry_ref* addOn)
 	BView* view;
 	fShelf->ReplicantAt(count - 1, &view, (uint32*)id, NULL);
 
-	if (view != NULL && fBarView != NULL && fBarView->AcrossBottom())
-		view->SetViewColor(B_TRANSPARENT_COLOR);
-
 	if (view != NULL && originalBounds != view->Bounds()) {
 		// The replicant changed its size when added to the window, so we need
 		// to recompute all over again (it's already done once via
@@ -1375,7 +1370,7 @@ TDragRegion::AttachedToWindow()
 	CalculateRegions();
 
 	if (fBarView != NULL && fBarView->AcrossBottom())
-		SetViewColor(kTaskbarColor);
+		SetViewUIColor(B_MENU_BACKGROUND_COLOR);
 	else
 		SetViewUIColor(B_MENU_BACKGROUND_COLOR, 1.1);
 
@@ -1413,7 +1408,7 @@ TDragRegion::Draw(BRect updateRect)
 	BRect frame(Bounds());
 
 	if (fBarView->AcrossBottom()) {
-		SetHighColor(kTaskbarColor);
+		SetHighColor(ViewColor());
 		FillRect(frame);
 		return;
 	}

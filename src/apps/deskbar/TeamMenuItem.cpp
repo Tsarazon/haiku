@@ -266,9 +266,9 @@ TTeamMenuItem::Draw()
 	} else {
 		if (fBarView->AcrossBottom()) {
 			// flat taskbar style
-			rgb_color bgColor = kTaskbarColor;
+			rgb_color bgColor = menuColor;
 			if (_IsSelected() && canHandle)
-				bgColor = kTaskbarHover;
+				bgColor = tint_color(menuColor, B_DARKEN_1_TINT);
 
 			menu->SetHighColor(bgColor);
 			menu->FillRect(frame);

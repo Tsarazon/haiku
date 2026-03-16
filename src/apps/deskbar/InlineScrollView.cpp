@@ -430,7 +430,7 @@ TInlineScrollView::Draw(BRect updateRect)
 {
 	TBarView* barView = dynamic_cast<TBarView*>(Parent());
 	if (barView != NULL && barView->AcrossBottom()) {
-		SetHighColor(kTaskbarColor);
+		SetHighColor(ViewColor());
 		FillRect(updateRect);
 		return;
 	}

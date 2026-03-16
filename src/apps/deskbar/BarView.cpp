@@ -228,13 +228,7 @@ TBarView::AttachedToWindow()
 
 	fBarWindow = dynamic_cast<TBarWindow*>(Window());
 
-	if (AcrossBottom()) {
-		SetViewColor(kTaskbarColor);
-		if (fInlineScrollView != NULL)
-			fInlineScrollView->SetViewColor(kTaskbarColor);
-	} else {
-		SetViewUIColor(B_MENU_BACKGROUND_COLOR);
-	}
+	SetViewUIColor(B_MENU_BACKGROUND_COLOR);
 	SetFont(be_plain_font);
 
 	fMouseFilter = new BarViewMessageFilter(this);
@@ -271,7 +265,7 @@ TBarView::Draw(BRect)
 	if (AcrossTop())
 		StrokeLine(bounds.LeftBottom(), bounds.RightBottom());
 	else if (AcrossBottom()) {
-		SetHighColor(kTaskbarColor);
+		SetHighColor(ViewColor());
 		FillRect(bounds);
 	}
 
@@ -807,34 +801,20 @@ TBarView::_ChangeState(BMessage* message)
 	fLeft = left;
 	fTop = top;
 
-	if (AcrossBottom()) {
-		SetViewColor(kTaskbarColor);
-		if (fDragRegion != NULL)
-			fDragRegion->SetViewColor(kTaskbarColor);
-		if (fReplicantTray != NULL)
-			fReplicantTray->SetViewColor(kTaskbarColor);
-		if (fBarMenuBar != NULL)
-			fBarMenuBar->SetViewColor(kTaskbarColor);
-		if (fInlineScrollView != NULL)
-			fInlineScrollView->SetViewColor(kTaskbarColor);
-		if (fExpandoMenuBar != NULL) {
-			fExpandoMenuBar->SetViewColor(kTaskbarColor);
-			fExpandoMenuBar->SetLowColor(kTaskbarColor);
-		}
-	} else {
-		SetViewUIColor(B_MENU_BACKGROUND_COLOR);
-		if (fDragRegion != NULL)
-			fDragRegion->SetViewUIColor(B_MENU_BACKGROUND_COLOR, 1.1);
-		if (fReplicantTray != NULL)
-			fReplicantTray->AdoptParentColors();
-		if (fBarMenuBar != NULL)
-			fBarMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
-		if (fInlineScrollView != NULL)
-			fInlineScrollView->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
-		if (fExpandoMenuBar != NULL) {
-			fExpandoMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
-			fExpandoMenuBar->SetLowUIColor(B_MENU_BACKGROUND_COLOR);
-		}
+	SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	if (fDragRegion != NULL) {
+		fDragRegion->SetViewUIColor(B_MENU_BACKGROUND_COLOR,
+			AcrossBottom() ? 1.0 : 1.1);
+	}
+	if (fReplicantTray != NULL)
+		fReplicantTray->AdoptParentColors();
+	if (fBarMenuBar != NULL)
+		fBarMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	if (fInlineScrollView != NULL)
+		fInlineScrollView->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+	if (fExpandoMenuBar != NULL) {
+		fExpandoMenuBar->SetViewUIColor(B_MENU_BACKGROUND_COLOR);
+		fExpandoMenuBar->SetLowUIColor(B_MENU_BACKGROUND_COLOR);
 	}
 
 	if (stateChanged || vertSwap) {

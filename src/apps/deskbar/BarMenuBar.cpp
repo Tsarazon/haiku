@@ -87,7 +87,7 @@ TSeparatorItem::Draw()
 		TBarView* barView = barMenu->BarView();
 		if (barView != NULL && barView->AcrossBottom()) {
 			menu->PushState();
-			menu->SetHighColor(kTaskbarColor);
+			menu->SetHighColor(menu->ViewColor());
 			menu->FillRect(frame);
 			menu->PopState();
 			return;

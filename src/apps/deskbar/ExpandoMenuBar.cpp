@@ -114,11 +114,6 @@ TExpandoMenuBar::AttachedToWindow()
 
 	fTeamList.MakeEmpty();
 
-	if (fBarView != NULL && fBarView->AcrossBottom()) {
-		SetViewColor(kTaskbarColor);
-		SetLowColor(kTaskbarColor);
-	}
-
 	if (Vertical())
 		StartMonitoringWindows();
 }
@@ -879,8 +874,8 @@ TExpandoMenuBar::DrawBackground(BRect updateRect)
 		return;
 
 	if (fBarView != NULL && fBarView->AcrossBottom()) {
-		// taskbar: solid dark fill, no edge separator
-		SetHighColor(kTaskbarColor);
+		// taskbar: solid flat fill, no edge separator
+		SetHighColor(ViewColor());
 		FillRect(updateRect);
 	} else {
 		SetHighColor(tint_color(ui_color(B_MENU_BACKGROUND_COLOR), 1.22));
