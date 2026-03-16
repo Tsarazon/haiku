@@ -536,7 +536,8 @@ test_queue_full()
 		written == KOSM_RAY_MAX_QUEUE_MESSAGES);
 
 	uint8 extra = 0xFF;
-	s = kosm_ray_write(ep0, &extra, 1, NULL, 0, 0);
+	s = kosm_ray_write_etc(ep0, &extra, 1, NULL, 0,
+		B_RELATIVE_TIMEOUT, 0);
 	TEST_ASSERT("queue full returns WOULD_BLOCK", s == B_WOULD_BLOCK);
 
 	uint8 buf;
@@ -879,6 +880,111 @@ test_handle_sem_move()
 	TEST_ASSERT("handle type SEM", hinfo.type == KOSM_HANDLE_SEM);
 
 	delete_sem(sid);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_handle_dot_move()
+{
+	trace("\n--- test_handle_dot_move ---\n");
+	kosm_ray_id ep0, ep1;
+	kosm_create_ray(&ep0, &ep1, 0);
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("ray_dot_test",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	TEST_ASSERT("create dot", dot >= 0);
+
+	if (addr != NULL)
+		memset(addr, 0xDD, B_PAGE_SIZE);
+
+	kosm_handle_t h = dot;
+
+	uint8 msg = 0x06;
+	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1, 0);
+	TEST_ASSERT("write with dot handle", s == B_OK);
+
+	uint8 recvMsg;
+	size_t sz = 1;
+	kosm_handle_t recvH;
+	size_t rhc = 1;
+	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
+	TEST_ASSERT("read succeeds", s == B_OK);
+	TEST_ASSERT("got 1 handle", rhc == 1);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info",
+		kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type DOT", hinfo.type == KOSM_HANDLE_DOT);
+
+	// Original was moved — verify through received handle
+	kosm_dot_info dinfo;
+	TEST_ASSERT("dot info via moved handle",
+		kosm_get_dot_info(recvH, &dinfo) == B_OK);
+	TEST_ASSERT("dot size correct", dinfo.size == B_PAGE_SIZE);
+
+	kosm_delete_dot(recvH);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_handle_dot_copy()
+{
+	trace("\n--- test_handle_dot_copy ---\n");
+	kosm_ray_id ep0, ep1;
+	kosm_create_ray(&ep0, &ep1, 0);
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("ray_dot_copy",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	TEST_ASSERT("create dot", dot >= 0);
+
+	if (addr != NULL)
+		memset(addr, 0xEE, B_PAGE_SIZE);
+
+	kosm_handle_t h = dot;
+
+	uint8 msg = 0x07;
+	status_t s = kosm_ray_write(ep0, &msg, 1, &h, 1,
+		KOSM_RAY_COPY_HANDLES);
+	TEST_ASSERT("write with dot handle (copy)", s == B_OK);
+
+	uint8 recvMsg;
+	size_t sz = 1;
+	kosm_handle_t recvH;
+	size_t rhc = 1;
+	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
+	TEST_ASSERT("read succeeds", s == B_OK);
+	TEST_ASSERT("got 1 handle", rhc == 1);
+
+	kosm_handle_info hinfo;
+	TEST_ASSERT("get handle info",
+		kosm_get_handle_info(recvH, &hinfo) == B_OK);
+	TEST_ASSERT("handle type DOT", hinfo.type == KOSM_HANDLE_DOT);
+
+	// Both handles valid
+	kosm_dot_info origInfo, copyInfo;
+	TEST_ASSERT("original still valid",
+		kosm_get_dot_info(dot, &origInfo) == B_OK);
+	TEST_ASSERT("copy valid",
+		kosm_get_dot_info(recvH, &copyInfo) == B_OK);
+	TEST_ASSERT("same size",
+		origInfo.size == copyInfo.size);
+
+	// Data visible through mapped addr
+	TEST_ASSERT("data intact",
+		((volatile uint8*)addr)[0] == 0xEE);
+
+	kosm_close_handle(recvH);
+	kosm_delete_dot(dot);
 	kosm_close_ray(ep0);
 	kosm_close_ray(ep1);
 }
@@ -2225,6 +2331,8 @@ static const TestEntry sRayTests[] = {
 	{ "mutex handle",               test_handle_mutex,               "Handles" },
 	{ "area handle",                test_handle_area_move,           "Handles" },
 	{ "sem handle",                 test_handle_sem_move,            "Handles" },
+	{ "dot handle move",            test_handle_dot_move,            "Handles" },
+	{ "dot handle copy",            test_handle_dot_copy,            "Handles" },
 	{ "FD not supported",           test_handle_fd_not_supported,    "Handles" },
 	{ "invalid handle",             test_handle_invalid,             "Handles" },
 	// Peek & Flags

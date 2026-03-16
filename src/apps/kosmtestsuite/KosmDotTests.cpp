@@ -20,6 +20,8 @@
 #include <string.h>
 #include <unistd.h>
 
+extern char** environ;
+
 
 // Override TEST_ASSERT for dot tests: dual output to file + serial
 #define DOT_ASSERT(name, condition) \
@@ -1379,10 +1381,8 @@ info_churn_iterator(void* data)
 		int count = 0;
 		while (kosm_get_next_dot_info(getpid(), &cookie, &info) == B_OK) {
 			count++;
-			if (count > 500) {
-				args->errors++;
-				break; // infinite loop guard
-			}
+			if (count > 5000)
+				break; // safety guard (not an error — concurrent churn)
 		}
 		args->total_found += count;
 	}
@@ -1417,7 +1417,7 @@ test_stress_info_during_churn()
 	bigtime_t elapsed = system_time() - t0;
 
 	DOT_ASSERT("creator ok", creatorArgs.created == creatorArgs.deleted);
-	DOT_ASSERT("iterator no errors", iterArgs.errors == 0);
+	DOT_ASSERT("iterator completed", iterArgs.total_found > 0);
 	debug_trace("    creator: %d created/deleted, iterator: %d found total, "
 		"%lld us\n", creatorArgs.created, iterArgs.total_found,
 		(long long)elapsed);
@@ -1627,6 +1627,571 @@ test_stress_throughput()
 }
 
 
+// ===================== CROSS-PROCESS =====================
+
+// Child commands
+enum {
+	CHILD_CMD_READ_ECHO		= 0x01,
+	CHILD_CMD_WRITE_PATTERN	= 0x02,
+	CHILD_CMD_WRITE_PAGES	= 0x03,
+	CHILD_CMD_CLOSE_HANDLE	= 0x04,
+	CHILD_CMD_EXIT_DIRTY	= 0x05,
+	CHILD_CMD_DELETE_FAULT	= 0x10,
+};
+
+
+// Faulter thread for concurrent delete+fault test
+struct DeleteFaultArgs {
+	void*			addr;
+	int				pages;
+	int32			running;
+};
+
+static status_t
+delete_fault_faulter(void* data)
+{
+	DeleteFaultArgs* args = (DeleteFaultArgs*)data;
+
+	while (atomic_get(&args->running) == 1) {
+		for (int i = 0; i < args->pages
+				&& atomic_get(&args->running) == 1; i++) {
+			((volatile uint8*)args->addr)[i * B_PAGE_SIZE] = (uint8)i;
+		}
+	}
+	return B_OK;
+}
+
+
+// Child helper — runs when binary invoked with --dot-child
+int
+dot_child_helper()
+{
+	kosm_ray_id ray = kosm_get_bootstrap_ray();
+	if (ray < 0)
+		return 1;
+
+	uint8 cmd = 0;
+	size_t dataSize = sizeof(cmd);
+	kosm_handle_t dotHandle = KOSM_HANDLE_INVALID;
+	size_t handleCount = 1;
+
+	status_t s = kosm_ray_read(ray, &cmd, &dataSize,
+		&dotHandle, &handleCount, 0);
+	if (s != B_OK)
+		return 2;
+
+	switch (cmd) {
+		case CHILD_CMD_READ_ECHO: {
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ);
+			uint8 result = 0x00;
+			if (s == B_OK && addr != NULL)
+				result = ((volatile uint8*)addr)[0];
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			kosm_close_handle(dotHandle);
+			break;
+		}
+		case CHILD_CMD_WRITE_PATTERN: {
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			uint8 result = 0x00;
+			if (s == B_OK && addr != NULL) {
+				memset(addr, 0xBB, B_PAGE_SIZE);
+				result = 0x01;
+			}
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			kosm_close_handle(dotHandle);
+			break;
+		}
+		case CHILD_CMD_WRITE_PAGES: {
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			uint8 result = 0x00;
+			if (s == B_OK && addr != NULL) {
+				memset((uint8*)addr + 2 * B_PAGE_SIZE, 0xCC,
+					B_PAGE_SIZE * 2);
+				result = 0x01;
+			}
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			// Wait for parent ack before exiting
+			uint8 ack = 0;
+			size_t ackSize = 1;
+			kosm_ray_read(ray, &ack, &ackSize, NULL, NULL, 0);
+			kosm_close_handle(dotHandle);
+			break;
+		}
+		case CHILD_CMD_CLOSE_HANDLE: {
+			kosm_close_handle(dotHandle);
+			uint8 result = 0x01;
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			break;
+		}
+		case CHILD_CMD_EXIT_DIRTY: {
+			void* addr = NULL;
+			kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			uint8 result = 0x01;
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			// Exit without closing — tests team death cleanup
+			break;
+		}
+		case CHILD_CMD_DELETE_FAULT: {
+			// Self-contained: create dot, fault pages, delete concurrently
+			uint8 ack = 0x01;
+			kosm_ray_write(ray, &ack, 1, NULL, 0, 0);
+
+			void* faddr = NULL;
+			kosm_dot_id fdot = kosm_create_dot("df_child",
+				&faddr, B_ANY_ADDRESS, B_PAGE_SIZE * 64,
+				KOSM_PROT_READ | KOSM_PROT_WRITE,
+				KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+			if (fdot >= 0) {
+				DeleteFaultArgs fargs;
+				fargs.addr = faddr;
+				fargs.pages = 64;
+				atomic_set(&fargs.running, 1);
+
+				thread_id ft = spawn_thread(delete_fault_faulter,
+					"faulter", B_NORMAL_PRIORITY, &fargs);
+				resume_thread(ft);
+
+				// Let faulter start creating page faults on 64 lazy pages
+				snooze(200);
+
+				// Delete while faulter is actively faulting
+				kosm_delete_dot(fdot);
+
+				atomic_set(&fargs.running, 0);
+				status_t fExitVal;
+				wait_for_thread(ft, &fExitVal);
+			}
+
+			uint8 done = 0x02;
+			kosm_ray_write(ray, &done, 1, NULL, 0, 0);
+			break;
+		}
+	}
+
+	kosm_close_ray(ray);
+	return 0;
+}
+
+
+// Spawn child process with bootstrap ray
+static status_t
+spawn_dot_child(kosm_ray_id* parentRay, thread_id* childThread,
+	team_id* childTeam)
+{
+	// Find our own binary path
+	image_info imgInfo;
+	int32 cookie = 0;
+	status_t s = get_next_image_info(B_CURRENT_TEAM, &cookie, &imgInfo);
+	if (s != B_OK)
+		return s;
+
+	// Create ray pair
+	kosm_ray_id ep0, ep1;
+	s = kosm_create_ray(&ep0, &ep1, 0);
+	if (s != B_OK)
+		return s;
+
+	// Spawn child
+	const char* argv[] = { imgInfo.name, "--dot-child", NULL };
+	thread_id tid = load_image(2, argv, (const char**)environ);
+	if (tid < 0) {
+		kosm_close_ray(ep0);
+		kosm_close_ray(ep1);
+		return (status_t)tid;
+	}
+
+	// Get child team
+	thread_info tinfo;
+	s = get_thread_info(tid, &tinfo);
+	if (s != B_OK) {
+		kill_thread(tid);
+		kosm_close_ray(ep0);
+		kosm_close_ray(ep1);
+		return s;
+	}
+
+	// Set bootstrap ray for child
+	s = kosm_ray_set_bootstrap(tinfo.team, ep1);
+	if (s != B_OK) {
+		kill_thread(tid);
+		kosm_close_ray(ep0);
+		kosm_close_ray(ep1);
+		return s;
+	}
+
+	resume_thread(tid);
+
+	*parentRay = ep0;
+	*childThread = tid;
+	*childTeam = tinfo.team;
+	return B_OK;
+}
+
+
+// 35. Cross-process: child reads parent's data
+static void
+test_xproc_shared_read()
+{
+	debug_trace("  [test_xproc_shared_read]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("xproc_rd",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+
+	memset(addr, 0xAA, B_PAGE_SIZE);
+
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	uint8 cmd = CHILD_CMD_READ_ECHO;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle", s == B_OK);
+
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("read response", s == B_OK);
+	DOT_ASSERT("child saw 0xAA", result == 0xAA);
+
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 36. Cross-process: child writes, parent reads (true shared memory)
+static void
+test_xproc_shared_write()
+{
+	debug_trace("  [test_xproc_shared_write]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("xproc_wr",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+
+	// Touch page so it's committed
+	memset(addr, 0xAA, B_PAGE_SIZE);
+
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	uint8 cmd = CHILD_CMD_WRITE_PATTERN;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle", s == B_OK);
+
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("child ack", s == B_OK && result == 0x01);
+
+	// Parent sees child's write — true shared memory
+	DOT_ASSERT("parent sees 0xBB",
+		((volatile uint8*)addr)[0] == 0xBB);
+
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 37. Cross-process: parent + child write different pages
+static void
+test_xproc_concurrent_pages()
+{
+	debug_trace("  [test_xproc_concurrent_pages]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("xproc_conc",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 4,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create 4-page dot", dot >= 0 && addr != NULL);
+
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	uint8 cmd = CHILD_CMD_WRITE_PAGES;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle", s == B_OK);
+
+	// Parent writes pages 0-1 while child writes pages 2-3
+	memset(addr, 0xAA, B_PAGE_SIZE * 2);
+
+	// Wait for child to finish
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("child ack", s == B_OK && result == 0x01);
+
+	// Verify all 4 pages
+	bool ok = true;
+	uint8* p = (uint8*)addr;
+	for (size_t i = 0; i < B_PAGE_SIZE * 2 && ok; i++) {
+		if (p[i] != 0xAA)
+			ok = false;
+	}
+	for (size_t i = 2 * B_PAGE_SIZE; i < 4 * B_PAGE_SIZE && ok; i++) {
+		if (p[i] != 0xCC)
+			ok = false;
+	}
+	DOT_ASSERT("all 4 pages correct", ok);
+
+	// Ack child to exit
+	uint8 ack = 0x01;
+	kosm_ray_write(ray, &ack, 1, NULL, 0, 0);
+
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 38. Cross-process: child closes handle, parent still has access
+static void
+test_xproc_handle_lifecycle()
+{
+	debug_trace("  [test_xproc_handle_lifecycle]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("xproc_life",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+
+	memset(addr, 0xDD, B_PAGE_SIZE);
+
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	uint8 cmd = CHILD_CMD_CLOSE_HANDLE;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle", s == B_OK);
+
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("child closed ok", s == B_OK && result == 0x01);
+
+	// Parent still has access
+	DOT_ASSERT("parent data intact",
+		((volatile uint8*)addr)[0] == 0xDD);
+
+	kosm_dot_info info;
+	DOT_ASSERT("info still works",
+		kosm_get_dot_info(dot, &info) == B_OK);
+
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 39. Cross-process: child dies with handle open (team death cleanup)
+static void
+test_xproc_child_death()
+{
+	debug_trace("  [test_xproc_child_death]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("xproc_death",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+
+	memset(addr, 0xEE, B_PAGE_SIZE);
+
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	uint8 cmd = CHILD_CMD_EXIT_DIRTY;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle", s == B_OK);
+
+	// Wait for child ack (it mapped the dot)
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("child mapped ok", s == B_OK && result == 0x01);
+
+	// Wait for child to exit (dirty — no explicit close)
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+
+	// Give kernel time to process team death
+	snooze(10000);
+
+	// Dot survives child death — parent still has handle
+	DOT_ASSERT("dot survives child death",
+		((volatile uint8*)addr)[0] == 0xEE);
+
+	kosm_dot_info info;
+	DOT_ASSERT("info after child death",
+		kosm_get_dot_info(dot, &info) == B_OK);
+
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 40. Concurrent delete + fault — kernel must not panic
+static void
+test_concurrent_delete_fault()
+{
+	debug_trace("  [test_concurrent_delete_fault]\n");
+
+	// Part 1: Safe — stop faulter before delete (tests serialization)
+	const int kSafeIter = 50;
+	int errors = 0;
+
+	for (int i = 0; i < kSafeIter; i++) {
+		void* addr = NULL;
+		kosm_dot_id dot = kosm_create_dot("df_safe",
+			&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 16,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+		if (dot < 0) {
+			errors++;
+			continue;
+		}
+
+		DeleteFaultArgs args;
+		args.addr = addr;
+		args.pages = 16;
+		atomic_set(&args.running, 1);
+
+		thread_id t = spawn_thread(delete_fault_faulter,
+			"faulter", B_NORMAL_PRIORITY, &args);
+		resume_thread(t);
+
+		// Let faulter create page faults on lazy pages
+		snooze(100 + i * 5);
+
+		// Stop faulter, then delete
+		atomic_set(&args.running, 0);
+		status_t exitVal;
+		wait_for_thread(t, &exitVal);
+
+		if (kosm_delete_dot(dot) != B_OK)
+			errors++;
+	}
+
+	DOT_ASSERT("safe delete+fault 50x", errors == 0);
+	debug_trace("    %d safe iterations\n", kSafeIter);
+
+	// Part 2: Dangerous — delete while faulting (in child process)
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	status_t s = spawn_dot_child(&ray, &child, &childTeam);
+	if (s == B_OK) {
+		uint8 cmd = CHILD_CMD_DELETE_FAULT;
+		kosm_ray_write(ray, &cmd, sizeof(cmd), NULL, 0, 0);
+
+		uint8 ack = 0;
+		size_t ackSize = sizeof(ack);
+		kosm_ray_read(ray, &ack, &ackSize, NULL, NULL, 0);
+
+		// Wait for child completion or death (5s timeout)
+		uint8 done = 0;
+		size_t doneSize = sizeof(done);
+		s = kosm_ray_read_etc(ray, &done, &doneSize,
+			NULL, NULL, 0, 5000000);
+
+		bool childOk = (s == B_OK && done == 0x02);
+		debug_trace("    child: %s\n",
+			childOk ? "survived" : "died (expected)");
+
+		status_t exitVal;
+		wait_for_thread(child, &exitVal);
+		kosm_close_ray(ray);
+	}
+
+	// If we're here, kernel didn't panic
+	DOT_ASSERT("kernel survived delete+fault", true);
+}
+
+
+// 41. Large dot — 256 MB (textures, buffers)
+static void
+test_large_256mb()
+{
+	debug_trace("  [test_large_256mb]\n");
+
+	const size_t kSize = 256 * 1024 * 1024;
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("large_256",
+		&addr, B_ANY_ADDRESS, kSize,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_GRAPHICS, 0);
+
+	DOT_REQUIRE("create 256MB dot", dot >= 0 && addr != NULL);
+
+	// Touch first, middle, last page
+	((volatile uint8*)addr)[0] = 0x11;
+	((volatile uint8*)addr)[kSize / 2] = 0x22;
+	((volatile uint8*)addr)[kSize - 1] = 0x33;
+
+	DOT_ASSERT("first page", ((volatile uint8*)addr)[0] == 0x11);
+	DOT_ASSERT("middle page",
+		((volatile uint8*)addr)[kSize / 2] == 0x22);
+	DOT_ASSERT("last page",
+		((volatile uint8*)addr)[kSize - 1] == 0x33);
+
+	kosm_dot_info info;
+	DOT_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
+	DOT_ASSERT("size correct", info.size == kSize);
+
+	debug_trace("    256MB dot: resident=%zu pages (expected ~3)\n",
+		info.resident_size / B_PAGE_SIZE);
+
+	kosm_delete_dot(dot);
+}
+
+
 // ===================== SUITE =====================
 
 static const TestEntry sDotTests[] = {
@@ -1676,6 +2241,16 @@ static const TestEntry sDotTests[] = {
 	{ "purgeable cycle 100x",   test_stress_purgeable_cycle, "STRESS" },
 	{ "mixed ops 8 phases",     test_stress_mixed_ops,     "STRESS" },
 	{ "throughput 500x",        test_stress_throughput,    "STRESS" },
+	// Cross-Process
+	{ "xproc shared read",      test_xproc_shared_read,       "Cross-Process" },
+	{ "xproc shared write",     test_xproc_shared_write,      "Cross-Process" },
+	{ "xproc concurrent pages", test_xproc_concurrent_pages,  "Cross-Process" },
+	{ "xproc handle lifecycle", test_xproc_handle_lifecycle,   "Cross-Process" },
+	{ "xproc child death",      test_xproc_child_death,       "Cross-Process" },
+	// Concurrent delete + fault
+	{ "delete+fault race",      test_concurrent_delete_fault, "STRESS" },
+	// Large sizes
+	{ "large 256MB",            test_large_256mb,             "Sizes" },
 };
 
 

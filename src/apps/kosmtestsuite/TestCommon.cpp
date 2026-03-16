@@ -443,8 +443,12 @@ public:
 
 
 int
-main()
+main(int argc, char** argv)
 {
+	// Child helper mode for cross-process dot tests
+	if (argc >= 2 && strcmp(argv[1], "--dot-child") == 0)
+		return dot_child_helper();
+
 	KosmTestSuiteApp app;
 	app.Run();
 	return 0;

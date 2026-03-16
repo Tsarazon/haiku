@@ -98,6 +98,9 @@ TestSuite	get_mutex_test_suite();
 TestSuite	get_surface_test_suite();
 TestSuite	get_dot_test_suite();
 
+// Child helper for cross-process dot tests (runs when invoked with --dot-child)
+int			dot_child_helper();
+
 
 // Trace file management
 void	open_trace(const char* filename);
