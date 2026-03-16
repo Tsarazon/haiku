@@ -4411,6 +4411,18 @@ vm_soft_fault(VMAddressSpace* addressSpace, addr_t originalAddress,
 			// KosmOS hook: check if this address belongs to a kosm_dot.
 			// kosm_dot_fault handles its own page tables, cache, and
 			// wired counts independently of VMArea.
+			//
+			// IMPORTANT: Unlock aspace read lock BEFORE calling the
+			// hook. kosm_dot_soft_fault calls vm_page_reserve_pages
+			// which can block under memory pressure. The low resource
+			// handler may need to write-lock the aspace (e.g. to
+			// delete areas and free memory). Holding the read lock
+			// here would prevent the writer, causing livelock.
+			// kosm_dot does not need the aspace lock — it uses its
+			// own per-aspace rw_lock for tree lookup, VMCache::Lock
+			// for page management, and translation map lock for PTEs.
+			context.addressSpaceLocker.Unlock();
+
 			status = kosm_dot_fault(addressSpace,
 				address, isWrite, isExecute, isUser);
 			if (status != B_BAD_ADDRESS)
