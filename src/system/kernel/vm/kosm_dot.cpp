@@ -349,13 +349,27 @@ unmap_dot_pages(KosmDot* dot, KosmDotMapping* mapping,
 
 	for (VMCachePagesTree::Iterator it = cache->pages.GetIterator();
 			vm_page* page = it.Next();) {
+		// For file-backed dots, pages in the shared vnode cache are
+		// indexed by absolute file offset. Subtract dot->cache_offset
+		// to get the offset within this dot's virtual range.
+		off_t pageCacheBytes = (off_t)page->cache_offset << PAGE_SHIFT;
+		if (pageCacheBytes < dot->cache_offset
+			|| pageCacheBytes >= dot->cache_offset + (off_t)mapping->size)
+			continue;
 		addr_t pageAddr = mapping->base
-			+ ((off_t)page->cache_offset << PAGE_SHIFT);
-		if (pageAddr >= mapping->base
-			&& pageAddr < mapping->base + mapping->size) {
-			map->Unmap(pageAddr, pageAddr + B_PAGE_SIZE - 1);
-			page->DecrementWiredCount();
-		}
+			+ (addr_t)(pageCacheBytes - dot->cache_offset);
+
+		// Only decrement wired count if the page is actually mapped
+		// in this address space. Pages faulted by other teams exist
+		// in the shared cache but have no PTE here.
+		phys_addr_t physAddr;
+		uint32 flags;
+		if (map->Query(pageAddr, &physAddr, &flags) != B_OK
+			|| (flags & PAGE_PRESENT) == 0)
+			continue;
+
+		map->Unmap(pageAddr, pageAddr + B_PAGE_SIZE - 1);
+		page->DecrementWiredCount();
 	}
 
 	map->Unlock();
@@ -466,19 +480,10 @@ delete_dot(KosmDot* dot)
 			aspace->Put();
 		} else {
 			// Team's aspace is already gone (team death race).
-			// PTEs are already destroyed, but wired counts on pages
-			// still reflect this mapping. Decrement them manually.
-			if (dot->cache != NULL) {
-				VMCache* cache = dot->cache;
-				cache->Lock();
-				for (VMCachePagesTree::Iterator it
-						= cache->pages.GetIterator();
-						vm_page* page = it.Next();) {
-					if (page->WiredCount() > 0)
-						page->DecrementWiredCount();
-				}
-				cache->Unlock();
-			}
+			// PTEs are already destroyed. We cannot determine which
+			// pages were mapped in this specific aspace, so we leave
+			// wired counts alone here. The final cache cleanup below
+			// forces all remaining wired counts to 0.
 		}
 		object_cache_delete(sMappingCache, mapping);
 	}
@@ -528,13 +533,14 @@ delete_dot(KosmDot* dot)
 
 // Unmap a specific team's mapping without destroying the dot.
 // Called when a team closes its handle (but other handles may remain).
-static void
+// Returns B_OK on success, KOSM_DOT_NOT_MAPPED if no mapping exists.
+static status_t
 close_dot_mapping_for_team(KosmDot* dot, team_id team)
 {
 	MutexLocker locker(dot->lock);
 	KosmDotMapping* mapping = dot->FindMapping(team);
 	if (mapping == NULL)
-		return;
+		return KOSM_DOT_NOT_MAPPED;
 
 	dot->mappings.Remove(mapping);
 	locker.Unlock();
@@ -553,6 +559,7 @@ close_dot_mapping_for_team(KosmDot* dot, team_id team)
 		aspace->Put();
 	}
 	object_cache_delete(sMappingCache, mapping);
+	return B_OK;
 }
 
 
@@ -584,9 +591,9 @@ kosm_dot_close_for_team(int32 internalId, team_id team)
 	if (dot == NULL)
 		return B_BAD_VALUE;
 
-	close_dot_mapping_for_team(dot, team);
+	status_t status = close_dot_mapping_for_team(dot, team);
 	put_dot(dot);
-	return B_OK;
+	return status;
 }
 
 
@@ -622,14 +629,20 @@ kosm_dot_resolve_handle(kosm_handle_t handle, uint32 requiredRights,
 // Page fault handler (internal)
 static status_t
 kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
+	uint32 grantedProtection,
 	VMAddressSpace* aspace, addr_t address,
 	bool isWrite, bool isExecute, bool isUser)
 {
 	TRACE("kosm_dot_soft_fault: dot %d, addr %#lx, write %d\n",
 		dot->id, address, isWrite);
 
-	// Protection check
-	uint32 prot = dot->protection;
+	// Protection check: effective protection is the intersection of
+	// the mapping's granted protection (ceiling set at map time) and
+	// the dot's current protection (may have been downgraded by
+	// kosm_protect_dot). This ensures:
+	// 1. Non-owner mappings can't exceed their granted ceiling
+	// 2. protect_dot downgrades apply to lazy-faulted pages too
+	uint32 prot = grantedProtection & dot->protection;
 	if (isWrite && !(prot & KOSM_PROT_WRITE))
 		return B_PERMISSION_DENIED;
 	if (isExecute && !(prot & KOSM_PROT_EXEC))
@@ -659,7 +672,7 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 			return B_BAD_ADDRESS;
 	}
 
-	// Reserve pages
+	// Reserve pages (may block under memory pressure)
 	VMTranslationMap* map = aspace->TranslationMap();
 	vm_page_reservation reservation;
 	size_t reservePages = 1 + map->MaxPagesNeededToMap(address, address);
@@ -667,9 +680,39 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 		aspace == VMAddressSpace::Kernel()
 			? VM_PRIORITY_SYSTEM : VM_PRIORITY_USER);
 
-	// Lock cache, look up or allocate page
+	// Recheck after reserve_pages: delete_dot may have completed while
+	// we were blocked. The dot struct is alive (we hold a ref), but
+	// the cache may have been released.
+	if (!dot->IsActive()) {
+		vm_page_unreserve_pages(&reservation);
+		return B_BAD_ADDRESS;
+	}
 	VMCache* cache = dot->cache;
+	if (cache == NULL) {
+		vm_page_unreserve_pages(&reservation);
+		return B_BAD_ADDRESS;
+	}
+
 	cache->Lock();
+
+	// Recheck under cache lock. If we acquired the lock before delete_dot,
+	// the cache is guaranteed alive (delete_dot needs the lock before
+	// ReleaseRefAndUnlock). If delete_dot already completed cache release,
+	// dot->cache would be NULL — caught above, or state would be DELETED —
+	// caught below.
+	//
+	// Narrow theoretical window: delete_dot sets DELETED (passes our
+	// IsActive check), then runs ReleaseRefAndUnlock (frees cache) and
+	// sets dot->cache = NULL, all between our read of dot->cache and
+	// cache->Lock(). This requires preemption at exactly the right moment.
+	// Practically unreproducible but not formally closed. Proper fix
+	// would require holding a cache ref before locking, which needs
+	// changes to VMCache refcount API.
+	if (!dot->IsActive()) {
+		cache->Unlock();
+		vm_page_unreserve_pages(&reservation);
+		return B_BAD_ADDRESS;
+	}
 
 	// Re-check purgeable state under cache lock. purge_volatile sets
 	// EMPTY under dot->lock then takes cache->Lock() to unmap/purge.
@@ -683,10 +726,22 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 		return B_PERMISSION_DENIED;
 	}
 
-	off_t cacheOffset = (off_t)(address - mappingBase);
+	// Cache offset for page lookup. For anonymous dots cache_offset is 0.
+	// For file-backed dots cache_offset is the file offset where the dot
+	// starts — pages in the shared vnode cache are indexed by absolute
+	// file offset, so we must add it.
+	off_t cacheOffset = dot->cache_offset + (off_t)(address - mappingBase);
 	vm_page* page = cache->LookupPage(cacheOffset);
 
 	if (page != NULL && page->busy) {
+		// Check page_fault_waits_allowed before blocking. If waits are
+		// not allowed (e.g. nested fault from user_memcpy), return B_BUSY
+		// to let the caller handle it without sleeping.
+		if (thread_get_current_thread()->page_fault_waits_allowed < 1) {
+			cache->Unlock();
+			vm_page_unreserve_pages(&reservation);
+			return B_BUSY;
+		}
 		// Wait for the page to become unbusy
 		cache->WaitForPageEvents(page, PAGE_EVENT_NOT_BUSY, false);
 		// Cache was unlocked by WaitForPageEvents
@@ -700,7 +755,7 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 		DEBUG_PAGE_ACCESS_START(page);
 		vm_page_set_state(page, PAGE_STATE_ACTIVE);
 
-		uint32 haikuProt = KosmDot::ToHaikuProtection(dot->protection);
+		uint32 haikuProt = KosmDot::ToHaikuProtection(prot);
 		map->Lock();
 		map->Map(address, page->physical_page_number * B_PAGE_SIZE,
 			haikuProt, dot->MemoryType(), &reservation);
@@ -731,10 +786,10 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 		generic_size_t numBytes = B_PAGE_SIZE;
 
 		// Read from file. Must unlock cache during I/O (may block).
-		off_t fileOffset = dot->cache_offset + cacheOffset;
+		// fileOffset = cacheOffset (already includes dot->cache_offset).
 		cache->Unlock();
 
-		status_t readStatus = cache->Read(fileOffset,
+		status_t readStatus = cache->Read(cacheOffset,
 			&vec, 1, B_PHYSICAL_IO_REQUEST, &numBytes);
 
 		cache->Lock();
@@ -772,8 +827,9 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 		tag_add_resident(dot->tag, 1);
 	}
 
-	// Map the page
-	uint32 haikuProt = KosmDot::ToHaikuProtection(dot->protection);
+	// Map the page using effective protection (intersection of granted
+	// ceiling and current dot->protection)
+	uint32 haikuProt = KosmDot::ToHaikuProtection(prot);
 	map->Lock();
 	map->Map(address, page->physical_page_number * B_PAGE_SIZE,
 		haikuProt, dot->MemoryType(), &reservation);
@@ -1336,7 +1392,28 @@ kosm_dot_fault(VMAddressSpace* addressSpace,
 		return B_BAD_ADDRESS;
 	}
 
-	status_t status = kosm_dot_soft_fault(dot, mappingBase, addressSpace,
+	// Look up granted protection for this team's mapping.
+	// Non-owner mappings have a protection ceiling set at kosm_map_dot
+	// time. The fault handler must use this ceiling, not the owner's
+	// dot->protection, to prevent privilege escalation on lazy pages.
+	team_id team = addressSpace->ID();
+	uint32 grantedProtection = dot->protection;
+
+	MutexLocker dotLocker(dot->lock);
+	KosmDotMapping* mapping = dot->FindMapping(team);
+	if (mapping != NULL)
+		grantedProtection = mapping->granted_protection;
+	else {
+		// Mapping gone (race with close_dot_mapping_for_team).
+		// The tree node removal follows shortly. Abort.
+		dotLocker.Unlock();
+		put_dot(dot);
+		return B_BAD_ADDRESS;
+	}
+	dotLocker.Unlock();
+
+	status_t status = kosm_dot_soft_fault(dot, mappingBase,
+		grantedProtection, addressSpace,
 		address, isWrite, isExecute, isUser);
 
 	put_dot(dot);
@@ -1456,19 +1533,11 @@ kosm_dot_purge_volatile(size_t targetPages)
 					if (aspace != NULL) {
 						unmap_dot_pages(dot, mapping, aspace);
 						aspace->Put();
-					} else {
-						// Aspace gone — PTEs already destroyed. Manually
-						// decrement wired counts so Purge() can free pages.
-						VMCache* cache = dot->cache;
-						cache->Lock();
-						for (VMCachePagesTree::Iterator pIt
-								= cache->pages.GetIterator();
-								vm_page* page = pIt.Next();) {
-							if (page->WiredCount() > 0)
-								page->DecrementWiredCount();
-						}
-						cache->Unlock();
 					}
+					// If aspace is gone, PTEs are already destroyed.
+					// team_death cleanup has already (or will) decrement
+					// wired counts. Purge() safely skips any remaining
+					// wired pages.
 				}
 
 				// Delegate page discard + commitment release to the cache
@@ -1616,14 +1685,18 @@ dot_scanner_pass(bool aggressive)
 					continue;
 
 				VMTranslationMap* map = aspace->TranslationMap();
-				addr_t pageAddr = mapping->base
-					+ ((off_t)page->cache_offset * B_PAGE_SIZE);
 
-				if (pageAddr < mapping->base
-					|| pageAddr >= mapping->base + mapping->size) {
+				// Convert absolute cache offset to dot-relative address
+				off_t pageCacheBytes
+					= (off_t)page->cache_offset * B_PAGE_SIZE;
+				if (pageCacheBytes < dot->cache_offset
+					|| pageCacheBytes >= dot->cache_offset
+						+ (off_t)mapping->size) {
 					aspace->Put();
 					continue;
 				}
+				addr_t pageAddr = mapping->base
+					+ (addr_t)(pageCacheBytes - dot->cache_offset);
 
 				phys_addr_t phys;
 				uint32 flags;
@@ -1678,23 +1751,33 @@ dot_scanner_pass(bool aggressive)
 					continue;
 
 				VMTranslationMap* map = aspace->TranslationMap();
-				addr_t pageAddr = mapping->base
-					+ ((off_t)page->cache_offset * B_PAGE_SIZE);
 
-				if (pageAddr < mapping->base
-					|| pageAddr >= mapping->base + mapping->size) {
+				// Convert absolute cache offset to dot-relative address
+				off_t pageCacheBytes
+					= (off_t)page->cache_offset * B_PAGE_SIZE;
+				if (pageCacheBytes < dot->cache_offset
+					|| pageCacheBytes >= dot->cache_offset
+						+ (off_t)mapping->size) {
 					aspace->Put();
 					continue;
 				}
+				addr_t pageAddr = mapping->base
+					+ (addr_t)(pageCacheBytes - dot->cache_offset);
 
 				map->Lock();
-				// Harvest modified bit before unmapping
+				// Check if page is actually mapped here before
+				// unmapping + decrementing wired count.
 				phys_addr_t phys;
 				uint32 flags;
-				if (map->Query(pageAddr, &phys, &flags) == B_OK
-					&& (flags & PAGE_MODIFIED) != 0) {
-					page->modified = true;
+				if (map->Query(pageAddr, &phys, &flags) != B_OK
+					|| (flags & PAGE_PRESENT) == 0) {
+					map->Unlock();
+					aspace->Put();
+					continue;
 				}
+				// Harvest modified bit before unmapping
+				if (flags & PAGE_MODIFIED)
+					page->modified = true;
 				map->Unmap(pageAddr, pageAddr + B_PAGE_SIZE - 1);
 				map->Unlock();
 
@@ -2401,14 +2484,21 @@ _user_kosm_map_dot(kosm_dot_id handle, void** userAddress,
 
 		for (VMCachePagesTree::Iterator pIt = cache->pages.GetIterator();
 				vm_page* page = pIt.Next();) {
-			addr_t pageAddr = base
-				+ ((off_t)page->cache_offset << PAGE_SHIFT);
-			if (pageAddr >= base && pageAddr < base + size) {
-				map->Map(pageAddr,
-					page->physical_page_number * B_PAGE_SIZE,
-					haikuProt, dot->MemoryType(), &reservation);
-				page->IncrementWiredCount();
+			// For file-backed dots, pages are indexed by absolute file
+			// offset. Convert to dot-relative address.
+			off_t pageCacheBytes
+				= (off_t)page->cache_offset << PAGE_SHIFT;
+			if (pageCacheBytes < dot->cache_offset
+				|| pageCacheBytes
+					>= dot->cache_offset + (off_t)size) {
+				continue;
 			}
+			addr_t pageAddr = base
+				+ (addr_t)(pageCacheBytes - dot->cache_offset);
+			map->Map(pageAddr,
+				page->physical_page_number * B_PAGE_SIZE,
+				haikuProt, dot->MemoryType(), &reservation);
+			page->IncrementWiredCount();
 		}
 
 		map->Unlock();
@@ -2704,6 +2794,7 @@ _user_kosm_dot_wire(kosm_dot_id handle, size_t offset, size_t size)
 
 		if (!mapped) {
 			status = kosm_dot_soft_fault(dot, mapping->base,
+				mapping->granted_protection & dot->protection,
 				aspace, addr, false, false, false);
 			if (status != B_OK) {
 				aspace->Put();
