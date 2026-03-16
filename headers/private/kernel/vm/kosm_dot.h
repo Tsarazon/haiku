@@ -197,7 +197,7 @@ struct KosmDot {
 	uint32				protection;		/* KOSM_PROT_* */
 	uint32				flags;			/* KOSM_DOT_* creation flags */
 	uint8				cache_policy;	/* KOSM_CACHE_* */
-	uint8				purgeable_state;/* KOSM_PURGE_* (atomic for reads) */
+	int32				purgeable_state;/* KOSM_PURGE_* (atomic for reads) */
 	uint32				tag;			/* KOSM_TAG_* */
 	uint32				wiring;			/* derived B_NO_LOCK / B_FULL_LOCK / B_CONTIGUOUS */
 

@@ -647,7 +647,7 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 	// Use atomic_get for ARM64 ordering — this read has no lock and
 	// must see the store from purge_volatile (done under dot->lock).
 	if (dot->IsPurgeable()
-		&& atomic_get((int32*)&dot->purgeable_state)
+		&& atomic_get(&dot->purgeable_state)
 			!= KOSM_PURGE_NONVOLATILE) {
 		return B_PERMISSION_DENIED;
 	}
@@ -676,7 +676,7 @@ kosm_dot_soft_fault(KosmDot* dot, addr_t mappingBase,
 	// The cache mutex provides happens-before ordering: if we acquire
 	// the cache lock after purge released it, we see the EMPTY state.
 	if (dot->IsPurgeable()
-		&& atomic_get((int32*)&dot->purgeable_state)
+		&& atomic_get(&dot->purgeable_state)
 			!= KOSM_PURGE_NONVOLATILE) {
 		cache->Unlock();
 		vm_page_unreserve_pages(&reservation);
@@ -1423,7 +1423,7 @@ kosm_dot_purge_volatile(size_t targetPages)
 				break;
 			if (!dot->IsPurgeable() || !dot->IsActive())
 				continue;
-			if (atomic_get((int32*)&dot->purgeable_state)
+			if (atomic_get(&dot->purgeable_state)
 				!= KOSM_PURGE_VOLATILE)
 				continue;
 			batch[batchCount++] = dot->id;
