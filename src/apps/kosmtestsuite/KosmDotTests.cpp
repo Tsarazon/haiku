@@ -336,7 +336,12 @@ test_purgeable_basic()
 
 	DOT_REQUIRE("create purgeable dot", dot >= 0);
 
+	debug_trace("    purgeable dot id=%d, addr=%p\n", (int)dot, addr);
+	DOT_REQUIRE("purgeable addr non-null", addr != NULL);
+
 	// Write data
+	debug_trace("    about to memset %p, size=%lu\n", addr,
+		(unsigned long)(B_PAGE_SIZE * 4));
 	memset(addr, 0xDD, B_PAGE_SIZE * 4);
 
 	// Mark volatile
@@ -931,6 +936,697 @@ test_stress_threaded()
 }
 
 
+// 25. Page fault storm — 8 threads hammering same large dot
+struct fault_storm_args {
+	void*		addr;
+	size_t		size;
+	int			thread_index;
+	int			iterations;
+	int			errors;
+};
+
+static status_t
+fault_storm_func(void* data)
+{
+	fault_storm_args* args = (fault_storm_args*)data;
+	args->errors = 0;
+	uint8* base = (uint8*)args->addr;
+	size_t pages = args->size / B_PAGE_SIZE;
+	uint8 tag = (uint8)(args->thread_index + 1);
+
+	for (int iter = 0; iter < args->iterations; iter++) {
+		// Touch all pages in strided pattern to create fault storms
+		for (size_t p = args->thread_index; p < pages; p += 8) {
+			base[p * B_PAGE_SIZE] = tag;
+			if (base[p * B_PAGE_SIZE] != tag)
+				args->errors++;
+		}
+	}
+	return B_OK;
+}
+
+static void
+test_stress_fault_storm()
+{
+	debug_trace("  [test_stress_fault_storm]\n");
+
+	const size_t kSize = B_PAGE_SIZE * 64; // 64 pages
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("fault_storm",
+		&addr, B_ANY_ADDRESS, kSize,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+
+	DOT_REQUIRE("create 64-page dot", dot >= 0);
+
+	const int kThreads = 8;
+	const int kIter = 50;
+	thread_id threads[kThreads];
+	fault_storm_args args[kThreads];
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kThreads; i++) {
+		args[i].addr = addr;
+		args[i].size = kSize;
+		args[i].thread_index = i;
+		args[i].iterations = kIter;
+		threads[i] = spawn_thread(fault_storm_func,
+			"fault_storm", B_NORMAL_PRIORITY, &args[i]);
+		resume_thread(threads[i]);
+	}
+
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	int totalErrors = 0;
+	for (int i = 0; i < kThreads; i++)
+		totalErrors += args[i].errors;
+
+	DOT_ASSERT("no data corruption", totalErrors == 0);
+	debug_trace("    8 threads x %d iter x 64 pages in %lld us\n",
+		kIter, (long long)elapsed);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 26. Memory pressure — allocate many large dots until failure
+static void
+test_stress_memory_pressure()
+{
+	debug_trace("  [test_stress_memory_pressure]\n");
+
+	const int kMaxDots = 128;
+	const size_t kDotSize = B_PAGE_SIZE * 16; // 64KB each, up to 8MB total
+	kosm_dot_id dots[kMaxDots];
+	void* addrs[kMaxDots];
+	int created = 0;
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kMaxDots; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "pressure_%d", i);
+		addrs[i] = NULL;
+		dots[i] = kosm_create_dot(name,
+			&addrs[i], B_ANY_ADDRESS, kDotSize,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+		if (dots[i] < 0)
+			break;
+		created++;
+		// Touch first page to fault it in
+		((uint8*)addrs[i])[0] = (uint8)i;
+	}
+
+	bigtime_t allocTime = system_time() - t0;
+
+	DOT_ASSERT("created at least 32 dots", created >= 32);
+	debug_trace("    allocated %d dots (%lu KB each) in %lld us\n",
+		created, (unsigned long)(kDotSize / 1024), (long long)allocTime);
+
+	// Verify all still readable
+	int verifyErrors = 0;
+	for (int i = 0; i < created; i++) {
+		if (((uint8*)addrs[i])[0] != (uint8)i)
+			verifyErrors++;
+	}
+	DOT_ASSERT("all dots readable after pressure", verifyErrors == 0);
+
+	// Delete all in reverse order (exercises different free patterns)
+	t0 = system_time();
+	for (int i = created - 1; i >= 0; i--)
+		kosm_delete_dot(dots[i]);
+	bigtime_t freeTime = system_time() - t0;
+
+	debug_trace("    freed %d dots in %lld us\n",
+		created, (long long)freeTime);
+}
+
+
+// 27. Protect thrash — rapidly toggle RO/RW from multiple threads
+struct protect_thrash_args {
+	kosm_dot_id	dot;
+	int			iterations;
+	int			errors;
+};
+
+static status_t
+protect_thrash_func(void* data)
+{
+	protect_thrash_args* args = (protect_thrash_args*)data;
+	args->errors = 0;
+
+	for (int i = 0; i < args->iterations; i++) {
+		status_t s;
+		if (i % 2 == 0)
+			s = kosm_protect_dot(args->dot, KOSM_PROT_READ);
+		else
+			s = kosm_protect_dot(args->dot,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+		if (s != B_OK)
+			args->errors++;
+	}
+	return B_OK;
+}
+
+static void
+test_stress_protect_thrash()
+{
+	debug_trace("  [test_stress_protect_thrash]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("prot_thrash",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+
+	DOT_REQUIRE("create dot", dot >= 0);
+
+	// Touch so page is resident
+	memset(addr, 0x55, B_PAGE_SIZE);
+
+	const int kThreads = 4;
+	const int kIter = 200;
+	thread_id threads[kThreads];
+	protect_thrash_args args[kThreads];
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kThreads; i++) {
+		args[i].dot = dot;
+		args[i].iterations = kIter;
+		threads[i] = spawn_thread(protect_thrash_func,
+			"prot_thrash", B_NORMAL_PRIORITY, &args[i]);
+		resume_thread(threads[i]);
+	}
+
+	for (int i = 0; i < kThreads; i++) {
+		status_t exitVal;
+		wait_for_thread(threads[i], &exitVal);
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	int totalErrors = 0;
+	for (int i = 0; i < kThreads; i++)
+		totalErrors += args[i].errors;
+
+	DOT_ASSERT("no protect errors", totalErrors == 0);
+
+	// Restore RW and verify data
+	kosm_protect_dot(dot, KOSM_PROT_READ | KOSM_PROT_WRITE);
+	DOT_ASSERT("data survived thrash", ((uint8*)addr)[0] == 0x55);
+
+	debug_trace("    4 threads x %d protects in %lld us\n",
+		kIter, (long long)elapsed);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 28. Map/unmap cycle stress
+static void
+test_stress_map_unmap()
+{
+	debug_trace("  [test_stress_map_unmap]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("map_stress",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 4,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+
+	DOT_REQUIRE("create dot", dot >= 0);
+
+	// Write initial data
+	memset(addr, 0xAA, B_PAGE_SIZE * 4);
+
+	const int kCycles = 50;
+	int errors = 0;
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kCycles; i++) {
+		status_t s = kosm_unmap_dot(dot);
+		if (s != B_OK) {
+			errors++;
+			break;
+		}
+
+		void* newAddr = NULL;
+		s = kosm_map_dot(dot, &newAddr, B_ANY_ADDRESS,
+			KOSM_PROT_READ | KOSM_PROT_WRITE);
+		if (s != B_OK || newAddr == NULL) {
+			errors++;
+			break;
+		}
+
+		// Verify data preserved
+		if (((uint8*)newAddr)[0] != 0xAA)
+			errors++;
+
+		// Update pattern
+		((uint8*)newAddr)[0] = 0xAA;
+		addr = newAddr;
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("no map/unmap errors", errors == 0);
+	debug_trace("    %d map/unmap cycles in %lld us\n",
+		kCycles, (long long)elapsed);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 29. Wire/unwire stress — repeated wire/unwire with phys addr check
+static void
+test_stress_wire_unwire()
+{
+	debug_trace("  [test_stress_wire_unwire]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("wire_stress",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 4,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+
+	DOT_REQUIRE("create dot", dot >= 0);
+
+	// Touch all pages
+	memset(addr, 0x77, B_PAGE_SIZE * 4);
+
+	const int kCycles = 100;
+	int errors = 0;
+	phys_addr_t prevPhys = 0;
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kCycles; i++) {
+		status_t s = kosm_dot_wire(dot, 0, B_PAGE_SIZE * 4);
+		if (s != B_OK) {
+			errors++;
+			debug_trace("    wire failed at iter %d: %s\n",
+				i, strerror(s));
+			break;
+		}
+
+		phys_addr_t phys = 0;
+		s = kosm_dot_get_phys(dot, 0, &phys);
+		if (s != B_OK || phys == 0)
+			errors++;
+
+		// Physical address should be stable for same page
+		if (prevPhys != 0 && phys != prevPhys)
+			errors++;
+		prevPhys = phys;
+
+		s = kosm_dot_unwire(dot, 0, B_PAGE_SIZE * 4);
+		if (s != B_OK)
+			errors++;
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("no wire/unwire errors", errors == 0);
+	debug_trace("    %d wire/unwire cycles in %lld us, phys=%#lx\n",
+		kCycles, (long long)elapsed, (unsigned long)prevPhys);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 30. Data integrity — fill patterns, verify after operations
+static void
+test_stress_data_integrity()
+{
+	debug_trace("  [test_stress_data_integrity]\n");
+
+	const size_t kSize = B_PAGE_SIZE * 32; // 128KB
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("integrity",
+		&addr, B_ANY_ADDRESS, kSize,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+
+	DOT_REQUIRE("create 32-page dot", dot >= 0);
+
+	// Fill with known pattern: each page gets its page index
+	for (size_t p = 0; p < 32; p++)
+		memset((uint8*)addr + p * B_PAGE_SIZE, (uint8)(p + 1), B_PAGE_SIZE);
+
+	// Verify all pages
+	int errors = 0;
+	for (size_t p = 0; p < 32; p++) {
+		uint8 expected = (uint8)(p + 1);
+		uint8* page = (uint8*)addr + p * B_PAGE_SIZE;
+		for (size_t b = 0; b < B_PAGE_SIZE; b++) {
+			if (page[b] != expected) {
+				errors++;
+				break; // one error per page is enough
+			}
+		}
+	}
+	DOT_ASSERT("initial fill correct", errors == 0);
+
+	// Overwrite with inverse pattern
+	for (size_t p = 0; p < 32; p++)
+		memset((uint8*)addr + p * B_PAGE_SIZE, (uint8)(255 - p), B_PAGE_SIZE);
+
+	// Verify inverse
+	errors = 0;
+	for (size_t p = 0; p < 32; p++) {
+		uint8 expected = (uint8)(255 - p);
+		uint8* page = (uint8*)addr + p * B_PAGE_SIZE;
+		// Check first, middle, last byte
+		if (page[0] != expected || page[B_PAGE_SIZE / 2] != expected
+			|| page[B_PAGE_SIZE - 1] != expected)
+			errors++;
+	}
+	DOT_ASSERT("inverse fill correct", errors == 0);
+
+	// Protect change + verify (ensure TLB flush doesn't corrupt)
+	kosm_protect_dot(dot, KOSM_PROT_READ);
+	errors = 0;
+	for (size_t p = 0; p < 32; p++) {
+		volatile uint8* page = (volatile uint8*)addr + p * B_PAGE_SIZE;
+		if (page[0] != (uint8)(255 - p))
+			errors++;
+	}
+	DOT_ASSERT("data survives protect change", errors == 0);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 31. Concurrent info iteration + create/delete
+struct info_churn_args {
+	int		iterations;
+	int		created;
+	int		deleted;
+};
+
+static status_t
+info_churn_creator(void* data)
+{
+	info_churn_args* args = (info_churn_args*)data;
+	args->created = 0;
+	args->deleted = 0;
+
+	for (int i = 0; i < args->iterations; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "churn_%d", i);
+		void* addr = NULL;
+		kosm_dot_id dot = kosm_create_dot(name,
+			&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+		if (dot >= 0) {
+			args->created++;
+			if (addr != NULL)
+				((uint8*)addr)[0] = 0x42;
+			snooze(100); // small delay to interleave with iterator
+			if (kosm_delete_dot(dot) == B_OK)
+				args->deleted++;
+		}
+	}
+	return B_OK;
+}
+
+struct info_iter_args {
+	int		iterations;
+	int		total_found;
+	int		errors;
+};
+
+static status_t
+info_churn_iterator(void* data)
+{
+	info_iter_args* args = (info_iter_args*)data;
+	args->total_found = 0;
+	args->errors = 0;
+
+	for (int i = 0; i < args->iterations; i++) {
+		int32 cookie = 0;
+		kosm_dot_info info;
+		int count = 0;
+		while (kosm_get_next_dot_info(getpid(), &cookie, &info) == B_OK) {
+			count++;
+			if (count > 500) {
+				args->errors++;
+				break; // infinite loop guard
+			}
+		}
+		args->total_found += count;
+	}
+	return B_OK;
+}
+
+static void
+test_stress_info_during_churn()
+{
+	debug_trace("  [test_stress_info_during_churn]\n");
+
+	info_churn_args creatorArgs;
+	creatorArgs.iterations = 50;
+
+	info_iter_args iterArgs;
+	iterArgs.iterations = 20;
+
+	bigtime_t t0 = system_time();
+
+	thread_id creator = spawn_thread(info_churn_creator,
+		"dot_churn", B_NORMAL_PRIORITY, &creatorArgs);
+	thread_id iterator = spawn_thread(info_churn_iterator,
+		"dot_iter", B_NORMAL_PRIORITY, &iterArgs);
+
+	resume_thread(creator);
+	resume_thread(iterator);
+
+	status_t exitVal;
+	wait_for_thread(creator, &exitVal);
+	wait_for_thread(iterator, &exitVal);
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("creator ok", creatorArgs.created == creatorArgs.deleted);
+	DOT_ASSERT("iterator no errors", iterArgs.errors == 0);
+	debug_trace("    creator: %d created/deleted, iterator: %d found total, "
+		"%lld us\n", creatorArgs.created, iterArgs.total_found,
+		(long long)elapsed);
+}
+
+
+// 32. Purgeable volatile/nonvolatile cycle stress
+static void
+test_stress_purgeable_cycle()
+{
+	debug_trace("  [test_stress_purgeable_cycle]\n");
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("purge_cycle",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 4,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_PURGEABLE, KOSM_TAG_GRAPHICS, 0);
+
+	DOT_REQUIRE("create purgeable dot", dot >= 0);
+	DOT_REQUIRE("purgeable addr ok", addr != NULL);
+
+	// Initial fill
+	memset(addr, 0xBB, B_PAGE_SIZE * 4);
+
+	const int kCycles = 100;
+	int errors = 0;
+	int purgeCount = 0;
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kCycles; i++) {
+		// Mark volatile
+		uint8 oldState = 0xFF;
+		status_t s = kosm_dot_mark_volatile(dot, &oldState);
+		if (s != B_OK) {
+			errors++;
+			break;
+		}
+
+		// Mark nonvolatile
+		oldState = 0xFF;
+		s = kosm_dot_mark_nonvolatile(dot, &oldState);
+		if (s != B_OK) {
+			errors++;
+			break;
+		}
+
+		if (oldState == KOSM_PURGE_EMPTY)
+			purgeCount++;
+
+		// Refill if purged (pages come back zeroed)
+		memset(addr, 0xBB, B_PAGE_SIZE * 4);
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("no cycle errors", errors == 0);
+	DOT_ASSERT("data accessible after cycles",
+		((uint8*)addr)[0] == 0xBB);
+
+	debug_trace("    %d cycles, %d purges, %lld us\n",
+		kCycles, purgeCount, (long long)elapsed);
+
+	kosm_delete_dot(dot);
+}
+
+
+// 33. Mixed operations — all API calls interleaved
+static void
+test_stress_mixed_ops()
+{
+	debug_trace("  [test_stress_mixed_ops]\n");
+
+	const int kDots = 8;
+	kosm_dot_id dots[kDots];
+	void* addrs[kDots];
+	int errors = 0;
+
+	bigtime_t t0 = system_time();
+
+	// Phase 1: create all
+	for (int i = 0; i < kDots; i++) {
+		char name[32];
+		snprintf(name, sizeof(name), "mixed_%d", i);
+		addrs[i] = NULL;
+		dots[i] = kosm_create_dot(name,
+			&addrs[i], B_ANY_ADDRESS, B_PAGE_SIZE * 2,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+		if (dots[i] < 0)
+			errors++;
+	}
+
+	// Phase 2: write patterns
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] >= 0 && addrs[i] != NULL)
+			memset(addrs[i], (uint8)(i + 0x10), B_PAGE_SIZE * 2);
+	}
+
+	// Phase 3: get info on all
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] >= 0) {
+			kosm_dot_info info;
+			if (kosm_get_dot_info(dots[i], &info) != B_OK)
+				errors++;
+		}
+	}
+
+	// Phase 4: wire half, protect other half
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] < 0)
+			continue;
+		if (i % 2 == 0) {
+			if (kosm_dot_wire(dots[i], 0, B_PAGE_SIZE) != B_OK)
+				errors++;
+		} else {
+			if (kosm_protect_dot(dots[i], KOSM_PROT_READ) != B_OK)
+				errors++;
+		}
+	}
+
+	// Phase 5: verify data still accessible (read-only for odd)
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] >= 0 && addrs[i] != NULL) {
+			volatile uint8* p = (volatile uint8*)addrs[i];
+			if (p[0] != (uint8)(i + 0x10))
+				errors++;
+		}
+	}
+
+	// Phase 6: unwire, restore RW
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] < 0)
+			continue;
+		if (i % 2 == 0)
+			kosm_dot_unwire(dots[i], 0, B_PAGE_SIZE);
+		else
+			kosm_protect_dot(dots[i], KOSM_PROT_READ | KOSM_PROT_WRITE);
+	}
+
+	// Phase 7: unmap/remap half
+	for (int i = 0; i < kDots; i += 2) {
+		if (dots[i] < 0)
+			continue;
+		kosm_unmap_dot(dots[i]);
+		void* newAddr = NULL;
+		status_t s = kosm_map_dot(dots[i], &newAddr, B_ANY_ADDRESS,
+			KOSM_PROT_READ | KOSM_PROT_WRITE);
+		if (s == B_OK && newAddr != NULL) {
+			if (((uint8*)newAddr)[0] != (uint8)(i + 0x10))
+				errors++;
+			addrs[i] = newAddr;
+		} else {
+			errors++;
+		}
+	}
+
+	// Phase 8: delete all
+	for (int i = 0; i < kDots; i++) {
+		if (dots[i] >= 0)
+			kosm_delete_dot(dots[i]);
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("no mixed op errors", errors == 0);
+	debug_trace("    8 dots x 8 phases in %lld us\n", (long long)elapsed);
+}
+
+
+// 34. Rapid create/touch/delete single-page — throughput test
+static void
+test_stress_throughput()
+{
+	debug_trace("  [test_stress_throughput]\n");
+
+	const int kCount = 500;
+	int errors = 0;
+
+	bigtime_t t0 = system_time();
+
+	for (int i = 0; i < kCount; i++) {
+		void* addr = NULL;
+		kosm_dot_id dot = kosm_create_dot("thru",
+			&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
+		if (dot < 0 || addr == NULL) {
+			errors++;
+			if (dot >= 0)
+				kosm_delete_dot(dot);
+			continue;
+		}
+		((uint8*)addr)[0] = 0xFF;
+		if (kosm_delete_dot(dot) != B_OK)
+			errors++;
+	}
+
+	bigtime_t elapsed = system_time() - t0;
+
+	DOT_ASSERT("no throughput errors", errors == 0);
+
+	double opsPerSec = (double)kCount * 1000000.0 / (double)elapsed;
+	debug_trace("    %d create/touch/delete in %lld us (%.0f ops/s)\n",
+		kCount, (long long)elapsed, opsPerSec);
+	DOT_ASSERT("throughput > 100 ops/s", opsPerSec > 100.0);
+}
+
+
 // ===================== SUITE =====================
 
 static const TestEntry sDotTests[] = {
@@ -970,6 +1666,16 @@ static const TestEntry sDotTests[] = {
 	// Stress
 	{ "create/delete 64x",      test_stress_create_delete, "STRESS" },
 	{ "4 threads x 32",         test_stress_threaded,      "STRESS" },
+	{ "fault storm 8 threads",  test_stress_fault_storm,   "STRESS" },
+	{ "memory pressure 128x",   test_stress_memory_pressure, "STRESS" },
+	{ "protect thrash 4x200",   test_stress_protect_thrash, "STRESS" },
+	{ "map/unmap 50 cycles",    test_stress_map_unmap,     "STRESS" },
+	{ "wire/unwire 100 cycles", test_stress_wire_unwire,   "STRESS" },
+	{ "data integrity 32pg",    test_stress_data_integrity, "STRESS" },
+	{ "info during churn",      test_stress_info_during_churn, "STRESS" },
+	{ "purgeable cycle 100x",   test_stress_purgeable_cycle, "STRESS" },
+	{ "mixed ops 8 phases",     test_stress_mixed_ops,     "STRESS" },
+	{ "throughput 500x",        test_stress_throughput,    "STRESS" },
 };
 
 
