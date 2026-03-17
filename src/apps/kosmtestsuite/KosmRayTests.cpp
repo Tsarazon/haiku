@@ -832,9 +832,10 @@ test_handle_area_move()
 
 	uint8 recvMsg;
 	size_t sz = 1;
-	kosm_handle_t recvH;
+	kosm_handle_t recvH = KOSM_HANDLE_INVALID;
 	size_t rhc = 1;
-	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
+	s = kosm_ray_read_etc(ep1, &recvMsg, &sz, &recvH, &rhc,
+		B_RELATIVE_TIMEOUT, 1000000);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
 
@@ -843,8 +844,8 @@ test_handle_area_move()
 	TEST_ASSERT("handle type AREA", hinfo.type == KOSM_HANDLE_AREA);
 
 	delete_area(aid);
-	// recvH is a cloned area handle — close it to clean up
-	kosm_close_handle(recvH);
+	if (recvH != KOSM_HANDLE_INVALID)
+		kosm_close_handle(recvH);
 	kosm_close_ray(ep0);
 	kosm_close_ray(ep1);
 }
@@ -869,9 +870,10 @@ test_handle_sem_move()
 
 	uint8 recvMsg;
 	size_t sz = 1;
-	kosm_handle_t recvH;
+	kosm_handle_t recvH = KOSM_HANDLE_INVALID;
 	size_t rhc = 1;
-	s = kosm_ray_read(ep1, &recvMsg, &sz, &recvH, &rhc, 0);
+	s = kosm_ray_read_etc(ep1, &recvMsg, &sz, &recvH, &rhc,
+		B_RELATIVE_TIMEOUT, 1000000);
 	TEST_ASSERT("read succeeds", s == B_OK);
 	TEST_ASSERT("got 1 handle", rhc == 1);
 
@@ -1059,7 +1061,8 @@ test_peek()
 	uint32 empty = 0;
 	sz = sizeof(empty);
 	hc = 0;
-	s = kosm_ray_read(ep1, &empty, &sz, NULL, &hc, 0);
+	s = kosm_ray_read_etc(ep1, &empty, &sz, NULL, &hc,
+		B_RELATIVE_TIMEOUT, 0);
 	TEST_ASSERT("queue empty after real read", s == B_WOULD_BLOCK);
 
 	kosm_close_ray(ep0);
