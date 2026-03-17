@@ -134,6 +134,12 @@ public:
 								KernelReferenceable** outObject = NULL,
 								uint16* outType = NULL);
 
+	// Remove with type check. Returns B_BAD_VALUE if type mismatch;
+	// handle stays in table. Atomic check-and-remove, no TOCTOU.
+	status_t				RemoveTyped(kosm_handle_t handle,
+								uint16 expectedType,
+								KernelReferenceable** outObject);
+
 	// Remove legacy handle. Returns the legacy_id.
 	status_t				RemoveLegacy(kosm_handle_t handle,
 								int32* outLegacyID = NULL,

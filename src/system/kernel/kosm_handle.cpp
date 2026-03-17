@@ -425,6 +425,40 @@ KosmHandleTable::Remove(kosm_handle_t handle,
 
 
 status_t
+KosmHandleTable::RemoveTyped(kosm_handle_t handle,
+	uint16 expectedType, KernelReferenceable** outObject)
+{
+	if (handle <= 0 || outObject == NULL)
+		return B_BAD_VALUE;
+
+	MutexLocker locker(fLock);
+
+	KosmHandleEntry* entry = _EntryFor(handle);
+	if (entry == NULL)
+		return B_BAD_VALUE;
+
+	if (entry->type != expectedType)
+		return B_BAD_VALUE;
+
+	uint32 index = _IndexOf(handle);
+	*outObject = entry->object;
+
+	// Clear entry and return to free list
+	entry->type = KOSM_HANDLE_TYPE_NONE;
+	entry->generation = (entry->generation + 1) & 0x7FFF;
+	entry->legacy_id = fFreeHead;
+	fFreeHead = (int32)index;
+	fCount--;
+
+	locker.Unlock();
+
+	TRACE(("kosm_handle: remove_typed handle=%" B_PRId32 " type=%u\n",
+		handle, expectedType));
+	return B_OK;
+}
+
+
+status_t
 KosmHandleTable::RemoveLegacy(kosm_handle_t handle,
 	int32* outLegacyID, uint16* outType)
 {

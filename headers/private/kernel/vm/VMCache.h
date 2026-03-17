@@ -95,6 +95,7 @@ public:
 
 	inline	void				AcquireRefLocked();
 	inline	void				AcquireRef();
+	inline	void				AcquireRefUnsafe();
 	inline	void				ReleaseRefLocked();
 	inline	void				ReleaseRef();
 	inline	void				ReleaseRefAndUnlock(
@@ -316,6 +317,17 @@ VMCache::AcquireRef()
 	Lock();
 	fRefCount++;
 	Unlock();
+}
+
+
+void
+VMCache::AcquireRefUnsafe()
+{
+	// Caller guarantees refcount > 0 via external synchronization.
+	// Used by kosm_dot when dot->lock serializes with delete_dot's
+	// cache detach — holding dot->lock and seeing cache != NULL
+	// guarantees the dot still holds its cache ref.
+	atomic_add(&fRefCount, 1);
 }
 
 
