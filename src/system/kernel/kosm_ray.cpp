@@ -27,6 +27,7 @@
 #include <string.h>
 
 #include <OS.h>
+#include <sys/uio.h>
 
 #include <AutoDeleter.h>
 
@@ -2512,5 +2513,210 @@ _user_kosm_get_ray_info(kosm_ray_id handle, kosm_ray_info* userInfo,
 	if (user_memcpy(userInfo, &info, sizeof(kosm_ray_info)) < B_OK)
 		return B_BAD_ADDRESS;
 
+	return B_OK;
+}
+
+
+status_t
+_user_kosm_ray_call(kosm_ray_id handle,
+	const void* sendData, size_t sendSize,
+	const kosm_handle_t* sendHandles, size_t sendHandleCount,
+	void* recvData, size_t* recvSize,
+	kosm_handle_t* recvHandles, size_t* recvHandleCount,
+	uint32 flags, bigtime_t timeout)
+{
+	if (sendData != NULL && !IS_USER_ADDRESS(sendData))
+		return B_BAD_ADDRESS;
+	if (sendHandles != NULL && !IS_USER_ADDRESS(sendHandles))
+		return B_BAD_ADDRESS;
+	if (recvData != NULL && !IS_USER_ADDRESS(recvData))
+		return B_BAD_ADDRESS;
+	if (recvSize != NULL && !IS_USER_ADDRESS(recvSize))
+		return B_BAD_ADDRESS;
+	if (recvHandles != NULL && !IS_USER_ADDRESS(recvHandles))
+		return B_BAD_ADDRESS;
+	if (recvHandleCount != NULL && !IS_USER_ADDRESS(recvHandleCount))
+		return B_BAD_ADDRESS;
+
+	// Need both READ and WRITE rights for call
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle,
+		KOSM_RIGHT_READ | KOSM_RIGHT_WRITE, &ref, &internalId);
+	if (status != B_OK)
+		return status;
+
+	syscall_restart_handle_timeout_pre(flags, timeout);
+
+	// Send phase: non-blocking write (if queue is full, fail immediately
+	// rather than blocking — the caller wants an atomic call, not a
+	// blocked-on-write + blocked-on-read double wait)
+	status = kosm_ray_write_internal(internalId, sendData, sendSize,
+		sendHandles, sendHandleCount,
+		flags | B_CAN_INTERRUPT | B_RELATIVE_TIMEOUT,
+		0, true, true);
+	if (status != B_OK)
+		return syscall_restart_handle_timeout_post(status, timeout);
+
+	// Receive phase: blocking read with the caller's timeout.
+	// Importance donation happens implicitly during the blocked wait
+	// (the server inherits the caller's QoS via the ray's QoS class).
+	status = kosm_ray_read_internal(internalId, recvData, recvSize,
+		recvHandles, recvHandleCount,
+		flags | B_CAN_INTERRUPT,
+		timeout, true, true);
+
+	return syscall_restart_handle_timeout_post(status, timeout);
+}
+
+
+status_t
+_user_kosm_ray_writev(kosm_ray_id handle,
+	const iovec* userVecs, size_t vecCount,
+	const kosm_handle_t* userHandles, size_t handleCount,
+	uint32 flags)
+{
+	if (userVecs == NULL || !IS_USER_ADDRESS(userVecs))
+		return B_BAD_ADDRESS;
+	if (userHandles != NULL && !IS_USER_ADDRESS(userHandles))
+		return B_BAD_ADDRESS;
+	if (vecCount == 0 || vecCount > 64)
+		return B_BAD_VALUE;
+
+	// Copy iovec array from userspace
+	iovec vecs[64];
+	if (user_memcpy(vecs, userVecs, vecCount * sizeof(iovec)) < B_OK)
+		return B_BAD_ADDRESS;
+
+	// Compute total size and validate
+	size_t totalSize = 0;
+	for (size_t i = 0; i < vecCount; i++) {
+		if (vecs[i].iov_len > KOSM_RAY_MAX_DATA_SIZE - totalSize)
+			return KOSM_RAY_TOO_LARGE;
+		totalSize += vecs[i].iov_len;
+	}
+	if (totalSize > KOSM_RAY_MAX_DATA_SIZE)
+		return KOSM_RAY_TOO_LARGE;
+
+	// Gather into contiguous kernel buffer
+	uint8* buffer = NULL;
+	if (totalSize > 0) {
+		buffer = (uint8*)malloc(totalSize);
+		if (buffer == NULL)
+			return B_NO_MEMORY;
+
+		size_t offset = 0;
+		for (size_t i = 0; i < vecCount; i++) {
+			if (vecs[i].iov_len == 0)
+				continue;
+			if (!IS_USER_ADDRESS(vecs[i].iov_base)) {
+				free(buffer);
+				return B_BAD_ADDRESS;
+			}
+			if (user_memcpy(buffer + offset, vecs[i].iov_base,
+					vecs[i].iov_len) < B_OK) {
+				free(buffer);
+				return B_BAD_ADDRESS;
+			}
+			offset += vecs[i].iov_len;
+		}
+	}
+
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_WRITE,
+		&ref, &internalId);
+	if (status != B_OK) {
+		free(buffer);
+		return status;
+	}
+
+	// Write using the gathered buffer. Pass userCopy=false since
+	// data is already in kernel space.
+	status = kosm_ray_write_internal(internalId, buffer, totalSize,
+		userHandles, handleCount, flags, 0, false, true);
+
+	free(buffer);
+	return status;
+}
+
+
+status_t
+_user_kosm_ray_readv(kosm_ray_id handle,
+	const iovec* userVecs, size_t vecCount,
+	kosm_handle_t* userHandles, size_t* userHandleCount,
+	uint32 flags)
+{
+	if (userVecs == NULL || !IS_USER_ADDRESS(userVecs))
+		return B_BAD_ADDRESS;
+	if (userHandles != NULL && !IS_USER_ADDRESS(userHandles))
+		return B_BAD_ADDRESS;
+	if (userHandleCount != NULL && !IS_USER_ADDRESS(userHandleCount))
+		return B_BAD_ADDRESS;
+	if (vecCount == 0 || vecCount > 64)
+		return B_BAD_VALUE;
+
+	// Copy iovec array from userspace
+	iovec vecs[64];
+	if (user_memcpy(vecs, userVecs, vecCount * sizeof(iovec)) < B_OK)
+		return B_BAD_ADDRESS;
+
+	// Compute total buffer size
+	size_t totalSize = 0;
+	for (size_t i = 0; i < vecCount; i++) {
+		if (vecs[i].iov_len > KOSM_RAY_MAX_DATA_SIZE - totalSize)
+			return KOSM_RAY_TOO_LARGE;
+		totalSize += vecs[i].iov_len;
+	}
+	if (totalSize > KOSM_RAY_MAX_DATA_SIZE)
+		return KOSM_RAY_TOO_LARGE;
+
+	// Allocate contiguous kernel buffer for read
+	uint8* buffer = NULL;
+	if (totalSize > 0) {
+		buffer = (uint8*)malloc(totalSize);
+		if (buffer == NULL)
+			return B_NO_MEMORY;
+	}
+
+	BReference<RayEndpoint> ref;
+	kosm_ray_id internalId;
+	status_t status = resolve_ray_handle(handle, KOSM_RIGHT_READ,
+		&ref, &internalId);
+	if (status != B_OK) {
+		free(buffer);
+		return status;
+	}
+
+	// Read into contiguous buffer. Pass userCopy=false for data
+	// (kernel buffer), true for handles (still userspace pointers).
+	size_t readSize = totalSize;
+	status = kosm_ray_read_internal(internalId, buffer, &readSize,
+		userHandles, userHandleCount, flags, 0, false, true);
+	if (status != B_OK) {
+		free(buffer);
+		return status;
+	}
+
+	// Scatter to user iovecs
+	size_t remaining = readSize;
+	size_t offset = 0;
+	for (size_t i = 0; i < vecCount && remaining > 0; i++) {
+		size_t chunk = vecs[i].iov_len;
+		if (chunk > remaining)
+			chunk = remaining;
+		if (!IS_USER_ADDRESS(vecs[i].iov_base)) {
+			free(buffer);
+			return B_BAD_ADDRESS;
+		}
+		if (user_memcpy(vecs[i].iov_base, buffer + offset, chunk) < B_OK) {
+			free(buffer);
+			return B_BAD_ADDRESS;
+		}
+		offset += chunk;
+		remaining -= chunk;
+	}
+
+	free(buffer);
 	return B_OK;
 }

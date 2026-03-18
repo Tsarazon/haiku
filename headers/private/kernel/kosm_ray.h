@@ -90,6 +90,25 @@ status_t		_user_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 
 status_t		_user_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
 
+status_t		_user_kosm_ray_call(kosm_ray_id id,
+					const void* sendData, size_t sendSize,
+					const kosm_handle_t* sendHandles,
+					size_t sendHandleCount,
+					void* recvData, size_t* recvSize,
+					kosm_handle_t* recvHandles,
+					size_t* recvHandleCount,
+					uint32 flags, bigtime_t timeout);
+
+status_t		_user_kosm_ray_writev(kosm_ray_id id,
+					const iovec* userVecs, size_t vecCount,
+					const kosm_handle_t* userHandles,
+					size_t handleCount, uint32 flags);
+
+status_t		_user_kosm_ray_readv(kosm_ray_id id,
+					const iovec* userVecs, size_t vecCount,
+					kosm_handle_t* userHandles,
+					size_t* userHandleCount, uint32 flags);
+
 kosm_ray_id		_user_kosm_get_bootstrap_ray(void);
 
 status_t		_user_kosm_ray_set_bootstrap(team_id team,

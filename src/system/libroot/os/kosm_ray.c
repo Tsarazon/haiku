@@ -7,6 +7,8 @@
 #include <KosmOS.h>
 #include <syscalls.h>
 
+#include <sys/uio.h>
+
 
 status_t
 kosm_create_ray(kosm_ray_id *endpoint0, kosm_ray_id *endpoint1, uint32 flags)
@@ -93,4 +95,36 @@ status_t
 _kosm_get_ray_info(kosm_ray_id id, kosm_ray_info *info, size_t size)
 {
 	return _kern_kosm_get_ray_info(id, info, size);
+}
+
+
+status_t
+kosm_ray_call(kosm_ray_id id,
+	const void *sendData, size_t sendSize,
+	const kosm_handle_t *sendHandles, size_t sendHandleCount,
+	void *recvData, size_t *recvSize,
+	kosm_handle_t *recvHandles, size_t *recvHandleCount,
+	uint32 flags, bigtime_t timeout)
+{
+	return _kern_kosm_ray_call(id, sendData, sendSize,
+		sendHandles, sendHandleCount, recvData, recvSize,
+		recvHandles, recvHandleCount, flags, timeout);
+}
+
+
+status_t
+kosm_ray_writev(kosm_ray_id id, const struct iovec *vecs, size_t vecCount,
+	const kosm_handle_t *handles, size_t handleCount, uint32 flags)
+{
+	return _kern_kosm_ray_writev(id, vecs, vecCount, handles,
+		handleCount, flags);
+}
+
+
+status_t
+kosm_ray_readv(kosm_ray_id id, const struct iovec *vecs, size_t vecCount,
+	kosm_handle_t *handles, size_t *handleCount, uint32 flags)
+{
+	return _kern_kosm_ray_readv(id, vecs, vecCount, handles,
+		handleCount, flags);
 }
