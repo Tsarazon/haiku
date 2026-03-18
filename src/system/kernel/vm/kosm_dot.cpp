@@ -2169,7 +2169,7 @@ kosm_dot_init_post_thread(void)
 kosm_handle_t
 kosm_create_dot_file_for(team_id team, int fd, off_t fileOffset,
 	const char* name, void** address, uint32 addressSpec, size_t size,
-	uint32 protection, uint32 flags, uint32 tag)
+	uint32 protection, uint32 flags, uint32 tag, bool kernel)
 {
 	if (size == 0 || fileOffset < 0)
 		return B_BAD_VALUE;
@@ -2193,7 +2193,7 @@ kosm_create_dot_file_for(team_id team, int fd, off_t fileOffset,
 
 	// Get vnode from fd
 	struct vnode* vnode;
-	status_t status = vfs_get_vnode_from_fd(fd, true, &vnode);
+	status_t status = vfs_get_vnode_from_fd(fd, kernel, &vnode);
 	if (status != B_OK)
 		return status;
 
@@ -3360,7 +3360,7 @@ _user_kosm_create_dot_file(int fd, off_t fileOffset,
 	team_id team = thread_get_current_thread()->team->id;
 
 	kosm_handle_t handle = kosm_create_dot_file_for(team, fd, fileOffset,
-		name, &address, addressSpec, size, protection, flags, tag);
+		name, &address, addressSpec, size, protection, flags, tag, false);
 	if (handle < B_OK)
 		return handle;
 

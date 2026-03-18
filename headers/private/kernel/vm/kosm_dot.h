@@ -2,6 +2,8 @@
  * Copyright 2025 KosmOS Project. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
+ * kosm_dot — kernel private definitions.
+ *
  * kosm_dot is a fully independent VM primitive parallel to Haiku area.
  * It does NOT wrap VMArea. It directly owns a VMCache, manages its own
  * page tables via VMTranslationMap, handles its own page faults, and
@@ -305,7 +307,10 @@ typedef BOpenHashTable<KosmDotHashDefinition> KosmDotHashTable;
 /* Defined in KosmDotPurgeableCache.cpp; forward-declared here. */
 struct KosmDotPurgeableCache;
 
+
+/* ============================================================ */
 /*  Kernel-only API                                              */
+/* ============================================================ */
 
 #ifdef __cplusplus
 extern "C" {
@@ -382,7 +387,8 @@ kosm_handle_t kosm_create_dot_for(team_id team, const char* name,
 kosm_handle_t kosm_create_dot_file_for(team_id team, int fd,
 				off_t fileOffset, const char* name,
 				void** address, uint32 addressSpec, size_t size,
-				uint32 protection, uint32 flags, uint32 tag);
+				uint32 protection, uint32 flags, uint32 tag,
+				bool kernel);
 
 /* Sync dirty pages of a file-backed dot back to disk. */
 status_t	kosm_dot_sync_internal(int32 internalId,

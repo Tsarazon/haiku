@@ -199,10 +199,26 @@ public:
 
 	virtual void Draw(BRect updateRect)
 	{
+		// Clear background explicitly to prevent artifacts on partial redraws
+		SetLowColor(30, 30, 40);
+		FillRect(updateRect, B_SOLID_LOW);
+
 		float lineHeight = 14.0f;
 		float y = 16.0f;
 
-		for (int i = 0; i < sLineCount && i < kMaxLines; i++) {
+		// Only draw lines that intersect updateRect
+		int firstLine = (int)((updateRect.top - 16.0f) / lineHeight);
+		if (firstLine < 0)
+			firstLine = 0;
+		int lastLine = (int)((updateRect.bottom) / lineHeight) + 1;
+		if (lastLine > sLineCount)
+			lastLine = sLineCount;
+		if (lastLine > kMaxLines)
+			lastLine = kMaxLines;
+
+		y += firstLine * lineHeight;
+
+		for (int i = firstLine; i < lastLine; i++) {
 			const char* line = sLines[i];
 
 			if (strstr(line, "FAIL"))
@@ -234,6 +250,13 @@ public:
 	{
 		float w, h;
 		GetPreferredSize(&w, &h);
+		// Ensure minimum height covers scroll view visible area
+		BScrollView* scroll = dynamic_cast<BScrollView*>(Parent());
+		if (scroll != NULL) {
+			float scrollH = scroll->Bounds().Height();
+			if (h < scrollH)
+				h = scrollH;
+		}
 		ResizeTo(w, h);
 		Invalidate();
 	}
