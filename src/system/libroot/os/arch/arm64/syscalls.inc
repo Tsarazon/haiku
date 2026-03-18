@@ -31,3 +31,5 @@ name: \
 #define SYSCALL18(name, n) _AARCH64_SYSCALL_ENCODE(name, n, 18)
 #define SYSCALL19(name, n) _AARCH64_SYSCALL_ENCODE(name, n, 19)
 #define SYSCALL20(name, n) _AARCH64_SYSCALL_ENCODE(name, n, 20)
+#define SYSCALL21(name, n) _AARCH64_SYSCALL_ENCODE(name, n, 21)
+#define SYSCALL22(name, n) _AARCH64_SYSCALL_ENCODE(name, n, 22)

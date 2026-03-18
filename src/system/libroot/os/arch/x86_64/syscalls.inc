@@ -56,4 +56,6 @@
 #define SYSCALL18(name, n)	_SYSCALL_RCX(name, n)
 #define SYSCALL19(name, n)	_SYSCALL_RCX(name, n)
 #define SYSCALL20(name, n)	_SYSCALL_RCX(name, n)
+#define SYSCALL21(name, n)	_SYSCALL_RCX(name, n)
+#define SYSCALL22(name, n)	_SYSCALL_RCX(name, n)
 
