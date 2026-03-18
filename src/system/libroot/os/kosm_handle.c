@@ -27,3 +27,17 @@ _kosm_get_handle_info(kosm_handle_t handle, kosm_handle_info *info)
 {
 	return _kern_kosm_handle_get_info(handle, info);
 }
+
+
+status_t
+kosm_handle_set_tag(kosm_handle_t handle, uintptr_t tag)
+{
+	return _kern_kosm_handle_set_tag(handle, tag);
+}
+
+
+status_t
+kosm_handle_get_tag(kosm_handle_t handle, uintptr_t *outTag)
+{
+	return _kern_kosm_handle_get_tag(handle, outTag);
+}

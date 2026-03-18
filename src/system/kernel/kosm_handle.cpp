@@ -204,6 +204,7 @@ KosmHandleTable::_AllocateSlot(uint16 type, uint32 rights)
 	uint16 generation = entry->generation;		// preserved from last use
 	entry->type = type;
 	entry->rights = rights;
+	entry->tag = 0;
 	// generation is already set (incremented on removal)
 	// object/legacy_id will be set by caller
 
@@ -358,6 +359,40 @@ KosmHandleTable::GetInfo(kosm_handle_t handle, uint16* outType,
 	if (outRights != NULL)
 		*outRights = entry->rights;
 
+	return B_OK;
+}
+
+
+status_t
+KosmHandleTable::SetTag(kosm_handle_t handle, uintptr_t tag)
+{
+	if (handle <= 0)
+		return B_BAD_VALUE;
+
+	MutexLocker locker(fLock);
+
+	KosmHandleEntry* entry = _EntryFor(handle);
+	if (entry == NULL)
+		return B_BAD_VALUE;
+
+	entry->tag = tag;
+	return B_OK;
+}
+
+
+status_t
+KosmHandleTable::GetTag(kosm_handle_t handle, uintptr_t* outTag)
+{
+	if (handle <= 0 || outTag == NULL)
+		return B_BAD_VALUE;
+
+	MutexLocker locker(fLock);
+
+	KosmHandleEntry* entry = _EntryFor(handle);
+	if (entry == NULL)
+		return B_BAD_VALUE;
+
+	*outTag = entry->tag;
 	return B_OK;
 }
 
@@ -744,4 +779,34 @@ _user_kosm_handle_get_info(kosm_handle_t handle,
 		return B_BAD_ADDRESS;
 
 	return B_OK;
+}
+
+
+status_t
+_user_kosm_handle_set_tag(kosm_handle_t handle, uintptr_t tag)
+{
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	return table->SetTag(handle, tag);
+}
+
+
+status_t
+_user_kosm_handle_get_tag(kosm_handle_t handle, uintptr_t* userTag)
+{
+	if (userTag == NULL || !IS_USER_ADDRESS(userTag))
+		return B_BAD_ADDRESS;
+
+	KosmHandleTable* table = KosmHandleTable::TableForCurrent();
+	if (table == NULL)
+		return B_NOT_INITIALIZED;
+
+	uintptr_t tag;
+	status_t status = table->GetTag(handle, &tag);
+	if (status != B_OK)
+		return status;
+
+	return user_memcpy(userTag, &tag, sizeof(tag));
 }

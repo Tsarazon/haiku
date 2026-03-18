@@ -83,6 +83,7 @@ struct KosmHandleEntry {
 	uint32		rights;
 	uint16		type;			// KOSM_HANDLE_RAY, _MUTEX, _AREA, ...
 	uint16		generation;		// use-after-close protection
+	uintptr_t	tag;			// userspace cookie for dispatch
 };
 
 
@@ -126,6 +127,12 @@ public:
 	// Caller must hold no table lock. Validates handle.
 	status_t				GetInfo(kosm_handle_t handle,
 								uint16* outType, uint32* outRights);
+
+	// Per-handle userspace cookie for dispatch without hashmap.
+	status_t				SetTag(kosm_handle_t handle,
+								uintptr_t tag);
+	status_t				GetTag(kosm_handle_t handle,
+								uintptr_t* outTag);
 
 	// Remove handle. Releases one reference on the object.
 	// If outObject is non-NULL, the reference is NOT released
@@ -211,6 +218,10 @@ kosm_handle_t _user_kosm_duplicate_handle(kosm_handle_t handle,
 				uint32 rights);
 status_t	_user_kosm_handle_get_info(kosm_handle_t handle,
 				kosm_handle_info* userInfo);
+status_t	_user_kosm_handle_set_tag(kosm_handle_t handle,
+				uintptr_t tag);
+status_t	_user_kosm_handle_get_tag(kosm_handle_t handle,
+				uintptr_t* userTag);
 
 
 #ifdef __cplusplus
