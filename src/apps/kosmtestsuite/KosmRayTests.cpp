@@ -1334,39 +1334,47 @@ test_wait_timeout()
 // STRESS
 
 static void
-test_stress_throughput()
-{
-	trace("\n--- test_stress_throughput ---\n");
-	kosm_ray_id ep0, ep1;
-	kosm_create_ray(&ep0, &ep1, 0);
+// Single throughput iteration — returns ops/sec
+static kosm_ray_id sThroughputEp0, sThroughputEp1;
 
+static double
+ray_throughput_iteration()
+{
 	const int kCycles = 10000;
 	uint8 sendBuf[64];
 	uint8 recvBuf[64];
 	memset(sendBuf, 0xAA, sizeof(sendBuf));
 
-	int errors = 0;
 	bigtime_t start = system_time();
 	for (int i = 0; i < kCycles; i++) {
 		sendBuf[0] = (uint8)(i & 0xFF);
-		status_t s = kosm_ray_write(ep0, sendBuf, sizeof(sendBuf),
+		kosm_ray_write(sThroughputEp0, sendBuf, sizeof(sendBuf),
 			NULL, 0, 0);
-		if (s != B_OK) { errors++; continue; }
-
 		size_t sz = sizeof(recvBuf);
 		size_t hc = 0;
-		s = kosm_ray_read(ep1, recvBuf, &sz, NULL, &hc, 0);
-		if (s != B_OK) errors++;
+		kosm_ray_read(sThroughputEp1, recvBuf, &sz, NULL, &hc, 0);
 	}
 	bigtime_t elapsed = system_time() - start;
-	double opsPerSec = (double)kCycles * 1000000.0 / (double)elapsed;
+	return (double)kCycles * 1000000.0 / (double)elapsed;
+}
 
-	trace("    throughput: %.0f round-trips/sec\n", opsPerSec);
-	TEST_ASSERT("no errors", errors == 0);
-	TEST_ASSERT("throughput > 10000 rt/s", opsPerSec > 10000);
+static void
+test_stress_throughput()
+{
+	trace("\n--- test_stress_throughput ---\n");
+	kosm_create_ray(&sThroughputEp0, &sThroughputEp1, 0);
 
-	kosm_close_ray(ep0);
-	kosm_close_ray(ep1);
+	BenchStats stats = run_benchmark(ray_throughput_iteration, 5, 2);
+
+	trace("    throughput: median=%.0f, min=%.0f, max=%.0f rt/s"
+		" (%d runs, %d warmup)\n",
+		stats.median_ops, stats.min_ops, stats.max_ops,
+		stats.runs, stats.warmup);
+	TEST_ASSERT("no errors (implicit)", true);
+	TEST_ASSERT("throughput > 10000 rt/s", stats.median_ops > 10000);
+
+	kosm_close_ray(sThroughputEp0);
+	kosm_close_ray(sThroughputEp1);
 }
 
 

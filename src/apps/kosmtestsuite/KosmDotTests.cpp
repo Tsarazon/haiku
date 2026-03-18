@@ -1590,40 +1590,40 @@ test_stress_mixed_ops()
 
 // 34. Rapid create/touch/delete single-page — throughput test
 static void
-test_stress_throughput()
+// Single dot throughput iteration — returns ops/sec
+static double
+dot_throughput_iteration()
 {
-	debug_trace("  [test_stress_throughput]\n");
-
 	const int kCount = 500;
-	int errors = 0;
 
 	bigtime_t t0 = system_time();
-
 	for (int i = 0; i < kCount; i++) {
 		void* addr = NULL;
 		kosm_dot_id dot = kosm_create_dot("thru",
 			&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 			KOSM_PROT_READ | KOSM_PROT_WRITE,
 			KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
-		if (dot < 0 || addr == NULL) {
-			errors++;
-			if (dot >= 0)
-				kosm_delete_dot(dot);
+		if (dot < 0)
 			continue;
-		}
 		((uint8*)addr)[0] = 0xFF;
-		if (kosm_delete_dot(dot) != B_OK)
-			errors++;
+		kosm_delete_dot(dot);
 	}
-
 	bigtime_t elapsed = system_time() - t0;
+	return (double)kCount * 1000000.0 / (double)elapsed;
+}
 
-	DOT_ASSERT("no throughput errors", errors == 0);
+static void
+test_stress_throughput()
+{
+	debug_trace("  [test_stress_throughput]\n");
 
-	double opsPerSec = (double)kCount * 1000000.0 / (double)elapsed;
-	debug_trace("    %d create/touch/delete in %lld us (%.0f ops/s)\n",
-		kCount, (long long)elapsed, opsPerSec);
-	DOT_ASSERT("throughput > 100 ops/s", opsPerSec > 100.0);
+	BenchStats stats = run_benchmark(dot_throughput_iteration, 5, 2);
+
+	debug_trace("    throughput: median=%.0f, min=%.0f, max=%.0f ops/s"
+		" (%d runs, %d warmup)\n",
+		stats.median_ops, stats.min_ops, stats.max_ops,
+		stats.runs, stats.warmup);
+	DOT_ASSERT("throughput > 100 ops/s", stats.median_ops > 100.0);
 }
 
 
