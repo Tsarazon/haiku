@@ -622,6 +622,7 @@ fi
 #
 GIT_DIR=`git -C "$configureDir" rev-parse --git-dir | sed 's/^gitdir: //'`
 HOST_GCC_MACHINE=`$CC -dumpmachine`
+HOST_GCC_VERSION=`$CC -dumpversion`
 HAIKU_INCLUDE_SOURCES=0
 HAIKU_INCLUDE_3RDPARTY=0
 HAIKU_DISTRO_COMPATIBILITY=default
@@ -716,6 +717,9 @@ while [ $# -gt 0 ] ; do
 			esac
 			set_variable buildCrossToolsMachine_$targetArch $targetMachine
 			targetArchs="$targetArchs $targetArch"
+			if [ "$targetArch" = "x86_gcc2" ] && [ ${HOST_GCC_VERSION%%.*} -ge 14 ]; then
+				CC="$CC -Wno-error=implicit-int -Wno-error=implicit-function-declaration"
+			fi
 			;;
 		--cross-tools-prefix)
 			assertparam "$1" $#
@@ -885,6 +889,22 @@ if [ "$("$HAIKU_NASM" -hf | grep -c elf'[36][24] ')" -ne "2" ]; then
 		echo "You can install it from Mac Ports."
 		echo "Mac Ports is available at: http://www.macports.org/"
 	fi
+	exit 1
+fi
+
+# locate awk
+if [ -z "$HOST_AWK" ]; then
+	HOST_AWK="awk"
+	awk 'BEGIN{strftime()}' 2>/dev/null
+	if [ $? -ne 0 ]; then
+		# awk does not support strftime, try gawk
+		HOST_AWK="gawk"
+	fi
+fi
+$HOST_AWK 'BEGIN{strftime()}' 2>/dev/null
+if [ $? -ne 0 ]; then
+	echo "A working awk was not found. Install gawk or specify"
+	echo "a different awk with HOST_AWK."
 	exit 1
 fi
 
@@ -1120,6 +1140,7 @@ HOST_OBJCOPY				?= ${HOST_GCC_OBJCOPY} ;
 HOST_EXTENDED_REGEX_SED		?= ${HOST_EXTENDED_REGEX_SED} ;
 HOST_SHA256					?= ${HOST_SHA256} ;
 HOST_PYTHON					?= ${HOST_PYTHON} ;
+HOST_AWK					?= ${HOST_AWK} ;
 HOST_WGET_RETRY_ON_HOST_ERROR			?= ${HOST_WGET_RETRY_ON_HOST_ERROR} ;
 HAIKU_NASM					?= ${HAIKU_NASM} ;
 

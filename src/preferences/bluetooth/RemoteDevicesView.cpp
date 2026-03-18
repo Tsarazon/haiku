@@ -56,6 +56,7 @@ RemoteDevicesView::RemoteDevicesView(const char* name, uint32 flags)
 	disconnectButton = new BButton("disconnect", B_TRANSLATE("Disconnect"),
 		new BMessage(kMsgDisconnectDevice));
 
+
 	// Set up device list
 	fDeviceList = new BListView("DeviceList", B_SINGLE_SELECTION_LIST);
 
@@ -116,10 +117,28 @@ RemoteDevicesView::MessageReceived(BMessage* message)
 			break;
 		case kMsgAddToRemoteList:
 		{
-			BListItem* device;
+			DeviceListItem* device = NULL;
 			message->FindPointer("device", (void**)&device);
-			fDeviceList->AddItem(device);
-			fDeviceList->Invalidate();
+			bool isDuplicate = false;
+
+			// check the list for duplicates
+			for (int32 i = 0; i < fDeviceList->CountItems(); i++) {
+				DeviceListItem* existingDevice
+					= static_cast<DeviceListItem*>(fDeviceList->ItemAt(i));
+
+				if (DeviceListItem::Compare(&existingDevice, &device)) {
+					isDuplicate = true;
+					break;
+				}
+			}
+
+			if (!isDuplicate) {
+				fDeviceList->AddItem((BListItem*)device);
+				fDeviceList->Invalidate();
+			} else {
+				delete device;
+			}
+
 			break;
 		}
 

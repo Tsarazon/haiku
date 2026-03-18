@@ -561,6 +561,7 @@ rule ArchitectureSetupWarnings architecture
 	EnableWerror src add-ons kernel drivers graphics skeleton ;
 	EnableWerror src add-ons kernel drivers graphics vesa ;
 	EnableWerror src add-ons kernel drivers graphics virtio ;
+	EnableWerror src add-ons kernel drivers hyperv ;
 	EnableWerror src add-ons kernel drivers input ;
 	EnableWerror src add-ons kernel drivers joystick ;
 	EnableWerror src add-ons kernel drivers midi ;
@@ -596,11 +597,11 @@ rule ArchitectureSetupWarnings architecture
 	EnableWerror src add-ons kernel drivers network wwan ;
 	EnableWerror src add-ons kernel drivers ports ;
 	EnableWerror src add-ons kernel drivers power ;
-#	EnableWerror src add-ons kernel drivers pty ;
-#	EnableWerror src add-ons kernel drivers sensor ;
-#	EnableWerror src add-ons kernel drivers timer ;
+	EnableWerror src add-ons kernel drivers pty ;
+	EnableWerror src add-ons kernel drivers sensor ;
+	EnableWerror src add-ons kernel drivers timer ;
 	EnableWerror src add-ons kernel drivers video ;
-#	EnableWerror src add-ons kernel drivers wmi ;
+	EnableWerror src add-ons kernel drivers wmi ;
 	EnableWerror src add-ons kernel file_systems bfs ;
 	EnableWerror src add-ons kernel file_systems cdda ;
 	EnableWerror src add-ons kernel file_systems ext2 ;
@@ -608,7 +609,7 @@ rule ArchitectureSetupWarnings architecture
 	EnableWerror src add-ons kernel file_systems googlefs ;
 	EnableWerror src add-ons kernel file_systems iso9660 ;
 	EnableWerror src add-ons kernel file_systems layers ;
-#	EnableWerror src add-ons kernel file_systems netfs ;
+	EnableWerror src add-ons kernel file_systems netfs ;
 	EnableWerror src add-ons kernel file_systems nfs ;
 	EnableWerror src add-ons kernel file_systems nfs4 ;
 #	EnableWerror src add-ons kernel file_systems ntfs ;

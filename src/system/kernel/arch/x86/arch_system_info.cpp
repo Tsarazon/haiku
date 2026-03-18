@@ -13,26 +13,31 @@
 
 #include <boot/kernel_args.h>
 #include <cpu.h>
+#include <debug.h>
 #include <kernel.h>
 #include <smp.h>
 
 
-enum cpu_vendor sCPUVendor;
-uint32 sCPUModel;
-int64 sCPUClockSpeed;
+static enum cpu_vendor sCPUVendor;
+static uint32 sCPUModel;
+static int64 sCPUClockSpeed;
 
 static spinlock sCPUIDLock = B_SPINLOCK_INITIALIZER;
 
 
-static bool
-get_cpuid_for(cpuid_info *info, uint32 currentCPU, uint32 eaxRegister,
-			  uint32 forCPU)
-{
-	if (currentCPU != forCPU)
-		return false;
+struct get_cpuid_args {
+	int forCPU;
+	cpuid_info* info;
+	uint32 eaxRegister;
+};
 
-	get_current_cpuid(info, eaxRegister, 0);
-	return true;
+
+static void
+get_cpuid_for(void* arg, int currentCPU)
+{
+	get_cpuid_args* args = (get_cpuid_args*)arg;
+	ASSERT(currentCPU == args->forCPU);
+	get_current_cpuid(args->info, args->eaxRegister, 0);
 }
 
 
@@ -55,27 +60,17 @@ status_t
 get_cpuid(cpuid_info *info, uint32 eaxRegister, uint32 forCPU)
 {
 	uint32 numCPUs = (uint32)smp_get_num_cpus();
-
 	if (forCPU >= numCPUs)
 		return B_BAD_VALUE;
 
-	if (info == NULL)
-		return B_BAD_ADDRESS;
+	get_cpuid_args args;
+	args.forCPU = forCPU;
+	args.info = info;
+	args.eaxRegister = eaxRegister;
 
-	if (!is_cpuid_leaf_supported(eaxRegister))
-		return B_NOT_SUPPORTED;
-
-	cpu_status state = disable_interrupts();
-	acquire_spinlock(&sCPUIDLock);
-
-	if (!get_cpuid_for(info, smp_get_current_cpu(), eaxRegister, forCPU)) {
-		smp_send_broadcast_ici(SMP_MSG_CALL_FUNCTION, (addr_t)info,
-							   eaxRegister, forCPU, (void *)get_cpuid_for, SMP_MSG_FLAG_SYNC);
-	}
-
-	release_spinlock(&sCPUIDLock);
-	restore_interrupts(state);
-
+	// ToDo: as long as we only run on pentium-class systems, we can assume
+	//	that the CPU supports cpuid.
+	call_single_cpu_sync(forCPU, get_cpuid_for, &args);
 	return B_OK;
 }
 

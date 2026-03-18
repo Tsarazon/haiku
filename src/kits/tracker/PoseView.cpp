@@ -986,9 +986,9 @@ BPoseView::ScrollTo(BPoint where)
 
 	// keep the view state in sync
 	if (ViewMode() == kListMode)
-		fViewState->SetListOrigin(LeftTop());
+		fViewState->SetListOrigin(Extent().LeftTop());
 	else
-		fViewState->SetIconOrigin(LeftTop());
+		fViewState->SetIconOrigin(Extent().LeftTop());
 }
 
 
@@ -2263,7 +2263,8 @@ BPoseView::MessageReceived(BMessage* message)
 			break;
 
 		case kRestoreBackgroundImage:
-			ContainerWindow()->UpdateBackgroundImage();
+			if (ContainerWindow() != NULL)
+				ContainerWindow()->MessageReceived(message);
 			break;
 
 		case B_META_MIME_CHANGED:
@@ -5993,8 +5994,8 @@ BPoseView::AttributeChanged(const BMessage* message)
 				continue;
 
 			for (int i = sizeof(sAttrColumnMap) / sizeof(attr_column_relation); i--;) {
-				if (sAttrColumnMap[i].attrHash == PrimarySort()
-					|| sAttrColumnMap[i].attrHash == SecondarySort()) {
+				uint32 attrHash = sAttrColumnMap[i].attrHash;
+				if (attrHash == PrimarySort() || attrHash == SecondarySort()) {
 					if ((fields & sAttrColumnMap[i].fieldMask) != 0) {
 						_CheckPoseSortOrder(fPoseList, pose, poseListIndex);
 						if (IsFiltering() && visible)
@@ -7758,7 +7759,7 @@ BPoseView::MakeDragBitmap(BRect dragRect, BPoint where, int32 poseIndex, BPoint&
 
 			if (poseRect.Intersects(inner)) {
 				offsetBy = BPoint(-inner.LeftTop().x, -inner.LeftTop().y);
-				pose->Draw(poseRect, poseRect, this, view, true, offsetBy, false);
+				pose->Draw(poseRect, poseRect, this, view, true, offsetBy, true);
 			}
 		}
 
@@ -8525,11 +8526,6 @@ BPoseView::SwitchDir(const entry_ref* newDirRef, AttributeStreamNode* node)
 
 	AdoptSystemColors();
 
-	if (!IsDesktopView()) {
-		if (ContainerWindow() != NULL)
-			ContainerWindow()->UpdateBackgroundImage();
-	}
-
 	Invalidate();
 
 	fLastKeyTime = 0;
@@ -9020,9 +9016,15 @@ BPoseView::RecalcExtent()
 	ASSERT(ViewMode() != kListMode);
 
 	ClearExtent();
-	int32 poseCount = fPoseList->CountItems();
-	for (int32 index = 0; index < poseCount; index++)
-		AddToExtent(fPoseList->ItemAt(index)->CalcRect(this));
+	if (IsFiltering()) {
+		int32 poseCount = fFilteredPoseList->CountItems();
+		for (int32 index = 0; index < poseCount; index++)
+			AddToExtent(fFilteredPoseList->ItemAt(index)->CalcRect(this));
+	} else {
+		int32 poseCount = fVSPoseList->CountItems();
+		for (int32 index = 0; index < poseCount; index++)
+			AddToExtent(fVSPoseList->ItemAt(index)->CalcRect(this));
+	}
 }
 
 
@@ -9633,9 +9635,12 @@ BPoseView::SortPoses()
 	PRINT(("===================\n"));
 #endif
 
-	PoseList* poseList = CurrentPoseList();
-	BPose** poses = reinterpret_cast<BPose**>(poseList->AsBList()->Items());
-	std::stable_sort(poses, &poses[poseList->CountItems()], PoseComparator(this));
+	BPose** poses = reinterpret_cast<BPose**>(fPoseList->AsBList()->Items());
+	std::stable_sort(poses, &poses[fPoseList->CountItems()], PoseComparator(this));
+	if (IsFiltering()) {
+		poses = reinterpret_cast<BPose**>(fFilteredPoseList->AsBList()->Items());
+		std::stable_sort(poses, &poses[fFilteredPoseList->CountItems()], PoseComparator(this));
+	}
 }
 
 

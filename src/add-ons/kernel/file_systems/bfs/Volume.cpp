@@ -431,6 +431,15 @@ Volume::WriteSuperBlock()
 }
 
 
+InodeList&
+Volume::RemovedInodes()
+{
+	// This list is guarded by the transaction lock.
+	fJournal->AssertLocked();
+	return fRemovedInodes;
+}
+
+
 void
 Volume::UpdateLiveQueries(Inode* inode, const char* attribute, int32 type,
 	const uint8* oldKey, size_t oldLength, const uint8* newKey,
@@ -473,8 +482,9 @@ Volume::UpdateLiveQueriesRenameMove(Inode* inode, ino_t oldDirectoryID,
 bool
 Volume::CheckForLiveQuery(const char* attribute)
 {
+	MutexLocker _(fQueryLock);
 	// TODO: check for a live query that depends on the specified attribute
-	return true;
+	return !fQueries.IsEmpty();
 }
 
 

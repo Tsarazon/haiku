@@ -14,7 +14,6 @@
 #include "Inode.h"
 #include "Volume.h"
 
-#include <query_private.h>
 #include <file_systems/QueryParser.h>
 
 
@@ -281,6 +280,11 @@ struct Query::QueryPolicy {
 	static Entry* NodeGetNextReferrer(Node* node, Entry* entry)
 	{
 		return NULL;
+	}
+
+	static bool NodeIsDeleted(Node* node)
+	{
+		return node->IsDeleted();
 	}
 
 	// Volume interface

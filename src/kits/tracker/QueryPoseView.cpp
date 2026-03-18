@@ -57,7 +57,7 @@ All rights reserved.
 #include "Tracker.h"
 
 #include <fs_attr.h>
-#include <query_private.h>
+#include <fs_query.h>
 
 
 using std::nothrow;
@@ -360,6 +360,25 @@ BQueryPoseView::WatchNewNodeMask()
 {
 	// B_QUERY_WATCH_ALL suffices.
 	return 0;
+}
+
+
+bool
+BQueryPoseView::AttributeChanged(const BMessage* message)
+{
+	BMessage alteredMessage;
+	const char* attrName;
+	if (message->FindString("attr", &attrName) == B_OK) {
+		if (strcmp(attrName, "last_modified") == 0 || strcmp(attrName, "size") == 0) {
+			// BPoseView handles changes to these under B_STAT_UPDATE,
+			// so make this message look like that one.
+			alteredMessage = *message;
+			alteredMessage.RemoveName("attr");
+			message = &alteredMessage;
+		}
+	}
+
+	return BPoseView::AttributeChanged(message);
 }
 
 

@@ -1223,8 +1223,8 @@ AccelerantHWInterface::SetCursor(ServerCursor* cursor)
 		uint16 xHotSpot = static_cast<uint16>(cursor->GetHotSpot().x);
 		uint16 yHotSpot = static_cast<uint16>(cursor->GetHotSpot().y);
 
-		uint16 width = static_cast<uint16>(cursor->Bounds().Width());
-		uint16 height = static_cast<uint16>(cursor->Bounds().Height());
+		uint16 width = static_cast<uint16>(cursor->Width());
+		uint16 height = static_cast<uint16>(cursor->Height());
 
 		// Time to talk to the accelerant!
 		cursorSet = fAccSetCursorBitmap(width, height, xHotSpot,

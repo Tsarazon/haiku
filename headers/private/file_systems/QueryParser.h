@@ -39,8 +39,6 @@
 
 #	include <util/SinglyLinkedList.h>
 #	include <util/Stack.h>
-
-#	include <query_private.h>
 #endif	// !FS_SHELL
 
 #include <file_systems/QueryParserUtils.h>
@@ -798,7 +796,10 @@ Equation<QueryPolicy>::CalculateScore(Index &index)
 				|| Term<QueryPolicy>::fOp == OP_GREATER_THAN
 				|| Term<QueryPolicy>::fOp == OP_GREATER_THAN_OR_EQUAL) {
 			// higher than most patterns
-			fScore /= (fSize > 8) ? 8 : fSize;
+			if (fSize > 8)
+				fScore /= 8;
+			else if (fSize != 0)
+				fScore /= fSize;
 		} else {
 			// better than nothing, anyway
 			fScore /= 2;
@@ -1660,6 +1661,10 @@ Query<QueryPolicy>::_EvaluateLiveUpdate(Entry* entry, Node* node, const char* at
 		// entry was removed
 		opcode = B_ENTRY_REMOVED;
 	} else if ((fFlags & B_QUERY_WATCH_ALL) != 0) {
+		if (QueryPolicy::NodeIsDeleted(node)) {
+			// don't notify
+			return;
+		}
 		// still in query, all attribute changes watched
 		opcode = B_ATTR_CHANGED;
 	} else {

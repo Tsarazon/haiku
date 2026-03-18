@@ -87,7 +87,7 @@ arch_cpu_sync_icache(void *address, size_t len)
 
 
 void
-arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
+arch_cpu_invalidate_tlb_range(intptr_t, addr_t start, addr_t end)
 {
 	// Use TLBI VAE1 for each page in range
 	for (addr_t va = start; va < end; va += B_PAGE_SIZE) {
@@ -103,7 +103,7 @@ arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
 
 
 void
-arch_cpu_invalidate_TLB_list(addr_t pages[], int num_pages)
+arch_cpu_invalidate_tlb_list(intptr_t, addr_t pages[], int num_pages)
 {
 	// Invalidate each page in the list
 	for (int i = 0; i < num_pages; i++) {
@@ -121,7 +121,7 @@ arch_cpu_invalidate_TLB_list(addr_t pages[], int num_pages)
 
 
 void
-arch_cpu_global_TLB_invalidate(void)
+arch_cpu_global_tlb_invalidate()
 {
 	asm(
 		"dsb ishst\n"
@@ -133,10 +133,9 @@ arch_cpu_global_TLB_invalidate(void)
 
 
 void
-arch_cpu_user_TLB_invalidate(void)
+arch_cpu_user_tlb_invalidate(intptr_t)
 {
-	// Invalidate user TLB entries only (ASID-based)
-	arch_cpu_global_TLB_invalidate();
+	arch_cpu_global_tlb_invalidate();
 }
 
 

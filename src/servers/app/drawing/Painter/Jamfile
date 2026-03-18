@@ -2,10 +2,12 @@ SubDir HAIKU_TOP src servers app drawing Painter ;
 
 AddSubDirSupportedPlatforms libbe_test ;
 
-UseLibraryHeaders agg kosmvg plutovg ;
+UseLibraryHeaders agg ;
+UseLibraryHeaders kosmvg plutovg ;
 SubDirC++Flags -std=c++20 -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-float-conversion ;
 UsePublicHeaders support ;
-UsePrivateHeaders app graphics interface kernel shared ;
+UsePrivateHeaders app graphics interface shared ;
+UsePrivateHeaders kernel ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app font ] ;
 UseHeaders [ FDirName $(HAIKU_TOP) src servers app drawing ] ;

@@ -184,7 +184,7 @@ enum xfs_dinode_fmt_t {
  */
 class Inode {
 public:
-	typedef struct Dinode{
+	struct Dinode{
 	public:
 		uint16				di_magic;
 		uint16				di_mode;
@@ -343,32 +343,5 @@ private:
 			ExtentMapEntry*		fExtents;
 };
 
-
-uint32 hashfunction(const char* name, int length);
-
-
-// A common function to return given hash lowerbound
-template<class T> void
-hashLowerBound(T* entry, int& left, int& right, uint32 hashValueOfRequest)
-{
-	int mid;
-
-	/*
-	* Trying to find the lowerbound of hashValueOfRequest
-	* This is slightly different from bsearch(), as we want the first
-	* instance of hashValueOfRequest and not any instance.
-	*/
-	while (left < right) {
-		mid = (left + right) / 2;
-		uint32 hashval = B_BENDIAN_TO_HOST_INT32(entry[mid].hashval);
-		if (hashval >= hashValueOfRequest) {
-			right = mid;
-			continue;
-		}
-		if (hashval < hashValueOfRequest)
-			left = mid+1;
-	}
-	TRACE("left:(%" B_PRId32 "), right:(%" B_PRId32 ")\n", left, right);
-}
 
 #endif

@@ -136,7 +136,7 @@ disable_caches()
 	x86_write_cr0((x86_read_cr0() | CR0_CACHE_DISABLE)
 		& ~CR0_NOT_WRITE_THROUGH);
 	wbinvd();
-	arch_cpu_global_TLB_invalidate();
+	arch_cpu_global_tlb_invalidate();
 }
 
 
@@ -144,7 +144,7 @@ static void
 enable_caches()
 {
 	wbinvd();
-	arch_cpu_global_TLB_invalidate();
+	arch_cpu_global_tlb_invalidate();
 	x86_write_cr0(x86_read_cr0()
 		& ~(CR0_CACHE_DISABLE | CR0_NOT_WRITE_THROUGH));
 }
@@ -1686,33 +1686,37 @@ arch_cpu_init_post_modules(kernel_args* args)
 
 
 void
-arch_cpu_user_TLB_invalidate(void)
+arch_cpu_user_tlb_invalidate(intptr_t context)
 {
+	if (context != 0 && (intptr_t)x86_read_cr3() != context)
+		return;
+
 	x86_write_cr3(x86_read_cr3());
 }
 
 
 void
-arch_cpu_global_TLB_invalidate(void)
+arch_cpu_global_tlb_invalidate()
 {
 	uint32 flags = x86_read_cr4();
-
-	if (flags & IA32_CR4_GLOBAL_PAGES) {
+	if ((flags & IA32_CR4_GLOBAL_PAGES) != 0) {
+		// disable and reenable the global pages to flush all TLBs regardless
+		// of the global page bit
 		x86_write_cr4(flags & ~IA32_CR4_GLOBAL_PAGES);
 		x86_write_cr4(flags | IA32_CR4_GLOBAL_PAGES);
 	} else {
-		cpu_status state = disable_interrupts();
-		arch_cpu_user_TLB_invalidate();
-		restore_interrupts(state);
+		arch_cpu_user_tlb_invalidate(0);
 	}
 }
 
 
 void
-arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
+arch_cpu_invalidate_tlb_range(intptr_t context, addr_t start, addr_t end)
 {
-	int32 num_pages = end / B_PAGE_SIZE - start / B_PAGE_SIZE;
-	while (num_pages-- >= 0) {
+	if (context != 0 && (intptr_t)x86_read_cr3() != context)
+		return;
+
+	while (start <= end) {
 		invalidate_TLB(start);
 		start += B_PAGE_SIZE;
 	}
@@ -1720,8 +1724,12 @@ arch_cpu_invalidate_TLB_range(addr_t start, addr_t end)
 
 
 void
-arch_cpu_invalidate_TLB_list(addr_t pages[], int num_pages)
+arch_cpu_invalidate_tlb_list(intptr_t context, addr_t pages[], int num_pages)
 {
+	if (context != 0 && (intptr_t)x86_read_cr3() != context)
+		return;
+
+
 	for (int i = 0; i < num_pages; i++)
 		invalidate_TLB(pages[i]);
 }

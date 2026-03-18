@@ -122,7 +122,7 @@ private:
 struct ExtentDataEntry {
 			xfs_ino_t			inumber;
 			uint8				namelen;
-			uint8				name[];
+			char				name[];
 
 // Followed by a file type (8bit) if applicable and a 16bit tag
 // tag is the offset from start of the block
@@ -169,6 +169,7 @@ public:
 			xfs_ino_t			GetIno();
 			uint32				GetOffsetFromAddress(uint32 address);
 			int					EntrySize(int len) const;
+			status_t			Rewind();
 			status_t			GetNext(char* name, size_t* length,
 									xfs_ino_t* ino);
 			status_t			Lookup(const char* name, size_t length,

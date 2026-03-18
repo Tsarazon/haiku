@@ -547,6 +547,8 @@ public:
 									{ return mutex_trylock(&fLock) == B_OK; }
 			void				Unlock()
 									{ mutex_unlock(&fLock); }
+			void				AssertLocked()
+									{ ASSERT_LOCKED_MUTEX(&fLock); }
 
 			void				UnlockAndReleaseReference()
 									{ Unlock(); ReleaseReference(); }

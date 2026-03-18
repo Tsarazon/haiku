@@ -322,6 +322,7 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 		jmicron2x0
 		marvell_yukon
 		pcnet
+		pegasus
 		rtl8125
 		rtl8139
 		rtl81xx
@@ -332,8 +333,6 @@ SYSTEM_ADD_ONS_DRIVERS_NET = [ FFilterByBuildFeatures
 	}@ # x86,x86_64,riscv64
 
 	etherpci
-	pegasus
-	usb_asix
 	usb_davicom
 	usb_rndis
 	wb840
@@ -357,6 +356,7 @@ SYSTEM_ADD_ONS_BUS_MANAGERS = [ FFilterByBuildFeatures
 	acpi@x86,x86_64,arm64
 	agp_gart@x86,x86_64
 	ata
+	hyperv@x86,x86_64
 	i2c@x86,x86_64
 	isa@x86,x86_64
 	mmc

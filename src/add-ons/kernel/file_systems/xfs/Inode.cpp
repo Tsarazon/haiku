@@ -608,7 +608,7 @@ Inode::ReadAt(off_t pos, uint8* buffer, size_t* length)
 		return B_BAD_VALUE;
 	}
 
-	if (pos >= Size() || length == 0) {
+	if (pos >= Size() || *length == 0) {
 		TRACE("inode %" B_PRIdINO ": ReadAt 0 (pos %" B_PRIdOFF
 			", length %" B_PRIuSIZE ")\n", ID(), pos, *length);
 		*length = 0;
@@ -671,9 +671,9 @@ Inode::ReadAt(off_t pos, uint8* buffer, size_t* length)
 			return B_IO_ERROR;
 		}
 
-
-		memcpy((void*) (buffer + lengthRead),
-			(void*)(block + offsetIntoBlock), lengthToRead);
+		if (user_memcpy((void*)(buffer + lengthRead),
+				(void*)(block + offsetIntoBlock), lengthToRead) < B_OK)
+			return B_BAD_ADDRESS;
 
 		pos += lengthToRead;
 		*length -= lengthToRead;
@@ -749,43 +749,4 @@ Inode::FileSystemBlockToAddr(uint64 block)
 
 	uint64 readPos = actualBlockToRead * (XFS_MIN_BLOCKSIZE);
 	return readPos;
-}
-
-
-/*
- * Basically take 4 characters at a time as long as you can, and xor with
- * previous hashVal after rotating 4 bits of hashVal. Likewise, continue
- * xor and rotating. This is quite a generic hash function.
-*/
-uint32
-hashfunction(const char* name, int length)
-{
-	uint32 hashVal = 0;
-	int lengthCovered = 0;
-	int index = 0;
-	if (length >= 4) {
-		for (; index < length && (length - index) >= 4; index += 4)
-		{
-			lengthCovered += 4;
-			hashVal = (name[index] << 21) ^ (name[index + 1] << 14)
-				^ (name[index + 2] << 7) ^ (name[index + 3] << 0)
-				^ ((hashVal << 28) | (hashVal >> 4));
-		}
-	}
-
-	int leftToCover = length - lengthCovered;
-	if (leftToCover == 3) {
-		hashVal = (name[index] << 14) ^ (name[index + 1] << 7)
-			^ (name[index + 2] << 0) ^ ((hashVal << 21) | (hashVal >> 11));
-	}
-	if (leftToCover == 2) {
-		hashVal = (name[index] << 7) ^ (name[index + 1] << 0)
-			^ ((hashVal << 14) | (hashVal >> (32 - 14)));
-	}
-	if (leftToCover == 1) {
-		hashVal = (name[index] << 0)
-			^ ((hashVal << 7) | (hashVal >> (32 - 7)));
-	}
-
-	return hashVal;
 }

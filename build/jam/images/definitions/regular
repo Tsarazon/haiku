@@ -173,7 +173,7 @@ SYSTEM_SERVERS += [ FFilterByBuildFeatures
 
 # Bluetooth stack + drivers
 SYSTEM_NETWORK_PROTOCOLS +=
-#	l2cap
+	l2cap
 ;
 SYSTEM_BT_STACK =
 	hci
@@ -224,6 +224,7 @@ SYSTEM_ADD_ONS_MEDIA += [ FFilterByBuildFeatures
 	opensound.media_addon
 	tone_producer_demo.media_addon
 	usb_webcam.media_addon
+	video_mixer.media_addon
 	video_producer_demo.media_addon
 	video_window_demo.media_addon
 	vst_host.media_addon
