@@ -10,6 +10,8 @@
 
 #include <OS.h>
 
+struct iovec;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -107,6 +109,13 @@ extern kosm_handle_t	kosm_duplicate_handle(kosm_handle_t handle,
 extern status_t			_kosm_get_handle_info(kosm_handle_t handle,
 							kosm_handle_info* info);
 
+/* Per-handle userspace cookie for dispatch */
+
+extern status_t			kosm_handle_set_tag(kosm_handle_t handle,
+							uintptr_t tag);
+extern status_t			kosm_handle_get_tag(kosm_handle_t handle,
+							uintptr_t* outTag);
+
 #define kosm_get_handle_info(handle, info) \
 	_kosm_get_handle_info((handle), (info))
 
@@ -183,6 +192,29 @@ extern status_t			kosm_ray_wait(kosm_ray_id id, uint32 signals,
 							bigtime_t timeout);
 
 extern status_t			kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
+
+/* Atomic send+receive (RPC round-trip in one syscall) */
+
+extern status_t			kosm_ray_call(kosm_ray_id id,
+							const void* sendData, size_t sendSize,
+							const kosm_handle_t* sendHandles,
+							size_t sendHandleCount,
+							void* recvData, size_t* recvSize,
+							kosm_handle_t* recvHandles,
+							size_t* recvHandleCount,
+							uint32 flags, bigtime_t timeout);
+
+/* Vectored I/O */
+
+extern status_t			kosm_ray_writev(kosm_ray_id id,
+							const struct iovec* vecs, size_t vecCount,
+							const kosm_handle_t* handles,
+							size_t handleCount, uint32 flags);
+
+extern status_t			kosm_ray_readv(kosm_ray_id id,
+							const struct iovec* vecs, size_t vecCount,
+							kosm_handle_t* handles,
+							size_t* handleCount, uint32 flags);
 
 extern kosm_ray_id		kosm_get_bootstrap_ray(void);
 extern status_t			kosm_ray_set_bootstrap(team_id team,
@@ -286,6 +318,7 @@ typedef struct {
 	phys_addr_t		phys_base;
 	size_t			resident_size;
 	size_t			wired_size;
+	uint32			reclaim_generation;
 } kosm_dot_info;
 
 /*
@@ -340,6 +373,37 @@ extern status_t			kosm_dot_get_phys(kosm_dot_id handle,
 							size_t offset,
 							phys_addr_t* physicalAddress);
 
+/* Batch physical address lookup (scatter-gather DMA) */
+
+typedef struct {
+	size_t			offset;
+	phys_addr_t		phys_addr;		/* filled by kernel */
+} kosm_dot_phys_entry;
+
+extern status_t			kosm_dot_get_phys_batch(kosm_dot_id handle,
+							kosm_dot_phys_entry* entries,
+							size_t entryCount);
+
+/* Resize (anonymous lazy dots only) */
+
+#define KOSM_DOT_CANNOT_GROW		(B_ERRORS_END + 0x4010)
+
+extern status_t			kosm_resize_dot(kosm_dot_id handle,
+							size_t newSize);
+
+/* Memory advice (madvise analogue) */
+
+#define KOSM_DOT_ADVISE_NORMAL		0
+#define KOSM_DOT_ADVISE_SEQUENTIAL	1
+#define KOSM_DOT_ADVISE_RANDOM		2
+#define KOSM_DOT_ADVISE_WILLNEED	3
+#define KOSM_DOT_ADVISE_DONTNEED	4
+#define KOSM_DOT_ADVISE_FREE		5
+
+extern status_t			kosm_dot_advise(kosm_dot_id handle,
+							size_t offset, size_t size,
+							uint32 advice);
+
 /* File-backed dots (KOSM_DOT_FILE) */
 
 extern kosm_dot_id		kosm_create_dot_file(int fd, off_t fileOffset,
@@ -348,8 +412,15 @@ extern kosm_dot_id		kosm_create_dot_file(int fd, off_t fileOffset,
 							size_t size, uint32 protection,
 							uint32 flags, uint32 tag);
 
+/* Sync flags */
+
+#define KOSM_DOT_SYNC_WAIT			0x0000
+#define KOSM_DOT_SYNC_ASYNC		0x0001
+#define KOSM_DOT_SYNC_INVALIDATE	0x0002
+
 extern status_t			kosm_dot_sync(kosm_dot_id handle,
-							size_t offset, size_t size);
+							size_t offset, size_t size,
+							uint32 flags);
 
 /* system private, use macros instead */
 

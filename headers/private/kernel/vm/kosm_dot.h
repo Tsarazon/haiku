@@ -209,6 +209,11 @@ struct KosmDot {
 	uint32				tag;			/* KOSM_TAG_* */
 	uint32				wiring;			/* derived B_NO_LOCK / B_FULL_LOCK / B_CONTIGUOUS */
 
+	/* Reclaim tracking: bumped atomically by dot_scanner_pass each time
+	   pages are reclaimed from this dot. Userspace reads via
+	   kosm_get_dot_info to detect data loss in anonymous reclaimable dots. */
+	int32				reclaim_generation;
+
 	/* Backing store -- owned by us, not by VMArea */
 	VMCache*			cache;		/* VMAnonymousNoSwapCache, KosmDotPurgeableCache, or NULL (device) */
 	off_t				cache_offset;
@@ -392,7 +397,7 @@ kosm_handle_t kosm_create_dot_file_for(team_id team, int fd,
 
 /* Sync dirty pages of a file-backed dot back to disk. */
 status_t	kosm_dot_sync_internal(int32 internalId,
-				size_t offset, size_t size);
+				size_t offset, size_t size, uint32 flags);
 
 
 /* --- Handle resolution --- */
@@ -478,6 +483,11 @@ status_t	_user_kosm_dot_unwire(kosm_dot_id handle,
 				size_t offset, size_t size);
 status_t	_user_kosm_dot_get_phys(kosm_dot_id handle,
 				size_t offset, phys_addr_t* physicalAddress);
+status_t	_user_kosm_dot_get_phys_batch(kosm_dot_id handle,
+				kosm_dot_phys_entry* entries, size_t entryCount);
+status_t	_user_kosm_resize_dot(kosm_dot_id handle, size_t newSize);
+status_t	_user_kosm_dot_advise(kosm_dot_id handle,
+				size_t offset, size_t size, uint32 advice);
 status_t	_user_kosm_get_dot_info(kosm_dot_id handle,
 				kosm_dot_info* info, size_t size);
 status_t	_user_kosm_get_next_dot_info(team_id team, int32* cookie,
@@ -488,7 +498,7 @@ kosm_dot_id	_user_kosm_create_dot_file(int fd, off_t fileOffset,
 				void** address, uint32 addressSpec, size_t size,
 				uint32 protection, uint32 flags, uint32 tag);
 status_t	_user_kosm_dot_sync(kosm_dot_id handle,
-				size_t offset, size_t size);
+				size_t offset, size_t size, uint32 flags);
 
 #ifdef __cplusplus
 }

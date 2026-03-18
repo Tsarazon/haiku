@@ -116,6 +116,10 @@ extern kosm_handle_t	_kern_kosm_duplicate_handle(kosm_handle_t handle,
 							uint32 rights);
 extern status_t		_kern_kosm_handle_get_info(kosm_handle_t handle,
 							kosm_handle_info* info);
+extern status_t		_kern_kosm_handle_set_tag(kosm_handle_t handle,
+							addr_t tag);
+extern status_t		_kern_kosm_handle_get_tag(kosm_handle_t handle,
+							addr_t* outTag);
 
 /* kosm ray functions */
 extern status_t		_kern_kosm_create_ray(kosm_ray_id* endpoint0,
@@ -141,6 +145,22 @@ extern status_t		_kern_kosm_ray_wait(kosm_ray_id id, uint32 signals,
 						uint32* observedSignals, uint32 flags,
 						bigtime_t timeout);
 extern status_t		_kern_kosm_ray_set_qos(kosm_ray_id id, uint8 qosClass);
+extern status_t		_kern_kosm_ray_call(kosm_ray_id id,
+							const void* sendData, size_t sendSize,
+							const kosm_handle_t* sendHandles,
+							size_t sendHandleCount,
+							void* recvData, size_t* recvSize,
+							kosm_handle_t* recvHandles,
+							size_t* recvHandleCount,
+							uint32 flags, bigtime_t timeout);
+extern status_t		_kern_kosm_ray_writev(kosm_ray_id id,
+							const struct iovec* vecs, size_t vecCount,
+							const kosm_handle_t* handles,
+							size_t handleCount, uint32 flags);
+extern status_t		_kern_kosm_ray_readv(kosm_ray_id id,
+							const struct iovec* vecs, size_t vecCount,
+							kosm_handle_t* handles,
+							size_t* handleCount, uint32 flags);
 extern kosm_ray_id	_kern_kosm_get_bootstrap_ray(void);
 extern status_t		_kern_kosm_ray_set_bootstrap(team_id team,
 						kosm_ray_id endpoint);
@@ -172,6 +192,13 @@ extern status_t		_kern_kosm_dot_unwire(kosm_dot_id handle,
 						size_t offset, size_t size);
 extern status_t		_kern_kosm_dot_get_phys(kosm_dot_id handle,
 						size_t offset, phys_addr_t* physicalAddress);
+extern status_t		_kern_kosm_dot_get_phys_batch(kosm_dot_id handle,
+						kosm_dot_phys_entry* entries,
+						size_t entryCount);
+extern status_t		_kern_kosm_resize_dot(kosm_dot_id handle,
+						size_t newSize);
+extern status_t		_kern_kosm_dot_advise(kosm_dot_id handle,
+						size_t offset, size_t size, uint32 advice);
 extern status_t		_kern_kosm_get_dot_info(kosm_dot_id handle,
 						kosm_dot_info* info, size_t size);
 extern status_t		_kern_kosm_get_next_dot_info(team_id team,
@@ -183,7 +210,7 @@ extern kosm_dot_id	_kern_kosm_create_dot_file(int fd, off_t fileOffset,
 						size_t size, uint32 protection,
 						uint32 flags, uint32 tag);
 extern status_t		_kern_kosm_dot_sync(kosm_dot_id handle,
-						size_t offset, size_t size);
+						size_t offset, size_t size, uint32 flags);
 
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);

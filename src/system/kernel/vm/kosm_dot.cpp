@@ -990,6 +990,7 @@ kosm_create_dot_for(team_id team, const char* name,
 	dot->cache_offset = 0;
 	dot->phys_base = isDevice ? physicalAddress : 0;
 	dot->memory_type = 0;
+	dot->reclaim_generation = 0;
 
 	char condName[32];
 	snprintf(condName, sizeof(condName), "kosm_dot %d", (int)id);
@@ -1309,11 +1310,12 @@ kosm_create_dot_for(team_id team, const char* name,
 	kosm_handle_t handle = table->Insert(dotObj, KOSM_HANDLE_DOT,
 		KOSM_RIGHT_DOT_DEFAULT);
 	if (handle < 0) {
-		// Undo everything
-		delete dotObj;  // no refs acquired yet by Insert
+		// Remove from hash FIRST so that ~KosmDotObject → kosm_dot_destroy
+		// → lookup_dot returns NULL and does not double-cleanup.
 		rw_lock_write_lock(&sDotTableLock);
 		sDotTable.RemoveUnchecked(dot);
 		rw_lock_write_unlock(&sDotTableLock);
+		delete dotObj;
 		tag_remove(tag, size);
 		remove_tree_node(aspaceData, base);
 		while (KosmDotMapping* m = dot->mappings.RemoveHead()) {
@@ -1826,6 +1828,8 @@ dot_scanner_pass(bool aggressive)
 			continue;
 		}
 
+		bool pagesReclaimed = false;
+
 		for (VMCachePagesTree::Iterator pIt = cache->pages.GetIterator();
 				vm_page* page = pIt.Next();) {
 
@@ -1953,9 +1957,13 @@ dot_scanner_pass(bool aggressive)
 				vm_page_set_state(page, PAGE_STATE_CACHED);
 
 			tag_remove_resident(dot->tag, 1);
+			pagesReclaimed = true;
 
 			DEBUG_PAGE_ACCESS_END(page);
 		}
+
+		if (pagesReclaimed)
+			atomic_add(&dot->reclaim_generation, 1);
 
 		cache->ReleaseRefAndUnlock();
 		put_dot(dot);
@@ -2265,6 +2273,7 @@ kosm_create_dot_file_for(team_id team, int fd, off_t fileOffset,
 	dot->cache_offset = fileOffset;
 	dot->phys_base = 0;
 	dot->memory_type = 0;
+	dot->reclaim_generation = 0;
 
 	char condName[32];
 	snprintf(condName, sizeof(condName), "kosm_dot %d", (int)id);
@@ -2394,10 +2403,12 @@ kosm_create_dot_file_for(team_id team, int fd, off_t fileOffset,
 	kosm_handle_t handle = table->Insert(dotObj, KOSM_HANDLE_DOT,
 		KOSM_RIGHT_DOT_DEFAULT);
 	if (handle < 0) {
-		delete dotObj;
+		// Remove from hash FIRST so that ~KosmDotObject → kosm_dot_destroy
+		// → lookup_dot returns NULL and does not double-cleanup.
 		rw_lock_write_lock(&sDotTableLock);
 		sDotTable.RemoveUnchecked(dot);
 		rw_lock_write_unlock(&sDotTableLock);
+		delete dotObj;
 		tag_remove(tag, size);
 		remove_tree_node(aspaceData, base);
 		while (KosmDotMapping* m = dot->mappings.RemoveHead()) {
@@ -2427,7 +2438,8 @@ kosm_create_dot_file_for(team_id team, int fd, off_t fileOffset,
 // Sync dirty pages of a file-backed dot back to disk
 
 status_t
-kosm_dot_sync_internal(int32 internalId, size_t offset, size_t size)
+kosm_dot_sync_internal(int32 internalId, size_t offset, size_t size,
+	uint32 flags)
 {
 	KosmDot* dot = lookup_dot(internalId);
 	if (dot == NULL)
@@ -2493,6 +2505,15 @@ kosm_dot_sync_internal(int32 internalId, size_t offset, size_t size)
 			page->modified = false;
 			page->busy = false;
 			cache->NotifyPageEvents(page, PAGE_EVENT_NOT_BUSY);
+
+			// INVALIDATE: drop clean cached pages after write-back
+			if ((flags & KOSM_DOT_SYNC_INVALIDATE) != 0
+				&& page->WiredCount() == 0) {
+				DEBUG_PAGE_ACCESS_START(page);
+				cache->RemovePage(page);
+				vm_page_free_etc(cache, page, NULL);
+				tag_remove_resident(dot->tag, 1);
+			}
 		}
 		cache->Unlock();
 	}
@@ -3254,6 +3275,7 @@ _user_kosm_get_dot_info(kosm_dot_id handle, kosm_dot_info* userInfo,
 	info.purgeable_state = dot->purgeable_state;
 	info.tag = dot->tag;
 	info.phys_base = dot->phys_base;
+	info.reclaim_generation = atomic_get(&dot->reclaim_generation);
 
 	put_dot(dot);
 
@@ -3319,6 +3341,7 @@ _user_kosm_get_next_dot_info(team_id team, int32* userCookie,
 	info.purgeable_state = found->purgeable_state;
 	info.tag = found->tag;
 	info.phys_base = found->phys_base;
+	info.reclaim_generation = atomic_get(&found->reclaim_generation);
 
 	int32 newCookie = found->id;
 
@@ -3383,13 +3406,527 @@ _user_kosm_create_dot_file(int fd, off_t fileOffset,
 
 
 status_t
-_user_kosm_dot_sync(kosm_dot_id handle, size_t offset, size_t size)
+_user_kosm_dot_sync(kosm_dot_id handle, size_t offset, size_t size,
+	uint32 flags)
 {
+	// Validate flags
+	if ((flags & ~(KOSM_DOT_SYNC_ASYNC | KOSM_DOT_SYNC_INVALIDATE)) != 0)
+		return B_BAD_VALUE;
+
 	int32 internalId;
 	status_t status = kosm_dot_resolve_handle(handle, KOSM_RIGHT_WRITE,
 		&internalId);
 	if (status != B_OK)
 		return status;
 
-	return kosm_dot_sync_internal(internalId, offset, size);
+	return kosm_dot_sync_internal(internalId, offset, size, flags);
+}
+
+
+status_t
+_user_kosm_dot_get_phys_batch(kosm_dot_id handle,
+	kosm_dot_phys_entry* userEntries, size_t entryCount)
+{
+	if (entryCount == 0)
+		return B_BAD_VALUE;
+	if (entryCount > 1024)
+		entryCount = 1024;
+	if (!IS_USER_ADDRESS(userEntries))
+		return B_BAD_ADDRESS;
+
+	// Copy entries from userspace (we need the offsets)
+	size_t copySize = entryCount * sizeof(kosm_dot_phys_entry);
+	kosm_dot_phys_entry* entries
+		= (kosm_dot_phys_entry*)malloc(copySize);
+	if (entries == NULL)
+		return B_NO_MEMORY;
+
+	if (user_memcpy(entries, userEntries, copySize) < B_OK) {
+		free(entries);
+		return B_BAD_ADDRESS;
+	}
+
+	int32 internalId;
+	status_t status = kosm_dot_resolve_handle(handle, KOSM_RIGHT_WRITE,
+		&internalId);
+	if (status != B_OK) {
+		free(entries);
+		return status;
+	}
+
+	KosmDot* dot = lookup_dot(internalId);
+	if (dot == NULL) {
+		free(entries);
+		return B_BAD_VALUE;
+	}
+
+	team_id team = thread_get_current_thread()->team->id;
+
+	// Read mapping base under dot->lock
+	MutexLocker dotLocker(dot->lock);
+	KosmDotMapping* mapping = dot->FindMapping(team);
+	if (mapping == NULL) {
+		dotLocker.Unlock();
+		put_dot(dot);
+		free(entries);
+		return KOSM_DOT_NOT_MAPPED;
+	}
+	addr_t mappingBase = mapping->base;
+	dotLocker.Unlock();
+
+	VMAddressSpace* aspace = VMAddressSpace::Get(team);
+	if (aspace == NULL) {
+		put_dot(dot);
+		free(entries);
+		return B_BAD_TEAM_ID;
+	}
+
+	VMTranslationMap* map = aspace->TranslationMap();
+	map->Lock();
+
+	for (size_t i = 0; i < entryCount; i++) {
+		size_t offset = ROUNDDOWN(entries[i].offset, B_PAGE_SIZE);
+		if (offset >= dot->size) {
+			entries[i].phys_addr = 0;
+			continue;
+		}
+
+		if (dot->IsDevice()) {
+			entries[i].phys_addr = dot->phys_base + offset;
+		} else {
+			phys_addr_t phys;
+			uint32 flags;
+			if (map->Query(mappingBase + offset, &phys, &flags) == B_OK
+				&& (flags & PAGE_PRESENT) != 0) {
+				entries[i].phys_addr = phys;
+			} else {
+				entries[i].phys_addr = 0;
+			}
+		}
+	}
+
+	map->Unlock();
+	aspace->Put();
+	put_dot(dot);
+
+	status = user_memcpy(userEntries, entries, copySize);
+	free(entries);
+	return status;
+}
+
+
+status_t
+_user_kosm_dot_advise(kosm_dot_id handle, size_t offset, size_t size,
+	uint32 advice)
+{
+	if (advice > KOSM_DOT_ADVISE_FREE)
+		return B_BAD_VALUE;
+
+	offset = ROUNDDOWN(offset, B_PAGE_SIZE);
+	size = ROUNDUP(size, B_PAGE_SIZE);
+	if (size == 0)
+		return B_BAD_VALUE;
+
+	int32 internalId;
+	status_t status = kosm_dot_resolve_handle(handle, KOSM_RIGHT_READ,
+		&internalId);
+	if (status != B_OK)
+		return status;
+
+	KosmDot* dot = lookup_dot(internalId);
+	if (dot == NULL)
+		return B_BAD_VALUE;
+
+	if (dot->IsDevice()) {
+		put_dot(dot);
+		return B_NOT_ALLOWED;
+	}
+
+	if (offset > dot->size) {
+		put_dot(dot);
+		return B_BAD_VALUE;
+	}
+	if (size > dot->size - offset)
+		size = dot->size - offset;
+
+	if (advice == KOSM_DOT_ADVISE_NORMAL
+		|| advice == KOSM_DOT_ADVISE_SEQUENTIAL
+		|| advice == KOSM_DOT_ADVISE_RANDOM) {
+		// Hints only — no kernel action currently.
+		// Future: adjust readahead or scanner priority.
+		put_dot(dot);
+		return B_OK;
+	}
+
+	team_id team = thread_get_current_thread()->team->id;
+
+	// WILLNEED: prefault pages in the range
+	if (advice == KOSM_DOT_ADVISE_WILLNEED) {
+		MutexLocker dotLocker(dot->lock);
+		KosmDotMapping* mapping = dot->FindMapping(team);
+		if (mapping == NULL) {
+			dotLocker.Unlock();
+			put_dot(dot);
+			return KOSM_DOT_NOT_MAPPED;
+		}
+		addr_t mappingBase = mapping->base;
+		uint32 grantedProt = mapping->granted_protection;
+		dotLocker.Unlock();
+
+		VMAddressSpace* aspace = VMAddressSpace::Get(team);
+		if (aspace == NULL) {
+			put_dot(dot);
+			return B_BAD_TEAM_ID;
+		}
+
+		for (size_t off = offset; off < offset + size;
+				off += B_PAGE_SIZE) {
+			addr_t addr = mappingBase + off;
+			VMTranslationMap* map = aspace->TranslationMap();
+			map->Lock();
+			phys_addr_t phys;
+			uint32 mapFlags;
+			bool mapped = (map->Query(addr, &phys, &mapFlags) == B_OK
+				&& (mapFlags & PAGE_PRESENT) != 0);
+			map->Unlock();
+
+			if (!mapped) {
+				kosm_dot_soft_fault(dot, mappingBase,
+					grantedProt & dot->protection,
+					aspace, addr, false, false, true);
+			}
+		}
+
+		aspace->Put();
+		put_dot(dot);
+		return B_OK;
+	}
+
+	// DONTNEED / FREE: transition pages to reclaimable state
+	VMCache* cache = dot->cache;
+	if (cache == NULL) {
+		put_dot(dot);
+		return B_BAD_VALUE;
+	}
+
+	MutexLocker dotLocker(dot->lock);
+	cache->AcquireRefUnsafe();
+	dotLocker.Unlock();
+
+	cache->Lock();
+
+	off_t rangeStart = dot->cache_offset + (off_t)offset;
+	off_t rangeEnd = rangeStart + (off_t)size;
+
+	for (off_t pageOffset = rangeStart; pageOffset < rangeEnd;
+			pageOffset += B_PAGE_SIZE) {
+		vm_page* page = cache->LookupPage(pageOffset);
+		if (page == NULL || page->busy || page->WiredCount() == 0)
+			continue;
+
+		DEBUG_PAGE_ACCESS_START(page);
+
+		if (advice == KOSM_DOT_ADVISE_FREE) {
+			// FREE: unmap from all mappings, remove from cache, free
+			// Snapshot mappings under dot->lock
+			struct { addr_t base; size_t sz; team_id t; } ms[16];
+			int mc = 0;
+			MutexLocker dLock(dot->lock);
+			for (KosmDotMappingList::Iterator it
+					= dot->mappings.GetIterator();
+					KosmDotMapping* m = it.Next();) {
+				if (mc >= 16) break;
+				ms[mc].base = m->base;
+				ms[mc].sz = m->size;
+				ms[mc].t = m->team;
+				mc++;
+			}
+			dLock.Unlock();
+
+			off_t pageCacheBytes
+				= (off_t)page->cache_offset * B_PAGE_SIZE;
+
+			for (int i = 0; i < mc; i++) {
+				if (pageCacheBytes < dot->cache_offset
+					|| pageCacheBytes >= dot->cache_offset
+						+ (off_t)ms[i].sz)
+					continue;
+				addr_t pageAddr = ms[i].base
+					+ (addr_t)(pageCacheBytes - dot->cache_offset);
+
+				VMAddressSpace* as = VMAddressSpace::Get(ms[i].t);
+				if (as == NULL) continue;
+				VMTranslationMap* map = as->TranslationMap();
+				map->Lock();
+				phys_addr_t ph; uint32 fl;
+				if (map->Query(pageAddr, &ph, &fl) == B_OK
+					&& (fl & PAGE_PRESENT) != 0) {
+					if (fl & PAGE_MODIFIED)
+						page->modified = true;
+					map->Unmap(pageAddr, pageAddr + B_PAGE_SIZE - 1);
+					page->DecrementWiredCount();
+				}
+				map->Unlock();
+				as->Put();
+			}
+
+			cache->RemovePage(page);
+			vm_page_free_etc(cache, page, NULL);
+			tag_remove_resident(dot->tag, 1);
+		} else {
+			// DONTNEED: just reset usage count so scanner reclaims sooner
+			page->usage_count = 0;
+			DEBUG_PAGE_ACCESS_END(page);
+		}
+	}
+
+	cache->ReleaseRefAndUnlock();
+	put_dot(dot);
+	return B_OK;
+}
+
+
+status_t
+_user_kosm_resize_dot(kosm_dot_id handle, size_t newSize)
+{
+	if (newSize == 0)
+		return B_BAD_VALUE;
+	newSize = ROUNDUP(newSize, B_PAGE_SIZE);
+	if (newSize == 0)
+		return B_BAD_VALUE;	// ROUNDUP wraparound
+
+	int32 internalId;
+	status_t status = kosm_dot_resolve_handle(handle,
+		KOSM_RIGHT_MANAGE, &internalId);
+	if (status != B_OK)
+		return status;
+
+	KosmDot* dot = lookup_dot(internalId);
+	if (dot == NULL)
+		return B_BAD_VALUE;
+
+	// Only anonymous lazy dots
+	if (dot->IsDevice() || dot->IsFileBacked()
+		|| dot->wiring != B_NO_LOCK) {
+		put_dot(dot);
+		return B_NOT_ALLOWED;
+	}
+
+	MutexLocker locker(dot->lock);
+	size_t oldSize = dot->size;
+
+	if (newSize == oldSize) {
+		locker.Unlock();
+		put_dot(dot);
+		return B_OK;
+	}
+
+	if (dot->IsPurgeable()
+		&& dot->purgeable_state != KOSM_PURGE_NONVOLATILE) {
+		locker.Unlock();
+		put_dot(dot);
+		return B_NOT_ALLOWED;
+	}
+
+	if (newSize < oldSize) {
+		// Shrink: check for wired ranges in truncated area
+		for (KosmDotWiredRangeList::Iterator it
+				= dot->wired_ranges.GetIterator();
+				KosmDotWiredRange* r = it.Next();) {
+			if (r->offset >= newSize
+				|| (r->size > 0 && r->offset + r->size > newSize)) {
+				locker.Unlock();
+				put_dot(dot);
+				return B_BUSY;
+			}
+		}
+
+		// Unmap truncated pages from all mappings
+		for (KosmDotMappingList::Iterator mIt
+				= dot->mappings.GetIterator();
+				KosmDotMapping* mapping = mIt.Next();) {
+			VMAddressSpace* aspace
+				= VMAddressSpace::Get(mapping->team);
+			if (aspace == NULL)
+				continue;
+
+			VMTranslationMap* map = aspace->TranslationMap();
+			addr_t unmapStart = mapping->base + newSize;
+			addr_t unmapEnd = mapping->base + oldSize - 1;
+
+			map->Lock();
+			map->Unmap(unmapStart, unmapEnd);
+			map->Unlock();
+
+			// Unreserve the tail VA range
+			aspace->WriteLock();
+			aspace->UnreserveAddressRange(unmapStart,
+				oldSize - newSize, 0);
+			aspace->WriteUnlock();
+
+			// Update mapping size
+			mapping->size = newSize;
+
+			aspace->Put();
+		}
+
+		// Truncate cache: remove pages beyond newSize
+		VMCache* cache = dot->cache;
+		if (cache != NULL) {
+			cache->Lock();
+			off_t truncOffset = dot->cache_offset + (off_t)newSize;
+			size_t truncated = 0;
+
+			for (VMCachePagesTree::Iterator pIt
+					= cache->pages.GetIterator();
+					vm_page* page = pIt.Next();) {
+				off_t pageCacheBytes
+					= (off_t)page->cache_offset * B_PAGE_SIZE;
+				if (pageCacheBytes < truncOffset)
+					continue;
+
+				while (page->WiredCount() > 0)
+					page->DecrementWiredCount();
+
+				DEBUG_PAGE_ACCESS_START(page);
+				cache->RemovePage(page);
+				vm_page_free_etc(cache, page, NULL);
+				truncated++;
+			}
+
+			// Release excess commitment
+			off_t newCommitment
+				= (off_t)cache->page_count * B_PAGE_SIZE;
+			if (newCommitment < cache->committed_size) {
+				vm_unreserve_memory(
+					cache->committed_size - newCommitment);
+				cache->committed_size = newCommitment;
+			}
+
+			cache->Unlock();
+			tag_remove_resident(dot->tag, truncated);
+		}
+
+		// Update tree nodes
+		for (KosmDotMappingList::Iterator mIt
+				= dot->mappings.GetIterator();
+				KosmDotMapping* mapping = mIt.Next();) {
+			PerAspaceData* aspaceData
+				= lookup_per_aspace(mapping->team);
+			if (aspaceData == NULL)
+				continue;
+			rw_lock_write_lock(&aspaceData->lock);
+			KosmDotTreeNode* node
+				= aspaceData->tree.Find(mapping->base);
+			if (node != NULL)
+				node->size = newSize;
+			rw_lock_write_unlock(&aspaceData->lock);
+		}
+
+		tag_remove(dot->tag, oldSize - newSize);
+		dot->size = newSize;
+	} else {
+		// Grow: try to extend VA reservation in place for each mapping.
+		// If any mapping cannot extend, roll back and fail.
+
+		// First pass: attempt all extensions
+		bool allOk = true;
+		size_t delta = newSize - oldSize;
+
+		for (KosmDotMappingList::Iterator mIt
+				= dot->mappings.GetIterator();
+				KosmDotMapping* mapping = mIt.Next();) {
+			VMAddressSpace* aspace
+				= VMAddressSpace::Get(mapping->team);
+			if (aspace == NULL) {
+				allOk = false;
+				break;
+			}
+
+			virtual_address_restrictions restr = {};
+			restr.address = (void*)(mapping->base + oldSize);
+			restr.address_specification = B_EXACT_ADDRESS;
+
+			void* reserved = restr.address;
+			aspace->WriteLock();
+			status = aspace->ReserveAddressRange(delta,
+				&restr, 0, 0, &reserved);
+			aspace->WriteUnlock();
+			aspace->Put();
+
+			if (status != B_OK || reserved != restr.address) {
+				if (status == B_OK) {
+					// Reserved at wrong address — unreserve
+					aspace = VMAddressSpace::Get(mapping->team);
+					if (aspace != NULL) {
+						aspace->WriteLock();
+						aspace->UnreserveAddressRange(
+							(addr_t)reserved, delta, 0);
+						aspace->WriteUnlock();
+						aspace->Put();
+					}
+				}
+				allOk = false;
+				break;
+			}
+
+			mapping->size = newSize;
+		}
+
+		if (!allOk) {
+			// Rollback: unreserve extensions for mappings that succeeded
+			for (KosmDotMappingList::Iterator mIt
+					= dot->mappings.GetIterator();
+					KosmDotMapping* mapping = mIt.Next();) {
+				if (mapping->size != newSize)
+					break;	// reached the failed one
+				mapping->size = oldSize;
+				VMAddressSpace* aspace
+					= VMAddressSpace::Get(mapping->team);
+				if (aspace == NULL)
+					continue;
+				aspace->WriteLock();
+				aspace->UnreserveAddressRange(
+					mapping->base + oldSize, delta, 0);
+				aspace->WriteUnlock();
+				aspace->Put();
+			}
+			locker.Unlock();
+			put_dot(dot);
+			return KOSM_DOT_CANNOT_GROW;
+		}
+
+		// Extend cache virtual_end
+		VMCache* cache = dot->cache;
+		if (cache != NULL) {
+			cache->Lock();
+			if (cache->virtual_end < dot->cache_offset + (off_t)newSize)
+				cache->virtual_end
+					= dot->cache_offset + (off_t)newSize;
+			cache->Unlock();
+		}
+
+		// Update tree nodes
+		for (KosmDotMappingList::Iterator mIt
+				= dot->mappings.GetIterator();
+				KosmDotMapping* mapping = mIt.Next();) {
+			PerAspaceData* aspaceData
+				= lookup_per_aspace(mapping->team);
+			if (aspaceData == NULL)
+				continue;
+			rw_lock_write_lock(&aspaceData->lock);
+			KosmDotTreeNode* node
+				= aspaceData->tree.Find(mapping->base);
+			if (node != NULL)
+				node->size = newSize;
+			rw_lock_write_unlock(&aspaceData->lock);
+		}
+
+		tag_add(dot->tag, delta);
+		dot->size = newSize;
+	}
+
+	locker.Unlock();
+	put_dot(dot);
+	return B_OK;
 }

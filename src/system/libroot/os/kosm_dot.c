@@ -139,7 +139,31 @@ kosm_create_dot_file(int fd, off_t fileOffset, const char* name,
 
 
 status_t
-kosm_dot_sync(kosm_dot_id handle, size_t offset, size_t size)
+kosm_dot_sync(kosm_dot_id handle, size_t offset, size_t size,
+	uint32 flags)
 {
-	return _kern_kosm_dot_sync(handle, offset, size);
+	return _kern_kosm_dot_sync(handle, offset, size, flags);
+}
+
+
+status_t
+kosm_dot_get_phys_batch(kosm_dot_id handle,
+	kosm_dot_phys_entry* entries, size_t entryCount)
+{
+	return _kern_kosm_dot_get_phys_batch(handle, entries, entryCount);
+}
+
+
+status_t
+kosm_resize_dot(kosm_dot_id handle, size_t newSize)
+{
+	return _kern_kosm_resize_dot(handle, newSize);
+}
+
+
+status_t
+kosm_dot_advise(kosm_dot_id handle, size_t offset, size_t size,
+	uint32 advice)
+{
+	return _kern_kosm_dot_advise(handle, offset, size, advice);
 }
