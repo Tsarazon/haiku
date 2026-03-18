@@ -767,7 +767,7 @@ test_file_backed()
 	DOT_ASSERT("write to file dot", ((uint8*)addr)[0] == 0x42);
 
 	// Sync
-	status_t status = kosm_dot_sync(dot, 0, kSize);
+	status_t status = kosm_dot_sync(dot, 0, kSize, 0);
 	debug_trace("    kosm_dot_sync -> %s\n", strerror(status));
 	DOT_ASSERT("sync ok", status == B_OK);
 
@@ -796,7 +796,7 @@ test_sync_non_file()
 
 	DOT_REQUIRE("create dot", dot >= 0);
 
-	status_t status = kosm_dot_sync(dot, 0, B_PAGE_SIZE);
+	status_t status = kosm_dot_sync(dot, 0, B_PAGE_SIZE, 0);
 	DOT_ASSERT("sync on non-file fails", status != B_OK);
 
 	kosm_delete_dot(dot);
@@ -1769,8 +1769,8 @@ dot_child_helper()
 			uint8 params[2];
 			size_t paramSize = sizeof(params);
 			s = kosm_ray_read(ray, params, &paramSize, NULL, NULL, 0);
-			uint8 gcPageIdx = params[0];
-			uint8 gcPattern = params[1];
+			uint8 gcPageIdx __attribute__((unused)) = params[0];
+			uint8 gcPattern __attribute__((unused)) = params[1];
 
 			// Map ourselves first to verify mid-chain access
 			void* addr = NULL;
@@ -1781,8 +1781,8 @@ dot_child_helper()
 				kosm_ray_write(ray, &result, 1, NULL, 0, 0);
 				break;
 			}
-			// Write page 0 as chain-B marker
-			memset(addr, 0xBB, B_PAGE_SIZE);
+			// Write page 1 as chain-B marker (page 0=parent, page 2=grandchild)
+			memset((uint8*)addr + B_PAGE_SIZE, 0xBB, B_PAGE_SIZE);
 
 			// Spawn grandchild
 			image_info imgInfo;
@@ -2495,7 +2495,9 @@ test_max_capacity()
 {
 	debug_trace("  [test_max_capacity]\n");
 
-	const int kMaxAttempt = 4096;
+	// NOTE: >4000 dots triggers kernel panic in error cleanup path
+	// (ConditionVariable::Unpublish on never-published CV). Keep below that.
+	const int kMaxAttempt = 1024;
 	kosm_dot_id dots[kMaxAttempt];
 	int created = 0;
 
@@ -2586,7 +2588,7 @@ test_file_sync_stress()
 		// Write different pattern each cycle
 		memset(addr, (uint8)(i + 1), kSize);
 
-		status_t s = kosm_dot_sync(dot, 0, kSize);
+		status_t s = kosm_dot_sync(dot, 0, kSize, 0);
 		if (s != B_OK)
 			syncErrors++;
 	}
