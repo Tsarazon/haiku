@@ -102,6 +102,23 @@ TestSuite	get_dot_test_suite();
 int			dot_child_helper();
 
 
+// System diagnostics — prints CPU count, RAM, timer resolution to serial
+void	print_system_info();
+
+
+// Benchmark helper — runs func N times with warmup, reports min/max/median
+struct BenchStats {
+	double		min_ops;
+	double		max_ops;
+	double		median_ops;
+	int			runs;
+	int			warmup;
+};
+
+typedef double (*bench_func_t)();	// returns ops/sec for one iteration
+BenchStats	run_benchmark(bench_func_t func, int runs, int warmup);
+
+
 // Trace file management
 void	open_trace(const char* filename);
 void	close_trace();

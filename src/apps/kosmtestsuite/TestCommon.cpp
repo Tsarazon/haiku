@@ -104,6 +104,86 @@ reset_results()
 
 
 void
+print_system_info()
+{
+	system_info sysInfo;
+	get_system_info(&sysInfo);
+
+	uint64 totalRAM = (uint64)sysInfo.max_pages * B_PAGE_SIZE;
+	uint64 usedRAM = (uint64)sysInfo.used_pages * B_PAGE_SIZE;
+
+	trace("# --- System Info ---\n");
+	trace("#   CPUs: %d\n", sysInfo.cpu_count);
+	trace("#   RAM: %llu MB total, %llu MB used\n",
+		(unsigned long long)(totalRAM / (1024 * 1024)),
+		(unsigned long long)(usedRAM / (1024 * 1024)));
+
+	// Measure system_time() resolution
+	bigtime_t minDelta = INT64_MAX;
+	for (int i = 0; i < 1000; i++) {
+		bigtime_t t0 = system_time();
+		bigtime_t t1 = system_time();
+		bigtime_t delta = t1 - t0;
+		if (delta > 0 && delta < minDelta)
+			minDelta = delta;
+	}
+	trace("#   system_time resolution: %lld us\n", (long long)minDelta);
+	trace("#   kernel version: %lld\n",
+		(long long)sysInfo.kernel_version);
+	trace("# ---\n");
+}
+
+
+// Simple insertion sort for small arrays
+static void
+sort_doubles(double* arr, int n)
+{
+	for (int i = 1; i < n; i++) {
+		double key = arr[i];
+		int j = i - 1;
+		while (j >= 0 && arr[j] > key) {
+			arr[j + 1] = arr[j];
+			j--;
+		}
+		arr[j + 1] = key;
+	}
+}
+
+
+BenchStats
+run_benchmark(bench_func_t func, int runs, int warmup)
+{
+	BenchStats stats = {};
+	stats.runs = runs;
+	stats.warmup = warmup;
+
+	// Warmup iterations (discarded)
+	for (int i = 0; i < warmup; i++)
+		func();
+
+	// Measured iterations
+	double* results = (double*)malloc(runs * sizeof(double));
+	if (results == NULL) {
+		stats.min_ops = stats.max_ops = stats.median_ops = func();
+		stats.runs = 1;
+		return stats;
+	}
+
+	for (int i = 0; i < runs; i++)
+		results[i] = func();
+
+	sort_doubles(results, runs);
+
+	stats.min_ops = results[0];
+	stats.max_ops = results[runs - 1];
+	stats.median_ops = results[runs / 2];
+
+	free(results);
+	return stats;
+}
+
+
+void
 run_test(const TestEntry& entry)
 {
 	int p0 = sPassCount, f0 = sFailCount;
@@ -150,6 +230,7 @@ open_trace(const char* filename)
 		(long long)system_time());
 	trace("# main thread: %ld, team: %ld\n",
 		(long)find_thread(NULL), (long)getpid());
+	print_system_info();
 	trace("#\n");
 }
 
