@@ -1636,6 +1636,9 @@ enum {
 	CHILD_CMD_WRITE_PAGES	= 0x03,
 	CHILD_CMD_CLOSE_HANDLE	= 0x04,
 	CHILD_CMD_EXIT_DIRTY	= 0x05,
+	CHILD_CMD_WRITE_PAGE_AT	= 0x06, // [cmd][page_idx][pattern] -> ack
+	CHILD_CMD_FORWARD_HANDLE = 0x07, // receive handle, forward to grandchild
+	CHILD_CMD_FAULT_PAGES	= 0x08, // map + touch all pages simultaneously
 	CHILD_CMD_DELETE_FAULT	= 0x10,
 };
 
@@ -1736,6 +1739,122 @@ dot_child_helper()
 			uint8 result = 0x01;
 			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
 			// Exit without closing — tests team death cleanup
+			break;
+		}
+		case CHILD_CMD_WRITE_PAGE_AT: {
+			// Data format: [cmd(1)][page_idx(1)][pattern(1)]
+			// Read extra params from a second message
+			uint8 params[2];
+			size_t paramSize = sizeof(params);
+			s = kosm_ray_read(ray, params, &paramSize, NULL, NULL, 0);
+			uint8 pageIdx = params[0];
+			uint8 pattern = params[1];
+
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			uint8 result = 0x00;
+			if (s == B_OK && addr != NULL) {
+				memset((uint8*)addr + pageIdx * B_PAGE_SIZE, pattern,
+					B_PAGE_SIZE);
+				result = 0x01;
+			}
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			kosm_close_handle(dotHandle);
+			break;
+		}
+		case CHILD_CMD_FORWARD_HANDLE: {
+			// Multi-hop: receive handle, spawn grandchild, forward it
+			// Read grandchild command params
+			uint8 params[2];
+			size_t paramSize = sizeof(params);
+			s = kosm_ray_read(ray, params, &paramSize, NULL, NULL, 0);
+			uint8 gcPageIdx = params[0];
+			uint8 gcPattern = params[1];
+
+			// Map ourselves first to verify mid-chain access
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			if (s != B_OK || addr == NULL) {
+				uint8 result = 0x00;
+				kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+				break;
+			}
+			// Write page 0 as chain-B marker
+			memset(addr, 0xBB, B_PAGE_SIZE);
+
+			// Spawn grandchild
+			image_info imgInfo;
+			int32 cookie = 0;
+			get_next_image_info(B_CURRENT_TEAM, &cookie, &imgInfo);
+			kosm_ray_id gcEp0, gcEp1;
+			s = kosm_create_ray(&gcEp0, &gcEp1, 0);
+			if (s != B_OK) {
+				uint8 result = 0x00;
+				kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+				break;
+			}
+
+			const char* argv[] = { imgInfo.name, "--dot-child", NULL };
+			thread_id gcTid = load_image(2, argv, (const char**)environ);
+			if (gcTid < 0) {
+				uint8 result = 0x00;
+				kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+				kosm_close_ray(gcEp0);
+				kosm_close_ray(gcEp1);
+				break;
+			}
+
+			thread_info gcTinfo;
+			get_thread_info(gcTid, &gcTinfo);
+			kosm_ray_set_bootstrap(gcTinfo.team, gcEp1);
+			resume_thread(gcTid);
+
+			// Send WRITE_PAGE_AT command + handle to grandchild
+			uint8 gcCmd = CHILD_CMD_WRITE_PAGE_AT;
+			kosm_handle_t gcHandle = dotHandle;
+			kosm_ray_write(gcEp0, &gcCmd, sizeof(gcCmd),
+				&gcHandle, 1, KOSM_RAY_COPY_HANDLES);
+			// Send params
+			kosm_ray_write(gcEp0, params, sizeof(params), NULL, 0, 0);
+
+			// Wait for grandchild ack
+			uint8 gcResult = 0;
+			size_t gcResultSize = sizeof(gcResult);
+			kosm_ray_read(gcEp0, &gcResult, &gcResultSize,
+				NULL, NULL, 0);
+
+			status_t gcExit;
+			wait_for_thread(gcTid, &gcExit);
+			kosm_close_ray(gcEp0);
+
+			// Report to parent: 0x01 if grandchild succeeded
+			uint8 result = gcResult;
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			kosm_close_handle(dotHandle);
+			break;
+		}
+		case CHILD_CMD_FAULT_PAGES: {
+			// Map and touch all pages as fast as possible
+			void* addr = NULL;
+			s = kosm_map_dot(dotHandle, &addr, B_ANY_ADDRESS,
+				KOSM_PROT_READ | KOSM_PROT_WRITE);
+			uint8 result = 0x00;
+			if (s == B_OK && addr != NULL) {
+				// Read dot size from parent
+				uint32 numPages = 0;
+				size_t npSize = sizeof(numPages);
+				kosm_ray_read(ray, &numPages, &npSize, NULL, NULL, 0);
+
+				// Touch all pages to trigger faults
+				for (uint32 i = 0; i < numPages; i++)
+					((volatile uint8*)addr)[i * B_PAGE_SIZE] = (uint8)i;
+
+				result = 0x01;
+			}
+			kosm_ray_write(ray, &result, 1, NULL, 0, 0);
+			kosm_close_handle(dotHandle);
 			break;
 		}
 		case CHILD_CMD_DELETE_FAULT: {
@@ -2192,6 +2311,303 @@ test_large_256mb()
 }
 
 
+// ===================== ADVANCED TESTS =====================
+
+// 42. Dual mapping — same dot at two addresses in one process
+static void
+test_dual_mapping()
+{
+	debug_trace("  [test_dual_mapping]\n");
+
+	void* addr1 = NULL;
+	kosm_dot_id dot = kosm_create_dot("dual_map",
+		&addr1, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create dot", dot >= 0 && addr1 != NULL);
+
+	// Write through first mapping
+	memset(addr1, 0xAA, B_PAGE_SIZE);
+
+	// Create second mapping via kosm_map_dot
+	void* addr2 = NULL;
+	status_t s = kosm_map_dot(dot, &addr2, B_ANY_ADDRESS,
+		KOSM_PROT_READ | KOSM_PROT_WRITE);
+	DOT_REQUIRE("second mapping", s == B_OK && addr2 != NULL);
+
+	DOT_ASSERT("different addresses", addr1 != addr2);
+
+	// Read through second mapping — should see same data
+	DOT_ASSERT("addr2 sees 0xAA",
+		((volatile uint8*)addr2)[0] == 0xAA);
+	DOT_ASSERT("addr2 last byte",
+		((volatile uint8*)addr2)[B_PAGE_SIZE - 1] == 0xAA);
+
+	// Write through addr2, read through addr1
+	((volatile uint8*)addr2)[42] = 0xBB;
+	DOT_ASSERT("addr1 sees addr2 write",
+		((volatile uint8*)addr1)[42] == 0xBB);
+
+	kosm_unmap_dot(dot);
+	kosm_delete_dot(dot);
+}
+
+
+// 43. Multi-hop handle transfer: Parent → Child B → Grandchild C
+static void
+test_multi_hop_transfer()
+{
+	debug_trace("  [test_multi_hop_transfer]\n");
+
+	// Create a 3-page dot: parent=page0(0xAA), B=page1(0xBB), C=page2(0xCC)
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("multi_hop",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 3,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create 3-page dot", dot >= 0 && addr != NULL);
+
+	// Parent writes page 0
+	memset(addr, 0xAA, B_PAGE_SIZE);
+
+	// Spawn child B with FORWARD_HANDLE command
+	kosm_ray_id ray;
+	thread_id child;
+	team_id childTeam;
+	DOT_REQUIRE("spawn child B",
+		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
+
+	// Send dot handle with FORWARD_HANDLE command
+	uint8 cmd = CHILD_CMD_FORWARD_HANDLE;
+	kosm_handle_t handle = (kosm_handle_t)dot;
+	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
+		&handle, 1, KOSM_RAY_COPY_HANDLES);
+	DOT_REQUIRE("send handle to B", s == B_OK);
+
+	// Send grandchild params: page_idx=2, pattern=0xCC
+	uint8 params[2] = { 2, 0xCC };
+	kosm_ray_write(ray, params, sizeof(params), NULL, 0, 0);
+
+	// Wait for child B to report grandchild result
+	uint8 result = 0;
+	size_t resultSize = sizeof(result);
+	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
+	DOT_ASSERT("chain completed", s == B_OK && result == 0x01);
+
+	// Verify all 3 pages: parent(0xAA), B(0xBB), C(0xCC)
+	uint8* p = (uint8*)addr;
+	bool page0ok = true, page1ok = true, page2ok = true;
+	for (size_t i = 0; i < B_PAGE_SIZE; i++) {
+		if (p[i] != 0xAA) page0ok = false;
+		if (p[B_PAGE_SIZE + i] != 0xBB) page1ok = false;
+		if (p[2 * B_PAGE_SIZE + i] != 0xCC) page2ok = false;
+	}
+	DOT_ASSERT("page 0 (parent 0xAA)", page0ok);
+	DOT_ASSERT("page 1 (child B 0xBB)", page1ok);
+	DOT_ASSERT("page 2 (grandchild C 0xCC)", page2ok);
+
+	status_t exitVal;
+	wait_for_thread(child, &exitVal);
+	kosm_close_ray(ray);
+	kosm_delete_dot(dot);
+}
+
+
+// 44. Three processes fault same lazy dot simultaneously
+static void
+test_three_process_fault()
+{
+	debug_trace("  [test_three_process_fault]\n");
+
+	const uint32 kPages = 64;
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot("3proc_fault",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * kPages,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_REQUIRE("create 64-page lazy dot", dot >= 0 && addr != NULL);
+
+	// Spawn 3 children
+	kosm_ray_id rays[3];
+	thread_id children[3];
+	team_id teams[3];
+	int spawned = 0;
+
+	for (int i = 0; i < 3; i++) {
+		status_t s = spawn_dot_child(&rays[i], &children[i], &teams[i]);
+		if (s == B_OK)
+			spawned++;
+		else
+			break;
+	}
+	DOT_REQUIRE("spawn 3 children", spawned == 3);
+
+	// Send FAULT_PAGES command + dot handle to all 3 simultaneously
+	for (int i = 0; i < 3; i++) {
+		uint8 cmd = CHILD_CMD_FAULT_PAGES;
+		kosm_handle_t handle = (kosm_handle_t)dot;
+		kosm_ray_write(rays[i], &cmd, sizeof(cmd),
+			&handle, 1, KOSM_RAY_COPY_HANDLES);
+	}
+
+	// Send page count to all 3 — they'll all fault the same pages
+	for (int i = 0; i < 3; i++) {
+		uint32 numPages = kPages;
+		kosm_ray_write(rays[i], &numPages, sizeof(numPages),
+			NULL, 0, 0);
+	}
+
+	// Parent also faults all pages simultaneously
+	for (uint32 i = 0; i < kPages; i++)
+		((volatile uint8*)addr)[i * B_PAGE_SIZE] = 0xFF;
+
+	// Wait for all children
+	int childOk = 0;
+	for (int i = 0; i < 3; i++) {
+		uint8 result = 0;
+		size_t resultSize = sizeof(result);
+		status_t s = kosm_ray_read_etc(rays[i], &result, &resultSize,
+			NULL, NULL, B_RELATIVE_TIMEOUT, 5000000);
+		if (s == B_OK && result == 0x01)
+			childOk++;
+	}
+
+	DOT_ASSERT("all 3 children faulted ok", childOk == 3);
+
+	// Verify dot is intact
+	kosm_dot_info info;
+	DOT_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
+	DOT_ASSERT("all pages resident",
+		info.resident_size >= kPages * B_PAGE_SIZE);
+
+	for (int i = 0; i < 3; i++) {
+		status_t exitVal;
+		wait_for_thread(children[i], &exitVal);
+		kosm_close_ray(rays[i]);
+	}
+	kosm_delete_dot(dot);
+}
+
+
+// 45. Max capacity — create dots until failure, verify cleanup
+static void
+test_max_capacity()
+{
+	debug_trace("  [test_max_capacity]\n");
+
+	const int kMaxAttempt = 4096;
+	kosm_dot_id dots[kMaxAttempt];
+	int created = 0;
+
+	for (int i = 0; i < kMaxAttempt; i++) {
+		void* addr = NULL;
+		char name[32];
+		snprintf(name, sizeof(name), "cap_%d", i);
+		kosm_dot_id dot = kosm_create_dot(name,
+			&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+			KOSM_PROT_READ | KOSM_PROT_WRITE,
+			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+		if (dot < 0)
+			break;
+		dots[created++] = dot;
+	}
+
+	debug_trace("    created %d dots before exhaustion\n", created);
+	DOT_ASSERT("created at least 100", created >= 100);
+
+	// Verify last created dot is functional
+	if (created > 0) {
+		kosm_dot_info info;
+		DOT_ASSERT("last dot info ok",
+			kosm_get_dot_info(dots[created - 1], &info) == B_OK);
+	}
+
+	// Delete all
+	int deleteErrors = 0;
+	for (int i = 0; i < created; i++) {
+		if (kosm_delete_dot(dots[i]) != B_OK)
+			deleteErrors++;
+	}
+	DOT_ASSERT("all deleted ok", deleteErrors == 0);
+
+	// Verify system recovered — can create new dot
+	void* addr = NULL;
+	kosm_dot_id newDot = kosm_create_dot("cap_recovery",
+		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
+	DOT_ASSERT("recovery create ok", newDot >= 0 && addr != NULL);
+	if (newDot >= 0) {
+		((volatile uint8*)addr)[0] = 0x42;
+		DOT_ASSERT("recovery write ok",
+			((volatile uint8*)addr)[0] == 0x42);
+		kosm_delete_dot(newDot);
+	}
+}
+
+
+// 46. File sync stress — concurrent writes + syncs
+static void
+test_file_sync_stress()
+{
+	debug_trace("  [test_file_sync_stress]\n");
+
+	BPath path;
+	if (find_directory(B_SYSTEM_TEMP_DIRECTORY, &path) != B_OK) {
+		DOT_ASSERT("find temp dir", false);
+		return;
+	}
+	path.Append("kosm_dot_sync_stress");
+
+	int fd = open(path.Path(), O_CREAT | O_RDWR | O_TRUNC, 0644);
+	DOT_REQUIRE("open temp file", fd >= 0);
+
+	const size_t kSize = B_PAGE_SIZE * 8;
+	ftruncate(fd, kSize);
+
+	void* addr = NULL;
+	kosm_dot_id dot = kosm_create_dot_file(fd, 0, "sync_stress",
+		&addr, B_ANY_ADDRESS, kSize,
+		KOSM_PROT_READ | KOSM_PROT_WRITE,
+		KOSM_DOT_FILE, KOSM_TAG_APP);
+
+	if (dot < 0) {
+		debug_trace("    file dot not available, skipping\n");
+		DOT_ASSERT("create file dot", dot >= 0);
+		close(fd);
+		unlink(path.Path());
+		return;
+	}
+
+	// Write + sync cycles
+	const int kCycles = 20;
+	int syncErrors = 0;
+	for (int i = 0; i < kCycles; i++) {
+		// Write different pattern each cycle
+		memset(addr, (uint8)(i + 1), kSize);
+
+		status_t s = kosm_dot_sync(dot, 0, kSize);
+		if (s != B_OK)
+			syncErrors++;
+	}
+
+	DOT_ASSERT("all syncs ok", syncErrors == 0);
+
+	// Verify last pattern survives
+	DOT_ASSERT("last pattern intact",
+		((uint8*)addr)[0] == (uint8)kCycles);
+	DOT_ASSERT("last pattern page 7",
+		((uint8*)addr)[7 * B_PAGE_SIZE] == (uint8)kCycles);
+
+	debug_trace("    %d write+sync cycles, %d errors\n",
+		kCycles, syncErrors);
+
+	kosm_delete_dot(dot);
+	close(fd);
+	unlink(path.Path());
+}
+
+
 // ===================== SUITE =====================
 
 static const TestEntry sDotTests[] = {
@@ -2251,6 +2667,12 @@ static const TestEntry sDotTests[] = {
 	{ "delete+fault race",      test_concurrent_delete_fault, "STRESS" },
 	// Large sizes
 	{ "large 256MB",            test_large_256mb,             "Sizes" },
+	// Advanced
+	{ "dual mapping",           test_dual_mapping,            "Advanced" },
+	{ "multi-hop A->B->C",     test_multi_hop_transfer,      "Advanced" },
+	{ "3-process concurrent fault", test_three_process_fault, "Advanced" },
+	{ "max capacity",           test_max_capacity,            "Advanced" },
+	{ "file sync stress",       test_file_sync_stress,        "Advanced" },
 };
 
 
