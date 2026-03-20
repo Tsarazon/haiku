@@ -1139,12 +1139,13 @@ test_qos_set_get()
 	kosm_create_ray(&ep0, &ep1, 0);
 
 	uint8 qosValues[] = {
-		KOSM_QOS_DEFAULT, KOSM_QOS_UTILITY,
-		KOSM_QOS_USER_INITIATED, KOSM_QOS_USER_INTERACTIVE
+		KOSM_QOS_BACKGROUND, KOSM_QOS_UTILITY,
+		KOSM_QOS_DEFAULT, KOSM_QOS_USER_INITIATED,
+		KOSM_QOS_USER_INTERACTIVE
 	};
 
 	bool allOK = true;
-	for (int i = 0; i < 4; i++) {
+	for (int i = 0; i < 5; i++) {
 		status_t s = kosm_ray_set_qos(ep0, qosValues[i]);
 		if (s != B_OK) { allOK = false; continue; }
 
@@ -1168,7 +1169,8 @@ test_qos_invalid()
 	kosm_ray_id ep0, ep1;
 	kosm_create_ray(&ep0, &ep1, 0);
 
-	TEST_ASSERT("qos 4 fails", kosm_ray_set_qos(ep0, 4) == B_BAD_VALUE);
+	TEST_ASSERT("qos CLASS_COUNT fails",
+		kosm_ray_set_qos(ep0, KOSM_QOS_CLASS_COUNT) == B_BAD_VALUE);
 	TEST_ASSERT("qos 255 fails",
 		kosm_ray_set_qos(ep0, 255) == B_BAD_VALUE);
 
@@ -1333,7 +1335,6 @@ test_wait_timeout()
 
 // STRESS
 
-static void
 // Single throughput iteration — returns ops/sec
 static kosm_ray_id sThroughputEp0, sThroughputEp1;
 

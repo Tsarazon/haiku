@@ -129,12 +129,18 @@ typedef int32 kosm_ray_id;
 #define KOSM_RAY_MAX_DATA_SIZE		(256 * 1024)
 #define KOSM_RAY_MAX_QUEUE_MESSAGES	256
 
-/* QoS classes */
+/* QoS classes -- single source of truth for all KosmOS subsystems.
+ * Used by scheduler, ray, and any future subsystem needing QoS.
+ * Ordered low-to-high priority. Do NOT redefine in other headers.
+ */
+typedef int32 kosm_qos_class;
 
-#define KOSM_QOS_DEFAULT			0
-#define KOSM_QOS_UTILITY			1
-#define KOSM_QOS_USER_INITIATED		2
-#define KOSM_QOS_USER_INTERACTIVE	3
+#define KOSM_QOS_BACKGROUND			0	/* backups, indexing, prefetch */
+#define KOSM_QOS_UTILITY			1	/* long tasks with progress UI */
+#define KOSM_QOS_DEFAULT			2	/* normal work */
+#define KOSM_QOS_USER_INITIATED		3	/* user waiting for result */
+#define KOSM_QOS_USER_INTERACTIVE	4	/* UI, input, animations */
+#define KOSM_QOS_CLASS_COUNT		5
 
 /* Wait signals for kosm_ray_wait() */
 
