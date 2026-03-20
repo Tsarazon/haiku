@@ -53,6 +53,14 @@ struct fd_ops {
 		int statMask);
 };
 
+// Descriptor type: discriminant for the file_descriptor union.
+// FD_TYPE_VNODE is the default; callers that set u.mount must also
+// set type = FD_TYPE_MOUNT.
+enum {
+	FD_TYPE_VNODE	= 0,
+	FD_TYPE_MOUNT	= 1,
+};
+
 struct file_descriptor {
 	int32	ref_count;
 	int32	open_count;
@@ -63,8 +71,15 @@ struct file_descriptor {
 	} u;
 	void	*cookie;
 	int32	open_mode;
+	int32	type;			// FD_TYPE_VNODE or FD_TYPE_MOUNT
 	off_t	pos;
 };
+
+
+// Check whether a descriptor supports a specific operation.
+// Safe to use even when ops is NULL (after disconnect).
+#define HAS_FD_OP(descriptor, op) \
+	((descriptor)->ops != NULL && (descriptor)->ops->op != NULL)
 
 
 // additional open mode - kernel special

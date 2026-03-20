@@ -83,9 +83,11 @@ alloc_fd(void)
 
 	descriptor->u.vnode = NULL;
 	descriptor->cookie = NULL;
+	descriptor->ops = NULL;
 	descriptor->ref_count = 1;
 	descriptor->open_count = 0;
 	descriptor->open_mode = 0;
+	descriptor->type = FD_TYPE_VNODE;
 	descriptor->pos = -1;
 
 	return descriptor;
@@ -191,7 +193,7 @@ put_fd(struct file_descriptor* descriptor)
 	// free the descriptor if we don't need it anymore
 	if (previous == 1) {
 		// free the underlying object
-		if (descriptor->ops != NULL && descriptor->ops->fd_free != NULL)
+		if (HAS_FD_OP(descriptor, fd_free))
 			descriptor->ops->fd_free(descriptor);
 
 		object_cache_free(sFileDescriptorCache, descriptor, 0);
@@ -202,9 +204,9 @@ put_fd(struct file_descriptor* descriptor)
 		// be accessed anymore, let's close it (no one is
 		// currently accessing this descriptor)
 
-		if (descriptor->ops->fd_close)
+		if (HAS_FD_OP(descriptor, fd_close))
 			descriptor->ops->fd_close(descriptor);
-		if (descriptor->ops->fd_free)
+		if (HAS_FD_OP(descriptor, fd_free))
 			descriptor->ops->fd_free(descriptor);
 
 		// prevent this descriptor from being closed/freed again
@@ -230,7 +232,7 @@ close_fd(struct io_context* context, struct file_descriptor* descriptor)
 	if (atomic_add(&descriptor->open_count, -1) == 1) {
 		vfs_unlock_vnode_if_locked(descriptor);
 
-		if (descriptor->ops != NULL && descriptor->ops->fd_close != NULL)
+		if (HAS_FD_OP(descriptor, fd_close))
 			descriptor->ops->fd_close(descriptor);
 	}
 }
@@ -519,7 +521,7 @@ fd_ioctl(bool kernelFD, int fd, uint32 op, void* buffer, size_t length)
 	}
 
 	status_t status;
-	if (descriptor->ops->fd_ioctl)
+	if (HAS_FD_OP(descriptor, fd_ioctl))
 		status = descriptor->ops->fd_ioctl(descriptor.Get(), op, buffer, length);
 	else
 		status = B_DEV_INVALID_IOCTL;
@@ -543,7 +545,7 @@ deselect_select_infos(file_descriptor* descriptor, select_info* infos,
 
 		// deselect the selected events
 		uint16 eventsToDeselect = info->selected_events & ~B_EVENT_INVALID;
-		if (descriptor->ops->fd_deselect != NULL && eventsToDeselect != 0) {
+		if (HAS_FD_OP(descriptor, fd_deselect) && eventsToDeselect != 0) {
 			for (uint16 event = 1; event < 16; event++) {
 				if ((eventsToDeselect & SELECT_FLAG(event)) != 0) {
 					descriptor->ops->fd_deselect(descriptor, event,
@@ -580,7 +582,7 @@ select_fd(int32 fd, struct select_info* info, bool kernel)
 
 	uint16 eventsToSelect = info->selected_events & ~B_EVENT_INVALID;
 
-	if (descriptor->ops->fd_select == NULL) {
+	if (!HAS_FD_OP(descriptor, fd_select)) {
 		// if the I/O subsystem doesn't support select(), we will
 		// immediately notify the select call
 		eventsToSelect &= ~SELECT_OUTPUT_ONLY_FLAGS;
@@ -674,7 +676,7 @@ deselect_fd(int32 fd, struct select_info* info, bool kernel)
 
 	// deselect the selected events
 	uint16 eventsToDeselect = info->selected_events & ~B_EVENT_INVALID;
-	if (descriptor->ops->fd_deselect != NULL && eventsToDeselect != 0) {
+	if (HAS_FD_OP(descriptor, fd_deselect) && eventsToDeselect != 0) {
 		for (uint16 event = 1; event < 16; event++) {
 			if ((eventsToDeselect & SELECT_FLAG(event)) != 0) {
 				descriptor->ops->fd_deselect(descriptor.Get(), event,
@@ -727,13 +729,13 @@ common_vector_io(int fd, off_t pos, const iovec* vecs, size_t count, bool write,
 		movePosition = true;
 	}
 
-	if (write ? descriptor->ops->fd_write == NULL
-			: descriptor->ops->fd_read == NULL) {
+	if (write ? !HAS_FD_OP(descriptor, fd_write)
+			: !HAS_FD_OP(descriptor, fd_read)) {
 		return B_BAD_VALUE;
 	}
 
-	if (!movePosition && count > 1 && (write ? descriptor->ops->fd_writev != NULL
-			: descriptor->ops->fd_readv != NULL)) {
+	if (!movePosition && count > 1 && (write ? HAS_FD_OP(descriptor, fd_writev)
+			: HAS_FD_OP(descriptor, fd_readv))) {
 		ssize_t result;
 		if (write) {
 			result = descriptor->ops->fd_writev(descriptor.Get(), pos,
@@ -810,8 +812,8 @@ common_user_io(int fd, off_t pos, void* buffer, size_t length, bool write)
 		movePosition = true;
 	}
 
-	if (write ? descriptor->ops->fd_write == NULL
-			: descriptor->ops->fd_read == NULL) {
+	if (write ? !HAS_FD_OP(descriptor, fd_write)
+			: !HAS_FD_OP(descriptor, fd_read)) {
 		return B_BAD_VALUE;
 	}
 
@@ -941,7 +943,7 @@ _user_seek(int fd, off_t pos, int seekType)
 
 	TRACE(("user_seek(descriptor = %p)\n", descriptor));
 
-	if (descriptor->ops->fd_seek)
+	if (HAS_FD_OP(descriptor, fd_seek))
 		pos = descriptor->ops->fd_seek(descriptor.Get(), pos, seekType);
 	else
 		pos = ESPIPE;
@@ -987,7 +989,7 @@ _user_read_dir(int fd, struct dirent* userBuffer, size_t bufferSize,
 	if (!descriptor.IsSet())
 		return B_FILE_ERROR;
 
-	if (descriptor->ops->fd_read_dir == NULL)
+	if (!HAS_FD_OP(descriptor, fd_read_dir))
 		return B_UNSUPPORTED;
 
 	// restrict buffer size and allocate a heap buffer
@@ -1035,7 +1037,7 @@ _user_rewind_dir(int fd)
 		return B_FILE_ERROR;
 
 	status_t status;
-	if (descriptor->ops->fd_rewind_dir)
+	if (HAS_FD_OP(descriptor, fd_rewind_dir))
 		status = descriptor->ops->fd_rewind_dir(descriptor.Get());
 	else
 		status = B_UNSUPPORTED;
@@ -1098,7 +1100,7 @@ _kern_read(int fd, off_t pos, void* buffer, size_t length)
 
 	SyscallFlagUnsetter _;
 
-	if (descriptor->ops->fd_read == NULL)
+	if (!HAS_FD_OP(descriptor, fd_read))
 		return B_BAD_VALUE;
 
 	ssize_t bytesRead = descriptor->ops->fd_read(descriptor.Get(), pos, buffer,
@@ -1136,7 +1138,7 @@ _kern_write(int fd, off_t pos, const void* buffer, size_t length)
 		movePosition = true;
 	}
 
-	if (descriptor->ops->fd_write == NULL)
+	if (!HAS_FD_OP(descriptor, fd_write))
 		return B_BAD_VALUE;
 
 	SyscallFlagUnsetter _;
@@ -1180,7 +1182,7 @@ _kern_seek(int fd, off_t pos, int seekType)
 	if (!descriptor.IsSet())
 		return B_FILE_ERROR;
 
-	if (descriptor->ops->fd_seek)
+	if (HAS_FD_OP(descriptor, fd_seek))
 		pos = descriptor->ops->fd_seek(descriptor.Get(), pos, seekType);
 	else
 		pos = ESPIPE;
@@ -1213,7 +1215,7 @@ _kern_read_dir(int fd, struct dirent* buffer, size_t bufferSize,
 		return B_FILE_ERROR;
 
 	ssize_t retval;
-	if (descriptor->ops->fd_read_dir) {
+	if (HAS_FD_OP(descriptor, fd_read_dir)) {
 		uint32 count = maxCount;
 		retval = descriptor->ops->fd_read_dir(ioContext, descriptor.Get(), buffer,
 			bufferSize, &count);
@@ -1236,7 +1238,7 @@ _kern_rewind_dir(int fd)
 		return B_FILE_ERROR;
 
 	status_t status;
-	if (descriptor->ops->fd_rewind_dir)
+	if (HAS_FD_OP(descriptor, fd_rewind_dir))
 		status = descriptor->ops->fd_rewind_dir(descriptor.Get());
 	else
 		status = B_UNSUPPORTED;

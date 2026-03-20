@@ -2852,14 +2852,16 @@ get_new_fd(struct fd_ops* ops, struct fs_mount* mount, struct vnode* vnode,
 
 	if (vnode)
 		descriptor->u.vnode = vnode;
-	else
+	else {
 		descriptor->u.mount = mount;
+		descriptor->type = FD_TYPE_MOUNT;
+	}
 	descriptor->cookie = cookie;
 
 	descriptor->ops = ops;
 	descriptor->open_mode = openMode;
 
-	if (descriptor->ops->fd_seek != NULL) {
+	if (HAS_FD_OP(descriptor, fd_seek)) {
 		// some kinds of files are not seekable
 		switch (vnode->Type() & S_IFMT) {
 			case S_IFIFO:
@@ -4399,7 +4401,7 @@ vfs_read_stat(int fd, const char* path, bool traverseLeafLink,
 		if (!descriptor.IsSet())
 			return B_FILE_ERROR;
 
-		if (descriptor->ops->fd_read_stat)
+		if (HAS_FD_OP(descriptor, fd_read_stat))
 			status = descriptor->ops->fd_read_stat(descriptor.Get(), stat);
 		else
 			status = B_UNSUPPORTED;
@@ -6364,7 +6366,7 @@ common_fcntl(int fd, int op, size_t argument, bool kernel)
 			const int32 modifiableFlags = O_APPEND | O_NONBLOCK;
 			argument &= modifiableFlags;
 
-			if (descriptor->ops->fd_set_flags != NULL) {
+			if (HAS_FD_OP(descriptor, fd_set_flags)) {
 				status = descriptor->ops->fd_set_flags(descriptor.Get(), argument);
 			} else if (vnode != NULL && HAS_FS_CALL(vnode, set_flags)) {
 				status = FS_CALL(vnode, set_flags, descriptor->cookie,
@@ -8844,7 +8846,7 @@ _kern_write_stat(int fd, const char* path, bool traverseLeafLink,
 		if (!descriptor.IsSet())
 			return B_FILE_ERROR;
 
-		if (descriptor->ops->fd_write_stat)
+		if (HAS_FD_OP(descriptor, fd_write_stat))
 			status = descriptor->ops->fd_write_stat(descriptor.Get(), stat, statMask);
 		else
 			status = B_UNSUPPORTED;
@@ -9809,7 +9811,7 @@ _user_read_stat(int fd, const char* userPath, bool traverseLink,
 		if (!descriptor.IsSet())
 			return B_FILE_ERROR;
 
-		if (descriptor->ops->fd_read_stat)
+		if (HAS_FD_OP(descriptor, fd_read_stat))
 			status = descriptor->ops->fd_read_stat(descriptor.Get(), &stat);
 		else
 			status = B_UNSUPPORTED;
@@ -9865,7 +9867,7 @@ _user_write_stat(int fd, const char* userPath, bool traverseLeafLink,
 		if (!descriptor.IsSet())
 			return B_FILE_ERROR;
 
-		if (descriptor->ops->fd_write_stat) {
+		if (HAS_FD_OP(descriptor, fd_write_stat)) {
 			status = descriptor->ops->fd_write_stat(descriptor.Get(), &stat,
 				statMask);
 		} else
@@ -9977,7 +9979,7 @@ _user_stat_attr(int fd, const char* userAttribute,
 	}
 
 	struct stat stat;
-	if (descriptor->ops->fd_read_stat)
+	if (HAS_FD_OP(descriptor, fd_read_stat))
 		status = descriptor->ops->fd_read_stat(descriptor, &stat);
 	else
 		status = B_UNSUPPORTED;

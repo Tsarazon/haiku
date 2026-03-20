@@ -98,6 +98,7 @@ private:
 
 private:
 	inline	Bucket&				_Bucket() const;
+	inline	int32				_GetFlags() const;
 
 			void				_WaitForLock();
 			void				_WakeUpLocker();
@@ -109,10 +110,17 @@ private:
 };
 
 
+int32
+vnode::_GetFlags() const
+{
+	return atomic_get(const_cast<int32*>(&fFlags));
+}
+
+
 bool
 vnode::IsBusy() const
 {
-	return (fFlags & kFlagsBusy) != 0;
+	return (_GetFlags() & kFlagsBusy) != 0;
 }
 
 
@@ -129,7 +137,7 @@ vnode::SetBusy(bool busy)
 bool
 vnode::IsRemoved() const
 {
-	return (fFlags & kFlagsRemoved) != 0;
+	return (_GetFlags() & kFlagsRemoved) != 0;
 }
 
 
@@ -146,7 +154,7 @@ vnode::SetRemoved(bool removed)
 bool
 vnode::IsUnpublished() const
 {
-	return (fFlags & kFlagsUnpublished) != 0;
+	return (_GetFlags() & kFlagsUnpublished) != 0;
 }
 
 
@@ -163,7 +171,7 @@ vnode::SetUnpublished(bool unpublished)
 bool
 vnode::IsUnused() const
 {
-	return (fFlags & kFlagsUnused) != 0;
+	return (_GetFlags() & kFlagsUnused) != 0;
 }
 
 
@@ -180,7 +188,7 @@ vnode::SetUnused(bool unused)
 bool
 vnode::IsHot() const
 {
-	return (fFlags & kFlagsHot) != 0;
+	return (_GetFlags() & kFlagsHot) != 0;
 }
 
 
@@ -197,7 +205,7 @@ vnode::SetHot(bool hot)
 bool
 vnode::IsCovered() const
 {
-	return (fFlags & kFlagsCovered) != 0;
+	return (_GetFlags() & kFlagsCovered) != 0;
 }
 
 
@@ -214,7 +222,7 @@ vnode::SetCovered(bool covered)
 bool
 vnode::IsCovering() const
 {
-	return (fFlags & kFlagsCovering) != 0;
+	return (_GetFlags() & kFlagsCovering) != 0;
 }
 
 
@@ -231,15 +239,19 @@ vnode::SetCovering(bool covering)
 uint32
 vnode::Type() const
 {
-	return (uint32)fFlags & kFlagsType;
+	return (uint32)_GetFlags() & kFlagsType;
 }
 
 
 void
 vnode::SetType(uint32 type)
 {
-	atomic_and(&fFlags, ~kFlagsType);
-	atomic_or(&fFlags, type & kFlagsType);
+	const int32 typeBits = (int32)(type & kFlagsType);
+	int32 old;
+	do {
+		old = atomic_get(&fFlags);
+	} while (atomic_test_and_set(&fFlags,
+		(old & ~(int32)kFlagsType) | typeBits, old) != old);
 }
 
 
