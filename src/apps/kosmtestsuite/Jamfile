@@ -8,6 +8,7 @@ Application KosmTestSuite :
 	KosmMutexTests.cpp
 	KosmSurfaceTests.cpp
 	KosmDotTests.cpp
+	KosmSchedulerTests.cpp
 	:
 	be
 	libsurface.so
