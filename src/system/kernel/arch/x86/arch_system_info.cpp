@@ -22,8 +22,6 @@ static enum cpu_vendor sCPUVendor;
 static uint32 sCPUModel;
 static int64 sCPUClockSpeed;
 
-static spinlock sCPUIDLock = B_SPINLOCK_INITIALIZER;
-
 
 struct get_cpuid_args {
 	int forCPU;
@@ -118,17 +116,12 @@ arch_system_info_init(struct kernel_args *args)
 
 	sCPUClockSpeed = args->arch_args.cpu_clock_speed;
 
-	if (cpu->arch.vendor == VENDOR_INTEL) {
+	if (cpu->arch.vendor == VENDOR_INTEL && is_cpuid_leaf_supported(0x16)) {
 		cpuid_info cpuid;
-		get_current_cpuid(&cpuid, 0, 0);
-		uint32 maxBasicLeaf = cpuid.eax_0.max_eax;
-
-		if (maxBasicLeaf >= 0x16) {
-			get_current_cpuid(&cpuid, 0x16, 0);
-			if (cpuid.regs.eax != 0) {
-				sCPUClockSpeed = cpuid.regs.eax * 1000000LL;
-				dprintf("found clock speed with CPUID.16h\n");
-			}
+		get_current_cpuid(&cpuid, 0x16, 0);
+		if (cpuid.regs.eax != 0) {
+			sCPUClockSpeed = cpuid.regs.eax * 1000000LL;
+			dprintf("found clock speed with CPUID.16h\n");
 		}
 	}
 

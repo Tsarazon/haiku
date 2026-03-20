@@ -225,6 +225,7 @@ struct Thread : TeamThreadIteratorEntry<thread_id>, KernelReferenceable {
 									// enabled, etc.)
 	int64			serial_number;	// immutable after adding thread to hash
 	Thread			*hash_next;		// protected by thread hash lock
+	Thread			*rt_queue_next;	// LAVD scheduler RT FIFO queue link
 	DoublyLinkedListLink<Thread> team_link; // protected by team lock and fLock
 	char			name[B_OS_NAME_LENGTH];	// protected by fLock
 	bool			going_to_suspend;	// protected by scheduler lock

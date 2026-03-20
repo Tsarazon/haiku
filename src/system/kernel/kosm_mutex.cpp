@@ -495,8 +495,8 @@ kosm_mutex_init(kernel_args* args)
 	if (area < 0)
 		panic("unable to allocate kosm_mutex table!\n");
 
-	memset(sMutexes, 0, sizeof(struct kosm_mutex_entry) * sMaxMutexes);
 	for (int32 i = 0; i < sMaxMutexes; i++) {
+		sMutexes[i] = kosm_mutex_entry{};
 		sMutexes[i].id = -1;
 		sMutexes[i].max_waiter_priority = -1;
 		sMutexes[i].next_held = NULL;

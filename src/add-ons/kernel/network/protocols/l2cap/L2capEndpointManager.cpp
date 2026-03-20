@@ -127,7 +127,7 @@ L2capEndpointManager::Disconnected(HciConnection* connection)
 	auto iter = fChannelEndpoints.GetIterator();
 	while (iter.HasNext()) {
 		L2capEndpoint* endpoint = iter.Next();
-		if (endpoint->fConnection != connection)
+		if (endpoint->fConnection.Get() != connection)
 			continue;
 
 		MutexLocker endpointLocker(endpoint->fLock);
