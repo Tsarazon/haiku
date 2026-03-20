@@ -44,25 +44,6 @@ trace(const char* fmt, ...)
 
 
 void
-debug_trace(const char* fmt, ...)
-{
-	// Same as trace() — kept for compatibility
-	char buf[512];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-
-	if (sTraceFile != NULL) {
-		fputs(buf, sTraceFile);
-		fflush(sTraceFile);
-	}
-
-	_kern_debug_output(buf);
-}
-
-
-void
 trace_call(const char* func, status_t result)
 {
 	trace("    %s -> %s (0x%08lx)\n", func, strerror(result),
@@ -271,11 +252,17 @@ class ResultView : public BView {
 public:
 	ResultView()
 		: BView("ResultView", B_WILL_DRAW | B_FULL_UPDATE_ON_RESIZE
-			| B_FRAME_EVENTS)
+			| B_FRAME_EVENTS),
+		  fScrollView(NULL)
 	{
 		SetViewColor(30, 30, 40);
 		SetFont(be_fixed_font);
 		SetFontSize(11.0f);
+	}
+
+	void SetScrollView(BScrollView* scrollView)
+	{
+		fScrollView = scrollView;
 	}
 
 	virtual void Draw(BRect updateRect)
@@ -332,22 +319,24 @@ public:
 		float w, h;
 		GetPreferredSize(&w, &h);
 		// Ensure minimum height covers scroll view visible area
-		BScrollView* scroll = dynamic_cast<BScrollView*>(Parent());
-		if (scroll != NULL) {
-			float scrollH = scroll->Bounds().Height();
+		if (fScrollView != NULL) {
+			float scrollH = fScrollView->Bounds().Height();
 			if (h < scrollH)
 				h = scrollH;
 		}
 		ResizeTo(w, h);
 		Invalidate();
 	}
+
+private:
+	BScrollView*	fScrollView;
 };
 
 
 class TestWindow : public BWindow {
 public:
 	TestWindow()
-		: BWindow(BRect(60, 40, 810, 900), "KosmOS Test Suite",
+		: BWindow(BRect(60, 40, 920, 900), "KosmOS Test Suite",
 			B_TITLED_WINDOW, B_QUIT_ON_WINDOW_CLOSE)
 	{
 		BView* root = new BView(Bounds(), "root", B_FOLLOW_ALL, 0);
@@ -393,6 +382,14 @@ public:
 		root->AddChild(dotBtn);
 		buttonX += buttonW + gap;
 
+		BButton* schedBtn = new BButton(
+			BRect(buttonX, buttonY,
+				buttonX + buttonW, buttonY + buttonH),
+			"sched", "Sched",
+			new BMessage(kMsgRunSched), B_FOLLOW_LEFT | B_FOLLOW_TOP);
+		root->AddChild(schedBtn);
+		buttonX += buttonW + gap;
+
 		BButton* allBtn = new BButton(
 			BRect(buttonX, buttonY,
 				buttonX + buttonW, buttonY + buttonH),
@@ -413,6 +410,7 @@ public:
 		fScrollView->MoveTo(0, scrollTop);
 		fScrollView->ResizeTo(Bounds().Width(),
 			Bounds().Height() - scrollTop);
+		fResultView->SetScrollView(fScrollView);
 		root->AddChild(fScrollView);
 	}
 
@@ -430,6 +428,9 @@ public:
 				break;
 			case kMsgRunDot:
 				_Run(get_dot_test_suite);
+				break;
+			case kMsgRunSched:
+				_Run(get_scheduler_test_suite);
 				break;
 			case kMsgRunAll:
 				_RunAll();
@@ -492,9 +493,10 @@ private:
 			get_mutex_test_suite(),
 			get_surface_test_suite(),
 			get_dot_test_suite(),
+			get_scheduler_test_suite(),
 		};
 
-		for (int i = 0; i < 4; i++) {
+		for (int i = 0; i < (int)(sizeof(suites) / sizeof(suites[0])); i++) {
 			log_line("");
 			_RunSuite(suites[i]);
 		}

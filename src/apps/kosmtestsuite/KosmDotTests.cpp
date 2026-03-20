@@ -3,9 +3,6 @@
  * Distributed under the terms of the MIT License.
  *
  * KosmDot test functions for the unified test suite.
- *
- * All output goes to both trace file AND kernel serial debug output,
- * so results are visible in QEMU debug console immediately.
  */
 
 
@@ -23,47 +20,13 @@
 extern char** environ;
 
 
-// Override TEST_ASSERT for dot tests: dual output to file + serial
-#define DOT_ASSERT(name, condition) \
-	do { \
-		bigtime_t _t0 = system_time(); \
-		bool _ok = (condition); \
-		bigtime_t _dt = system_time() - _t0; \
-		if (_ok) { \
-			debug_trace("  PASS: %s  (%lld us)\n", name, (long long)_dt); \
-			sPassCount++; \
-		} else { \
-			debug_trace("  FAIL: %s  (line %d, %lld us)\n", \
-				name, __LINE__, (long long)_dt); \
-			sFailCount++; \
-		} \
-	} while (0)
-
-// Return-on-fail variant — prevents NULL dereference after failed allocation
-#define DOT_REQUIRE(name, condition) \
-	do { \
-		bigtime_t _t0 = system_time(); \
-		bool _ok = (condition); \
-		bigtime_t _dt = system_time() - _t0; \
-		if (_ok) { \
-			debug_trace("  PASS: %s  (%lld us)\n", name, (long long)_dt); \
-			sPassCount++; \
-		} else { \
-			debug_trace("  FAIL: %s  (line %d, %lld us) ** ABORT **\n", \
-				name, __LINE__, (long long)_dt); \
-			sFailCount++; \
-			return; \
-		} \
-	} while (0)
-
-
 // ===================== BASIC =====================
 
 // 1. Create and delete
 static void
 test_create_delete()
 {
-	debug_trace("  [test_create_delete]\n");
+	trace("  [test_create_delete]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("test_basic",
@@ -71,17 +34,17 @@ test_create_delete()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
-	DOT_ASSERT("address non-null", addr != NULL);
-	DOT_ASSERT("address page-aligned", ((addr_t)addr % B_PAGE_SIZE) == 0);
+	TEST_REQUIRE("create dot", dot >= 0);
+	TEST_ASSERT("address non-null", addr != NULL);
+	TEST_ASSERT("address page-aligned", ((addr_t)addr % B_PAGE_SIZE) == 0);
 
 	// Write to verify it's mapped and writable
 	memset(addr, 0xAB, B_PAGE_SIZE);
-	DOT_ASSERT("write succeeded", ((uint8*)addr)[0] == 0xAB);
-	DOT_ASSERT("write full page", ((uint8*)addr)[B_PAGE_SIZE - 1] == 0xAB);
+	TEST_ASSERT("write succeeded", ((uint8*)addr)[0] == 0xAB);
+	TEST_ASSERT("write full page", ((uint8*)addr)[B_PAGE_SIZE - 1] == 0xAB);
 
 	status_t status = kosm_delete_dot(dot);
-	DOT_ASSERT("delete dot", status == B_OK);
+	TEST_ASSERT("delete dot", status == B_OK);
 }
 
 
@@ -89,7 +52,7 @@ test_create_delete()
 static void
 test_create_named()
 {
-	debug_trace("  [test_create_named]\n");
+	trace("  [test_create_named]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("my_named_dot",
@@ -97,19 +60,19 @@ test_create_named()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_UI, 0);
 
-	DOT_REQUIRE("create named dot", dot >= 0);
+	TEST_REQUIRE("create named dot", dot >= 0);
 
 	kosm_dot_info info;
 	memset(&info, 0, sizeof(info));
 	status_t status = kosm_get_dot_info(dot, &info);
-	DOT_ASSERT("get_dot_info ok", status == B_OK);
-	DOT_ASSERT("info name match",
+	TEST_ASSERT("get_dot_info ok", status == B_OK);
+	TEST_ASSERT("info name match",
 		strcmp(info.name, "my_named_dot") == 0);
-	DOT_ASSERT("info size", info.size == B_PAGE_SIZE * 4);
-	DOT_ASSERT("info tag", info.tag == KOSM_TAG_UI);
-	DOT_ASSERT("info protection read",
+	TEST_ASSERT("info size", info.size == B_PAGE_SIZE * 4);
+	TEST_ASSERT("info tag", info.tag == KOSM_TAG_UI);
+	TEST_ASSERT("info protection read",
 		(info.protection & KOSM_PROT_READ) != 0);
-	DOT_ASSERT("info protection write",
+	TEST_ASSERT("info protection write",
 		(info.protection & KOSM_PROT_WRITE) != 0);
 
 	kosm_delete_dot(dot);
@@ -120,7 +83,7 @@ test_create_named()
 static void
 test_multi_page()
 {
-	debug_trace("  [test_multi_page]\n");
+	trace("  [test_multi_page]\n");
 
 	const size_t kSize = B_PAGE_SIZE * 8;
 	void* addr = NULL;
@@ -129,7 +92,7 @@ test_multi_page()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create 8-page dot", dot >= 0);
+	TEST_REQUIRE("create 8-page dot", dot >= 0);
 
 	// Write different pattern per page
 	for (size_t i = 0; i < 8; i++) {
@@ -143,12 +106,12 @@ test_multi_page()
 		uint8 expected = (uint8)(i + 1);
 		uint8 actual = ((uint8*)addr)[i * B_PAGE_SIZE];
 		if (actual != expected) {
-			debug_trace("    page %zu: expected %u got %u\n",
+			trace("    page %zu: expected %u got %u\n",
 				i, expected, actual);
 			allOk = false;
 		}
 	}
-	DOT_ASSERT("all pages correct", allOk);
+	TEST_ASSERT("all pages correct", allOk);
 
 	kosm_delete_dot(dot);
 }
@@ -158,7 +121,7 @@ test_multi_page()
 static void
 test_double_delete()
 {
-	debug_trace("  [test_double_delete]\n");
+	trace("  [test_double_delete]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("double_del",
@@ -166,13 +129,13 @@ test_double_delete()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	status_t s1 = kosm_delete_dot(dot);
-	DOT_ASSERT("first delete ok", s1 == B_OK);
+	TEST_ASSERT("first delete ok", s1 == B_OK);
 
 	status_t s2 = kosm_delete_dot(dot);
-	DOT_ASSERT("second delete fails", s2 != B_OK);
+	TEST_ASSERT("second delete fails", s2 != B_OK);
 }
 
 
@@ -180,7 +143,7 @@ test_double_delete()
 static void
 test_read_only()
 {
-	debug_trace("  [test_read_only]\n");
+	trace("  [test_read_only]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("read_only",
@@ -188,13 +151,13 @@ test_read_only()
 		KOSM_PROT_READ,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create read-only dot", dot >= 0);
+	TEST_REQUIRE("create read-only dot", dot >= 0);
 
 	// Reading should work — touch the page to fault it in
 	// (page comes in zeroed)
 	volatile uint8* p = (volatile uint8*)addr;
 	uint8 val = p[0];
-	DOT_ASSERT("read from read-only", val == 0);
+	TEST_ASSERT("read from read-only", val == 0);
 
 	// NOTE: writing to read-only memory would SIGSEGV.
 	// We don't test that here to avoid crashing the suite.
@@ -209,7 +172,7 @@ test_read_only()
 static void
 test_protect_change()
 {
-	debug_trace("  [test_protect_change]\n");
+	trace("  [test_protect_change]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("prot_change",
@@ -217,16 +180,16 @@ test_protect_change()
 		KOSM_PROT_READ,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create RO dot", dot >= 0);
+	TEST_REQUIRE("create RO dot", dot >= 0);
 
 	// Upgrade to RW
 	status_t status = kosm_protect_dot(dot,
 		KOSM_PROT_READ | KOSM_PROT_WRITE);
-	DOT_ASSERT("protect RO->RW", status == B_OK);
+	TEST_ASSERT("protect RO->RW", status == B_OK);
 
 	// Now writing should work
 	memset(addr, 0xCC, B_PAGE_SIZE);
-	DOT_ASSERT("write after protect change",
+	TEST_ASSERT("write after protect change",
 		((uint8*)addr)[0] == 0xCC);
 
 	kosm_delete_dot(dot);
@@ -239,7 +202,7 @@ test_protect_change()
 static void
 test_get_info()
 {
-	debug_trace("  [test_get_info]\n");
+	trace("  [test_get_info]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("info_test",
@@ -247,7 +210,7 @@ test_get_info()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_GRAPHICS, 0);
 
-	DOT_REQUIRE("create dot for info", dot >= 0);
+	TEST_REQUIRE("create dot for info", dot >= 0);
 
 	// Touch both pages so they're resident
 	memset(addr, 0x11, B_PAGE_SIZE * 2);
@@ -256,13 +219,13 @@ test_get_info()
 	memset(&info, 0, sizeof(info));
 	status_t status = kosm_get_dot_info(dot, &info);
 
-	DOT_ASSERT("info ok", status == B_OK);
-	DOT_ASSERT("info.name", strcmp(info.name, "info_test") == 0);
-	DOT_ASSERT("info.size", info.size == B_PAGE_SIZE * 2);
-	DOT_ASSERT("info.tag", info.tag == KOSM_TAG_GRAPHICS);
-	DOT_ASSERT("info.address non-zero", info.address != 0);
+	TEST_ASSERT("info ok", status == B_OK);
+	TEST_ASSERT("info.name", strcmp(info.name, "info_test") == 0);
+	TEST_ASSERT("info.size", info.size == B_PAGE_SIZE * 2);
+	TEST_ASSERT("info.tag", info.tag == KOSM_TAG_GRAPHICS);
+	TEST_ASSERT("info.address non-zero", info.address != 0);
 
-	debug_trace("    info: base=%p size=%#lx prot=%#x flags=%#x "
+	trace("    info: base=%p size=%#lx prot=%#x flags=%#x "
 		"tag=%u resident=%#lx\n",
 		(void*)info.address, info.size, info.protection,
 		info.flags, info.tag, info.resident_size);
@@ -275,7 +238,7 @@ test_get_info()
 static void
 test_get_next_info()
 {
-	debug_trace("  [test_get_next_info]\n");
+	trace("  [test_get_next_info]\n");
 
 	// Create 3 dots
 	void* addrs[3];
@@ -290,7 +253,7 @@ test_get_next_info()
 			KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 	}
 
-	DOT_REQUIRE("create 3 dots", dots[0] >= 0 && dots[1] >= 0 && dots[2] >= 0);
+	TEST_REQUIRE("create 3 dots", dots[0] >= 0 && dots[1] >= 0 && dots[2] >= 0);
 
 	// Iterate
 	int32 cookie = 0;
@@ -299,11 +262,11 @@ test_get_next_info()
 	while (kosm_get_next_dot_info(getpid(), &cookie, &info) == B_OK) {
 		count++;
 		if (count <= 20) {
-			debug_trace("    iter[%d]: id=%d name=%s size=%#lx\n",
+			trace("    iter[%d]: id=%d name=%s size=%#lx\n",
 				count, (int)info.kosm_dot, info.name, info.size);
 		}
 	}
-	DOT_ASSERT("found >= 3 dots", count >= 3);
+	TEST_ASSERT("found >= 3 dots", count >= 3);
 
 	for (int i = 0; i < 3; i++)
 		kosm_delete_dot(dots[i]);
@@ -314,11 +277,11 @@ test_get_next_info()
 static void
 test_info_invalid()
 {
-	debug_trace("  [test_info_invalid]\n");
+	trace("  [test_info_invalid]\n");
 
 	kosm_dot_info info;
 	status_t status = kosm_get_dot_info(999999, &info);
-	DOT_ASSERT("info on invalid handle fails", status != B_OK);
+	TEST_ASSERT("info on invalid handle fails", status != B_OK);
 }
 
 
@@ -328,7 +291,7 @@ test_info_invalid()
 static void
 test_purgeable_basic()
 {
-	debug_trace("  [test_purgeable_basic]\n");
+	trace("  [test_purgeable_basic]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("purgeable",
@@ -336,33 +299,33 @@ test_purgeable_basic()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_PURGEABLE, KOSM_TAG_GRAPHICS, 0);
 
-	DOT_REQUIRE("create purgeable dot", dot >= 0);
+	TEST_REQUIRE("create purgeable dot", dot >= 0);
 
-	debug_trace("    purgeable dot id=%d, addr=%p\n", (int)dot, addr);
-	DOT_REQUIRE("purgeable addr non-null", addr != NULL);
+	trace("    purgeable dot id=%d, addr=%p\n", (int)dot, addr);
+	TEST_REQUIRE("purgeable addr non-null", addr != NULL);
 
 	// Write data
-	debug_trace("    about to memset %p, size=%lu\n", addr,
+	trace("    about to memset %p, size=%lu\n", addr,
 		(unsigned long)(B_PAGE_SIZE * 4));
 	memset(addr, 0xDD, B_PAGE_SIZE * 4);
 
 	// Mark volatile
 	uint8 oldState = 0xFF;
 	status_t status = kosm_dot_mark_volatile(dot, &oldState);
-	DOT_ASSERT("mark volatile ok", status == B_OK);
-	DOT_ASSERT("old state was nonvolatile",
+	TEST_ASSERT("mark volatile ok", status == B_OK);
+	TEST_ASSERT("old state was nonvolatile",
 		oldState == KOSM_PURGE_NONVOLATILE);
 
 	// Mark nonvolatile again
 	oldState = 0xFF;
 	status = kosm_dot_mark_nonvolatile(dot, &oldState);
-	DOT_ASSERT("mark nonvolatile ok", status == B_OK);
+	TEST_ASSERT("mark nonvolatile ok", status == B_OK);
 	// Old state could be VOLATILE or EMPTY (if system purged it)
-	DOT_ASSERT("old state valid",
+	TEST_ASSERT("old state valid",
 		oldState == KOSM_PURGE_VOLATILE
 		|| oldState == KOSM_PURGE_EMPTY);
 
-	debug_trace("    old state after nonvolatile: %d\n", oldState);
+	trace("    old state after nonvolatile: %d\n", oldState);
 
 	kosm_delete_dot(dot);
 }
@@ -372,7 +335,7 @@ test_purgeable_basic()
 static void
 test_purgeable_reject()
 {
-	debug_trace("  [test_purgeable_reject]\n");
+	trace("  [test_purgeable_reject]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("not_purgeable",
@@ -380,11 +343,11 @@ test_purgeable_reject()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create non-purgeable dot", dot >= 0);
+	TEST_REQUIRE("create non-purgeable dot", dot >= 0);
 
 	uint8 oldState = 0;
 	status_t status = kosm_dot_mark_volatile(dot, &oldState);
-	DOT_ASSERT("mark volatile on non-purgeable fails",
+	TEST_ASSERT("mark volatile on non-purgeable fails",
 		status == KOSM_DOT_NOT_PURGEABLE);
 
 	kosm_delete_dot(dot);
@@ -397,7 +360,7 @@ test_purgeable_reject()
 static void
 test_wire_phys()
 {
-	debug_trace("  [test_wire_phys]\n");
+	trace("  [test_wire_phys]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("wire_test",
@@ -405,27 +368,27 @@ test_wire_phys()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot for wire", dot >= 0);
+	TEST_REQUIRE("create dot for wire", dot >= 0);
 
 	// Touch the page
 	memset(addr, 0xEE, B_PAGE_SIZE);
 
 	// Wire it
 	status_t status = kosm_dot_wire(dot, 0, B_PAGE_SIZE);
-	DOT_ASSERT("wire ok", status == B_OK);
+	TEST_ASSERT("wire ok", status == B_OK);
 
 	// Get physical address
 	phys_addr_t phys = 0;
 	status = kosm_dot_get_phys(dot, 0, &phys);
-	DOT_ASSERT("get_phys ok", status == B_OK);
-	DOT_ASSERT("phys addr non-zero", phys != 0);
-	DOT_ASSERT("phys addr page-aligned", (phys % B_PAGE_SIZE) == 0);
+	TEST_ASSERT("get_phys ok", status == B_OK);
+	TEST_ASSERT("phys addr non-zero", phys != 0);
+	TEST_ASSERT("phys addr page-aligned", (phys % B_PAGE_SIZE) == 0);
 
-	debug_trace("    physical address: %#lx\n", (unsigned long)phys);
+	trace("    physical address: %#lx\n", (unsigned long)phys);
 
 	// Unwire
 	status = kosm_dot_unwire(dot, 0, B_PAGE_SIZE);
-	DOT_ASSERT("unwire ok", status == B_OK);
+	TEST_ASSERT("unwire ok", status == B_OK);
 
 	kosm_delete_dot(dot);
 }
@@ -435,7 +398,7 @@ test_wire_phys()
 static void
 test_unwire_without_wire()
 {
-	debug_trace("  [test_unwire_without_wire]\n");
+	trace("  [test_unwire_without_wire]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("unwire_fail",
@@ -443,10 +406,10 @@ test_unwire_without_wire()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	status_t status = kosm_dot_unwire(dot, 0, B_PAGE_SIZE);
-	DOT_ASSERT("unwire without wire fails", status != B_OK);
+	TEST_ASSERT("unwire without wire fails", status != B_OK);
 
 	kosm_delete_dot(dot);
 }
@@ -458,7 +421,7 @@ test_unwire_without_wire()
 static void
 test_size_alignment()
 {
-	debug_trace("  [test_size_alignment]\n");
+	trace("  [test_size_alignment]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("align_test",
@@ -470,14 +433,14 @@ test_size_alignment()
 		// Kernel rounded up — check info
 		kosm_dot_info info;
 		kosm_get_dot_info(dot, &info);
-		DOT_ASSERT("size rounded up to page",
+		TEST_ASSERT("size rounded up to page",
 			info.size >= B_PAGE_SIZE);
-		debug_trace("    requested 100, got size %#lx\n", info.size);
+		trace("    requested 100, got size %#lx\n", info.size);
 		kosm_delete_dot(dot);
 	} else {
 		// Kernel rejected non-aligned — also valid
-		DOT_ASSERT("rejected non-aligned size", dot < 0);
-		debug_trace("    kernel rejected non-aligned size (also ok)\n");
+		TEST_ASSERT("rejected non-aligned size", dot < 0);
+		trace("    kernel rejected non-aligned size (also ok)\n");
 	}
 }
 
@@ -486,7 +449,7 @@ test_size_alignment()
 static void
 test_zero_size()
 {
-	debug_trace("  [test_zero_size]\n");
+	trace("  [test_zero_size]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("zero_size",
@@ -494,7 +457,7 @@ test_zero_size()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
 
-	DOT_ASSERT("zero-size create fails", dot < 0);
+	TEST_ASSERT("zero-size create fails", dot < 0);
 
 	if (dot >= 0)
 		kosm_delete_dot(dot);
@@ -505,7 +468,7 @@ test_zero_size()
 static void
 test_large_dot()
 {
-	debug_trace("  [test_large_dot]\n");
+	trace("  [test_large_dot]\n");
 
 	const size_t kSize = 16 * 1024 * 1024;  // 16 MB
 	void* addr = NULL;
@@ -514,18 +477,18 @@ test_large_dot()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_GRAPHICS, 0);
 
-	DOT_REQUIRE("create 16MB dot", dot >= 0);
+	TEST_REQUIRE("create 16MB dot", dot >= 0);
 
 	// Touch first and last page
 	((uint8*)addr)[0] = 0x42;
 	((uint8*)addr)[kSize - 1] = 0x43;
 
-	DOT_ASSERT("first byte", ((uint8*)addr)[0] == 0x42);
-	DOT_ASSERT("last byte", ((uint8*)addr)[kSize - 1] == 0x43);
+	TEST_ASSERT("first byte", ((uint8*)addr)[0] == 0x42);
+	TEST_ASSERT("last byte", ((uint8*)addr)[kSize - 1] == 0x43);
 
 	kosm_dot_info info;
 	kosm_get_dot_info(dot, &info);
-	debug_trace("    16MB dot: base=%p size=%#lx resident=%#lx\n",
+	trace("    16MB dot: base=%p size=%#lx resident=%#lx\n",
 		(void*)info.address, info.size, info.resident_size);
 
 	kosm_delete_dot(dot);
@@ -538,7 +501,7 @@ test_large_dot()
 static void
 test_tags()
 {
-	debug_trace("  [test_tags]\n");
+	trace("  [test_tags]\n");
 
 	struct {
 		uint32 tag;
@@ -562,7 +525,7 @@ test_tags()
 			KOSM_DOT_LAZY, tagTests[i].tag, 0);
 
 		if (dot < 0) {
-			debug_trace("    tag %u failed to create\n", tagTests[i].tag);
+			trace("    tag %u failed to create\n", tagTests[i].tag);
 			allOk = false;
 			continue;
 		}
@@ -570,13 +533,13 @@ test_tags()
 		kosm_dot_info info;
 		kosm_get_dot_info(dot, &info);
 		if (info.tag != tagTests[i].tag) {
-			debug_trace("    tag mismatch: expected %u got %u\n",
+			trace("    tag mismatch: expected %u got %u\n",
 				tagTests[i].tag, info.tag);
 			allOk = false;
 		}
 		kosm_delete_dot(dot);
 	}
-	DOT_ASSERT("all 7 tags correct", allOk);
+	TEST_ASSERT("all 7 tags correct", allOk);
 }
 
 
@@ -586,7 +549,7 @@ test_tags()
 static void
 test_unmap()
 {
-	debug_trace("  [test_unmap]\n");
+	trace("  [test_unmap]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("unmap_test",
@@ -594,19 +557,19 @@ test_unmap()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Write data
 	memset(addr, 0xAA, B_PAGE_SIZE);
-	DOT_ASSERT("write ok", ((uint8*)addr)[0] == 0xAA);
+	TEST_ASSERT("write ok", ((uint8*)addr)[0] == 0xAA);
 
 	// Unmap
 	status_t status = kosm_unmap_dot(dot);
-	DOT_ASSERT("unmap ok", status == B_OK);
+	TEST_ASSERT("unmap ok", status == B_OK);
 
 	// Second unmap should fail
 	status = kosm_unmap_dot(dot);
-	DOT_ASSERT("double unmap fails", status != B_OK);
+	TEST_ASSERT("double unmap fails", status != B_OK);
 
 	// Cleanup (delete still works even after unmap)
 	kosm_delete_dot(dot);
@@ -617,7 +580,7 @@ test_unmap()
 static void
 test_remap()
 {
-	debug_trace("  [test_remap]\n");
+	trace("  [test_remap]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("remap_test",
@@ -625,26 +588,26 @@ test_remap()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Write data
 	memset(addr, 0xBB, B_PAGE_SIZE);
 
 	// Unmap
 	status_t status = kosm_unmap_dot(dot);
-	DOT_REQUIRE("unmap ok", status == B_OK);
+	TEST_REQUIRE("unmap ok", status == B_OK);
 
 	// Remap
 	void* newAddr = NULL;
 	status = kosm_map_dot(dot, &newAddr, B_ANY_ADDRESS,
 		KOSM_PROT_READ | KOSM_PROT_WRITE);
-	DOT_ASSERT("remap ok", status == B_OK);
+	TEST_ASSERT("remap ok", status == B_OK);
 
 	if (status == B_OK && newAddr != NULL) {
 		// Data should still be there (cache preserved)
-		DOT_ASSERT("data preserved after remap",
+		TEST_ASSERT("data preserved after remap",
 			((uint8*)newAddr)[0] == 0xBB);
-		debug_trace("    original addr=%p, new addr=%p\n", addr, newAddr);
+		trace("    original addr=%p, new addr=%p\n", addr, newAddr);
 	}
 
 	kosm_delete_dot(dot);
@@ -655,7 +618,7 @@ test_remap()
 static void
 test_map_reduced_prot()
 {
-	debug_trace("  [test_map_reduced_prot]\n");
+	trace("  [test_map_reduced_prot]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("map_prot",
@@ -663,7 +626,7 @@ test_map_reduced_prot()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create RW dot", dot >= 0);
+	TEST_REQUIRE("create RW dot", dot >= 0);
 
 	// Write data
 	memset(addr, 0xCC, B_PAGE_SIZE);
@@ -675,11 +638,11 @@ test_map_reduced_prot()
 	void* roAddr = NULL;
 	status_t status = kosm_map_dot(dot, &roAddr, B_ANY_ADDRESS,
 		KOSM_PROT_READ);
-	DOT_ASSERT("remap as RO ok", status == B_OK);
+	TEST_ASSERT("remap as RO ok", status == B_OK);
 
 	if (status == B_OK && roAddr != NULL) {
 		// Read should work
-		DOT_ASSERT("read after RO remap",
+		TEST_ASSERT("read after RO remap",
 			((volatile uint8*)roAddr)[0] == 0xCC);
 	}
 
@@ -693,7 +656,7 @@ test_map_reduced_prot()
 static void
 test_cache_policy()
 {
-	debug_trace("  [test_cache_policy]\n");
+	trace("  [test_cache_policy]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("cache_pol",
@@ -701,22 +664,22 @@ test_cache_policy()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Default cache policy should be KOSM_CACHE_DEFAULT
 	kosm_dot_info info;
 	kosm_get_dot_info(dot, &info);
-	DOT_ASSERT("default cache policy", info.cache_policy == KOSM_CACHE_DEFAULT);
+	TEST_ASSERT("default cache policy", info.cache_policy == KOSM_CACHE_DEFAULT);
 
 	// Try setting write-combine (may fail on some platforms, that's ok)
 	status_t status = kosm_dot_set_cache_policy(dot, KOSM_CACHE_WRITECOMBINE);
-	debug_trace("    set_cache_policy(WRITECOMBINE) -> %s\n",
+	trace("    set_cache_policy(WRITECOMBINE) -> %s\n",
 		strerror(status));
 	// Just log the result, don't assert — platform-dependent
 
 	// Invalid policy should fail
 	status = kosm_dot_set_cache_policy(dot, 0xFF);
-	DOT_ASSERT("invalid cache policy fails", status != B_OK);
+	TEST_ASSERT("invalid cache policy fails", status != B_OK);
 
 	kosm_delete_dot(dot);
 }
@@ -728,19 +691,19 @@ test_cache_policy()
 static void
 test_file_backed()
 {
-	debug_trace("  [test_file_backed]\n");
+	trace("  [test_file_backed]\n");
 
 	// Create a temp file
 	BPath path;
 	if (find_directory(B_SYSTEM_TEMP_DIRECTORY, &path) != B_OK) {
-		debug_trace("    can't find temp dir, skipping\n");
-		DOT_ASSERT("find temp dir", false);
+		trace("    can't find temp dir, skipping\n");
+		TEST_ASSERT("find temp dir", false);
 		return;
 	}
 	path.Append("kosm_dot_test_file");
 
 	int fd = open(path.Path(), O_CREAT | O_RDWR | O_TRUNC, 0644);
-	DOT_REQUIRE("open temp file", fd >= 0);
+	TEST_REQUIRE("open temp file", fd >= 0);
 
 	// Extend file to 2 pages
 	const size_t kSize = B_PAGE_SIZE * 2;
@@ -754,9 +717,9 @@ test_file_backed()
 		KOSM_DOT_FILE, KOSM_TAG_APP);
 
 	if (dot < 0) {
-		debug_trace("    kosm_create_dot_file not implemented or failed: %s\n",
+		trace("    kosm_create_dot_file not implemented or failed: %s\n",
 			strerror(dot));
-		DOT_ASSERT("create file dot (may not be implemented)", dot >= 0);
+		TEST_ASSERT("create file dot (may not be implemented)", dot >= 0);
 		close(fd);
 		unlink(path.Path());
 		return;
@@ -764,17 +727,17 @@ test_file_backed()
 
 	// Write pattern
 	memset(addr, 0x42, kSize);
-	DOT_ASSERT("write to file dot", ((uint8*)addr)[0] == 0x42);
+	TEST_ASSERT("write to file dot", ((uint8*)addr)[0] == 0x42);
 
 	// Sync
 	status_t status = kosm_dot_sync(dot, 0, kSize, 0);
-	debug_trace("    kosm_dot_sync -> %s\n", strerror(status));
-	DOT_ASSERT("sync ok", status == B_OK);
+	trace("    kosm_dot_sync -> %s\n", strerror(status));
+	TEST_ASSERT("sync ok", status == B_OK);
 
 	// Verify via info
 	kosm_dot_info info;
 	kosm_get_dot_info(dot, &info);
-	DOT_ASSERT("file dot flags", (info.flags & KOSM_DOT_FILE) != 0);
+	TEST_ASSERT("file dot flags", (info.flags & KOSM_DOT_FILE) != 0);
 
 	kosm_delete_dot(dot);
 	close(fd);
@@ -786,7 +749,7 @@ test_file_backed()
 static void
 test_sync_non_file()
 {
-	debug_trace("  [test_sync_non_file]\n");
+	trace("  [test_sync_non_file]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("sync_fail",
@@ -794,10 +757,10 @@ test_sync_non_file()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_NONE, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	status_t status = kosm_dot_sync(dot, 0, B_PAGE_SIZE, 0);
-	DOT_ASSERT("sync on non-file fails", status != B_OK);
+	TEST_ASSERT("sync on non-file fails", status != B_OK);
 
 	kosm_delete_dot(dot);
 }
@@ -809,7 +772,7 @@ test_sync_non_file()
 static void
 test_stress_create_delete()
 {
-	debug_trace("  [test_stress_create_delete]\n");
+	trace("  [test_stress_create_delete]\n");
 
 	const int kCount = 64;
 	kosm_dot_id dots[kCount];
@@ -832,8 +795,8 @@ test_stress_create_delete()
 
 	bigtime_t createTime = system_time() - t0;
 
-	DOT_ASSERT("created all 64", created == kCount);
-	debug_trace("    created %d dots in %lld us\n",
+	TEST_ASSERT("created all 64", created == kCount);
+	trace("    created %d dots in %lld us\n",
 		created, (long long)createTime);
 
 	// Touch each one
@@ -853,8 +816,8 @@ test_stress_create_delete()
 	}
 	bigtime_t deleteTime = system_time() - t0;
 
-	DOT_ASSERT("deleted all", deleted == created);
-	debug_trace("    deleted %d dots in %lld us\n",
+	TEST_ASSERT("deleted all", deleted == created);
+	trace("    deleted %d dots in %lld us\n",
 		deleted, (long long)deleteTime);
 }
 
@@ -896,7 +859,7 @@ dot_thread_func(void* data)
 static void
 test_stress_threaded()
 {
-	debug_trace("  [test_stress_threaded]\n");
+	trace("  [test_stress_threaded]\n");
 
 	const int kThreads = 4;
 	const int kPerThread = 32;
@@ -924,16 +887,16 @@ test_stress_threaded()
 	for (int i = 0; i < kThreads; i++) {
 		totalCreated += args[i].created;
 		totalDeleted += args[i].deleted;
-		debug_trace("    thread %d: created=%d deleted=%d\n",
+		trace("    thread %d: created=%d deleted=%d\n",
 			i, args[i].created, args[i].deleted);
 	}
 
-	DOT_ASSERT("all threads created ok",
+	TEST_ASSERT("all threads created ok",
 		totalCreated == kThreads * kPerThread);
-	DOT_ASSERT("all threads deleted ok",
+	TEST_ASSERT("all threads deleted ok",
 		totalDeleted == kThreads * kPerThread);
 
-	debug_trace("    %d threads x %d dots in %lld us\n",
+	trace("    %d threads x %d dots in %lld us\n",
 		kThreads, kPerThread, (long long)elapsed);
 }
 
@@ -970,7 +933,7 @@ fault_storm_func(void* data)
 static void
 test_stress_fault_storm()
 {
-	debug_trace("  [test_stress_fault_storm]\n");
+	trace("  [test_stress_fault_storm]\n");
 
 	const size_t kSize = B_PAGE_SIZE * 64; // 64 pages
 	void* addr = NULL;
@@ -979,7 +942,7 @@ test_stress_fault_storm()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create 64-page dot", dot >= 0);
+	TEST_REQUIRE("create 64-page dot", dot >= 0);
 
 	const int kThreads = 8;
 	const int kIter = 50;
@@ -1009,8 +972,8 @@ test_stress_fault_storm()
 	for (int i = 0; i < kThreads; i++)
 		totalErrors += args[i].errors;
 
-	DOT_ASSERT("no data corruption", totalErrors == 0);
-	debug_trace("    8 threads x %d iter x 64 pages in %lld us\n",
+	TEST_ASSERT("no data corruption", totalErrors == 0);
+	trace("    8 threads x %d iter x 64 pages in %lld us\n",
 		kIter, (long long)elapsed);
 
 	kosm_delete_dot(dot);
@@ -1021,7 +984,7 @@ test_stress_fault_storm()
 static void
 test_stress_memory_pressure()
 {
-	debug_trace("  [test_stress_memory_pressure]\n");
+	trace("  [test_stress_memory_pressure]\n");
 
 	const int kMaxDots = 128;
 	const size_t kDotSize = B_PAGE_SIZE * 16; // 64KB each, up to 8MB total
@@ -1048,8 +1011,8 @@ test_stress_memory_pressure()
 
 	bigtime_t allocTime = system_time() - t0;
 
-	DOT_ASSERT("created at least 32 dots", created >= 32);
-	debug_trace("    allocated %d dots (%lu KB each) in %lld us\n",
+	TEST_ASSERT("created at least 32 dots", created >= 32);
+	trace("    allocated %d dots (%lu KB each) in %lld us\n",
 		created, (unsigned long)(kDotSize / 1024), (long long)allocTime);
 
 	// Verify all still readable
@@ -1058,7 +1021,7 @@ test_stress_memory_pressure()
 		if (((uint8*)addrs[i])[0] != (uint8)i)
 			verifyErrors++;
 	}
-	DOT_ASSERT("all dots readable after pressure", verifyErrors == 0);
+	TEST_ASSERT("all dots readable after pressure", verifyErrors == 0);
 
 	// Delete all in reverse order (exercises different free patterns)
 	t0 = system_time();
@@ -1066,7 +1029,7 @@ test_stress_memory_pressure()
 		kosm_delete_dot(dots[i]);
 	bigtime_t freeTime = system_time() - t0;
 
-	debug_trace("    freed %d dots in %lld us\n",
+	trace("    freed %d dots in %lld us\n",
 		created, (long long)freeTime);
 }
 
@@ -1100,7 +1063,7 @@ protect_thrash_func(void* data)
 static void
 test_stress_protect_thrash()
 {
-	debug_trace("  [test_stress_protect_thrash]\n");
+	trace("  [test_stress_protect_thrash]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("prot_thrash",
@@ -1108,7 +1071,7 @@ test_stress_protect_thrash()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Touch so page is resident
 	memset(addr, 0x55, B_PAGE_SIZE);
@@ -1139,13 +1102,13 @@ test_stress_protect_thrash()
 	for (int i = 0; i < kThreads; i++)
 		totalErrors += args[i].errors;
 
-	DOT_ASSERT("no protect errors", totalErrors == 0);
+	TEST_ASSERT("no protect errors", totalErrors == 0);
 
 	// Restore RW and verify data
 	kosm_protect_dot(dot, KOSM_PROT_READ | KOSM_PROT_WRITE);
-	DOT_ASSERT("data survived thrash", ((uint8*)addr)[0] == 0x55);
+	TEST_ASSERT("data survived thrash", ((uint8*)addr)[0] == 0x55);
 
-	debug_trace("    4 threads x %d protects in %lld us\n",
+	trace("    4 threads x %d protects in %lld us\n",
 		kIter, (long long)elapsed);
 
 	kosm_delete_dot(dot);
@@ -1156,7 +1119,7 @@ test_stress_protect_thrash()
 static void
 test_stress_map_unmap()
 {
-	debug_trace("  [test_stress_map_unmap]\n");
+	trace("  [test_stress_map_unmap]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("map_stress",
@@ -1164,7 +1127,7 @@ test_stress_map_unmap()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Write initial data
 	memset(addr, 0xAA, B_PAGE_SIZE * 4);
@@ -1200,8 +1163,8 @@ test_stress_map_unmap()
 
 	bigtime_t elapsed = system_time() - t0;
 
-	DOT_ASSERT("no map/unmap errors", errors == 0);
-	debug_trace("    %d map/unmap cycles in %lld us\n",
+	TEST_ASSERT("no map/unmap errors", errors == 0);
+	trace("    %d map/unmap cycles in %lld us\n",
 		kCycles, (long long)elapsed);
 
 	kosm_delete_dot(dot);
@@ -1212,7 +1175,7 @@ test_stress_map_unmap()
 static void
 test_stress_wire_unwire()
 {
-	debug_trace("  [test_stress_wire_unwire]\n");
+	trace("  [test_stress_wire_unwire]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("wire_stress",
@@ -1220,7 +1183,7 @@ test_stress_wire_unwire()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create dot", dot >= 0);
+	TEST_REQUIRE("create dot", dot >= 0);
 
 	// Touch all pages
 	memset(addr, 0x77, B_PAGE_SIZE * 4);
@@ -1235,7 +1198,7 @@ test_stress_wire_unwire()
 		status_t s = kosm_dot_wire(dot, 0, B_PAGE_SIZE * 4);
 		if (s != B_OK) {
 			errors++;
-			debug_trace("    wire failed at iter %d: %s\n",
+			trace("    wire failed at iter %d: %s\n",
 				i, strerror(s));
 			break;
 		}
@@ -1257,8 +1220,8 @@ test_stress_wire_unwire()
 
 	bigtime_t elapsed = system_time() - t0;
 
-	DOT_ASSERT("no wire/unwire errors", errors == 0);
-	debug_trace("    %d wire/unwire cycles in %lld us, phys=%#lx\n",
+	TEST_ASSERT("no wire/unwire errors", errors == 0);
+	trace("    %d wire/unwire cycles in %lld us, phys=%#lx\n",
 		kCycles, (long long)elapsed, (unsigned long)prevPhys);
 
 	kosm_delete_dot(dot);
@@ -1269,7 +1232,7 @@ test_stress_wire_unwire()
 static void
 test_stress_data_integrity()
 {
-	debug_trace("  [test_stress_data_integrity]\n");
+	trace("  [test_stress_data_integrity]\n");
 
 	const size_t kSize = B_PAGE_SIZE * 32; // 128KB
 	void* addr = NULL;
@@ -1278,7 +1241,7 @@ test_stress_data_integrity()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
 
-	DOT_REQUIRE("create 32-page dot", dot >= 0);
+	TEST_REQUIRE("create 32-page dot", dot >= 0);
 
 	// Fill with known pattern: each page gets its page index
 	for (size_t p = 0; p < 32; p++)
@@ -1296,7 +1259,7 @@ test_stress_data_integrity()
 			}
 		}
 	}
-	DOT_ASSERT("initial fill correct", errors == 0);
+	TEST_ASSERT("initial fill correct", errors == 0);
 
 	// Overwrite with inverse pattern
 	for (size_t p = 0; p < 32; p++)
@@ -1312,7 +1275,7 @@ test_stress_data_integrity()
 			|| page[B_PAGE_SIZE - 1] != expected)
 			errors++;
 	}
-	DOT_ASSERT("inverse fill correct", errors == 0);
+	TEST_ASSERT("inverse fill correct", errors == 0);
 
 	// Protect change + verify (ensure TLB flush doesn't corrupt)
 	kosm_protect_dot(dot, KOSM_PROT_READ);
@@ -1322,7 +1285,7 @@ test_stress_data_integrity()
 		if (page[0] != (uint8)(255 - p))
 			errors++;
 	}
-	DOT_ASSERT("data survives protect change", errors == 0);
+	TEST_ASSERT("data survives protect change", errors == 0);
 
 	kosm_delete_dot(dot);
 }
@@ -1392,7 +1355,7 @@ info_churn_iterator(void* data)
 static void
 test_stress_info_during_churn()
 {
-	debug_trace("  [test_stress_info_during_churn]\n");
+	trace("  [test_stress_info_during_churn]\n");
 
 	info_churn_args creatorArgs;
 	creatorArgs.iterations = 50;
@@ -1416,9 +1379,9 @@ test_stress_info_during_churn()
 
 	bigtime_t elapsed = system_time() - t0;
 
-	DOT_ASSERT("creator ok", creatorArgs.created == creatorArgs.deleted);
-	DOT_ASSERT("iterator completed", iterArgs.total_found > 0);
-	debug_trace("    creator: %d created/deleted, iterator: %d found total, "
+	TEST_ASSERT("creator ok", creatorArgs.created == creatorArgs.deleted);
+	TEST_ASSERT("iterator completed", iterArgs.total_found > 0);
+	trace("    creator: %d created/deleted, iterator: %d found total, "
 		"%lld us\n", creatorArgs.created, iterArgs.total_found,
 		(long long)elapsed);
 }
@@ -1428,7 +1391,7 @@ test_stress_info_during_churn()
 static void
 test_stress_purgeable_cycle()
 {
-	debug_trace("  [test_stress_purgeable_cycle]\n");
+	trace("  [test_stress_purgeable_cycle]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("purge_cycle",
@@ -1436,8 +1399,8 @@ test_stress_purgeable_cycle()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_PURGEABLE, KOSM_TAG_GRAPHICS, 0);
 
-	DOT_REQUIRE("create purgeable dot", dot >= 0);
-	DOT_REQUIRE("purgeable addr ok", addr != NULL);
+	TEST_REQUIRE("create purgeable dot", dot >= 0);
+	TEST_REQUIRE("purgeable addr ok", addr != NULL);
 
 	// Initial fill
 	memset(addr, 0xBB, B_PAGE_SIZE * 4);
@@ -1474,11 +1437,11 @@ test_stress_purgeable_cycle()
 
 	bigtime_t elapsed = system_time() - t0;
 
-	DOT_ASSERT("no cycle errors", errors == 0);
-	DOT_ASSERT("data accessible after cycles",
+	TEST_ASSERT("no cycle errors", errors == 0);
+	TEST_ASSERT("data accessible after cycles",
 		((uint8*)addr)[0] == 0xBB);
 
-	debug_trace("    %d cycles, %d purges, %lld us\n",
+	trace("    %d cycles, %d purges, %lld us\n",
 		kCycles, purgeCount, (long long)elapsed);
 
 	kosm_delete_dot(dot);
@@ -1489,7 +1452,7 @@ test_stress_purgeable_cycle()
 static void
 test_stress_mixed_ops()
 {
-	debug_trace("  [test_stress_mixed_ops]\n");
+	trace("  [test_stress_mixed_ops]\n");
 
 	const int kDots = 8;
 	kosm_dot_id dots[kDots];
@@ -1583,13 +1546,12 @@ test_stress_mixed_ops()
 
 	bigtime_t elapsed = system_time() - t0;
 
-	DOT_ASSERT("no mixed op errors", errors == 0);
-	debug_trace("    8 dots x 8 phases in %lld us\n", (long long)elapsed);
+	TEST_ASSERT("no mixed op errors", errors == 0);
+	trace("    8 dots x 8 phases in %lld us\n", (long long)elapsed);
 }
 
 
 // 34. Rapid create/touch/delete single-page — throughput test
-static void
 // Single dot throughput iteration — returns ops/sec
 static double
 dot_throughput_iteration()
@@ -1615,15 +1577,15 @@ dot_throughput_iteration()
 static void
 test_stress_throughput()
 {
-	debug_trace("  [test_stress_throughput]\n");
+	trace("  [test_stress_throughput]\n");
 
 	BenchStats stats = run_benchmark(dot_throughput_iteration, 5, 2);
 
-	debug_trace("    throughput: median=%.0f, min=%.0f, max=%.0f ops/s"
+	trace("    throughput: median=%.0f, min=%.0f, max=%.0f ops/s"
 		" (%d runs, %d warmup)\n",
 		stats.median_ops, stats.min_ops, stats.max_ops,
 		stats.runs, stats.warmup);
-	DOT_ASSERT("throughput > 100 ops/s", stats.median_ops > 100.0);
+	TEST_ASSERT("throughput > 100 ops/s", stats.median_ops > 100.0);
 }
 
 
@@ -1958,34 +1920,34 @@ spawn_dot_child(kosm_ray_id* parentRay, thread_id* childThread,
 static void
 test_xproc_shared_read()
 {
-	debug_trace("  [test_xproc_shared_read]\n");
+	trace("  [test_xproc_shared_read]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("xproc_rd",
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create dot", dot >= 0 && addr != NULL);
 
 	memset(addr, 0xAA, B_PAGE_SIZE);
 
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child",
+	TEST_REQUIRE("spawn child",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	uint8 cmd = CHILD_CMD_READ_ECHO;
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle", s == B_OK);
+	TEST_REQUIRE("send handle", s == B_OK);
 
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("read response", s == B_OK);
-	DOT_ASSERT("child saw 0xAA", result == 0xAA);
+	TEST_ASSERT("read response", s == B_OK);
+	TEST_ASSERT("child saw 0xAA", result == 0xAA);
 
 	status_t exitVal;
 	wait_for_thread(child, &exitVal);
@@ -1998,14 +1960,14 @@ test_xproc_shared_read()
 static void
 test_xproc_shared_write()
 {
-	debug_trace("  [test_xproc_shared_write]\n");
+	trace("  [test_xproc_shared_write]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("xproc_wr",
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create dot", dot >= 0 && addr != NULL);
 
 	// Touch page so it's committed
 	memset(addr, 0xAA, B_PAGE_SIZE);
@@ -2013,22 +1975,22 @@ test_xproc_shared_write()
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child",
+	TEST_REQUIRE("spawn child",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	uint8 cmd = CHILD_CMD_WRITE_PATTERN;
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle", s == B_OK);
+	TEST_REQUIRE("send handle", s == B_OK);
 
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("child ack", s == B_OK && result == 0x01);
+	TEST_ASSERT("child ack", s == B_OK && result == 0x01);
 
 	// Parent sees child's write — true shared memory
-	DOT_ASSERT("parent sees 0xBB",
+	TEST_ASSERT("parent sees 0xBB",
 		((volatile uint8*)addr)[0] == 0xBB);
 
 	status_t exitVal;
@@ -2042,26 +2004,26 @@ test_xproc_shared_write()
 static void
 test_xproc_concurrent_pages()
 {
-	debug_trace("  [test_xproc_concurrent_pages]\n");
+	trace("  [test_xproc_concurrent_pages]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("xproc_conc",
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 4,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create 4-page dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create 4-page dot", dot >= 0 && addr != NULL);
 
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child",
+	TEST_REQUIRE("spawn child",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	uint8 cmd = CHILD_CMD_WRITE_PAGES;
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle", s == B_OK);
+	TEST_REQUIRE("send handle", s == B_OK);
 
 	// Parent writes pages 0-1 while child writes pages 2-3
 	memset(addr, 0xAA, B_PAGE_SIZE * 2);
@@ -2070,7 +2032,7 @@ test_xproc_concurrent_pages()
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("child ack", s == B_OK && result == 0x01);
+	TEST_ASSERT("child ack", s == B_OK && result == 0x01);
 
 	// Verify all 4 pages
 	bool ok = true;
@@ -2083,7 +2045,7 @@ test_xproc_concurrent_pages()
 		if (p[i] != 0xCC)
 			ok = false;
 	}
-	DOT_ASSERT("all 4 pages correct", ok);
+	TEST_ASSERT("all 4 pages correct", ok);
 
 	// Ack child to exit
 	uint8 ack = 0x01;
@@ -2100,40 +2062,40 @@ test_xproc_concurrent_pages()
 static void
 test_xproc_handle_lifecycle()
 {
-	debug_trace("  [test_xproc_handle_lifecycle]\n");
+	trace("  [test_xproc_handle_lifecycle]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("xproc_life",
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create dot", dot >= 0 && addr != NULL);
 
 	memset(addr, 0xDD, B_PAGE_SIZE);
 
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child",
+	TEST_REQUIRE("spawn child",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	uint8 cmd = CHILD_CMD_CLOSE_HANDLE;
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle", s == B_OK);
+	TEST_REQUIRE("send handle", s == B_OK);
 
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("child closed ok", s == B_OK && result == 0x01);
+	TEST_ASSERT("child closed ok", s == B_OK && result == 0x01);
 
 	// Parent still has access
-	DOT_ASSERT("parent data intact",
+	TEST_ASSERT("parent data intact",
 		((volatile uint8*)addr)[0] == 0xDD);
 
 	kosm_dot_info info;
-	DOT_ASSERT("info still works",
+	TEST_ASSERT("info still works",
 		kosm_get_dot_info(dot, &info) == B_OK);
 
 	status_t exitVal;
@@ -2147,34 +2109,34 @@ test_xproc_handle_lifecycle()
 static void
 test_xproc_child_death()
 {
-	debug_trace("  [test_xproc_child_death]\n");
+	trace("  [test_xproc_child_death]\n");
 
 	void* addr = NULL;
 	kosm_dot_id dot = kosm_create_dot("xproc_death",
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create dot", dot >= 0 && addr != NULL);
 
 	memset(addr, 0xEE, B_PAGE_SIZE);
 
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child",
+	TEST_REQUIRE("spawn child",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	uint8 cmd = CHILD_CMD_EXIT_DIRTY;
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle", s == B_OK);
+	TEST_REQUIRE("send handle", s == B_OK);
 
 	// Wait for child ack (it mapped the dot)
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("child mapped ok", s == B_OK && result == 0x01);
+	TEST_ASSERT("child mapped ok", s == B_OK && result == 0x01);
 
 	// Wait for child to exit (dirty — no explicit close)
 	status_t exitVal;
@@ -2184,11 +2146,11 @@ test_xproc_child_death()
 	snooze(10000);
 
 	// Dot survives child death — parent still has handle
-	DOT_ASSERT("dot survives child death",
+	TEST_ASSERT("dot survives child death",
 		((volatile uint8*)addr)[0] == 0xEE);
 
 	kosm_dot_info info;
-	DOT_ASSERT("info after child death",
+	TEST_ASSERT("info after child death",
 		kosm_get_dot_info(dot, &info) == B_OK);
 
 	kosm_close_ray(ray);
@@ -2200,7 +2162,7 @@ test_xproc_child_death()
 static void
 test_concurrent_delete_fault()
 {
-	debug_trace("  [test_concurrent_delete_fault]\n");
+	trace("  [test_concurrent_delete_fault]\n");
 
 	// Part 1: Safe — stop faulter before delete (tests serialization)
 	const int kSafeIter = 50;
@@ -2238,8 +2200,8 @@ test_concurrent_delete_fault()
 			errors++;
 	}
 
-	DOT_ASSERT("safe delete+fault 50x", errors == 0);
-	debug_trace("    %d safe iterations\n", kSafeIter);
+	TEST_ASSERT("safe delete+fault 50x", errors == 0);
+	trace("    %d safe iterations\n", kSafeIter);
 
 	// Part 2: Dangerous — delete while faulting (in child process)
 	kosm_ray_id ray;
@@ -2261,7 +2223,7 @@ test_concurrent_delete_fault()
 			NULL, NULL, 0, 5000000);
 
 		bool childOk = (s == B_OK && done == 0x02);
-		debug_trace("    child: %s\n",
+		trace("    child: %s\n",
 			childOk ? "survived" : "died (expected)");
 
 		status_t exitVal;
@@ -2270,7 +2232,7 @@ test_concurrent_delete_fault()
 	}
 
 	// If we're here, kernel didn't panic
-	DOT_ASSERT("kernel survived delete+fault", true);
+	TEST_ASSERT("kernel survived delete+fault", true);
 }
 
 
@@ -2278,7 +2240,7 @@ test_concurrent_delete_fault()
 static void
 test_large_256mb()
 {
-	debug_trace("  [test_large_256mb]\n");
+	trace("  [test_large_256mb]\n");
 
 	const size_t kSize = 256 * 1024 * 1024;
 	void* addr = NULL;
@@ -2287,24 +2249,24 @@ test_large_256mb()
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_GRAPHICS, 0);
 
-	DOT_REQUIRE("create 256MB dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create 256MB dot", dot >= 0 && addr != NULL);
 
 	// Touch first, middle, last page
 	((volatile uint8*)addr)[0] = 0x11;
 	((volatile uint8*)addr)[kSize / 2] = 0x22;
 	((volatile uint8*)addr)[kSize - 1] = 0x33;
 
-	DOT_ASSERT("first page", ((volatile uint8*)addr)[0] == 0x11);
-	DOT_ASSERT("middle page",
+	TEST_ASSERT("first page", ((volatile uint8*)addr)[0] == 0x11);
+	TEST_ASSERT("middle page",
 		((volatile uint8*)addr)[kSize / 2] == 0x22);
-	DOT_ASSERT("last page",
+	TEST_ASSERT("last page",
 		((volatile uint8*)addr)[kSize - 1] == 0x33);
 
 	kosm_dot_info info;
-	DOT_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
-	DOT_ASSERT("size correct", info.size == kSize);
+	TEST_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
+	TEST_ASSERT("size correct", info.size == kSize);
 
-	debug_trace("    256MB dot: resident=%zu pages (expected ~3)\n",
+	trace("    256MB dot: resident=%zu pages (expected ~3)\n",
 		info.resident_size / B_PAGE_SIZE);
 
 	kosm_delete_dot(dot);
@@ -2317,14 +2279,14 @@ test_large_256mb()
 static void
 test_dual_mapping()
 {
-	debug_trace("  [test_dual_mapping]\n");
+	trace("  [test_dual_mapping]\n");
 
 	void* addr1 = NULL;
 	kosm_dot_id dot = kosm_create_dot("dual_map",
 		&addr1, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create dot", dot >= 0 && addr1 != NULL);
+	TEST_REQUIRE("create dot", dot >= 0 && addr1 != NULL);
 
 	// Write through first mapping
 	memset(addr1, 0xAA, B_PAGE_SIZE);
@@ -2333,19 +2295,19 @@ test_dual_mapping()
 	void* addr2 = NULL;
 	status_t s = kosm_map_dot(dot, &addr2, B_ANY_ADDRESS,
 		KOSM_PROT_READ | KOSM_PROT_WRITE);
-	DOT_REQUIRE("second mapping", s == B_OK && addr2 != NULL);
+	TEST_REQUIRE("second mapping", s == B_OK && addr2 != NULL);
 
-	DOT_ASSERT("different addresses", addr1 != addr2);
+	TEST_ASSERT("different addresses", addr1 != addr2);
 
 	// Read through second mapping — should see same data
-	DOT_ASSERT("addr2 sees 0xAA",
+	TEST_ASSERT("addr2 sees 0xAA",
 		((volatile uint8*)addr2)[0] == 0xAA);
-	DOT_ASSERT("addr2 last byte",
+	TEST_ASSERT("addr2 last byte",
 		((volatile uint8*)addr2)[B_PAGE_SIZE - 1] == 0xAA);
 
 	// Write through addr2, read through addr1
 	((volatile uint8*)addr2)[42] = 0xBB;
-	DOT_ASSERT("addr1 sees addr2 write",
+	TEST_ASSERT("addr1 sees addr2 write",
 		((volatile uint8*)addr1)[42] == 0xBB);
 
 	kosm_unmap_dot(dot);
@@ -2357,7 +2319,7 @@ test_dual_mapping()
 static void
 test_multi_hop_transfer()
 {
-	debug_trace("  [test_multi_hop_transfer]\n");
+	trace("  [test_multi_hop_transfer]\n");
 
 	// Create a 3-page dot: parent=page0(0xAA), B=page1(0xBB), C=page2(0xCC)
 	void* addr = NULL;
@@ -2365,7 +2327,7 @@ test_multi_hop_transfer()
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * 3,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create 3-page dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create 3-page dot", dot >= 0 && addr != NULL);
 
 	// Parent writes page 0
 	memset(addr, 0xAA, B_PAGE_SIZE);
@@ -2374,7 +2336,7 @@ test_multi_hop_transfer()
 	kosm_ray_id ray;
 	thread_id child;
 	team_id childTeam;
-	DOT_REQUIRE("spawn child B",
+	TEST_REQUIRE("spawn child B",
 		spawn_dot_child(&ray, &child, &childTeam) == B_OK);
 
 	// Send dot handle with FORWARD_HANDLE command
@@ -2382,7 +2344,7 @@ test_multi_hop_transfer()
 	kosm_handle_t handle = (kosm_handle_t)dot;
 	status_t s = kosm_ray_write(ray, &cmd, sizeof(cmd),
 		&handle, 1, KOSM_RAY_COPY_HANDLES);
-	DOT_REQUIRE("send handle to B", s == B_OK);
+	TEST_REQUIRE("send handle to B", s == B_OK);
 
 	// Send grandchild params: page_idx=2, pattern=0xCC
 	uint8 params[2] = { 2, 0xCC };
@@ -2392,7 +2354,7 @@ test_multi_hop_transfer()
 	uint8 result = 0;
 	size_t resultSize = sizeof(result);
 	s = kosm_ray_read(ray, &result, &resultSize, NULL, NULL, 0);
-	DOT_ASSERT("chain completed", s == B_OK && result == 0x01);
+	TEST_ASSERT("chain completed", s == B_OK && result == 0x01);
 
 	// Verify all 3 pages: parent(0xAA), B(0xBB), C(0xCC)
 	uint8* p = (uint8*)addr;
@@ -2402,9 +2364,9 @@ test_multi_hop_transfer()
 		if (p[B_PAGE_SIZE + i] != 0xBB) page1ok = false;
 		if (p[2 * B_PAGE_SIZE + i] != 0xCC) page2ok = false;
 	}
-	DOT_ASSERT("page 0 (parent 0xAA)", page0ok);
-	DOT_ASSERT("page 1 (child B 0xBB)", page1ok);
-	DOT_ASSERT("page 2 (grandchild C 0xCC)", page2ok);
+	TEST_ASSERT("page 0 (parent 0xAA)", page0ok);
+	TEST_ASSERT("page 1 (child B 0xBB)", page1ok);
+	TEST_ASSERT("page 2 (grandchild C 0xCC)", page2ok);
 
 	status_t exitVal;
 	wait_for_thread(child, &exitVal);
@@ -2417,7 +2379,7 @@ test_multi_hop_transfer()
 static void
 test_three_process_fault()
 {
-	debug_trace("  [test_three_process_fault]\n");
+	trace("  [test_three_process_fault]\n");
 
 	const uint32 kPages = 64;
 	void* addr = NULL;
@@ -2425,7 +2387,7 @@ test_three_process_fault()
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE * kPages,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_REQUIRE("create 64-page lazy dot", dot >= 0 && addr != NULL);
+	TEST_REQUIRE("create 64-page lazy dot", dot >= 0 && addr != NULL);
 
 	// Spawn 3 children
 	kosm_ray_id rays[3];
@@ -2440,7 +2402,7 @@ test_three_process_fault()
 		else
 			break;
 	}
-	DOT_REQUIRE("spawn 3 children", spawned == 3);
+	TEST_REQUIRE("spawn 3 children", spawned == 3);
 
 	// Send FAULT_PAGES command + dot handle to all 3 simultaneously
 	for (int i = 0; i < 3; i++) {
@@ -2472,12 +2434,12 @@ test_three_process_fault()
 			childOk++;
 	}
 
-	DOT_ASSERT("all 3 children faulted ok", childOk == 3);
+	TEST_ASSERT("all 3 children faulted ok", childOk == 3);
 
 	// Verify dot is intact
 	kosm_dot_info info;
-	DOT_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
-	DOT_ASSERT("all pages resident",
+	TEST_ASSERT("info ok", kosm_get_dot_info(dot, &info) == B_OK);
+	TEST_ASSERT("all pages resident",
 		info.resident_size >= kPages * B_PAGE_SIZE);
 
 	for (int i = 0; i < 3; i++) {
@@ -2493,7 +2455,7 @@ test_three_process_fault()
 static void
 test_max_capacity()
 {
-	debug_trace("  [test_max_capacity]\n");
+	trace("  [test_max_capacity]\n");
 
 	// NOTE: >4000 dots triggers kernel panic in error cleanup path
 	// (ConditionVariable::Unpublish on never-published CV). Keep below that.
@@ -2514,13 +2476,13 @@ test_max_capacity()
 		dots[created++] = dot;
 	}
 
-	debug_trace("    created %d dots before exhaustion\n", created);
-	DOT_ASSERT("created at least 100", created >= 100);
+	trace("    created %d dots before exhaustion\n", created);
+	TEST_ASSERT("created at least 100", created >= 100);
 
 	// Verify last created dot is functional
 	if (created > 0) {
 		kosm_dot_info info;
-		DOT_ASSERT("last dot info ok",
+		TEST_ASSERT("last dot info ok",
 			kosm_get_dot_info(dots[created - 1], &info) == B_OK);
 	}
 
@@ -2530,7 +2492,7 @@ test_max_capacity()
 		if (kosm_delete_dot(dots[i]) != B_OK)
 			deleteErrors++;
 	}
-	DOT_ASSERT("all deleted ok", deleteErrors == 0);
+	TEST_ASSERT("all deleted ok", deleteErrors == 0);
 
 	// Verify system recovered — can create new dot
 	void* addr = NULL;
@@ -2538,10 +2500,10 @@ test_max_capacity()
 		&addr, B_ANY_ADDRESS, B_PAGE_SIZE,
 		KOSM_PROT_READ | KOSM_PROT_WRITE,
 		KOSM_DOT_LAZY, KOSM_TAG_APP, 0);
-	DOT_ASSERT("recovery create ok", newDot >= 0 && addr != NULL);
+	TEST_ASSERT("recovery create ok", newDot >= 0 && addr != NULL);
 	if (newDot >= 0) {
 		((volatile uint8*)addr)[0] = 0x42;
-		DOT_ASSERT("recovery write ok",
+		TEST_ASSERT("recovery write ok",
 			((volatile uint8*)addr)[0] == 0x42);
 		kosm_delete_dot(newDot);
 	}
@@ -2552,17 +2514,17 @@ test_max_capacity()
 static void
 test_file_sync_stress()
 {
-	debug_trace("  [test_file_sync_stress]\n");
+	trace("  [test_file_sync_stress]\n");
 
 	BPath path;
 	if (find_directory(B_SYSTEM_TEMP_DIRECTORY, &path) != B_OK) {
-		DOT_ASSERT("find temp dir", false);
+		TEST_ASSERT("find temp dir", false);
 		return;
 	}
 	path.Append("kosm_dot_sync_stress");
 
 	int fd = open(path.Path(), O_CREAT | O_RDWR | O_TRUNC, 0644);
-	DOT_REQUIRE("open temp file", fd >= 0);
+	TEST_REQUIRE("open temp file", fd >= 0);
 
 	const size_t kSize = B_PAGE_SIZE * 8;
 	ftruncate(fd, kSize);
@@ -2574,8 +2536,8 @@ test_file_sync_stress()
 		KOSM_DOT_FILE, KOSM_TAG_APP);
 
 	if (dot < 0) {
-		debug_trace("    file dot not available, skipping\n");
-		DOT_ASSERT("create file dot", dot >= 0);
+		trace("    file dot not available, skipping\n");
+		TEST_ASSERT("create file dot", dot >= 0);
 		close(fd);
 		unlink(path.Path());
 		return;
@@ -2593,15 +2555,15 @@ test_file_sync_stress()
 			syncErrors++;
 	}
 
-	DOT_ASSERT("all syncs ok", syncErrors == 0);
+	TEST_ASSERT("all syncs ok", syncErrors == 0);
 
 	// Verify last pattern survives
-	DOT_ASSERT("last pattern intact",
+	TEST_ASSERT("last pattern intact",
 		((uint8*)addr)[0] == (uint8)kCycles);
-	DOT_ASSERT("last pattern page 7",
+	TEST_ASSERT("last pattern page 7",
 		((uint8*)addr)[7 * B_PAGE_SIZE] == (uint8)kCycles);
 
-	debug_trace("    %d write+sync cycles, %d errors\n",
+	trace("    %d write+sync cycles, %d errors\n",
 		kCycles, syncErrors);
 
 	kosm_delete_dot(dot);

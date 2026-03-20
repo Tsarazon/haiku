@@ -28,7 +28,7 @@
 
 
 // Maximum log lines displayed in GUI
-static const int kMaxLines = 600;
+enum { kMaxLines = 600 };
 
 
 // Global state (defined in TestCommon.cpp)
@@ -39,13 +39,10 @@ extern char		sLines[kMaxLines][256];
 extern int		sLineCount;
 
 
-// Trace to log file
+// Trace to log file and kernel serial debug output
 void	trace(const char* fmt, ...);
 void	trace_call(const char* func, status_t result);
 void	trace_call_id(const char* func, int32 result);
-
-// Trace to both log file AND kernel serial debug output (QEMU console)
-void	debug_trace(const char* fmt, ...);
 
 // Log line to GUI display
 void	log_line(const char* fmt, ...);
@@ -67,6 +64,24 @@ void	reset_results();
 			trace("  FAIL: %s  (line %d, %lld us)\n", \
 				name, __LINE__, (long long)_dt); \
 			sFailCount++; \
+		} \
+	} while (0)
+
+// TEST_REQUIRE — same as TEST_ASSERT but returns from the calling
+// function on failure (prevents NULL dereference after failed alloc)
+#define TEST_REQUIRE(name, condition) \
+	do { \
+		bigtime_t _t0 = system_time(); \
+		bool _ok = (condition); \
+		bigtime_t _dt = system_time() - _t0; \
+		if (_ok) { \
+			trace("  PASS: %s  (%lld us)\n", name, (long long)_dt); \
+			sPassCount++; \
+		} else { \
+			trace("  FAIL: %s  (line %d, %lld us) ** ABORT **\n", \
+				name, __LINE__, (long long)_dt); \
+			sFailCount++; \
+			return; \
 		} \
 	} while (0)
 
@@ -97,6 +112,7 @@ TestSuite	get_ray_test_suite();
 TestSuite	get_mutex_test_suite();
 TestSuite	get_surface_test_suite();
 TestSuite	get_dot_test_suite();
+TestSuite	get_scheduler_test_suite();
 
 // Child helper for cross-process dot tests (runs when invoked with --dot-child)
 int			dot_child_helper();
@@ -130,6 +146,7 @@ enum {
 	kMsgRunMutex	= 'rMTX',
 	kMsgRunSurface	= 'rSRF',
 	kMsgRunDot		= 'rDOT',
+	kMsgRunSched	= 'rSCH',
 	kMsgRunAll		= 'rALL',
 };
 
