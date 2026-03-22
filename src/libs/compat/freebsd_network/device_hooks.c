@@ -387,3 +387,10 @@ device_hooks gDeviceHooks = {
 	NULL,
 	NULL,
 };
+
+
+status_t
+_fbsd_device_free(void* cookie)
+{
+	return compat_free(cookie);
+}

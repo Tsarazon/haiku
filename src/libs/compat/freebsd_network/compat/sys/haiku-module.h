@@ -7,8 +7,10 @@
 #define _FBSD_COMPAT_SYS_HAIKU_MODULE_H_
 
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
+#include <bus/PCI.h>
 
 #include <kernel/lock.h>
 #include <sys/method-ids.h>
@@ -84,6 +86,7 @@ status_t _fbsd_init_hardware_pci(driver_t* drivers[]);
 status_t _fbsd_init_hardware_uhub(driver_t* drivers[]);
 status_t _fbsd_init_drivers();
 status_t _fbsd_uninit_drivers();
+status_t _fbsd_device_free(void* cookie);
 
 extern const char *gDriverName;
 driver_t *__haiku_select_miibus_driver(device_t dev);
@@ -105,23 +108,102 @@ status_t wlan_close(void*);
 	extern const char *gDeviceNameList[];								\
 	extern device_hooks gDeviceHooks;									\
 	const char *gDriverName = #publicname;								\
-	int32 api_version = B_CUR_DRIVER_API_VERSION;						\
-	status_t init_hardware()											\
+	static device_manager_info *_s_fbsd_dm;								\
+	static bool _s_fbsd_initialized = false;							\
+	static float _fbsd_supports_device(device_node *parent)				\
 	{																	\
-		return _fbsd_init_hardware();									\
+		const char *bus;												\
+		if (_s_fbsd_dm->get_attr_string(parent, B_DEVICE_BUS,			\
+				&bus, false))											\
+			return -1;													\
+		if (strcmp(bus, "pci"))											\
+			return 0.0;													\
+		if (_s_fbsd_initialized)										\
+			return 0.0;													\
+		return 0.01;													\
 	}																	\
-	status_t init_driver()												\
+	static status_t _fbsd_register_device(device_node *node)			\
 	{																	\
-		return _fbsd_init_drivers();									\
+		device_attr attrs[] = {											\
+			{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,						\
+				{.string = "FreeBSD " #publicname} },					\
+			{ NULL }													\
+		};																\
+		return _s_fbsd_dm->register_node(node,							\
+			"drivers/network/" #publicname "/driver_v1",				\
+			attrs, NULL, NULL);											\
 	}																	\
-	void uninit_driver()												\
+	static status_t _fbsd_dm_init_driver(device_node *node,				\
+		void **cookie)													\
 	{																	\
-		_fbsd_uninit_drivers();											\
+		if (!_s_fbsd_initialized) {										\
+			extern pci_device_module_info *gPci;						\
+			extern pci_device *gPciDev;									\
+			device_node *_parent =										\
+				_s_fbsd_dm->get_parent_node(node);						\
+			_s_fbsd_dm->get_driver(_parent,								\
+				(driver_module_info **)&gPci,							\
+				(void **)&gPciDev);										\
+			_s_fbsd_dm->put_node(_parent);								\
+			status_t status = _fbsd_init_drivers();						\
+			if (status != B_OK)											\
+				return status;											\
+			_s_fbsd_initialized = true;									\
+		}																\
+		*cookie = node;													\
+		return B_OK;													\
 	}																	\
-	const char **publish_devices()										\
-		{ return gDeviceNameList; }										\
-	device_hooks *find_device(const char *name)							\
-		{ return &gDeviceHooks; }
+	static void _fbsd_dm_uninit_driver(void *_cookie) {}				\
+	static status_t _fbsd_dm_register_children(void *_cookie)			\
+	{																	\
+		device_node *node = (device_node *)_cookie;						\
+		for (int i = 0; gDeviceNameList[i] != NULL; i++)				\
+			_s_fbsd_dm->publish_device(node, gDeviceNameList[i],		\
+				"drivers/network/" #publicname "/device_v1");			\
+		return B_OK;													\
+	}																	\
+	static status_t _fbsd_dm_init_device(void *i, void **c)				\
+		{ *c = i; return B_OK; }										\
+	static void _fbsd_dm_uninit_device(void *c) {}						\
+	static status_t _fbsd_dm_open(void *i, const char *p, int m,		\
+		void **c)														\
+		{ return gDeviceHooks.open(p, m, c); }							\
+	static status_t _fbsd_dm_close(void *c)								\
+		{ return gDeviceHooks.close(c); }								\
+	static status_t _fbsd_dm_free(void *c)								\
+		{ return _fbsd_device_free(c); }								\
+	static status_t _fbsd_dm_read(void *c, off_t p, void *b,			\
+		size_t *l)														\
+		{ return gDeviceHooks.read(c, p, b, l); }						\
+	static status_t _fbsd_dm_write(void *c, off_t p, const void *b,		\
+		size_t *l)														\
+		{ return gDeviceHooks.write(c, p, b, l); }						\
+	static status_t _fbsd_dm_control(void *c, uint32 o, void *b,		\
+		size_t l)														\
+		{ return gDeviceHooks.control(c, o, b, l); }					\
+	module_dependency module_dependencies[] = {							\
+		{ B_DEVICE_MANAGER_MODULE_NAME,									\
+			(module_info **)&_s_fbsd_dm },								\
+		{ NULL }														\
+	};																	\
+	struct device_module_info _s_fbsd_device = {							\
+		{ "drivers/network/" #publicname "/device_v1", 0, NULL },		\
+		_fbsd_dm_init_device, _fbsd_dm_uninit_device, NULL,				\
+		_fbsd_dm_open, _fbsd_dm_close, _fbsd_dm_free,					\
+		_fbsd_dm_read, _fbsd_dm_write, NULL, _fbsd_dm_control,			\
+		NULL, NULL														\
+	};																	\
+	struct driver_module_info _s_fbsd_driver = {							\
+		{ "drivers/network/" #publicname "/driver_v1", 0, NULL },		\
+		_fbsd_supports_device, _fbsd_register_device,					\
+		_fbsd_dm_init_driver, _fbsd_dm_uninit_driver,					\
+		_fbsd_dm_register_children, NULL, NULL							\
+	};																	\
+	module_info *modules[] = {											\
+		(module_info *)&_s_fbsd_driver,									\
+		(module_info *)&_s_fbsd_device,									\
+		NULL															\
+	};
 
 #define HAIKU_FBSD_DRIVERS_GLUE(publicname)								\
 	HAIKU_FBSD_DRIVERS_CORE_GLUE(publicname)							\

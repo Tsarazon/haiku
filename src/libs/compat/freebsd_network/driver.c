@@ -114,9 +114,7 @@ uninit_probed_devices()
 {
 	for (int p = 0; sProbedDevices[p].bus != BUS_INVALID; p++) {
 		if (sProbedDevices[p].bus == BUS_pci) {
-			gPci->unreserve_device(sProbedDevices[p].pci_info.bus,
-				sProbedDevices[p].pci_info.device, sProbedDevices[p].pci_info.function,
-				gDriverName, NULL);
+			// device_manager handles device ownership — no manual unreserve needed
 		} else {
 			sProbedDevices[p].free_compat_device(sProbedDevices[p].compat_device);
 		}
@@ -170,40 +168,30 @@ _fbsd_init_hardware_pci(driver_t* drivers[])
 	if (status != B_OK)
 		return status;
 
-	bool found = false;
-	for (info = get_device_pci_info(root); gPci->get_nth_pci_info(i, info) == B_OK; i++) {
-		int best = 0;
-		driver_t* driver = NULL;
+	// Get PCI info for THIS device (already matched by device_manager)
+	info = get_device_pci_info(root);
+	gPci->get_pci_info(gPciDev, info);
 
+	{
 		struct device device = {};
 		device.parent = root;
 		device.root = root;
 
-		driver = __haiku_probe_drivers(&device, drivers);
-		if (driver == NULL)
-			continue;
-
-		// We've found a driver; now try to reserve the device and store it
-		if (gPci->reserve_device(info->bus, info->device, info->function,
-				gDriverName, NULL) != B_OK) {
-			dprintf("%s: Failed to reserve PCI:%d:%d:%d\n",
-				gDriverName, info->bus, info->device, info->function);
-			continue;
+		driver_t* driver = __haiku_probe_drivers(&device, drivers);
+		if (driver != NULL) {
+			sProbedDevices[p].bus = BUS_pci;
+			sProbedDevices[p].driver = driver;
+			sProbedDevices[p].pci_info = *info;
+			p++;
 		}
-		sProbedDevices[p].bus = BUS_pci;
-		sProbedDevices[p].driver = driver;
-		sProbedDevices[p].pci_info = *info;
-		found = true;
-		p++;
 	}
 	sProbedDevices[p].bus = BUS_INVALID;
 
 	device_delete_child(NULL, root);
 
-	if (found)
+	if (p > 0)
 		return B_OK;
 
-	uninit_pci();
 	return B_NOT_SUPPORTED;
 }
 

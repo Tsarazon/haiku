@@ -424,15 +424,13 @@ bus_setup_intr(device_t dev, struct resource *res, int flags,
 		// this is an msi, enable it
 		struct root_device_softc* root_softc = ((struct root_device_softc *)dev->root->softc);
 		if (root_softc->is_msi) {
-			if (gPci->enable_msi(root_softc->pci_info.bus, root_softc->pci_info.device,
-					root_softc->pci_info.function) != B_OK) {
+			if (gPci->enable_msi(gPciDev) != B_OK) {
 				device_printf(dev, "enabling msi failed\n");
 				bus_teardown_intr(dev, res, intr);
 				return ENODEV;
 			}
 		} else if (root_softc->is_msix) {
-			if (gPci->enable_msix(root_softc->pci_info.bus, root_softc->pci_info.device,
-					root_softc->pci_info.function) != B_OK) {
+			if (gPci->enable_msix(gPciDev) != B_OK) {
 				device_printf(dev, "enabling msix failed\n");
 				bus_teardown_intr(dev, res, intr);
 				return ENODEV;
@@ -464,7 +462,7 @@ bus_teardown_intr(device_t dev, struct resource *res, void *arg)
 	if (root->is_msi || root->is_msix) {
 		// disable msi generation
 		pci_info *info = &root->pci_info;
-		gPci->disable_msi(info->bus, info->device, info->function);
+		gPci->disable_msi(gPciDev);
 	}
 
 	if (intr->filter != NULL) {

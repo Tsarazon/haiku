@@ -11,7 +11,7 @@ extern "C" {
 #include <compat/dev/pci/pcivar.h>
 }
 
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 //#define DEBUG_PCI
@@ -22,28 +22,23 @@ extern "C" {
 #endif
 
 
-pci_module_info *gPci;
+pci_device_module_info *gPci;
+pci_device *gPciDev;
 
 
 status_t
 init_pci()
 {
-	if (gPci != NULL)
-		return B_OK;
-
-	status_t status = get_module(B_PCI_MODULE_NAME, (module_info **)&gPci);
-	if (status != B_OK)
-		return status;
-
-	return B_OK;
+	// gPci and gPciDev are set by the driver glue macro from the
+	// device_manager parent node before _fbsd_init_drivers is called.
+	return (gPci != NULL) ? B_OK : B_NO_INIT;
 }
 
 
 void
 uninit_pci()
 {
-	if (gPci != NULL)
-		put_module(B_PCI_MODULE_NAME);
+	// No module to put — pci_device_module_info comes from device_manager.
 }
 
 
@@ -62,8 +57,7 @@ pci_read_config(device_t dev, int offset, int size)
 {
 	pci_info* info = get_device_pci_info(dev);
 
-	uint32_t value = gPci->read_pci_config(info->bus, info->device,
-		info->function, offset, size);
+	uint32_t value = gPci->read_pci_config(gPciDev, offset, size);
 	TRACE_PCI(dev, "pci_read_config(%i, %i) = 0x%x\n", offset, size, value);
 	return value;
 }
@@ -76,8 +70,7 @@ pci_write_config(device_t dev, int offset, uint32_t value, int size)
 
 	TRACE_PCI(dev, "pci_write_config(%i, 0x%x, %i)\n", offset, value, size);
 
-	gPci->write_pci_config(info->bus, info->device, info->function, offset,
-		size, value);
+	gPci->write_pci_config(gPciDev, offset, size, value);
 }
 
 
@@ -232,8 +225,7 @@ pci_find_cap(device_t dev, int capability, int *capreg)
 	uint8 offset;
 	status_t status;
 
-	status = gPci->find_pci_capability(info->bus, info->device, info->function,
-		capability, &offset);
+	status = gPci->find_pci_capability(gPciDev, capability, &offset);
 	*capreg = offset;
 	return status;
 }
@@ -246,8 +238,7 @@ pci_find_extcap(device_t dev, int capability, int *capreg)
 	uint16 offset;
 	status_t status;
 
-	status = gPci->find_pci_extended_capability(info->bus, info->device, info->function,
-		capability, &offset);
+	status = gPci->find_pci_extended_capability(gPciDev, capability, &offset);
 	*capreg = offset;
 	return status;
 }
@@ -257,7 +248,7 @@ int
 pci_msi_count(device_t dev)
 {
 	pci_info* info = get_device_pci_info(dev);
-	return gPci->get_msi_count(info->bus, info->device, info->function);
+	return gPci->get_msi_count(gPciDev);
 }
 
 
@@ -266,8 +257,7 @@ pci_alloc_msi(device_t dev, int *count)
 {
 	pci_info* info = get_device_pci_info(dev);
 	uint32 startVector = 0;
-	if (gPci->configure_msi(info->bus, info->device, info->function, *count,
-			&startVector) != B_OK) {
+	if (gPci->configure_msi(gPciDev, *count, &startVector) != B_OK) {
 		return ENODEV;
 	}
 
@@ -281,7 +271,7 @@ int
 pci_release_msi(device_t dev)
 {
 	pci_info* info = get_device_pci_info(dev);
-	gPci->unconfigure_msi(info->bus, info->device, info->function);
+	gPci->unconfigure_msi(gPciDev);
 	((struct root_device_softc *)dev->root->softc)->is_msi = false;
 	((struct root_device_softc *)dev->root->softc)->is_msix = false;
 	return EOK;
@@ -294,11 +284,11 @@ pci_msix_table_bar(device_t dev)
 	pci_info* info = get_device_pci_info(dev);
 
 	uint8 capability_offset;
-	if (gPci->find_pci_capability(info->bus, info->device, info->function,
-			PCI_cap_id_msix, &capability_offset) != B_OK)
+	if (gPci->find_pci_capability(gPciDev, PCI_cap_id_msix,
+			&capability_offset) != B_OK)
 		return -1;
 
-	uint32 table_value = gPci->read_pci_config(info->bus, info->device, info->function,
+	uint32 table_value = gPci->read_pci_config(gPciDev,
 		capability_offset + PCI_msix_table, 4);
 
 	uint32 bar = table_value & PCI_msix_bir_mask;
@@ -310,7 +300,7 @@ int
 pci_msix_count(device_t dev)
 {
 	pci_info* info = get_device_pci_info(dev);
-	return gPci->get_msix_count(info->bus, info->device, info->function);
+	return gPci->get_msix_count(gPciDev);
 }
 
 
@@ -319,8 +309,7 @@ pci_alloc_msix(device_t dev, int *count)
 {
 	pci_info* info = get_device_pci_info(dev);
 	uint32 startVector = 0;
-	if (gPci->configure_msix(info->bus, info->device, info->function, *count,
-			&startVector) != B_OK) {
+	if (gPci->configure_msix(gPciDev, *count, &startVector) != B_OK) {
 		return ENODEV;
 	}
 
