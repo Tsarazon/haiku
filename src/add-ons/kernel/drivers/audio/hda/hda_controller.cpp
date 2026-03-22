@@ -220,17 +220,13 @@ static inline bool
 update_pci_register(hda_controller* controller, uint8 reg, uint32 mask,
 	uint32 value, uint8 size, bool check = false)
 {
-	uint32 originalValue = (gPci->read_pci_config)(controller->pci_info.bus,
-		controller->pci_info.device, controller->pci_info.function, reg, size);
-	(gPci->write_pci_config)(controller->pci_info.bus,
-		controller->pci_info.device, controller->pci_info.function,
-		reg, size, (originalValue & mask) | value);
+	uint32 originalValue = gPci->read_pci_config(gPciDev, reg, size);
+	gPci->write_pci_config(gPciDev, reg, size, (originalValue & mask) | value);
 
 	if (!check)
 		return true;
 
-	uint32 newValue = (gPci->read_pci_config)(controller->pci_info.bus,
-		controller->pci_info.device, controller->pci_info.function, reg, size);
+	uint32 newValue = gPci->read_pci_config(gPciDev, reg, size);
 	return (newValue & ~mask) == value;
 }
 
@@ -1104,8 +1100,7 @@ hda_hw_init(hda_controller* controller)
 	uint32 quirks = get_controller_quirks(pciInfo);
 
 	// enable power
-	gPci->set_powerstate(pciInfo.bus, pciInfo.device, pciInfo.function,
-		PCI_pm_state_d0);
+	gPci->set_powerstate(gPciDev, PCI_pm_state_d0);
 
 	// map the registers (low + high for 64-bit when requested)
 	phys_addr_t physicalAddress = pciInfo.u.h0.base_registers[0];
@@ -1124,8 +1119,7 @@ hda_hw_init(hda_controller* controller)
 		goto error;
 	}
 
-	cmd = gPci->read_pci_config(pciInfo.bus, pciInfo.device, pciInfo.function,
-		PCI_command, 2);
+	cmd = gPci->read_pci_config(gPciDev, PCI_command, 2);
 	if (!(cmd & PCI_command_master)) {
 		dprintf("hda: enabling PCI bus mastering\n");
 		cmd |= PCI_command_master;
@@ -1134,8 +1128,7 @@ hda_hw_init(hda_controller* controller)
 		dprintf("hda: enabling PCI memory access\n");
 		cmd |= PCI_command_memory;
 	}
-	gPci->write_pci_config(pciInfo.bus, pciInfo.device, pciInfo.function,
-		PCI_command, 2, cmd);
+	gPci->write_pci_config(gPciDev, PCI_command, 2, cmd);
 
 	// Disable misc. backbone dynamic clock gating before hda reset.
 	// (may prevent CORB/RIRB logic from being reset on skylake and others)
@@ -1157,13 +1150,11 @@ hda_hw_init(hda_controller* controller)
 		controller->irq = 0;
 
 	if ((quirks & HDA_QUIRK_NO_MSI) == 0
-			&& gPci->get_msi_count(pciInfo.bus, pciInfo.device,
-				pciInfo.function) >= 1) {
+			&& gPci->get_msi_count(gPciDev) >= 1) {
 		// Try MSI first
 		uint32 vector;
-		if (gPci->configure_msi(pciInfo.bus, pciInfo.device,
-			pciInfo.function, 1, &vector) == B_OK && gPci->enable_msi(
-				pciInfo.bus, pciInfo.device, pciInfo.function) == B_OK) {
+		if (gPci->configure_msi(gPciDev, 1, &vector) == B_OK
+			&& gPci->enable_msi(gPciDev) == B_OK) {
 			dprintf("hda: using MSI vector %" B_PRIu32 "\n", vector);
 			controller->irq = vector;
 			controller->msi = true;
@@ -1180,8 +1171,7 @@ hda_hw_init(hda_controller* controller)
 	if (status != B_OK)
 		goto no_irq_handler;
 
-	cmd = gPci->read_pci_config(pciInfo.bus, pciInfo.device, pciInfo.function,
-		PCI_command, 2);
+	cmd = gPci->read_pci_config(gPciDev, PCI_command, 2);
 	if (controller->msi != ((cmd & PCI_command_int_disable) != 0)) {
 		if ((cmd & PCI_command_int_disable) != 0) {
 			dprintf("hda: enabling PCI interrupts\n");
@@ -1191,8 +1181,7 @@ hda_hw_init(hda_controller* controller)
 			cmd |= PCI_command_int_disable;
 		}
 
-		gPci->write_pci_config(pciInfo.bus, pciInfo.device, pciInfo.function,
-			PCI_command, 2, cmd);
+		gPci->write_pci_config(gPciDev, PCI_command, 2, cmd);
 	}
 
 	// TCSEL is reset to TC0 (clear 0-2 bits)
@@ -1340,10 +1329,8 @@ reset_failed:
 
 no_irq_handler:
 	if (controller->msi) {
-		gPci->disable_msi(controller->pci_info.bus,
-			controller->pci_info.device, controller->pci_info.function);
-		gPci->unconfigure_msi(controller->pci_info.bus,
-			controller->pci_info.device, controller->pci_info.function);
+		gPci->disable_msi(gPciDev);
+		gPci->unconfigure_msi(gPciDev);
 	}
 
 	delete_area(controller->regs_area);
@@ -1402,10 +1389,8 @@ hda_hw_uninit(hda_controller* controller)
 
 	if (controller->msi) {
 		// Disable MSI
-		gPci->disable_msi(controller->pci_info.bus,
-			controller->pci_info.device, controller->pci_info.function);
-		gPci->unconfigure_msi(controller->pci_info.bus,
-			controller->pci_info.device, controller->pci_info.function);
+		gPci->disable_msi(gPciDev);
+		gPci->unconfigure_msi(gPciDev);
 	}
 
 	// Delete corb/rirb area

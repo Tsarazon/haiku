@@ -65,35 +65,23 @@ static status_t
 find_graphics_card(addr_t frameBuffer, addr_t& base, size_t& size, uint16_t& vendorId,
 	uint16_t& productId)
 {
-	// TODO: when we port this over to the new driver API, this mechanism can be
-	// used to find the right device_node
-	pci_module_info* pci;
-	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pci) != B_OK)
-		return B_ERROR;
-
+	// Get PCI info for our device from device_manager
 	pci_info info;
-	for (int32 index = 0; pci->get_nth_pci_info(index, &info) == B_OK; index++) {
-		if (info.class_base != PCI_display)
-			continue;
+	gPCI->get_pci_info(gPCIDev, &info);
 
-		// check PCI BARs
-		for (uint32 i = 0; i < 6; i++) {
-			if (info.u.h0.base_registers[i] <= frameBuffer
-				&& info.u.h0.base_registers[i] + info.u.h0.base_register_sizes[i]
-					> frameBuffer) {
-				// found it!
-				base = info.u.h0.base_registers[i];
-				size = info.u.h0.base_register_sizes[i];
-				vendorId = info.vendor_id;
-				productId = info.device_id;
-
-				put_module(B_PCI_MODULE_NAME);
-				return B_OK;
-			}
+	// Check PCI BARs for the framebuffer address
+	for (uint32 i = 0; i < 6; i++) {
+		if (info.u.h0.base_registers[i] <= frameBuffer
+			&& info.u.h0.base_registers[i] + info.u.h0.base_register_sizes[i]
+				> frameBuffer) {
+			base = info.u.h0.base_registers[i];
+			size = info.u.h0.base_register_sizes[i];
+			vendorId = info.vendor_id;
+			productId = info.device_id;
+			return B_OK;
 		}
 	}
 
-	put_module(B_PCI_MODULE_NAME);
 	return B_ENTRY_NOT_FOUND;
 }
 

@@ -8,7 +8,7 @@
 
 #include <debug.h>
 #include <kernel/vm/vm.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 extern "C" {
 #include "nvme.h"

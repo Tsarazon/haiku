@@ -4,6 +4,7 @@
  */
 
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 
@@ -15,99 +16,42 @@
 #define DRIVER_NAME "mem"
 #define DEVICE_NAME "misc/mem"
 
-#define DEVMNT "/dev/"
+#define MEM_DRIVER_MODULE_NAME "drivers/misc/mem/driver_v1"
+#define MEM_DEVICE_MODULE_NAME "drivers/misc/mem/device_v1"
 
 /* also publish /dev/mem */
 #define PUBLISH_DEV_MEM
 
-static status_t mem_open(const char*, uint32, void**);
-static status_t mem_close(void*);
-static status_t mem_free(void*);
-static status_t mem_read(void*, off_t, void*, size_t*);
-static status_t mem_write(void*, off_t, const void*, size_t*);
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
 
 static area_id mem_map_target(off_t position, size_t length, uint32 protection,
 	void **virtualAddress);
 
-static const char* mem_name[] = {
-	DEVICE_NAME,
-#ifdef PUBLISH_DEV_MEM
-	DRIVER_NAME,
-#endif
-	NULL
-};
 
-
-device_hooks mem_hooks = {
-	mem_open,
-	mem_close,
-	mem_free,
-	NULL, /*mem_control,*/
-	mem_read,
-	mem_write,
-};
-
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-
-
-status_t
-init_hardware(void)
+static status_t
+mem_open(void* _info, const char* name, int flags, void** cookie)
 {
-	return B_OK;
-}
-
-
-status_t
-init_driver(void)
-{
-	return B_OK;
-}
-
-
-void
-uninit_driver(void)
-{
-}
-
-
-const char**
-publish_devices(void)
-{
-	return mem_name;
-}
-
-
-device_hooks*
-find_device(const char* name)
-{
-	return &mem_hooks;
-}
-
-
-status_t
-mem_open(const char* name, uint32 flags, void** cookie)
-{
-	// not really needed.
 	*cookie = NULL;
 	return B_OK;
 }
 
 
-status_t
+static status_t
 mem_close(void* cookie)
 {
 	return B_OK;
 }
 
 
-status_t
+static status_t
 mem_free(void* cookie)
 {
 	return B_OK;
 }
 
 
-status_t
+static status_t
 mem_read(void* cookie, off_t position, void* buffer, size_t* numBytes)
 {
 	void *virtualAddress;
@@ -134,7 +78,7 @@ mem_read(void* cookie, off_t position, void* buffer, size_t* numBytes)
 }
 
 
-status_t
+static status_t
 mem_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 {
 	void *virtualAddress;
@@ -161,7 +105,7 @@ mem_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 }
 
 
-area_id
+static area_id
 mem_map_target(off_t position, size_t length, uint32 protection,
 	void **virtualAddress)
 {
@@ -190,3 +134,86 @@ mem_map_target(off_t position, size_t length, uint32 protection,
 	*virtualAddress = (void*)((addr_t)(*virtualAddress) + offset);
 	return area;
 }
+
+
+/*	#pragma mark - driver module API */
+
+
+static float
+mem_supports_device(device_node* parent)
+{
+	const char* bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
+}
+
+
+static status_t
+mem_register_device(device_node* node)
+{
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Physical Memory"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, MEM_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+mem_init_driver(device_node* node, void** cookie)
+{
+	*cookie = node;
+	return B_OK;
+}
+
+static void mem_uninit_driver(void* c) { sPublished = false; }
+
+static status_t
+mem_register_child_devices(void* _cookie)
+{
+	device_node* node = (device_node*)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
+	sDeviceManager->publish_device(node, DEVICE_NAME, MEM_DEVICE_MODULE_NAME);
+#ifdef PUBLISH_DEV_MEM
+	sDeviceManager->publish_device(node, DRIVER_NAME, MEM_DEVICE_MODULE_NAME);
+#endif
+	return B_OK;
+}
+
+static status_t mem_init_device(void* i, void** c)
+{ *c = i; return B_OK; }
+static void mem_uninit_device(void* c) {}
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sMemDevice = {
+	{ MEM_DEVICE_MODULE_NAME, 0, NULL },
+	mem_init_device, mem_uninit_device, NULL,
+	mem_open, mem_close, mem_free,
+	mem_read, mem_write, NULL, NULL,
+	NULL, NULL
+};
+
+struct driver_module_info sMemDriver = {
+	{ MEM_DRIVER_MODULE_NAME, 0, NULL },
+	mem_supports_device, mem_register_device,
+	mem_init_driver, mem_uninit_driver,
+	mem_register_child_devices, NULL, NULL
+};
+
+module_info* modules[] = {
+	(module_info*)&sMemDriver,
+	(module_info*)&sMemDevice,
+	NULL
+};

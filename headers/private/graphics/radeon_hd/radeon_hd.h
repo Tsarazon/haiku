@@ -29,7 +29,7 @@
 #include <Accelerant.h>
 #include <Drivers.h>
 #include <edid.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 #define VENDOR_ID_ATI	0x1002

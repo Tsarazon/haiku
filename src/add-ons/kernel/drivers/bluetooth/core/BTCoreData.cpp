@@ -13,9 +13,6 @@
 #include <btDebug.h>
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-
-
 mutex sConnectionListLock = MUTEX_INITIALIZER("bt connection list");
 DoublyLinkedList<HciConnection> sConnectionList;
 net_buffer_module_info* gBufferModule = NULL;

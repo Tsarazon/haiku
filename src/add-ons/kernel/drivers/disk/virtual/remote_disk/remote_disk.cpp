@@ -320,65 +320,109 @@ static device_hooks sDataDeviceHooks = {
 };
 
 
-// #pragma mark - public API
+// #pragma mark - device_manager API
 
+#include <device_manager.h>
+#include <string.h>
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#define RD_DRIVER_MODULE_NAME "drivers/disk/remote_disk/driver_v1"
+#define RD_DEVICE_MODULE_NAME "drivers/disk/remote_disk/device_v1"
 
+static device_manager_info *sDeviceManager;
+static bool sPublished = false;
 
-status_t
-init_hardware(void)
+static float rd_supports_device(device_node *parent)
 {
-	TRACE(("remote_disk: init_hardware()\n"));
-
-	return B_OK;
+	const char *bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
 }
 
-
-status_t
-init_driver(void)
+static status_t rd_register_device(device_node *node)
 {
-	TRACE(("remote_disk: init_driver()\n"));
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Remote Disk"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, RD_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
 
+static status_t rd_init_driver(device_node *node, void **cookie)
+{
 	sDevices = new(nothrow) RemoteDiskDevice[MAX_REMOTE_DISKS];
 	if (!sDevices)
 		return B_NO_MEMORY;
-
 	status_t error = B_OK;
 	for (int i = 0; error == B_OK && i < MAX_REMOTE_DISKS; i++)
 		error = sDevices[i].Init();
-
 	if (error != B_OK) {
 		delete[] sDevices;
 		sDevices = NULL;
 		return error;
 	}
-
+	*cookie = node;
 	return B_OK;
 }
 
-
-void
-uninit_driver(void)
+static void rd_uninit_driver(void *c)
 {
-	TRACE(("remote_disk: uninit_driver()\n"));
-
 	delete[] sDevices;
+	sPublished = false;
 }
 
-
-const char**
-publish_devices(void)
+static status_t rd_register_child_devices(void *_cookie)
 {
-	TRACE(("remote_disk: publish_devices()\n"));
-	return kPublishedNames;
+	device_node *node = (device_node *)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
+	for (int i = 0; kPublishedNames[i] != NULL; i++)
+		sDeviceManager->publish_device(node, kPublishedNames[i],
+			RD_DEVICE_MODULE_NAME);
+	return B_OK;
 }
 
+static status_t rd_init_device(void *i, void **c) { *c = i; return B_OK; }
+static void rd_uninit_device(void *c) {}
 
-device_hooks*
-find_device(const char* name)
-{
-	TRACE(("remote_disk: find_device(%s)\n", name));
-	return &sDataDeviceHooks;
-}
+static status_t rd_dm_open(void *i, const char *p, int m, void **c)
+{ return sDataDeviceHooks.open(p, m, c); }
+static status_t rd_dm_close(void *c) { return sDataDeviceHooks.close(c); }
+static status_t rd_dm_free(void *c) { return sDataDeviceHooks.free(c); }
+static status_t rd_dm_read(void *c, off_t p, void *b, size_t *l)
+{ return sDataDeviceHooks.read(c, p, b, l); }
+static status_t rd_dm_write(void *c, off_t p, const void *b, size_t *l)
+{ return sDataDeviceHooks.write(c, p, b, l); }
+static status_t rd_dm_control(void *c, uint32 o, void *b, size_t l)
+{ return sDataDeviceHooks.control(c, o, b, l); }
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sRdDevice = {
+	{ RD_DEVICE_MODULE_NAME, 0, NULL },
+	rd_init_device, rd_uninit_device, NULL,
+	rd_dm_open, rd_dm_close, rd_dm_free,
+	rd_dm_read, rd_dm_write, NULL, rd_dm_control,
+	NULL, NULL
+};
+
+struct driver_module_info sRdDriver = {
+	{ RD_DRIVER_MODULE_NAME, 0, NULL },
+	rd_supports_device, rd_register_device,
+	rd_init_driver, rd_uninit_driver,
+	rd_register_child_devices, NULL, NULL
+};
+
+module_info *modules[] = {
+	(module_info *)&sRdDriver,
+	(module_info *)&sRdDevice,
+	NULL
+};
 

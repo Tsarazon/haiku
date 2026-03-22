@@ -22,18 +22,25 @@
 #include "Driver.h"
 #include "SerialDevice.h"
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+
+#define PC_SERIAL_DRIVER_MODULE_NAME "drivers/ports/pc_serial/driver_v1"
+#define PC_SERIAL_DEVICE_MODULE_NAME "drivers/ports/pc_serial/device_v1"
+
 static const char *sDeviceBaseName = DEVFS_BASE;
+
 SerialDevice *gSerialDevices[DEVICES_COUNT];
 char *gDeviceNames[DEVICES_COUNT + 1];
 isa_module_info *gISAModule = NULL;
 pci_module_info *gPCIModule = NULL;
 tty_module_info *gTTYModule = NULL;
 dpc_module_info *gDPCModule = NULL;
+device_manager_info *gDeviceManager = NULL;
 void* gDPCHandle = NULL;
 sem_id gDriverLock = -1;
 bool gHandleISA = false;
 uint32 gKernelDebugPort = 0x3f8;
+
+static bool sInitialized = false;
 
 // 24 MHz clock
 static const uint32 sDefaultRates[] = {
@@ -60,14 +67,6 @@ static const uint32 sDefaultRates[] = {
 		0, //921600 !?
 };
 
-// 8MHz clock on serial3 and 4 on the BeBox
-#if 0
-static const uint32 sBeBoxRates[] = {
-		0,		//B0
-		//... TODO
-};
-#endif
-
 // XXX: should really be generated from metadata (CSV ?)
 
 static const struct serial_support_descriptor sSupportedDevices[] = {
@@ -81,53 +80,24 @@ static const struct serial_support_descriptor sSupportedDevices[] = {
 
 	// vendor/device matches first
 
-/*
-	// vendor: OxfordSemi
-#define VN "OxfordSemi"
-	// http://www.softio.com/ox16pci954ds.pdf
-	{ B_PCI_BUS, "OxfordSemi 16950 Serial Port", sDefaultRates, NULL, { 32, 32, 8 },
-	  { PCI_simple_communications, PCI_serial, PCI_serial_16950,
-		0x1415, 0x9501, PCI_INVAL, PCI_INVAL } },
-
-	// http://www.softio.com/ox16pci952ds.pdf
-	{ B_PCI_BUS, "OxfordSemi 16950 Serial Port", sDefaultRates, NULL, { 8, 8, 8 },
-	  { PCI_simple_communications, PCI_serial, PCI_serial_16950,
-		0x1415, 0x9521, PCI_INVAL, PCI_INVAL } },
-*/
-
-
 	// vendor: NetMos
 #define VN "MosChip"
 
 	// used in Manhattan cards
 	// 1 function / port
-	// http://www.moschip.com/data/products/MCS9865/Data%20Sheet_9865.pdf
 	{ B_PCI_BUS, VN" 16550 Serial Port", sDefaultRates, NULL, { 8, 8, 8, 0, 0, 0 },
 	  { PCI_simple_communications, PCI_serial, PCI_serial_16550,
 		0x9710, 0x9865, PCI_INVAL, PCI_INVAL } },
 
 	// single function with all ports
 	// only BAR 0 & 1 are UART
-	// http://www.moschip.com/data/products/NM9835/Data%20Sheet_9835.pdf
 	{ B_PCI_BUS, VN" 16550 Serial Port", sDefaultRates, NULL, { 8, 8, 8, (uint8)~0x3, 2, 0x000f },
 	  { PCI_simple_communications, PCI_serial, PCI_serial_16550,
 		0x9710, 0x9835, PCI_INVAL, PCI_INVAL } },
 
 #undef VN
 
-
-
 	// generic fallback matches
-	/*
-	{ B_PCI_BUS, "Generic XT Serial Port", NULL },
-	  { PCI_INVAL, PCI_INVAL, PCI_simple_communications,
-		PCI_serial, PCI_serial_xt, PCI_INVAL, PCI_INVAL } },
-		
-	{ B_PCI_BUS, "Generic 16450 Serial Port", NULL },
-	  { PCI_INVAL, PCI_INVAL, PCI_simple_communications,
-		PCI_serial, PCI_serial_16450, PCI_INVAL, PCI_INVAL } },
-		
-	*/
 	{ B_PCI_BUS, "Generic 16550 Serial Port", sDefaultRates, NULL, { 8, 8, 8 },
 	  { PCI_simple_communications, PCI_serial, PCI_serial_16550,
 		PCI_INVAL, PCI_INVAL, PCI_INVAL, PCI_INVAL } },
@@ -149,11 +119,9 @@ static const struct serial_support_descriptor sSupportedDevices[] = {
 		PCI_INVAL, PCI_INVAL, PCI_INVAL, PCI_INVAL } },
 
 	// non PCI_serial devices
-
-	// beos zz driver supported that one
 	{ B_PCI_BUS, "Lucent Modem", sDefaultRates, NULL, { 8, 8, 8 },
-	  { PCI_simple_communications, PCI_simple_communications_other, 0x00, 
-		0x11C1, 0x0480, PCI_INVAL, PCI_INVAL } }, 
+	  { PCI_simple_communications, PCI_simple_communications_other, 0x00,
+		0x11C1, 0x0480, PCI_INVAL, PCI_INVAL } },
 
 	{ B_PCI_BUS, NULL, NULL, NULL, {0}, {0} }
 };
@@ -170,86 +138,6 @@ static struct isa_ports {
 	{ 0x2e8, 3 },
 };
 
-#if 0
-status_t
-pc_serial_device_added(pc_device device, void **cookie)
-{
-	TRACE_FUNCALLS("> pc_serial_device_added(0x%08x, 0x%08x)\n", device, cookie);
-
-	status_t status = B_OK;
-	const pc_device_descriptor *descriptor
-		= gUSBModule->get_device_descriptor(device);
-
-	TRACE_ALWAYS("probing device: 0x%04x/0x%04x\n", descriptor->vendor_id,
-		descriptor->product_id);
-
-	*cookie = NULL;
-	SerialDevice *serialDevice = SerialDevice::MakeDevice(device,
-		descriptor->vendor_id, descriptor->product_id);
-
-	const pc_configuration_info *configuration
-		= gUSBModule->get_nth_configuration(device, 0);
-
-	if (!configuration)
-		return B_ERROR;
-
-	status = serialDevice->AddDevice(configuration);
-	if (status < B_OK) {
-		delete serialDevice;
-		return status;
-	}
-
-	acquire_sem(gDriverLock);
-	for (int32 i = 0; i < DEVICES_COUNT; i++) {
-		if (gSerialDevices[i] != NULL)
-			continue;
-
-		status = serialDevice->Init();
-		if (status < B_OK) {
-			delete serialDevice;
-			return status;
-		}
-
-		gSerialDevices[i] = serialDevice;
-		*cookie = serialDevice;
-
-		release_sem(gDriverLock);
-		TRACE_ALWAYS("%s (0x%04x/0x%04x) added\n", serialDevice->Description(),
-			descriptor->vendor_id, descriptor->product_id);
-		return B_OK;
-	}
-
-	release_sem(gDriverLock);
-	return B_ERROR;
-}
-
-
-status_t
-pc_serial_device_removed(void *cookie)
-{
-	TRACE_FUNCALLS("> pc_serial_device_removed(0x%08x)\n", cookie);
-
-	acquire_sem(gDriverLock);
-
-	SerialDevice *device = (SerialDevice *)cookie;
-	for (int32 i = 0; i < DEVICES_COUNT; i++) {
-		if (gSerialDevices[i] == device) {
-			if (device->IsOpen()) {
-				// the device will be deleted upon being freed
-				device->Removed();
-			} else {
-				delete device;
-				gSerialDevices[i] = NULL;
-			}
-			break;
-		}
-	}
-
-	release_sem(gDriverLock);
-	TRACE_FUNCRET("< pc_serial_device_removed() returns\n");
-	return B_OK;
-}
-#endif
 
 //#pragma mark -
 
@@ -258,7 +146,6 @@ pc_serial_insert_device(SerialDevice *device)
 {
 	status_t status = B_OK;
 
-	//XXX fix leaks!
 	acquire_sem(gDriverLock);
 	for (int32 i = 0; i < DEVICES_COUNT; i++) {
 		if (gSerialDevices[i] != NULL)
@@ -267,7 +154,6 @@ pc_serial_insert_device(SerialDevice *device)
 		status = device->Init();
 		if (status < B_OK) {
 			delete device;
-			//return status;
 			break;
 		}
 
@@ -295,7 +181,8 @@ scan_isa_hardcoded()
 	for (i = 0; i < 4; i++) {
 		// skip the port used for kernel debugging...
 		if (serialDebug && sHardcodedPorts[i].ioBase == gKernelDebugPort) {
-			TRACE_ALWAYS("Skipping port %d as it is used for kernel debug.\n", i);
+			TRACE_ALWAYS("Skipping port %d as it is used for kernel debug.\n",
+				i);
 			continue;
 		}
 
@@ -307,6 +194,7 @@ scan_isa_hardcoded()
 		else
 			delete device;
 	}
+
 #endif
 	return B_OK;
 }
@@ -322,13 +210,9 @@ scan_pci()
 	// probe PCI devices
 	for (ix = 0; (*gPCIModule->get_nth_pci_info)(ix, &info) == B_OK; ix++) {
 		// sanity check
-		if ((info.header_type & PCI_header_type_mask) != PCI_header_type_generic)
+		if ((info.header_type & PCI_header_type_mask)
+				!= PCI_header_type_generic)
 			continue;
-		/*
-		TRACE_ALWAYS("probing PCI device %2d [%x|%x|%x] %04x:%04x\n",
-			ix, info.class_base, info.class_sub, info.class_api,
-			info.vendor_id, info.device_id);
-		*/
 
 		const struct serial_support_descriptor *supported = NULL;
 		for (int i = 0; sSupportedDevices[i].name; i++) {
@@ -356,7 +240,6 @@ scan_pci()
 			ix, info.class_base, info.class_sub, info.class_api,
 			info.vendor_id, info.device_id, supported->name);
 
-		// XXX: interrupt_line doesn't seem to 
 		TRACE_ALWAYS("irq line %d, pin %d\n",
 			info.u.h0.interrupt_line, info.u.h0.interrupt_pin);
 		int irq = info.u.h0.interrupt_line;
@@ -374,7 +257,6 @@ scan_pci()
 			uint32 id = info.u.h0.subsystem_id;
 			uint32 mask = supported->constraints.subsystem_id_mask;
 			id &= mask;
-			//TRACE_ALWAYS("mask: %lx, masked: %lx\n", mask, id);
 			while (!(mask & 0x1)) {
 				mask >>= 1;
 				id >>= 1;
@@ -388,10 +270,8 @@ scan_pci()
 			uint32 regbase = info.u.h0.base_registers[r];
 			uint32 reglen = info.u.h0.base_register_sizes[r];
 
-			/**/
 			TRACE("ranges[%d] at 0x%08lx len 0x%lx flags 0x%02x\n", r,
 				regbase, reglen, info.u.h0.base_register_flags[r]);
-			/**/
 
 			// empty
 			if (reglen == 0)
@@ -410,7 +290,6 @@ scan_pci()
 
 			TRACE_ALWAYS("regs at 0x%08lx len 0x%lx\n",
 				regbase, reglen);
-			//&PCI_address_io_mask
 
 			if (reglen < supported->constraints.minsize)
 				continue;
@@ -427,12 +306,11 @@ next_split_alt:
 			if (portCount >= maxPorts)
 				break;
 
-			TRACE_ALWAYS("inserting device at io 0x%04lx as %s\n", ioport, 
+			TRACE_ALWAYS("inserting device at io 0x%04lx as %s\n", ioport,
 				supported->name);
 
-			
-/**/
-			device = new(std::nothrow) SerialDevice(supported, ioport, irq, master);
+			device = new(std::nothrow) SerialDevice(supported, ioport, irq,
+				master);
 			if (device == NULL) {
 				TRACE_ALWAYS("can't allocate device\n");
 				continue;
@@ -442,14 +320,12 @@ next_split_alt:
 				TRACE_ALWAYS("can't insert device\n");
 				continue;
 			}
-/**/			if (master == NULL)
+			if (master == NULL)
 				master = device;
-			
+
 			ioport += supported->constraints.split;
 			portCount++;
 			goto next_split_alt;
-			// try next part of the I/O range now
-
 		}
 	}
 
@@ -471,143 +347,91 @@ check_kernel_debug_port()
 		NULL, NULL);
 	if (str != NULL) {
 		value = strtol(str, NULL, 0);
-		if (value >= 4) // XXX: actually should be MAX_SERIAL_PORTS...
+		if (value >= 4)
 			gKernelDebugPort = (uint32)value;
-		else if (value >= 0) // XXX: we should use the kernel_arg's table...
+		else if (value >= 0)
 			gKernelDebugPort = sHardcodedPorts[value].ioBase;
 	}
-
-	/* TODO: actually handle this in the kernel debugger too!
-	bool enabled = get_driver_boolean_parameter(handle, "serial_debug_output",
-		false, true);
-	if (!enabled)
-		gKernelDebugPort = 0;
-	*/
 
 	unload_driver_settings(handle);
 }
 
 
-//#pragma mark -
-
-
-/* init_hardware - called once the first time the driver is loaded */
-status_t
-init_hardware()
+// Ensure global state is initialized once
+static status_t
+ensure_globals_initialized()
 {
-	TRACE("init_hardware\n");
-	return B_OK;
-}
+	if (sInitialized)
+		return B_OK;
 
-
-/* init_driver - called every time the driver is loaded. */
-status_t
-init_driver()
-{
 	status_t status;
 	load_settings();
 	create_log_file();
 
-	TRACE_FUNCALLS("> init_driver()\n");
+	TRACE_FUNCALLS("> ensure_globals_initialized()\n");
 
 	status = get_module(B_DPC_MODULE_NAME, (module_info **)&gDPCModule);
 	if (status < B_OK)
-		goto err_dpc;
+		return status;
 
 	status = get_module(B_TTY_MODULE_NAME, (module_info **)&gTTYModule);
-	if (status < B_OK)
-		goto err_tty;
+	if (status < B_OK) {
+		put_module(B_DPC_MODULE_NAME);
+		return status;
+	}
 
 	status = get_module(B_PCI_MODULE_NAME, (module_info **)&gPCIModule);
-	if (status < B_OK)
-		goto err_pci;
+	if (status < B_OK) {
+		put_module(B_TTY_MODULE_NAME);
+		put_module(B_DPC_MODULE_NAME);
+		return status;
+	}
 
 	status = get_module(B_ISA_MODULE_NAME, (module_info **)&gISAModule);
-	if (status < B_OK)
-		goto err_isa;
+	if (status < B_OK) {
+		put_module(B_PCI_MODULE_NAME);
+		put_module(B_TTY_MODULE_NAME);
+		put_module(B_DPC_MODULE_NAME);
+		return status;
+	}
 
 	status = gDPCModule->new_dpc_queue(&gDPCHandle, "pc_serial irq",
 		B_REAL_TIME_PRIORITY);
-	if (status != B_OK)
-		goto err_dpcq;
+	if (status != B_OK) {
+		put_module(B_ISA_MODULE_NAME);
+		put_module(B_PCI_MODULE_NAME);
+		put_module(B_TTY_MODULE_NAME);
+		put_module(B_DPC_MODULE_NAME);
+		return status;
+	}
 
 	for (int32 i = 0; i < DEVICES_COUNT; i++)
 		gSerialDevices[i] = NULL;
 
 	gDeviceNames[0] = NULL;
 
-	gDriverLock = create_sem(1, DRIVER_NAME"_devices_table_lock");
+	gDriverLock = create_sem(1, DRIVER_NAME "_devices_table_lock");
 	if (gDriverLock < B_OK) {
-		status = gDriverLock;
-		goto err_sem;
+		gDPCModule->delete_dpc_queue(gDPCHandle);
+		gDPCHandle = NULL;
+		put_module(B_ISA_MODULE_NAME);
+		put_module(B_PCI_MODULE_NAME);
+		put_module(B_TTY_MODULE_NAME);
+		put_module(B_DPC_MODULE_NAME);
+		return gDriverLock;
 	}
 
-	status = ENOENT;
-
 	check_kernel_debug_port();
-
 	scan_isa_hardcoded();
 	scan_pci();
 
-	// XXX: ISA cards
-	// XXX: pcmcia
-
-	TRACE_FUNCRET("< init_driver() returns\n");
+	sInitialized = true;
+	TRACE_FUNCRET("< ensure_globals_initialized() returns\n");
 	return B_OK;
-
-//err_none:
-	delete_sem(gDriverLock);
-err_sem:
-	gDPCModule->delete_dpc_queue(gDPCHandle);
-	gDPCHandle = NULL;
-err_dpcq:
-	put_module(B_ISA_MODULE_NAME);
-err_isa:
-	put_module(B_PCI_MODULE_NAME);
-err_pci:
-	put_module(B_TTY_MODULE_NAME);
-err_tty:
-	put_module(B_DPC_MODULE_NAME);
-err_dpc:
-	TRACE_FUNCRET("< init_driver() returns %s\n", strerror(status));
-	return status;
 }
 
 
-/* uninit_driver - called every time the driver is unloaded */
-void
-uninit_driver()
-{
-	TRACE_FUNCALLS("> uninit_driver()\n");
-
-	//gUSBModule->uninstall_notify(DRIVER_NAME);
-	acquire_sem(gDriverLock);
-
-	for (int32 i = 0; i < DEVICES_COUNT; i++) {
-		if (gSerialDevices[i]) {
-			/*
-			if (gSerialDevices[i]->Master() == gSerialDevices[i])
-				remove_io_interrupt_handler(gSerialDevices[i]->IRQ(), 
-					pc_serial_interrupt, gSerialDevices[i]);
-			*/
-			delete gSerialDevices[i];
-			gSerialDevices[i] = NULL;
-		}
-	}
-
-	for (int32 i = 0; gDeviceNames[i]; i++)
-		free(gDeviceNames[i]);
-
-	delete_sem(gDriverLock);
-	gDPCModule->delete_dpc_queue(gDPCHandle);
-	gDPCHandle = NULL;
-	put_module(B_ISA_MODULE_NAME);
-	put_module(B_PCI_MODULE_NAME);
-	put_module(B_TTY_MODULE_NAME);
-	put_module(B_DPC_MODULE_NAME);
-
-	TRACE_FUNCRET("< uninit_driver() returns\n");
-}
+//#pragma mark -
 
 
 bool
@@ -615,7 +439,6 @@ pc_serial_service(struct tty *tty, uint32 op, void *buffer, size_t length)
 {
 	TRACE_FUNCALLS("> pc_serial_service(%p, 0x%08lx, %p, %lu)\n", tty,
 		op, buffer, length);
-
 
 	for (int32 i = 0; i < DEVICES_COUNT; i++) {
 		if (gSerialDevices[i]
@@ -664,19 +487,21 @@ pc_serial_interrupt(void *arg)
 }
 
 
-/* pc_serial_open - handle open() calls */
-status_t
-pc_serial_open(const char *name, uint32 flags, void **cookie)
+//	#pragma mark - device module API
+
+
+static status_t
+pc_serial_open(void *_info, const char *name, int openMode, void **_cookie)
 {
-	TRACE_FUNCALLS("> pc_serial_open(%s, 0x%08x, 0x%08x)\n", name, flags, cookie);
+	TRACE_FUNCALLS("> pc_serial_open(%s, 0x%08x)\n", name, openMode);
 	acquire_sem(gDriverLock);
 	status_t status = ENODEV;
 
-	*cookie = NULL;
+	*_cookie = NULL;
 	int i = strtol(name + strlen(sDeviceBaseName), NULL, 10);
 	if (i >= 0 && i < DEVICES_COUNT && gSerialDevices[i]) {
-		status = gSerialDevices[i]->Open(flags);
-		*cookie = gSerialDevices[i];
+		status = gSerialDevices[i]->Open(openMode);
+		*_cookie = gSerialDevices[i];
 	}
 
 	release_sem(gDriverLock);
@@ -685,85 +510,71 @@ pc_serial_open(const char *name, uint32 flags, void **cookie)
 }
 
 
-/* pc_serial_read - handle read() calls */
-status_t
+static status_t
 pc_serial_read(void *cookie, off_t position, void *buffer, size_t *numBytes)
 {
-	TRACE_FUNCALLS("> pc_serial_read(0x%08x, %lld, 0x%08x, %d)\n", cookie,
-		position, buffer, *numBytes);
+	TRACE_FUNCALLS("> pc_serial_read()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	return device->Read((char *)buffer, numBytes);
 }
 
 
-/* pc_serial_write - handle write() calls */
-status_t
+static status_t
 pc_serial_write(void *cookie, off_t position, const void *buffer,
 	size_t *numBytes)
 {
-	TRACE_FUNCALLS("> pc_serial_write(0x%08x, %lld, 0x%08x, %d)\n", cookie,
-		position, buffer, *numBytes);
+	TRACE_FUNCALLS("> pc_serial_write()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	return device->Write((const char *)buffer, numBytes);
 }
 
 
-/* pc_serial_control - handle ioctl calls */
-status_t
+static status_t
 pc_serial_control(void *cookie, uint32 op, void *arg, size_t length)
 {
-	TRACE_FUNCALLS("> pc_serial_control(0x%08x, 0x%08x, 0x%08x, %d)\n",
-		cookie, op, arg, length);
+	TRACE_FUNCALLS("> pc_serial_control()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	return device->Control(op, arg, length);
 }
 
 
-/* pc_serial_select - handle select start */
-status_t
-pc_serial_select(void *cookie, uint8 event, uint32 ref, selectsync *sync)
+static status_t
+pc_serial_select(void *cookie, uint8 event, selectsync *sync)
 {
-	TRACE_FUNCALLS("> pc_serial_select(0x%08x, 0x%08x, 0x%08x, %p)\n",
-		cookie, event, ref, sync);
+	TRACE_FUNCALLS("> pc_serial_select()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
-	return device->Select(event, ref, sync);
+	return device->Select(event, 0, sync);
 }
 
 
-/* pc_serial_deselect - handle select exit */
-status_t
+static status_t
 pc_serial_deselect(void *cookie, uint8 event, selectsync *sync)
 {
-	TRACE_FUNCALLS("> pc_serial_deselect(0x%08x, 0x%08x, %p)\n",
-		cookie, event, sync);
+	TRACE_FUNCALLS("> pc_serial_deselect()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	return device->DeSelect(event, sync);
 }
 
 
-/* pc_serial_close - handle close() calls */
-status_t
+static status_t
 pc_serial_close(void *cookie)
 {
-	TRACE_FUNCALLS("> pc_serial_close(0x%08x)\n", cookie);
+	TRACE_FUNCALLS("> pc_serial_close()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	return device->Close();
 }
 
 
-/* pc_serial_free - called after last device is closed, and all i/o complete. */
-status_t
+static status_t
 pc_serial_free(void *cookie)
 {
-	TRACE_FUNCALLS("> pc_serial_free(0x%08x)\n", cookie);
+	TRACE_FUNCALLS("> pc_serial_free()\n");
 	SerialDevice *device = (SerialDevice *)cookie;
 	acquire_sem(gDriverLock);
 	status_t status = device->Free();
 	if (device->IsRemoved()) {
 		for (int32 i = 0; i < DEVICES_COUNT; i++) {
 			if (gSerialDevices[i] == device) {
-				// the device is removed already but as it was open the
-				// removed hook has not deleted the object
 				delete device;
 				gSerialDevices[i] = NULL;
 				break;
@@ -776,48 +587,178 @@ pc_serial_free(void *cookie)
 }
 
 
-/* publish_devices - null-terminated array of devices supported by this driver. */
-const char **
-publish_devices()
-{
-	TRACE_FUNCALLS("> publish_devices()\n");
-	for (int32 i = 0; gDeviceNames[i]; i++)
-		free(gDeviceNames[i]);
+//	#pragma mark - driver module API
 
-	int j = 0;
-	acquire_sem(gDriverLock);
-	for(int i = 0; i < DEVICES_COUNT; i++) {
-		if (gSerialDevices[i]) {
-			gDeviceNames[j] = (char *)malloc(strlen(sDeviceBaseName) + 4);
-			if (gDeviceNames[j]) {
-				sprintf(gDeviceNames[j], "%s%d", sDeviceBaseName, i);
-				j++;
-			} else
-				TRACE_ALWAYS("publish_devices - no memory to allocate device names\n");
+
+static float
+pc_serial_supports_device(device_node *parent)
+{
+	TRACE_FUNCALLS("> pc_serial_supports_device()\n");
+	const char *bus;
+
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "pci"))
+		return 0.0;
+
+	// match PCI simple communications / serial class
+	uint8 classBase = 0, classSub = 0;
+	gDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
+	gDeviceManager->get_attr_uint8(parent, B_DEVICE_SUB_TYPE, &classSub,
+		false);
+
+	if (classBase == PCI_simple_communications
+		&& classSub == PCI_serial) {
+		TRACE_ALWAYS("PCI serial device found!\n");
+		return 0.6;
+	}
+
+	// also match Lucent modem (class 0x07, subclass 0x80)
+	if (classBase == PCI_simple_communications
+		&& classSub == PCI_simple_communications_other) {
+		uint16 vendorId = 0;
+		gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false);
+		if (vendorId == 0x11C1) {
+			TRACE_ALWAYS("Lucent modem found!\n");
+			return 0.6;
 		}
 	}
 
-	gDeviceNames[j] = NULL;
-	release_sem(gDriverLock);
-	return (const char **)&gDeviceNames[0];
+	return 0.0;
 }
 
 
-/* find_device - return poiter to device hooks structure for a given device */
-device_hooks *
-find_device(const char *name)
+static status_t
+pc_serial_register_device(device_node *node)
 {
-	static device_hooks deviceHooks = {
-		pc_serial_open,			/* -> open entry point */
-		pc_serial_close,			/* -> close entry point */
-		pc_serial_free,			/* -> free cookie */
-		pc_serial_control,			/* -> control entry point */
-		pc_serial_read,			/* -> read entry point */
-		pc_serial_write,			/* -> write entry point */
-		pc_serial_select,			/* -> select entry point */
-		pc_serial_deselect			/* -> deselect entry point */
+	TRACE_FUNCALLS("> pc_serial_register_device()\n");
+
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "PC Serial Port"} },
+		{ NULL }
 	};
 
-	TRACE_FUNCALLS("> find_device(%s)\n", name);
-	return &deviceHooks;
+	return gDeviceManager->register_node(node,
+		PC_SERIAL_DRIVER_MODULE_NAME, attrs, NULL, NULL);
 }
+
+
+static status_t
+pc_serial_init_driver(device_node *node, void **cookie)
+{
+	TRACE_FUNCALLS("> pc_serial_init_driver()\n");
+
+	status_t status = ensure_globals_initialized();
+	if (status != B_OK)
+		return status;
+
+	// Store the node as cookie
+	*cookie = node;
+	return B_OK;
+}
+
+
+static void
+pc_serial_uninit_driver(void *_cookie)
+{
+	TRACE_FUNCALLS("> pc_serial_uninit_driver()\n");
+	// Global cleanup happens when the last driver instance is unloaded
+}
+
+
+static status_t
+pc_serial_register_child_devices(void *_cookie)
+{
+	TRACE_FUNCALLS("> pc_serial_register_child_devices()\n");
+	device_node *node = (device_node *)_cookie;
+
+	// Publish all detected serial ports
+	acquire_sem(gDriverLock);
+	for (int32 i = 0; i < DEVICES_COUNT; i++) {
+		if (gSerialDevices[i] == NULL)
+			continue;
+
+		char name[64];
+		snprintf(name, sizeof(name), "%s%d", sDeviceBaseName, (int)i);
+
+		gDeviceManager->publish_device(node, name,
+			PC_SERIAL_DEVICE_MODULE_NAME);
+	}
+	release_sem(gDriverLock);
+
+	return B_OK;
+}
+
+
+//	#pragma mark - device init/uninit
+
+
+static status_t
+pc_serial_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+pc_serial_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sPcSerialDevice = {
+	{
+		PC_SERIAL_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	pc_serial_init_device,
+	pc_serial_uninit_device,
+	NULL,	// device_removed
+
+	pc_serial_open,
+	pc_serial_close,
+	pc_serial_free,
+	pc_serial_read,
+	pc_serial_write,
+	NULL,	// io
+	pc_serial_control,
+
+	pc_serial_select,
+	pc_serial_deselect,
+};
+
+struct driver_module_info sPcSerialDriver = {
+	{
+		PC_SERIAL_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	pc_serial_supports_device,
+	pc_serial_register_device,
+	pc_serial_init_driver,
+	pc_serial_uninit_driver,
+	pc_serial_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
+
+module_info *modules[] = {
+	(module_info *)&sPcSerialDriver,
+	(module_info *)&sPcSerialDevice,
+	NULL
+};

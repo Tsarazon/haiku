@@ -19,9 +19,12 @@
 #define _USB_MIDI_H
 
 
+#include <device_manager.h>
 #include <Drivers.h>
-#include <USB.h>
+#include <USB3.h>
 #include <usb/USB_midi.h>
+
+#include <bus/USB.h>
 
 #include <util/ring_buffer.h>
 
@@ -79,6 +82,9 @@ struct driver_cookie;
 
 typedef struct usbmidi_device_info
 {
+	/* device_manager node */
+	device_node* node;
+
 	/* Set of actual ports ("cables" -- one or more) */
 	struct usbmidi_port_info* ports[16];
 
@@ -89,11 +95,11 @@ typedef struct usbmidi_device_info
 	usb_midi_event_packet* buffer;	/* input buffer & base of area */
 	usb_midi_event_packet* out_buffer;	/* above input buffer */
 	size_t inMaxPkt, outMaxPkt;		/* for each of in and out buffers */
-	
+
 	/* Phase 5.2: Lock-free event buffer for low-latency performance */
 	MIDIEventBuffer* event_buffer;	/* Lock-free buffer for v2 packets */
 
-	const usb_device* dev;
+	usb_device dev;
 	uint16 ifno;
 	int devnum;	/* unique device number */
 	char name[20];
@@ -138,14 +144,15 @@ typedef struct usbmidi_port_info
  usb_midi.cpp
 */
 
-extern usb_module_info* usb;
+extern usb_module_info* gUSBModule;
+extern device_manager_info* gDeviceManager;
 extern const char* usb_midi_base_name;
 
 extern usbmidi_port_info* create_usbmidi_port(usbmidi_device_info* devinfo,
 	int cable, bool has_in, bool has_out);
 extern void remove_port(usbmidi_port_info* port);
 
-extern usbmidi_device_info* create_device(const usb_device* dev, uint16 ifno);
+extern usbmidi_device_info* create_device(usb_device dev, uint16 ifno);
 extern void remove_device(usbmidi_device_info* my_dev);
 
 
@@ -170,4 +177,3 @@ extern void free_port_names(void);
 extern void rebuild_port_names(void);
 
 #endif
-

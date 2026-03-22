@@ -15,7 +15,7 @@
 #include <OS.h>
 #include <KernelExport.h>
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <SupportDefs.h>
 #include <graphic_driver.h>
 #include <image.h>

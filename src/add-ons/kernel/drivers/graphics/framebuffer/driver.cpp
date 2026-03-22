@@ -5,10 +5,11 @@
  */
 
 
+#include <device_manager.h>
 #include <OS.h>
 #include <KernelExport.h>
 #include <SupportDefs.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <frame_buffer_console.h>
 #include <boot_item.h>
 #include <vesa_info.h>
@@ -31,38 +32,69 @@
 
 #define MAX_CARDS 1
 
+#define FB_DRIVER_MODULE_NAME "drivers/graphics/framebuffer/driver_v1"
+#define FB_DEVICE_MODULE_NAME "drivers/graphics/framebuffer/device_v1"
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
 
 char* gDeviceNames[MAX_CARDS + 1];
 framebuffer_info* gDeviceInfo[MAX_CARDS];
 mutex gLock;
 
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
 
-extern "C" const char**
-publish_devices(void)
+
+//	#pragma mark - driver module API
+
+
+static float
+fb_supports_device(device_node *parent)
 {
-	TRACE((DEVICE_NAME ": publish_devices()\n"));
-	return (const char**)gDeviceNames;
+	TRACE((DEVICE_NAME ": supports_device()\n"));
+	const char *bus;
+
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "pci"))
+		return 0.0;
+
+	// only match if we're a framebuffer (no VESA modes, but have frame buffer)
+	if (get_boot_item(VESA_MODES_BOOT_INFO, NULL) != NULL
+		|| get_boot_item(FRAME_BUFFER_BOOT_INFO, NULL) == NULL)
+		return 0.0;
+
+	if (sPublished)
+		return 0.0;
+
+	// match PCI display devices with low priority
+	uint8 classBase = 0;
+	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
+	if (classBase == PCI_display) {
+		TRACE((DEVICE_NAME ": framebuffer device found!\n"));
+		return 0.1;
+	}
+
+	return 0.0;
 }
 
 
-extern "C" status_t
-init_hardware(void)
+static status_t
+fb_register_device(device_node *node)
 {
-	TRACE((DEVICE_NAME ": init_hardware()\n"));
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Framebuffer"} },
+		{ NULL }
+	};
 
-	// If we don't have a VESA mode list, then we are a dumb
-	// framebuffer, e.g. when there are no drivers available
-	// on a UEFI system.
-	return (get_boot_item(VESA_MODES_BOOT_INFO, NULL) == NULL
-			&& get_boot_item(FRAME_BUFFER_BOOT_INFO, NULL) != NULL)
-		? B_OK : B_ERROR;
+	return sDeviceManager->register_node(node, FB_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
 
 
-extern "C" status_t
-init_driver(void)
+static status_t
+fb_init_driver(device_node *node, void **cookie)
 {
 	TRACE((DEVICE_NAME ": init_driver()\n"));
 
@@ -74,45 +106,160 @@ init_driver(void)
 
 	gDeviceNames[0] = strdup("graphics/framebuffer");
 	if (gDeviceNames[0] == NULL) {
-		free(gDeviceNames[0]);
+		free(gDeviceInfo[0]);
 		return B_NO_MEMORY;
 	}
 
 	gDeviceNames[1] = NULL;
 
 	mutex_init(&gLock, "framebuffer lock");
+
+	*cookie = node;
 	return B_OK;
 }
 
 
-extern "C" void
-uninit_driver(void)
+static void
+fb_uninit_driver(void *_cookie)
 {
 	TRACE((DEVICE_NAME ": uninit_driver()\n"));
 
 	mutex_destroy(&gLock);
 
-	// free device related structures
 	char* name;
 	for (int32 index = 0; (name = gDeviceNames[index]) != NULL; index++) {
 		free(gDeviceInfo[index]);
 		free(name);
+		gDeviceNames[index] = NULL;
+		gDeviceInfo[index] = NULL;
 	}
+
+	sPublished = false;
 }
 
 
-extern "C" device_hooks*
-find_device(const char* name)
+static status_t
+fb_register_child_devices(void *_cookie)
 {
-	int index;
+	device_node *node = (device_node *)_cookie;
 
-	TRACE((DEVICE_NAME ": find_device()\n"));
+	if (sPublished || gDeviceNames[0] == NULL)
+		return B_OK;
 
-	for (index = 0; gDeviceNames[index] != NULL; index++) {
-		if (!strcmp(name, gDeviceNames[index]))
-			return &gDeviceHooks;
-	}
-
-	return NULL;
+	sPublished = true;
+	return sDeviceManager->publish_device(node, gDeviceNames[0],
+		FB_DEVICE_MODULE_NAME);
 }
 
+
+//	#pragma mark - device module API
+
+
+static status_t
+fb_open(void *_info, const char *path, int openMode, void **_cookie)
+{
+	return gDeviceHooks.open(path, openMode, _cookie);
+}
+
+
+static status_t
+fb_close(void *cookie)
+{
+	return gDeviceHooks.close(cookie);
+}
+
+
+static status_t
+fb_free(void *cookie)
+{
+	return gDeviceHooks.free(cookie);
+}
+
+
+static status_t
+fb_read(void *cookie, off_t position, void *buffer, size_t *numBytes)
+{
+	return gDeviceHooks.read(cookie, position, buffer, numBytes);
+}
+
+
+static status_t
+fb_write(void *cookie, off_t position, const void *buffer, size_t *numBytes)
+{
+	return gDeviceHooks.write(cookie, position, buffer, numBytes);
+}
+
+
+static status_t
+fb_control(void *cookie, uint32 op, void *buffer, size_t length)
+{
+	return gDeviceHooks.control(cookie, op, buffer, length);
+}
+
+
+static status_t
+fb_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+fb_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sFbDevice = {
+	{
+		FB_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	fb_init_device,
+	fb_uninit_device,
+	NULL,	// device_removed
+
+	fb_open,
+	fb_close,
+	fb_free,
+	fb_read,
+	fb_write,
+	NULL,	// io
+	fb_control,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sFbDriver = {
+	{
+		FB_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	fb_supports_device,
+	fb_register_device,
+	fb_init_driver,
+	fb_uninit_driver,
+	fb_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
+
+module_info* modules[] = {
+	(module_info*)&sFbDriver,
+	(module_info*)&sFbDevice,
+	NULL
+};

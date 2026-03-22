@@ -9,7 +9,7 @@
 
 #include <Drivers.h>
 #include <Accelerant.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <drivers/bios.h>
 

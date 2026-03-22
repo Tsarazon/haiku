@@ -14,7 +14,7 @@
 #include <Accelerant.h>
 #include "video_overlay.h"
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <OS.h>
 #include "AGP.h"
 

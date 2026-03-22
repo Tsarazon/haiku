@@ -11,7 +11,7 @@
 
 #include <KernelExport.h>
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <debug.h>
 
 #include <string.h>
@@ -351,7 +351,8 @@ struct hda_multi {
 
 /* driver.c */
 extern device_hooks gDriverHooks;
-extern pci_module_info* gPci;
+extern pci_device_module_info* gPci;
+extern pci_device* gPciDev;
 extern hda_controller gCards[MAX_CARDS];
 extern uint32 gNumCards;
 

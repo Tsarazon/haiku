@@ -5,7 +5,7 @@
  */
 
 
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <sys/bus.h>
 #include <sys/rman.h>
@@ -27,7 +27,6 @@ HAIKU_DRIVER_REQUIREMENTS(0);
 NO_HAIKU_REENABLE_INTERRUPTS();
 
 
-extern pci_module_info *gPci;
 extern driver_t* DRIVER_MODULE_NAME(ukphy, miibus);
 
 
@@ -70,49 +69,52 @@ haiku_sge_get_mac_addr_apc(device_t dev, uint8_t* dest, int* rgmii)
 {
 	// SiS96x can use APC CMOS RAM to store MAC address,
 	// this is accessed through ISA bridge.
+	// Cross-device query requires legacy PCI module.
+	pci_module_info* pciLegacy;
+	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pciLegacy) != B_OK)
+		return B_ERROR;
 
-	// look for PCI-ISA bridge
 	uint16 ids[] = { 0x0965, 0x0966, 0x0968 };
+	int result = B_ERROR;
 
 	pci_info pciInfo = {0};
 	long i;
-	for (i = 0; B_OK == (*gPci->get_nth_pci_info)(i, &pciInfo); i++) {
+	for (i = 0; pciLegacy->get_nth_pci_info(i, &pciInfo) == B_OK; i++) {
 		size_t idx;
 		if (pciInfo.vendor_id != 0x1039)
 			continue;
 
 		for (idx = 0; idx < B_COUNT_OF(ids); idx++) {
 			if (pciInfo.device_id == ids[idx]) {
-				size_t i;
-				// enable ports 0x78 0x79 to access APC registers
-				uint32 reg = gPci->read_pci_config(pciInfo.bus,
+				size_t j;
+				uint32 reg = pciLegacy->read_pci_config(pciInfo.bus,
 					pciInfo.device, pciInfo.function, 0x48, 1);
 				reg &= ~0x02;
-				gPci->write_pci_config(pciInfo.bus,
+				pciLegacy->write_pci_config(pciInfo.bus,
 					pciInfo.device, pciInfo.function, 0x48, 1, reg);
 				snooze(50);
-				reg = gPci->read_pci_config(pciInfo.bus,
+				reg = pciLegacy->read_pci_config(pciInfo.bus,
 					pciInfo.device, pciInfo.function, 0x48, 1);
 
-				// read factory MAC address
-				for (i = 0; i < 6; i++) {
-					gPci->write_io_8(0x78, 0x09 + i);
-					dest[i] = gPci->read_io_8(0x79);
+				for (j = 0; j < 6; j++) {
+					pciLegacy->write_io_8(0x78, 0x09 + j);
+					dest[j] = pciLegacy->read_io_8(0x79);
 				}
 
-				// check MII/RGMII
-				gPci->write_io_8(0x78, 0x12);
-				if ((gPci->read_io_8(0x79) & 0x80) != 0)
+				pciLegacy->write_io_8(0x78, 0x12);
+				if ((pciLegacy->read_io_8(0x79) & 0x80) != 0)
 					*rgmii = 1;
 
-				// close access to APC registers
-				gPci->write_pci_config(pciInfo.bus,
+				pciLegacy->write_pci_config(pciInfo.bus,
 					pciInfo.device, pciInfo.function, 0x48, 1, reg);
 
-				return B_OK;
+				result = B_OK;
+				goto done;
 			}
 		}
 	}
 
-	return B_ERROR;
+done:
+	put_module(B_PCI_MODULE_NAME);
+	return result;
 }

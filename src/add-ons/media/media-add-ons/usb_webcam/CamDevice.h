@@ -8,15 +8,9 @@
 
 #include <OS.h>
 #include <image.h>
-#ifdef __HAIKU__
-//#if 1
-#	include <USB3.h>
-#	include <USBKit.h>
-#	define SUPPORT_ISO
-#else
-#	include <USB.h>
-#	include <usb/USBKit.h>
-#endif
+#include <USB3.h>
+#include <USBKit.h>
+#define SUPPORT_ISO
 #include <Locker.h>
 #include <MediaAddOn.h>
 #include <String.h>

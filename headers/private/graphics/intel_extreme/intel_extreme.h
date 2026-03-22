@@ -14,7 +14,7 @@
 
 #include <Accelerant.h>
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <edid.h>
 

@@ -8,10 +8,11 @@
 #include "etherpci_private.h"
 #include <ether_driver.h>
 
+#include <device_manager.h>
 #include <OS.h>
 #include <KernelExport.h>
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -23,7 +24,11 @@
 #define DEVNAME_LENGTH		64
 #define MAX_CARDS 			 4			/* maximum number of driver instances */
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#define ETHERPCI_DRIVER_MODULE_NAME "drivers/network/etherpci/driver_v1"
+#define ETHERPCI_DEVICE_MODULE_NAME "drivers/network/etherpci/device_v1"
+#define ETHERPCI_DEVICE_ID_GENERATOR "etherpci/device_id"
+
+static device_manager_info *sDeviceManager;
 
 /* debug flags */
 #define ERR       0x0001
@@ -49,18 +54,14 @@ int32 api_version = B_CUR_DRIVER_API_VERSION;
 #endif
 
 
-static pci_module_info		*gPCIModInfo;
+static pci_device_module_info	*gPCI;
+static pci_device			*gPCIDev;
 static char 				*gDevNameList[MAX_CARDS+1];
 static pci_info 			*gDevList[MAX_CARDS+1];
 static int32 				gOpenMask = 0;
 
 
-/* Driver Entry Points */
-status_t init_hardware(void);
-status_t init_driver(void);
-void uninit_driver(void);
-const char** publish_devices(void);
-device_hooks *find_device(const char *name);
+/* Forward declarations */
 
 
 
@@ -170,10 +171,10 @@ typedef struct etherpci_private {
 
 #else /* !PPC */
 
-#define ether_outb(device, offset, value)	(*gPCIModInfo->write_io_8)((device->reg_base + (offset)), (value))
-#define ether_outw(device, offset, value)	(*gPCIModInfo->write_io_16)((device->reg_base + (offset)), (value))
-#define ether_inb(device, offset)			((*gPCIModInfo->read_io_8)(device->reg_base + (offset)))
-#define ether_inw(device, offset)			((*gPCIModInfo->read_io_16)(device->reg_base + (offset)))
+#define ether_outb(device, offset, value)	gPCI->write_io_8(gPCIDev, (device->reg_base + (offset)), (value))
+#define ether_outw(device, offset, value)	gPCI->write_io_16(gPCIDev, (device->reg_base + (offset)), (value))
+#define ether_inb(device, offset)			gPCI->read_io_8(gPCIDev, (device->reg_base + (offset)))
+#define ether_inw(device, offset)			gPCI->read_io_16(gPCIDev, (device->reg_base + (offset)))
 
 #endif
 
@@ -182,22 +183,22 @@ typedef struct etherpci_private {
 
 uint8  ether_inb(etherpci_private_t *device, uint32 offset) {
   	uint8 result;
-	result = ((*gPCIModInfo->read_io_8)(device->reg_base + (offset)));
+	result = gPCI->read_io_8(gPCIDev, device->reg_base + (offset));
 	ETHER_DEBUG(PCI_IO, device->debug, " inb(%x) %x \n", offset, result);
 	return result;
 };
 uint16  ether_inw(etherpci_private_t *device, uint32 offset) {
   	uint16 result;
-	result = ((*gPCIModInfo->read_io_16)(device->reg_base + (offset)));
+	result = gPCI->read_io_16(gPCIDev, device->reg_base + (offset));
 	ETHER_DEBUG(PCI_IO, device->debug, " inw(%x) %x \n", offset, result);
 	return result;
 };
 void  ether_outb(etherpci_private_t *device, uint32 offset, uint8 value) {
-	(*gPCIModInfo->write_io_8)((device->reg_base + (offset)), (value));
+	gPCI->write_io_8(gPCIDev, device->reg_base + (offset), (value));
 	ETHER_DEBUG(PCI_IO, device->debug, " outb(%x) %x \n", offset, value);
 };
 void  ether_outw(etherpci_private_t *device, uint32 offset, uint16 value) {
-	(*gPCIModInfo->write_io_16)((device->reg_base + (offset)), (value));
+	gPCI->write_io_16(gPCIDev, device->reg_base + (offset), (value));
 	ETHER_DEBUG(PCI_IO, device->debug, " outb(%x) %x \n", offset, value);
 };
 
@@ -265,7 +266,7 @@ static int etherpci(int argc, char **argv);
 
 
 /* prototypes */
-static status_t open_hook(const char *name, uint32 flags, void **cookie);
+static status_t open_hook(void *info, const char *name, int flags, void **cookie);
 static status_t close_hook(void *);
 static status_t free_hook(void *);
 static status_t control_hook(void * cookie,uint32 msg,void *buf,size_t len);
@@ -278,57 +279,10 @@ static status_t write_hook(void *data, off_t pos, const void *buf, size_t *len);
 //static status_t enable_addressing(etherpci_private_t  *data);             /* enable pci io address space for device */
 //static int domulti(etherpci_private_t *data,char *addr);
 
-static device_hooks gDeviceHooks =  {
-	open_hook, 			/* -> open entry point */
-	close_hook,         /* -> close entry point */
-	free_hook,          /* -> free entry point */
-	control_hook,       /* -> control entry point */
-	read_hook,          /* -> read entry point */
-	write_hook,         /* -> write entry point */
-	NULL,               /* -> select entry point */
-	NULL,                /* -> deselect entry point */
-	NULL,               /* -> readv */
-	NULL                /* -> writev */
-};
+/* device_hooks replaced by device_module_info at end of file */
 
 
-static int32
-get_pci_list(pci_info *info[], int32 maxEntries)
-{
-	int32 i, entries;
-	pci_info *item;
-
-	item = (pci_info *)malloc(sizeof(pci_info));
-	if (item == NULL)
-		return 0;
-
-	for (i = 0, entries = 0; entries < maxEntries; i++) {
-		if (gPCIModInfo->get_nth_pci_info(i, item) != B_OK)
-			break;
-
-		if ((item->vendor_id == 0x10ec && item->device_id == 0x8029)		// RealTek 8029
-			|| (item->vendor_id == 0x1106 && item->device_id == 0x0926)		// VIA
-			|| (item->vendor_id == 0x4a14 && item->device_id == 0x5000)		// NetVin 5000
-			|| (item->vendor_id == 0x1050 && item->device_id == 0x0940)		// ProLAN
-			|| (item->vendor_id == 0x11f6 && item->device_id == 0x1401)		// Compex
-			|| (item->vendor_id == 0x8e2e && item->device_id == 0x3000)) {	// KTI
-			/* check if the device really has an IRQ */
-			if (item->u.h0.interrupt_line == 0 || item->u.h0.interrupt_line == 0xFF) {
-				dprintf(kDevName " found with invalid IRQ - check IRQ assignement");
-				continue;
-			}
-
-			dprintf(kDevName " found at IRQ %x ", item->u.h0.interrupt_line);
-			info[entries++] = item;
-			item = (pci_info *)malloc(sizeof(pci_info));
-			if (item == NULL)
-				break;
-		}
-	}
-	info[entries] = NULL;
-	free(item);
-	return entries;
-}
+/* get_pci_list removed — device_manager handles device discovery */
 
 
 static status_t
@@ -1210,8 +1164,8 @@ enable_addressing(etherpci_private_t *data)
 	dprintf(kDevName ": reg_base=%" B_PRIx32 "\n", data->reg_base);
 
 	/* enable pci address access */
-	cmd = (gPCIModInfo->read_pci_config)(data->pciInfo->bus, data->pciInfo->device, data->pciInfo->function, PCI_command, 2);
-	(gPCIModInfo->write_pci_config)(data->pciInfo->bus, data->pciInfo->device, data->pciInfo->function, PCI_command, 2, cmd | PCI_command_io);
+	cmd = gPCI->read_pci_config(gPCIDev, PCI_command, 2);
+	gPCI->write_pci_config(gPCIDev, PCI_command, 2, cmd | PCI_command_io);
 
 	return B_OK;
 }
@@ -1340,91 +1294,121 @@ dump_packet(const char * msg, unsigned char * buf, uint16 size)
 }
 
 
-//	#pragma mark - Driver Entry Points
+//	#pragma mark - Driver Module API
 
 
-status_t
-init_hardware(void)
+static int
+etherpci_is_supported_device(uint16 vendor_id, uint16 device_id)
 {
-	return B_NO_ERROR;
+	return (vendor_id == 0x10ec && device_id == 0x8029)
+		|| (vendor_id == 0x1106 && device_id == 0x0926)
+		|| (vendor_id == 0x4a14 && device_id == 0x5000)
+		|| (vendor_id == 0x1050 && device_id == 0x0940)
+		|| (vendor_id == 0x11f6 && device_id == 0x1401)
+		|| (vendor_id == 0x8e2e && device_id == 0x3000);
 }
 
 
-status_t
-init_driver(void)
+static float
+etherpci_supports_device(device_node *parent)
 {
-	status_t status;
-	int32 entries;
-	char devName[64];
-	int32 i;
+	const char *bus;
+	uint16 vendorId, deviceId;
 
-	dprintf(kDevName ": init_driver ");
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "pci"))
+		return 0.0;
 
-	if ((status = get_module( B_PCI_MODULE_NAME, (module_info **)&gPCIModInfo )) != B_OK) {
-		dprintf(kDevName " Get module failed! %s\n", strerror(status ));
-		return status;
-	}
+	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false) != B_OK)
+		return 0.0;
+	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+			&deviceId, false) != B_OK)
+		return 0.0;
 
-	/* Find Lan cards*/
-	if ((entries = get_pci_list(gDevList, MAX_CARDS )) == 0) {
-		dprintf("init_driver: " kDevName " not found\n");
-		free_pci_list(gDevList);
-		put_module(B_PCI_MODULE_NAME );
+	if (etherpci_is_supported_device(vendorId, deviceId))
+		return 0.6;
+
+	return 0.0;
+}
+
+
+static status_t
+etherpci_register_device(device_node *node)
+{
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "PCI NE2000 Ethernet" } },
+		{ NULL }
+	};
+
+	return sDeviceManager->register_node(node, ETHERPCI_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+etherpci_init_driver(device_node *node, void **cookie)
+{
+	dprintf(kDevName ": init_driver\n");
+
+	/* Get pci_device_module_info from parent node */
+	device_node *parent = sDeviceManager->get_parent_node(node);
+	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
+		(void **)&gPCIDev);
+	sDeviceManager->put_node(parent);
+
+	/* Get pci_info for this device */
+	pci_info *item = (pci_info *)malloc(sizeof(pci_info));
+	if (item == NULL)
+		return B_NO_MEMORY;
+
+	gPCI->get_pci_info(gPCIDev, item);
+
+	if (item->u.h0.interrupt_line == 0
+		|| item->u.h0.interrupt_line == 0xFF) {
+		dprintf(kDevName " found with invalid IRQ\n");
+		free(item);
 		return B_ERROR;
 	}
-	dprintf("\n");
 
-	/* Create device name list*/
-	for (i=0; i<entries; i++ )
-	{
-		sprintf(devName, "%s%" B_PRId32, kDevDir, i );
-		gDevNameList[i] = (char *)malloc(strlen(devName)+1);
-		strcpy(gDevNameList[i], devName);
-	}
-	gDevNameList[i] = NULL;
+	gDevList[0] = item;
+	gDevList[1] = NULL;
 
+	char devName[64];
+	sprintf(devName, "%s%d", kDevDir, 0);
+	gDevNameList[0] = strdup(devName);
+	gDevNameList[1] = NULL;
+
+	*cookie = node;
 	return B_OK;
 }
 
 
-void
-uninit_driver(void)
+static void
+etherpci_uninit_driver(void *_cookie)
 {
-	void *item;
 	int32 i;
 
-	/*Free device name list*/
-	for (i = 0; (item = gDevNameList[i]) != NULL; i++) {
-		free(item);
+	for (i = 0; gDevNameList[i] != NULL; i++) {
+		free(gDevNameList[i]);
+		gDevNameList[i] = NULL;
 	}
 
-	/*Free device list*/
 	free_pci_list(gDevList);
-	put_module(B_PCI_MODULE_NAME);
 }
 
 
-device_hooks *
-find_device(const char *name)
+static status_t
+etherpci_register_child_devices(void *_cookie)
 {
-	int32 i;
-	char *item;
+	device_node *node = (device_node *)_cookie;
 
-	/* Find device name */
-	for (i = 0; (item = gDevNameList[i]) != NULL; i++) {
-		if (!strcmp(name, item))
-			return &gDeviceHooks;
-	}
+	if (gDevNameList[0] == NULL)
+		return B_ERROR;
 
-	return NULL;
-}
-
-
-const char**
-publish_devices(void)
-{
-	dprintf(kDevName ": publish_devices()\n");
-	return (const char **)gDevNameList;
+	return sDeviceManager->publish_device(node, gDevNameList[0],
+		ETHERPCI_DEVICE_MODULE_NAME);
 }
 
 
@@ -1467,7 +1451,7 @@ read_hook(void *_data, off_t pos, void *buf, size_t *len)
 
 
 static status_t
-open_hook(const char *name, uint32 flags, void **cookie)
+open_hook(void *_info, const char *name, int flags, void **cookie)
 {
 	int32 devID;
 	int32 mask;
@@ -1721,4 +1705,75 @@ control_hook(void *_data, uint32 msg, void *buf, size_t len)
 
 	return B_ERROR;
 }
+
+
+//	#pragma mark - device init/uninit
+
+
+static status_t
+etherpci_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+etherpci_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark - module exports
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sEtherpciDevice = {
+	{
+		ETHERPCI_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	etherpci_init_device,
+	etherpci_uninit_device,
+	NULL,	/* device_removed */
+
+	open_hook,
+	close_hook,
+	free_hook,
+	read_hook,
+	write_hook,
+	NULL,	/* io */
+	control_hook,
+
+	NULL,	/* select */
+	NULL,	/* deselect */
+};
+
+struct driver_module_info sEtherpciDriver = {
+	{
+		ETHERPCI_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	etherpci_supports_device,
+	etherpci_register_device,
+	etherpci_init_driver,
+	etherpci_uninit_driver,
+	etherpci_register_child_devices,
+	NULL,	/* rescan */
+	NULL,	/* removed */
+};
+
+module_info *modules[] = {
+	(module_info *)&sEtherpciDriver,
+	(module_info *)&sEtherpciDevice,
+	NULL
+};
 

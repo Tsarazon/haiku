@@ -14,7 +14,7 @@
 #include <image.h>
 #include <KernelExport.h>
 #include <OS.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <SupportDefs.h>
 
 #include <vesa.h>

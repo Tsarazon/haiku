@@ -11,6 +11,7 @@
 
 #include <util/AutoLock.h>
 #include <AutoDeleter.h>
+#include <device_manager.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <bus/USB.h>
 #include <kernel.h>
 
 
@@ -30,115 +32,31 @@
 #endif
 
 #define DRIVER_NAME		"usb_raw"
-#define DEVICE_NAME		"bus/usb/raw"
+#define DEVICE_NAME		"bus/usb"
+
+
+#define USB_RAW_DRIVER_MODULE_NAME "drivers/bus/usb_raw/driver_v1"
+#define USB_RAW_DEVICE_MODULE_NAME "drivers/bus/usb_raw/device_v1"
+#define USB_RAW_DEVICE_ID_GENERATOR "usb_raw/device_id"
+
 
 typedef struct {
+	device_node*		node;
 	usb_device			device;
 	mutex				lock;
 	uint32				reference_count;
-
 	char				name[64];
-	void				*link;
-
 	sem_id				notify;
 	status_t			status;
 	size_t				actual_length;
 } raw_device;
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
 static usb_module_info *gUSBModule = NULL;
-static raw_device *gDeviceList = NULL;
-static uint32 gDeviceCount = 0;
-static mutex gDeviceListLock;
-static char **gDeviceNames = NULL;
-
-static status_t
-usb_raw_device_added(usb_device newDevice, void **cookie)
-{
-	TRACE((DRIVER_NAME": device_added(0x%08" B_PRIx32 ")\n", newDevice));
-	raw_device *device = (raw_device *)malloc(sizeof(raw_device));
-
-	mutex_init(&device->lock, "usb_raw device lock");
-
-	device->notify = create_sem(0, "usb_raw callback notify");
-	if (device->notify < B_OK) {
-		mutex_destroy(&device->lock);
-		free(device);
-		return B_NO_MORE_SEMS;
-	}
-
-	char deviceName[64];
-	memcpy(deviceName, &newDevice, sizeof(usb_device));
-	if (gUSBModule->usb_ioctl('DNAM', deviceName, sizeof(deviceName)) >= B_OK) {
-		snprintf(device->name, sizeof(device->name), "bus/usb/%s", deviceName);
-	} else {
-		snprintf(device->name, sizeof(device->name), "bus/usb/%08" B_PRIx32,
-			newDevice);
-	}
-
-	device->device = newDevice;
-	device->reference_count = 0;
-
-	mutex_lock(&gDeviceListLock);
-	device->link = (void *)gDeviceList;
-	gDeviceList = device;
-	gDeviceCount++;
-	mutex_unlock(&gDeviceListLock);
-
-	TRACE((DRIVER_NAME": new device: 0x%p\n", device));
-	*cookie = (void *)device;
-	return B_OK;
-}
-
-
-static status_t
-usb_raw_device_removed(void *cookie)
-{
-	TRACE((DRIVER_NAME": device_removed(0x%p)\n", cookie));
-	raw_device *device = (raw_device *)cookie;
-
-	// cancel all pending transfers to make sure no one keeps waiting forever
-	// in syscalls.
-	const usb_configuration_info *configurationInfo =
-		gUSBModule->get_configuration(device->device);
-	if (configurationInfo != NULL) {
-		struct usb_interface_info* interface
-			= configurationInfo->interface->active;
-		for (unsigned int i = 0; i < interface->endpoint_count; i++)
-			gUSBModule->cancel_queued_transfers(interface->endpoint[i].handle);
-	}
-
-	mutex_lock(&gDeviceListLock);
-	if (gDeviceList == device) {
-		gDeviceList = (raw_device *)device->link;
-	} else {
-		raw_device *element = gDeviceList;
-		while (element) {
-			if (element->link == device) {
-				element->link = device->link;
-				break;
-			}
-
-			element = (raw_device *)element->link;
-		}
-	}
-	gDeviceCount--;
-	mutex_unlock(&gDeviceListLock);
-
-	device->device = 0;
-	if (device->reference_count == 0) {
-		mutex_lock(&device->lock);
-		mutex_destroy(&device->lock);
-		delete_sem(device->notify);
-		free(device);
-	}
-
-	return B_OK;
-}
+static device_manager_info *gDeviceManager = NULL;
 
 
 //
-//#pragma mark -
+//#pragma mark - Helper Functions
 //
 
 
@@ -175,44 +93,41 @@ usb_raw_get_interface(raw_device *device, uint32 configIndex,
 	if (alternateIndex == B_USB_RAW_ACTIVE_ALTERNATE)
 		result = configurationInfo->interface[interfaceIndex].active;
 	else {
-		const usb_interface_list *interfaceList =
-			&configurationInfo->interface[interfaceIndex];
-		if (alternateIndex >= interfaceList->alt_count) {
+		if (alternateIndex >= configurationInfo->interface[interfaceIndex].alt_count) {
 			*status = B_USB_RAW_STATUS_INVALID_INTERFACE;
 			return NULL;
 		}
-
-		result = &interfaceList->alt[alternateIndex];
+		result = &configurationInfo->interface[interfaceIndex].alt[alternateIndex];
 	}
 
 	return result;
 }
 
 
+static void
+usb_raw_callback(void *cookie, status_t status, void *data,
+	size_t actualLength)
+{
+	raw_device *device = (raw_device *)cookie;
+	device->status = status;
+	device->actual_length = actualLength;
+	release_sem(device->notify);
+}
+
+
 //
-//#pragma mark -
+//#pragma mark - device module API
 //
 
 
 static status_t
-usb_raw_open(const char *name, uint32 flags, void **cookie)
+usb_raw_open(void *_info, const char *path, int openMode, void **_cookie)
 {
-	TRACE((DRIVER_NAME": open()\n"));
-	mutex_lock(&gDeviceListLock);
-	raw_device *element = gDeviceList;
-	while (element) {
-		if (strcmp(name, element->name) == 0) {
-			element->reference_count++;
-			*cookie = element;
-			mutex_unlock(&gDeviceListLock);
-			return B_OK;
-		}
-
-		element = (raw_device *)element->link;
-	}
-
-	mutex_unlock(&gDeviceListLock);
-	return B_NAME_NOT_FOUND;
+	TRACE((DRIVER_NAME": open(%s)\n", path));
+	raw_device *device = (raw_device *)_info;
+	device->reference_count++;
+	*_cookie = device;
+	return B_OK;
 }
 
 
@@ -228,51 +143,9 @@ static status_t
 usb_raw_free(void *cookie)
 {
 	TRACE((DRIVER_NAME": free()\n"));
-	mutex_lock(&gDeviceListLock);
-
 	raw_device *device = (raw_device *)cookie;
 	device->reference_count--;
-	if (device->device == 0) {
-		mutex_lock(&device->lock);
-		mutex_destroy(&device->lock);
-		delete_sem(device->notify);
-		free(device);
-	}
-
-	mutex_unlock(&gDeviceListLock);
 	return B_OK;
-}
-
-
-static void
-usb_raw_callback(void *cookie, status_t status, void *data, size_t actualLength)
-{
-	TRACE((DRIVER_NAME": callback()\n"));
-	raw_device *device = (raw_device *)cookie;
-
-	switch (status) {
-		case B_OK:
-			device->status = B_USB_RAW_STATUS_SUCCESS;
-			break;
-		case B_TIMED_OUT:
-			device->status = B_USB_RAW_STATUS_TIMEOUT;
-			break;
-		case B_CANCELED:
-			device->status = B_USB_RAW_STATUS_ABORTED;
-			break;
-		case B_DEV_CRC_ERROR:
-			device->status = B_USB_RAW_STATUS_CRC_ERROR;
-			break;
-		case B_DEV_STALLED:
-			device->status = B_USB_RAW_STATUS_STALLED;
-			break;
-		default:
-			device->status = B_USB_RAW_STATUS_FAILED;
-			break;
-	}
-
-	device->actual_length = actualLength;
-	release_sem(device->notify);
 }
 
 
@@ -285,113 +158,132 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 		return B_DEV_NOT_READY;
 
 	usb_raw_command command;
-	if (length < sizeof(command.version.status))
+	if (length < sizeof(command)) {
+		TRACE((DRIVER_NAME": raw ioctl buffer too small\n"));
 		return B_BUFFER_OVERFLOW;
-	if (!IS_USER_ADDRESS(buffer)
-		|| user_memcpy(&command, buffer, min_c(length, sizeof(command)))
-			!= B_OK) {
+	}
+
+	if (!IS_USER_ADDRESS(buffer) || user_memcpy(&command, buffer,
+			sizeof(command)) != B_OK) {
 		return B_BAD_ADDRESS;
 	}
 
-	command.version.status = B_USB_RAW_STATUS_ABORTED;
-	status_t status = B_DEV_INVALID_IOCTL;
+	command.version.status = B_USB_RAW_STATUS_FAILED;
+	status_t status = B_OK;
 
 	switch (op) {
 		case B_USB_RAW_COMMAND_GET_VERSION:
 		{
 			command.version.status = B_USB_RAW_PROTOCOL_VERSION;
-			status = B_OK;
 			break;
 		}
 
 		case B_USB_RAW_COMMAND_GET_DEVICE_DESCRIPTOR:
 		{
-			if (length < sizeof(command.device))
-				return B_BUFFER_OVERFLOW;
-
-			status = B_OK;
 			const usb_device_descriptor *deviceDescriptor =
 				gUSBModule->get_device_descriptor(device->device);
-			if (deviceDescriptor == NULL)
-				return B_OK;
-
-			if (!IS_USER_ADDRESS(command.device.descriptor)
-				|| user_memcpy(command.device.descriptor, deviceDescriptor,
-					sizeof(usb_device_descriptor)) != B_OK) {
-				return B_BAD_ADDRESS;
+			if (deviceDescriptor == NULL) {
+				command.device.status = B_USB_RAW_STATUS_ABORTED;
+				break;
 			}
 
+			if (user_memcpy(command.device.descriptor,
+					deviceDescriptor, sizeof(usb_device_descriptor))
+					!= B_OK) {
+				return B_BAD_ADDRESS;
+			}
 			command.device.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
 
 		case B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR:
-		case B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR_ETC:
 		{
-			if (op == B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR_ETC
-					&& length < sizeof(command.config_etc))
-				return B_BUFFER_OVERFLOW;
-
-			if (length < sizeof(command.config))
-				return B_BUFFER_OVERFLOW;
-
-			status = B_OK;
-			const usb_configuration_info *configurationInfo =
-				usb_raw_get_configuration(device, command.config.config_index,
-					&command.config.status);
+			const usb_configuration_info *configurationInfo
+				= usb_raw_get_configuration(device,
+					command.config.config_index, &command.config.status);
 			if (configurationInfo == NULL)
 				break;
 
-			size_t sizeToCopy = sizeof(usb_configuration_descriptor);
-			if (op == B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR_ETC) {
-				sizeToCopy = std::min(command.config_etc.length,
-					(size_t)configurationInfo->descr->total_length);
-			}
-
-			if (!IS_USER_ADDRESS(command.config.descriptor)
-				|| user_memcpy(command.config.descriptor,
-					configurationInfo->descr, sizeToCopy) != B_OK) {
+			if (user_memcpy(command.config.descriptor,
+					configurationInfo->descr,
+					sizeof(usb_configuration_descriptor)) != B_OK) {
 				return B_BAD_ADDRESS;
 			}
-
 			command.config.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
 
-		case B_USB_RAW_COMMAND_GET_ALT_INTERFACE_COUNT:
-		case B_USB_RAW_COMMAND_GET_ACTIVE_ALT_INTERFACE_INDEX:
+		case B_USB_RAW_COMMAND_GET_CONFIGURATION_DESCRIPTOR_ETC:
 		{
-			if (length < sizeof(command.alternate))
-				return B_BUFFER_OVERFLOW;
+			const usb_configuration_info *configurationInfo
+				= usb_raw_get_configuration(device,
+					command.config_etc.config_index,
+					&command.config_etc.status);
+			if (configurationInfo == NULL)
+				break;
 
-			status = B_OK;
-			const usb_configuration_info *configurationInfo =
-				usb_raw_get_configuration(device,
+			size_t actualLength = std::min(command.config_etc.length,
+				(size_t)configurationInfo->descr->total_length);
+			const usb_configuration_descriptor *descriptor
+				= gUSBModule->get_nth_configuration(device->device,
+					command.config_etc.config_index)->descr;
+
+			if (user_memcpy(command.config_etc.descriptor,
+					descriptor, actualLength) != B_OK) {
+				return B_BAD_ADDRESS;
+			}
+			command.config_etc.length = actualLength;
+			command.config_etc.status = B_USB_RAW_STATUS_SUCCESS;
+			break;
+		}
+
+		case B_USB_RAW_COMMAND_GET_ALT_INTERFACE_COUNT:
+		{
+			const usb_configuration_info *configurationInfo
+				= usb_raw_get_configuration(device,
 					command.alternate.config_index,
 					&command.alternate.status);
 			if (configurationInfo == NULL)
 				break;
 
-			if (command.alternate.interface_index
-				>= configurationInfo->interface_count) {
-				command.alternate.status = B_USB_RAW_STATUS_INVALID_INTERFACE;
+			uint32 interfaceIndex = command.alternate.interface_index;
+			if (interfaceIndex >= configurationInfo->interface_count) {
+				command.alternate.status
+					= B_USB_RAW_STATUS_INVALID_INTERFACE;
 				break;
 			}
 
-			const usb_interface_list *interfaceList
-				= &configurationInfo->interface[
-					command.alternate.interface_index];
-			if (op == B_USB_RAW_COMMAND_GET_ALT_INTERFACE_COUNT) {
-				command.alternate.alternate_info = interfaceList->alt_count;
-			} else {
-				for (size_t i = 0; i < interfaceList->alt_count; i++) {
-					if (&interfaceList->alt[i] == interfaceList->active) {
-						command.alternate.alternate_info = i;
-						break;
-					}
-				}
+			command.alternate.alternate_info
+				= configurationInfo->interface[interfaceIndex].alt_count;
+			command.alternate.status = B_USB_RAW_STATUS_SUCCESS;
+			break;
+		}
+
+		case B_USB_RAW_COMMAND_GET_ACTIVE_ALT_INTERFACE_INDEX:
+		{
+			const usb_configuration_info *configurationInfo
+				= usb_raw_get_configuration(device,
+					command.alternate.config_index,
+					&command.alternate.status);
+			if (configurationInfo == NULL)
+				break;
+
+			uint32 interfaceIndex = command.alternate.interface_index;
+			if (interfaceIndex >= configurationInfo->interface_count) {
+				command.alternate.status
+					= B_USB_RAW_STATUS_INVALID_INTERFACE;
+				break;
 			}
 
+			for (uint32 i = 0; i < configurationInfo->interface[
+					interfaceIndex].alt_count; i++) {
+				if (&configurationInfo->interface[interfaceIndex].alt[i]
+						== configurationInfo->interface[
+							interfaceIndex].active) {
+					command.alternate.alternate_info = i;
+					break;
+				}
+			}
 			command.alternate.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
@@ -399,37 +291,23 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 		case B_USB_RAW_COMMAND_GET_INTERFACE_DESCRIPTOR:
 		case B_USB_RAW_COMMAND_GET_INTERFACE_DESCRIPTOR_ETC:
 		{
-			const usb_interface_info *interfaceInfo = NULL;
-			status = B_OK;
-			if (op == B_USB_RAW_COMMAND_GET_INTERFACE_DESCRIPTOR) {
-				if (length < sizeof(command.interface))
-					return B_BUFFER_OVERFLOW;
+			uint32 configIndex = command.interface.config_index;
+			uint32 interfaceIndex = command.interface.interface_index;
+			uint32 alternateIndex = B_USB_RAW_ACTIVE_ALTERNATE;
+			if (op == B_USB_RAW_COMMAND_GET_INTERFACE_DESCRIPTOR_ETC)
+				alternateIndex = command.interface_etc.alternate_index;
 
-				interfaceInfo = usb_raw_get_interface(device,
-					command.interface.config_index,
-					command.interface.interface_index,
-					B_USB_RAW_ACTIVE_ALTERNATE,
-					&command.interface.status);
-			} else {
-				if (length < sizeof(command.interface_etc))
-					return B_BUFFER_OVERFLOW;
-
-				interfaceInfo = usb_raw_get_interface(device,
-					command.interface_etc.config_index,
-					command.interface_etc.interface_index,
-					command.interface_etc.alternate_index,
-					&command.interface_etc.status);
-			}
-
+			const usb_interface_info *interfaceInfo = usb_raw_get_interface(
+				device, configIndex, interfaceIndex, alternateIndex,
+				&command.interface.status);
 			if (interfaceInfo == NULL)
 				break;
 
-			if (!IS_USER_ADDRESS(command.interface.descriptor)
-				|| user_memcpy(command.interface.descriptor, interfaceInfo->descr,
+			if (user_memcpy(command.interface.descriptor,
+					interfaceInfo->descr,
 					sizeof(usb_interface_descriptor)) != B_OK) {
 				return B_BAD_ADDRESS;
 			}
-
 			command.interface.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
@@ -437,46 +315,30 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 		case B_USB_RAW_COMMAND_GET_ENDPOINT_DESCRIPTOR:
 		case B_USB_RAW_COMMAND_GET_ENDPOINT_DESCRIPTOR_ETC:
 		{
-			uint32 endpointIndex = 0;
-			const usb_interface_info *interfaceInfo = NULL;
-			status = B_OK;
-			if (op == B_USB_RAW_COMMAND_GET_ENDPOINT_DESCRIPTOR) {
-				if (length < sizeof(command.endpoint))
-					return B_BUFFER_OVERFLOW;
+			uint32 configIndex = command.endpoint.config_index;
+			uint32 interfaceIndex = command.endpoint.interface_index;
+			uint32 endpointIndex = command.endpoint.endpoint_index;
+			uint32 alternateIndex = B_USB_RAW_ACTIVE_ALTERNATE;
+			if (op == B_USB_RAW_COMMAND_GET_ENDPOINT_DESCRIPTOR_ETC)
+				alternateIndex = command.endpoint_etc.alternate_index;
 
-				interfaceInfo = usb_raw_get_interface(device,
-					command.endpoint.config_index,
-					command.endpoint.interface_index,
-					B_USB_RAW_ACTIVE_ALTERNATE,
-					&command.endpoint.status);
-				endpointIndex = command.endpoint.endpoint_index;
-			} else {
-				if (length < sizeof(command.endpoint_etc))
-					return B_BUFFER_OVERFLOW;
-
-				interfaceInfo = usb_raw_get_interface(device,
-					command.endpoint_etc.config_index,
-					command.endpoint_etc.interface_index,
-					command.endpoint_etc.alternate_index,
-					&command.endpoint_etc.status);
-				endpointIndex = command.endpoint_etc.endpoint_index;
-			}
-
+			const usb_interface_info *interfaceInfo = usb_raw_get_interface(
+				device, configIndex, interfaceIndex, alternateIndex,
+				&command.endpoint.status);
 			if (interfaceInfo == NULL)
 				break;
 
 			if (endpointIndex >= interfaceInfo->endpoint_count) {
-				command.endpoint.status = B_USB_RAW_STATUS_INVALID_ENDPOINT;
+				command.endpoint.status
+					= B_USB_RAW_STATUS_INVALID_ENDPOINT;
 				break;
 			}
 
-			if (!IS_USER_ADDRESS(command.endpoint.descriptor)
-				|| user_memcpy(command.endpoint.descriptor,
+			if (user_memcpy(command.endpoint.descriptor,
 					interfaceInfo->endpoint[endpointIndex].descr,
 					sizeof(usb_endpoint_descriptor)) != B_OK) {
 				return B_BAD_ADDRESS;
 			}
-
 			command.endpoint.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
@@ -484,191 +346,106 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 		case B_USB_RAW_COMMAND_GET_GENERIC_DESCRIPTOR:
 		case B_USB_RAW_COMMAND_GET_GENERIC_DESCRIPTOR_ETC:
 		{
-			uint32 genericIndex = 0;
-			size_t genericLength = 0;
-			const usb_interface_info *interfaceInfo = NULL;
-			status = B_OK;
-			if (op == B_USB_RAW_COMMAND_GET_GENERIC_DESCRIPTOR) {
-				if (length < sizeof(command.generic))
-					return B_BUFFER_OVERFLOW;
+			uint32 configIndex = command.generic.config_index;
+			uint32 interfaceIndex = command.generic.interface_index;
+			uint32 genericIndex = command.generic.generic_index;
+			uint32 alternateIndex = B_USB_RAW_ACTIVE_ALTERNATE;
+			if (op == B_USB_RAW_COMMAND_GET_GENERIC_DESCRIPTOR_ETC)
+				alternateIndex = command.generic_etc.alternate_index;
 
-				interfaceInfo = usb_raw_get_interface(device,
-					command.generic.config_index,
-					command.generic.interface_index,
-					B_USB_RAW_ACTIVE_ALTERNATE,
-					&command.generic.status);
-				genericIndex = command.generic.generic_index;
-				genericLength = command.generic.length;
-			} else {
-				if (length < sizeof(command.generic_etc))
-					return B_BUFFER_OVERFLOW;
-
-				interfaceInfo = usb_raw_get_interface(device,
-					command.generic_etc.config_index,
-					command.generic_etc.interface_index,
-					command.generic_etc.alternate_index,
-					&command.generic_etc.status);
-				genericIndex = command.generic_etc.generic_index;
-				genericLength = command.generic_etc.length;
-			}
-
+			const usb_interface_info *interfaceInfo = usb_raw_get_interface(
+				device, configIndex, interfaceIndex, alternateIndex,
+				&command.generic.status);
 			if (interfaceInfo == NULL)
 				break;
 
 			if (genericIndex >= interfaceInfo->generic_count) {
-				command.endpoint.status = B_USB_RAW_STATUS_INVALID_ENDPOINT;
+				command.generic.status = B_USB_RAW_STATUS_INVALID_ENDPOINT;
 				break;
 			}
 
-			usb_descriptor *descriptor = interfaceInfo->generic[genericIndex];
+			usb_descriptor *descriptor
+				= interfaceInfo->generic[genericIndex];
 			if (descriptor == NULL)
 				break;
 
-			if (!IS_USER_ADDRESS(command.generic.descriptor)
-				|| user_memcpy(command.generic.descriptor, descriptor,
-					min_c(genericLength, descriptor->generic.length)) != B_OK) {
+			size_t actualLength = std::min(command.generic.length,
+				(size_t)descriptor->generic.length);
+			if (user_memcpy(command.generic.descriptor,
+					descriptor, actualLength) != B_OK) {
 				return B_BAD_ADDRESS;
 			}
-
-			if (descriptor->generic.length > genericLength)
-				command.generic.status = B_USB_RAW_STATUS_NO_MEMORY;
-			else
-				command.generic.status = B_USB_RAW_STATUS_SUCCESS;
+			command.generic.length = actualLength;
+			command.generic.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
 
 		case B_USB_RAW_COMMAND_GET_STRING_DESCRIPTOR:
 		{
-			if (length < sizeof(command.string))
-				return B_BUFFER_OVERFLOW;
+			size_t actualLength = std::min(command.string.length,
+				(size_t)256);
+			uint8 stringBuffer[256];
 
-			size_t actualLength = 0;
-			uint8 temp[4];
-			status = B_OK;
-
-			// We need to fetch the default language code, first.
-			if (gUSBModule->get_descriptor(device->device,
-				USB_DESCRIPTOR_STRING, 0, 0,
-				temp, 4, &actualLength) < B_OK
-				|| actualLength != 4
-				|| temp[1] != USB_DESCRIPTOR_STRING) {
-				command.string.status = B_USB_RAW_STATUS_ABORTED;
-				command.string.length = 0;
-				break;
-			}
-			const uint16 langid = (temp[2] | (temp[3] << 8));
-
-			// Now fetch the string length.
-			if (gUSBModule->get_descriptor(device->device,
-				USB_DESCRIPTOR_STRING, command.string.string_index, langid,
-				temp, 2, &actualLength) < B_OK
-				|| actualLength != 2
-				|| temp[1] != USB_DESCRIPTOR_STRING) {
+			status = gUSBModule->get_descriptor(device->device,
+				USB_DESCRIPTOR_STRING, command.string.string_index, 0,
+				stringBuffer, actualLength, &actualLength);
+			if (status < B_OK) {
 				command.string.status = B_USB_RAW_STATUS_ABORTED;
 				command.string.length = 0;
 				break;
 			}
 
-			uint8 stringLength = MIN(temp[0], command.string.length);
-			char *string = (char *)malloc(stringLength);
-			if (string == NULL) {
-				command.string.status = B_USB_RAW_STATUS_ABORTED;
-				command.string.length = 0;
-				status = B_NO_MEMORY;
-				break;
-			}
-
-			if (gUSBModule->get_descriptor(device->device,
-				USB_DESCRIPTOR_STRING, command.string.string_index, langid,
-				string, stringLength, &actualLength) < B_OK
-				|| actualLength != stringLength) {
-				command.string.status = B_USB_RAW_STATUS_ABORTED;
-				command.string.length = 0;
-				free(string);
-				break;
-			}
-
-			if (!IS_USER_ADDRESS(command.string.descriptor)
-				|| user_memcpy(command.string.descriptor, string,
-					stringLength) != B_OK) {
-				free(string);
+			if (user_memcpy(command.string.descriptor, stringBuffer,
+					actualLength) != B_OK) {
 				return B_BAD_ADDRESS;
 			}
-
+			command.string.length = actualLength;
 			command.string.status = B_USB_RAW_STATUS_SUCCESS;
-			command.string.length = stringLength;
-			free(string);
 			break;
 		}
 
 		case B_USB_RAW_COMMAND_GET_DESCRIPTOR:
 		{
-			if (length < sizeof(command.descriptor))
-				return B_BUFFER_OVERFLOW;
-
 			size_t actualLength = 0;
-			uint8 firstTwoBytes[2];
-			status = B_OK;
-
-			if (gUSBModule->get_descriptor(device->device,
-				command.descriptor.type, command.descriptor.index,
-				command.descriptor.language_id, firstTwoBytes, 2,
-				&actualLength) < B_OK
-				|| actualLength != 2
-				|| firstTwoBytes[1] != command.descriptor.type) {
-				command.descriptor.status = B_USB_RAW_STATUS_ABORTED;
-				command.descriptor.length = 0;
-				break;
-			}
-
-			uint8 descriptorLength = MIN(firstTwoBytes[0],
-				command.descriptor.length);
-			uint8 *descriptorBuffer = (uint8 *)malloc(descriptorLength);
+			uint8 *descriptorBuffer = (uint8 *)malloc(command.descriptor.length);
 			if (descriptorBuffer == NULL) {
-				command.descriptor.status = B_USB_RAW_STATUS_ABORTED;
+				command.descriptor.status = B_USB_RAW_STATUS_NO_MEMORY;
 				command.descriptor.length = 0;
-				status = B_NO_MEMORY;
 				break;
 			}
 
-			if (gUSBModule->get_descriptor(device->device,
+			status = gUSBModule->get_descriptor(device->device,
 				command.descriptor.type, command.descriptor.index,
 				command.descriptor.language_id, descriptorBuffer,
-				descriptorLength, &actualLength) < B_OK
-				|| actualLength != descriptorLength) {
+				command.descriptor.length, &actualLength);
+			if (status < B_OK) {
 				command.descriptor.status = B_USB_RAW_STATUS_ABORTED;
 				command.descriptor.length = 0;
 				free(descriptorBuffer);
 				break;
 			}
 
-			if (!IS_USER_ADDRESS(command.descriptor.data)
-				|| user_memcpy(command.descriptor.data, descriptorBuffer,
-					descriptorLength) != B_OK) {
+			if (user_memcpy(command.descriptor.data, descriptorBuffer,
+					actualLength) != B_OK) {
 				free(descriptorBuffer);
 				return B_BAD_ADDRESS;
 			}
-
+			command.descriptor.length = actualLength;
 			command.descriptor.status = B_USB_RAW_STATUS_SUCCESS;
-			command.descriptor.length = descriptorLength;
 			free(descriptorBuffer);
 			break;
 		}
 
 		case B_USB_RAW_COMMAND_SET_CONFIGURATION:
 		{
-			if (length < sizeof(command.config))
-				return B_BUFFER_OVERFLOW;
-
-			status = B_OK;
-			const usb_configuration_info *configurationInfo =
-				usb_raw_get_configuration(device, command.config.config_index,
-					&command.config.status);
+			const usb_configuration_info *configurationInfo
+				= usb_raw_get_configuration(device,
+					command.config.config_index, &command.config.status);
 			if (configurationInfo == NULL)
 				break;
 
 			if (gUSBModule->set_configuration(device->device,
-				configurationInfo) < B_OK) {
+					configurationInfo) < B_OK) {
 				command.config.status = B_USB_RAW_STATUS_FAILED;
 				break;
 			}
@@ -679,32 +456,15 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 
 		case B_USB_RAW_COMMAND_SET_ALT_INTERFACE:
 		{
-			if (length < sizeof(command.alternate))
-				return B_BUFFER_OVERFLOW;
-
-			status = B_OK;
-			const usb_configuration_info *configurationInfo =
-				usb_raw_get_configuration(device,
-					command.alternate.config_index,
-					&command.alternate.status);
-			if (configurationInfo == NULL)
+			const usb_interface_info *interfaceInfo = usb_raw_get_interface(
+				device, command.alternate.config_index,
+				command.alternate.interface_index,
+				command.alternate.alternate_info, &command.alternate.status);
+			if (interfaceInfo == NULL)
 				break;
-
-			if (command.alternate.interface_index
-				>= configurationInfo->interface_count) {
-				command.alternate.status = B_USB_RAW_STATUS_INVALID_INTERFACE;
-				break;
-			}
-
-			const usb_interface_list *interfaceList =
-				&configurationInfo->interface[command.alternate.interface_index];
-			if (command.alternate.alternate_info >= interfaceList->alt_count) {
-				command.alternate.status = B_USB_RAW_STATUS_INVALID_INTERFACE;
-				break;
-			}
 
 			if (gUSBModule->set_alt_interface(device->device,
-				&interfaceList->alt[command.alternate.alternate_info]) < B_OK) {
+					interfaceInfo) < B_OK) {
 				command.alternate.status = B_USB_RAW_STATUS_FAILED;
 				break;
 			}
@@ -715,50 +475,51 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 
 		case B_USB_RAW_COMMAND_CONTROL_TRANSFER:
 		{
-			if (length < sizeof(command.control))
-				return B_BUFFER_OVERFLOW;
-
-			void *controlData = malloc(command.control.length);
-			if (controlData == NULL)
-				return B_NO_MEMORY;
-			MemoryDeleter dataDeleter(controlData);
-
+			void *controlData = NULL;
+			MemoryDeleter dataDeleter;
 			bool inTransfer = (command.control.request_type
-				& USB_ENDPOINT_ADDR_DIR_IN) != 0;
-			if (!IS_USER_ADDRESS(command.control.data)
-				|| (!inTransfer && user_memcpy(controlData,
-					command.control.data, command.control.length) != B_OK)) {
-				return B_BAD_ADDRESS;
+				& USB_REQTYPE_DEVICE_IN) != 0;
+
+			if (command.control.length > 0) {
+				controlData = malloc(command.control.length);
+				if (controlData == NULL) {
+					command.control.status = B_USB_RAW_STATUS_NO_MEMORY;
+					command.control.length = 0;
+					break;
+				}
+
+				dataDeleter.SetTo(controlData);
+				if (!IS_USER_ADDRESS(command.control.data)
+					|| (!inTransfer && user_memcpy(controlData,
+						command.control.data, command.control.length)
+						!= B_OK)) {
+					return B_BAD_ADDRESS;
+				}
 			}
 
+			size_t actualLength = command.control.length;
 			MutexLocker deviceLocker(device->lock);
-			if (gUSBModule->queue_request(device->device,
+			status = gUSBModule->send_request(device->device,
 				command.control.request_type, command.control.request,
 				command.control.value, command.control.index,
 				command.control.length, controlData,
-				usb_raw_callback, device) < B_OK) {
+				&actualLength);
+			command.control.length = actualLength;
+			deviceLocker.Unlock();
+
+			if (status < B_OK) {
 				command.control.status = B_USB_RAW_STATUS_FAILED;
 				command.control.length = 0;
-				status = B_OK;
 				break;
 			}
 
-			status = acquire_sem_etc(device->notify, 1, B_KILL_CAN_INTERRUPT, 0);
-			if (status != B_OK) {
-				gUSBModule->cancel_queued_requests(device->device);
-				acquire_sem(device->notify);
+			if (inTransfer && command.control.length > 0
+				&& user_memcpy(command.control.data, controlData,
+					command.control.length) != B_OK) {
+				return B_BAD_ADDRESS;
 			}
 
-			command.control.status = device->status;
-			command.control.length = device->actual_length;
-			deviceLocker.Unlock();
-
-			if (command.control.status == B_OK)
-				status = B_OK;
-			if (inTransfer && user_memcpy(command.control.data, controlData,
-				command.control.length) != B_OK) {
-				status = B_BAD_ADDRESS;
-			}
+			command.control.status = B_USB_RAW_STATUS_SUCCESS;
 			break;
 		}
 
@@ -766,54 +527,61 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 		case B_USB_RAW_COMMAND_BULK_TRANSFER:
 		case B_USB_RAW_COMMAND_ISOCHRONOUS_TRANSFER:
 		{
-			if (length < sizeof(command.transfer))
-				return B_BUFFER_OVERFLOW;
-
-			status = B_OK;
-			const usb_configuration_info *configurationInfo =
-				gUSBModule->get_configuration(device->device);
+			const usb_configuration_info *configurationInfo
+				= gUSBModule->get_configuration(device->device);
 			if (configurationInfo == NULL) {
-				command.transfer.status = B_USB_RAW_STATUS_INVALID_CONFIGURATION;
-				break;
-			}
-
-			if (command.transfer.interface >= configurationInfo->interface_count) {
-				command.transfer.status = B_USB_RAW_STATUS_INVALID_INTERFACE;
-				break;
-			}
-
-			const usb_interface_info *interfaceInfo =
-				configurationInfo->interface[command.transfer.interface].active;
-			if (interfaceInfo == NULL) {
 				command.transfer.status = B_USB_RAW_STATUS_ABORTED;
+				command.transfer.length = 0;
 				break;
 			}
 
-			if (command.transfer.endpoint >= interfaceInfo->endpoint_count) {
-				command.transfer.status = B_USB_RAW_STATUS_INVALID_ENDPOINT;
+			if (command.transfer.interface
+					>= configurationInfo->interface_count) {
+				command.transfer.status
+					= B_USB_RAW_STATUS_INVALID_INTERFACE;
+				command.transfer.length = 0;
 				break;
 			}
 
-			const usb_endpoint_info *endpointInfo =
-				&interfaceInfo->endpoint[command.transfer.endpoint];
-			if (!endpointInfo->handle) {
+			const usb_interface_info *interfaceInfo
+				= configurationInfo->interface[
+					command.transfer.interface].active;
+			if (interfaceInfo == NULL) {
+				command.transfer.status
+					= B_USB_RAW_STATUS_ABORTED;
+				command.transfer.length = 0;
+				break;
+			}
+
+			if (command.transfer.endpoint
+					>= interfaceInfo->endpoint_count) {
+				command.transfer.status
+					= B_USB_RAW_STATUS_INVALID_ENDPOINT;
+				command.transfer.length = 0;
+				break;
+			}
+
+			const usb_endpoint_info *endpointInfo
+				= &interfaceInfo->endpoint[command.transfer.endpoint];
+			if (endpointInfo == NULL || endpointInfo->handle == 0) {
 				command.transfer.status = B_USB_RAW_STATUS_INVALID_ENDPOINT;
+				command.transfer.length = 0;
 				break;
 			}
 
 			size_t descriptorsSize = 0;
 			usb_iso_packet_descriptor *packetDescriptors = NULL;
+			MemoryDeleter descriptorsDeleter;
+
 			void *transferData = NULL;
-			MemoryDeleter descriptorsDeleter, dataDeleter;
+			MemoryDeleter dataDeleter;
 
 			bool inTransfer = (endpointInfo->descr->endpoint_address
 				& USB_ENDPOINT_ADDR_DIR_IN) != 0;
-			if (op == B_USB_RAW_COMMAND_ISOCHRONOUS_TRANSFER) {
-				if (length < sizeof(command.isochronous))
-					return B_BUFFER_OVERFLOW;
 
-				descriptorsSize = sizeof(usb_iso_packet_descriptor)
-					* command.isochronous.packet_count;
+			if (op == B_USB_RAW_COMMAND_ISOCHRONOUS_TRANSFER) {
+				descriptorsSize = command.isochronous.packet_count
+					* sizeof(usb_iso_packet_descriptor);
 				packetDescriptors
 					= (usb_iso_packet_descriptor *)malloc(descriptorsSize);
 				if (packetDescriptors == NULL) {
@@ -821,11 +589,9 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 					command.transfer.length = 0;
 					break;
 				}
-				descriptorsDeleter.SetTo(packetDescriptors);
 
-				if (!IS_USER_ADDRESS(command.isochronous.data)
-					|| !IS_USER_ADDRESS(command.isochronous.packet_descriptors)
-					|| user_memcpy(packetDescriptors,
+				descriptorsDeleter.SetTo(packetDescriptors);
+				if (user_memcpy(packetDescriptors,
 						command.isochronous.packet_descriptors,
 						descriptorsSize) != B_OK) {
 					return B_BAD_ADDRESS;
@@ -870,7 +636,8 @@ usb_raw_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 				break;
 			}
 
-			status = acquire_sem_etc(device->notify, 1, B_KILL_CAN_INTERRUPT, 0);
+			status = acquire_sem_etc(device->notify, 1,
+				B_KILL_CAN_INTERRUPT, 0);
 			if (status != B_OK) {
 				gUSBModule->cancel_queued_transfers(endpointInfo->handle);
 				acquire_sem(device->notify);
@@ -915,7 +682,8 @@ usb_raw_read(void *cookie, off_t position, void *buffer, size_t *length)
 
 
 static status_t
-usb_raw_write(void *cookie, off_t position, const void *buffer, size_t *length)
+usb_raw_write(void *cookie, off_t position, const void *buffer,
+	size_t *length)
 {
 	TRACE((DRIVER_NAME": write()\n"));
 	*length = 0;
@@ -924,113 +692,190 @@ usb_raw_write(void *cookie, off_t position, const void *buffer, size_t *length)
 
 
 //
+//#pragma mark - driver module API
+//
+
+
+static float
+usb_raw_supports_device(device_node *parent)
+{
+	TRACE((DRIVER_NAME": supports_device()\n"));
+	const char *bus;
+
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "usb"))
+		return 0.0;
+
+	// usb_raw matches all USB devices with low priority
+	return 0.1;
+}
+
+
+static status_t
+usb_raw_register_device(device_node *node)
+{
+	TRACE((DRIVER_NAME": register_device()\n"));
+
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "USB Raw Access"} },
+		{ NULL }
+	};
+
+	return gDeviceManager->register_node(node, USB_RAW_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+usb_raw_init_driver(device_node *node, void **cookie)
+{
+	TRACE((DRIVER_NAME": init_driver()\n"));
+
+	raw_device *device = (raw_device *)malloc(sizeof(raw_device));
+	if (device == NULL)
+		return B_NO_MEMORY;
+
+	memset(device, 0, sizeof(raw_device));
+	device->node = node;
+
+	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+			&device->device, true) != B_OK) {
+		free(device);
+		return B_ERROR;
+	}
+
+	mutex_init(&device->lock, "usb_raw device lock");
+	device->notify = create_sem(0, "usb_raw callback notify");
+	if (device->notify < B_OK) {
+		mutex_destroy(&device->lock);
+		free(device);
+		return B_NO_MORE_SEMS;
+	}
+
+	// generate a device name
+	char deviceName[64];
+	memcpy(deviceName, &device->device, sizeof(usb_device));
+	if (gUSBModule->usb_ioctl('DNAM', deviceName, sizeof(deviceName))
+			>= B_OK) {
+		snprintf(device->name, sizeof(device->name), "%s/%s",
+			DEVICE_NAME, deviceName);
+	} else {
+		snprintf(device->name, sizeof(device->name), "%s/%08" B_PRIx32,
+			DEVICE_NAME, device->device);
+	}
+
+	*cookie = device;
+	return B_OK;
+}
+
+
+static void
+usb_raw_uninit_driver(void *_cookie)
+{
+	TRACE((DRIVER_NAME": uninit_driver()\n"));
+	raw_device *device = (raw_device *)_cookie;
+
+	mutex_lock(&device->lock);
+	mutex_destroy(&device->lock);
+	delete_sem(device->notify);
+	free(device);
+}
+
+
+static status_t
+usb_raw_register_child_devices(void *_cookie)
+{
+	TRACE((DRIVER_NAME": register_child_devices()\n"));
+	raw_device *device = (raw_device *)_cookie;
+
+	return gDeviceManager->publish_device(device->node, device->name,
+		USB_RAW_DEVICE_MODULE_NAME);
+}
+
+
+static void
+usb_raw_driver_device_removed(void *_cookie)
+{
+	TRACE((DRIVER_NAME": driver_device_removed()\n"));
+	raw_device *device = (raw_device *)_cookie;
+	device->device = 0;
+}
+
+
+//
+//#pragma mark - device init/uninit
+//
+
+
+static status_t
+usb_raw_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+usb_raw_uninit_device(void *_cookie)
+{
+}
+
+
+//
 //#pragma mark -
 //
 
 
-status_t
-init_hardware()
-{
-	TRACE((DRIVER_NAME": init_hardware()\n"));
-	return B_OK;
-}
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ B_USB_MODULE_NAME, (module_info **)&gUSBModule },
+	{ NULL }
+};
 
-
-status_t
-init_driver()
-{
-	TRACE((DRIVER_NAME": init_driver()\n"));
-	static usb_notify_hooks notifyHooks = {
-		&usb_raw_device_added,
-		&usb_raw_device_removed
-	};
-
-	gDeviceList = NULL;
-	gDeviceCount = 0;
-	mutex_init(&gDeviceListLock, "usb_raw device list lock");
-
-	TRACE((DRIVER_NAME": trying module %s\n", B_USB_MODULE_NAME));
-	status_t result = get_module(B_USB_MODULE_NAME,
-		(module_info **)&gUSBModule);
-	if (result < B_OK) {
-		TRACE((DRIVER_NAME": getting module failed 0x%08" B_PRIx32 "\n",
-			result));
-		mutex_destroy(&gDeviceListLock);
-		return result;
-	}
-
-	gUSBModule->register_driver(DRIVER_NAME, NULL, 0, NULL);
-	gUSBModule->install_notify(DRIVER_NAME, &notifyHooks);
-	return B_OK;
-}
-
-
-void
-uninit_driver()
-{
-	TRACE((DRIVER_NAME": uninit_driver()\n"));
-	gUSBModule->uninstall_notify(DRIVER_NAME);
-	mutex_lock(&gDeviceListLock);
-
-	if (gDeviceNames) {
-		for (int32 i = 1; gDeviceNames[i]; i++)
-			free(gDeviceNames[i]);
-		free(gDeviceNames);
-		gDeviceNames = NULL;
-	}
-
-	mutex_destroy(&gDeviceListLock);
-	put_module(B_USB_MODULE_NAME);
-}
-
-
-const char **
-publish_devices()
-{
-	TRACE((DRIVER_NAME": publish_devices()\n"));
-	if (gDeviceNames) {
-		for (int32 i = 0; gDeviceNames[i]; i++)
-			free(gDeviceNames[i]);
-		free(gDeviceNames);
-		gDeviceNames = NULL;
-	}
-
-	int32 index = 0;
-	gDeviceNames = (char **)malloc(sizeof(char *) * (gDeviceCount + 2));
-	if (gDeviceNames == NULL)
-		return NULL;
-
-	gDeviceNames[index++] = strdup(DEVICE_NAME);
-
-	mutex_lock(&gDeviceListLock);
-	raw_device *element = gDeviceList;
-	while (element) {
-		gDeviceNames[index++] = strdup(element->name);
-		element = (raw_device *)element->link;
-	}
-
-	gDeviceNames[index++] = NULL;
-	mutex_unlock(&gDeviceListLock);
-	return (const char **)gDeviceNames;
-}
-
-
-device_hooks *
-find_device(const char *name)
-{
-	TRACE((DRIVER_NAME": find_device()\n"));
-	static device_hooks hooks = {
-		&usb_raw_open,
-		&usb_raw_close,
-		&usb_raw_free,
-		&usb_raw_ioctl,
-		&usb_raw_read,
-		&usb_raw_write,
-		NULL,
-		NULL,
-		NULL,
+struct device_module_info sUsbRawDevice = {
+	{
+		USB_RAW_DEVICE_MODULE_NAME,
+		0,
 		NULL
-	};
+	},
 
-	return &hooks;
-}
+	usb_raw_init_device,
+	usb_raw_uninit_device,
+	NULL,	// device_removed
+
+	usb_raw_open,
+	usb_raw_close,
+	usb_raw_free,
+	usb_raw_read,
+	usb_raw_write,
+	NULL,	// io
+	usb_raw_ioctl,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sUsbRawDriver = {
+	{
+		USB_RAW_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	usb_raw_supports_device,
+	usb_raw_register_device,
+	usb_raw_init_driver,
+	usb_raw_uninit_driver,
+	usb_raw_register_child_devices,
+	NULL,	// rescan
+	usb_raw_driver_device_removed,
+};
+
+module_info *modules[] = {
+	(module_info *)&sUsbRawDriver,
+	(module_info *)&sUsbRawDevice,
+	NULL
+};

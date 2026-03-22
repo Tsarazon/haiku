@@ -5,10 +5,14 @@
  */
 #include "poke.h"
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <ISA.h>
-#include <PCI.h>
+#include <bus/PCI.h>
+
+#include <malloc.h>
+#include <string.h>
 
 #include <team.h>
 #include <vm/vm.h>
@@ -18,7 +22,11 @@
 #endif
 
 
-static status_t poke_open(const char*, uint32, void**);
+#define POKE_DRIVER_MODULE_NAME "drivers/misc/poke/driver_v1"
+#define POKE_DEVICE_MODULE_NAME "drivers/misc/poke/device_v1"
+
+
+static status_t poke_open(void*, const char*, int, void**);
 static status_t poke_close(void*);
 static status_t poke_free(void*);
 static status_t poke_control(void*, uint32, void*, size_t);
@@ -26,76 +34,21 @@ static status_t poke_read(void*, off_t, void*, size_t*);
 static status_t poke_write(void*, off_t, const void*, size_t*);
 
 
-static const char* poke_name[] = {
-    "misc/" POKE_DEVICE_NAME,
-    NULL
-};
+static isa_module_info* isa;
+static pci_module_info* pci;
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
+
+typedef struct {
+	device_node* node;
+} poke_driver_info;
 
 
-device_hooks poke_hooks = {
-	poke_open,
-	poke_close,
-	poke_free,
-	poke_control,
-	poke_read,
-	poke_write,
-};
-
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-
-isa_module_info* isa;
-pci_module_info* pci;
+//	#pragma mark - device module API
 
 
 status_t
-init_hardware(void)
-{
-	return B_OK;
-}
-
-
-status_t
-init_driver(void)
-{
-	if (get_module(B_ISA_MODULE_NAME, (module_info**)&isa) < B_OK)
-		return ENOSYS;
-
-	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pci) < B_OK) {
-		put_module(B_ISA_MODULE_NAME);
-		return ENOSYS;
-	}
-
-	return B_OK;
-}
-
-
-void
-uninit_driver(void)
-{
-	put_module(B_ISA_MODULE_NAME);
-	put_module(B_PCI_MODULE_NAME);
-}
-
-
-const char**
-publish_devices(void)
-{
-	return poke_name;
-}
-
-
-device_hooks*
-find_device(const char* name)
-{
-	return &poke_hooks;
-}
-
-
-//	#pragma mark -
-
-
-status_t
-poke_open(const char* name, uint32 flags, void** cookie)
+poke_open(void* _info, const char* name, int openMode, void** cookie)
 {
 	*cookie = NULL;
 
@@ -306,9 +259,9 @@ poke_control(void* cookie, uint32 op, void* arg, size_t length)
 			if (user_strlcpy(name, ioctl.name, B_OS_NAME_LENGTH) < B_OK)
 				return B_BAD_ADDRESS;
 
-			ioctl.area = vm_map_physical_memory(team_get_current_team_id(), name,
-				(void**)&ioctl.address, ioctl.flags, ioctl.size, ioctl.protection,
-				ioctl.physical_address, false);
+			ioctl.area = vm_map_physical_memory(team_get_current_team_id(),
+				name, (void**)&ioctl.address, ioctl.flags, ioctl.size,
+				ioctl.protection, ioctl.physical_address, false);
 
 			if (user_memcpy(arg, &ioctl, sizeof(mem_map_args)) != B_OK)
 				return B_BAD_ADDRESS;
@@ -345,3 +298,160 @@ poke_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 	*numBytes = 0;
 	return B_NOT_ALLOWED;
 }
+
+
+//	#pragma mark - driver module API
+
+
+static float
+poke_supports_device(device_node *parent)
+{
+	const char *bus;
+
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	// match any PCI device with very low priority — poke is a utility
+	// driver that provides raw hardware access, not a real device driver
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+
+	return 0.0;
+}
+
+
+static status_t
+poke_register_device(device_node *node)
+{
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Poke raw access"} },
+		{ NULL }
+	};
+
+	return sDeviceManager->register_node(node, POKE_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+poke_init_driver(device_node *node, void **cookie)
+{
+	if (get_module(B_ISA_MODULE_NAME, (module_info**)&isa) < B_OK)
+		return ENOSYS;
+
+	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pci) < B_OK) {
+		put_module(B_ISA_MODULE_NAME);
+		return ENOSYS;
+	}
+
+	poke_driver_info *info = (poke_driver_info *)malloc(
+		sizeof(poke_driver_info));
+	if (info == NULL) {
+		put_module(B_PCI_MODULE_NAME);
+		put_module(B_ISA_MODULE_NAME);
+		return B_NO_MEMORY;
+	}
+
+	info->node = node;
+	*cookie = info;
+	return B_OK;
+}
+
+
+static void
+poke_uninit_driver(void *_cookie)
+{
+	poke_driver_info *info = (poke_driver_info *)_cookie;
+
+	sPublished = false;
+	put_module(B_ISA_MODULE_NAME);
+	put_module(B_PCI_MODULE_NAME);
+	free(info);
+}
+
+
+static status_t
+poke_register_child_devices(void *_cookie)
+{
+	poke_driver_info *info = (poke_driver_info *)_cookie;
+
+	if (sPublished)
+		return B_OK;
+
+	sPublished = true;
+	return sDeviceManager->publish_device(info->node,
+		"misc/" POKE_DEVICE_NAME, POKE_DEVICE_MODULE_NAME);
+}
+
+
+//	#pragma mark - device init/uninit
+
+
+static status_t
+poke_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+poke_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sPokeDevice = {
+	{
+		POKE_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	poke_init_device,
+	poke_uninit_device,
+	NULL,	// device_removed
+
+	poke_open,
+	poke_close,
+	poke_free,
+	poke_read,
+	poke_write,
+	NULL,	// io
+	poke_control,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sPokeDriver = {
+	{
+		POKE_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	poke_supports_device,
+	poke_register_device,
+	poke_init_driver,
+	poke_uninit_driver,
+	poke_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
+
+module_info *modules[] = {
+	(module_info *)&sPokeDriver,
+	(module_info *)&sPokeDevice,
+	NULL
+};

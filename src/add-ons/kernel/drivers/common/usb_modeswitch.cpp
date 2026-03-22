@@ -11,14 +11,17 @@
 	Huawei devices updated to usb-modeswitch-data-20150115
 */
 
-#include <ByteOrder.h>
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <lock.h>
 #include <USB3.h>
 
+#include <bus/USB.h>
+
 #include <malloc.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define DRIVER_NAME			"usb_modeswitch"
@@ -31,6 +34,13 @@
 #endif
 #define TRACE_ALWAYS(x...)	dprintf(DRIVER_NAME ": " x)
 #define ENTER()	TRACE("%s", __FUNCTION__)
+
+
+#define USB_MODESWITCH_DRIVER_MODULE_NAME "drivers/common/usb_modeswitch/driver_v1"
+
+
+static usb_module_info *gUSBModule = NULL;
+static device_manager_info *gDeviceManager = NULL;
 
 
 enum msgType {
@@ -287,101 +297,24 @@ static const struct {
 static uint32 kDevicesCount = sizeof(kDevices) / sizeof(kDevices[0]);
 
 
-typedef struct _my_device {
-	usb_device	device;
-	bool		removed;
-	mutex		lock;
-	struct _my_device *link;
-
-	// device state
-	usb_pipe	bulk_in;
-	usb_pipe	bulk_out;
-	uint8		interface;
-	uint8       alternate_setting;
-
-	// used to store callback information
-	sem_id		notify;
-	status_t	status;
-	size_t		actual_length;
-
-	msgType		type[3];
-} my_device;
-
-
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-static usb_module_info *gUSBModule = NULL;
-static my_device *gDeviceList = NULL;
-static uint32 gDeviceCount = 0;
-static mutex gDeviceListLock;
+typedef struct {
+	device_node*	node;
+	usb_device		device;
+	usb_pipe		bulk_in;
+	usb_pipe		bulk_out;
+	sem_id			notify;
+	status_t		status;
+	size_t			actual_length;
+	msgType			type[3];
+} usb_modeswitch_info;
 
 
 //
-//#pragma mark - Device Allocation Helper Functions
+//#pragma mark - Helper Functions
 //
 
 
-static void
-my_free_device(my_device *device)
-{
-	mutex_lock(&device->lock);
-	mutex_destroy(&device->lock);
-	delete_sem(device->notify);
-	free(device);
-}
-
-
-//
-//#pragma mark - Bulk-only Functions
-//
-
-
-static void
-my_callback(void *cookie, status_t status, void *data,
-	size_t actualLength)
-{
-	my_device *device = (my_device *)cookie;
-	device->status = status;
-	device->actual_length = actualLength;
-	release_sem(device->notify);
-}
-
-
-static status_t
-my_transfer_data(my_device *device, bool directionIn, void *data,
-	size_t dataLength)
-{
-	status_t result = gUSBModule->queue_bulk(directionIn ? device->bulk_in
-		: device->bulk_out, data, dataLength, my_callback, device);
-	if (result != B_OK) {
-		TRACE_ALWAYS("failed to queue data transfer\n");
-		return result;
-	}
-
-	do {
-		bigtime_t timeout = 500000;
-		result = acquire_sem_etc(device->notify, 1, B_RELATIVE_TIMEOUT,
-			timeout);
-		if (result == B_TIMED_OUT) {
-			// Cancel the transfer and collect the sem that should now be
-			// released through the callback on cancel. Handling of device
-			// reset is done in usb_printer_operation() when it detects that
-			// the transfer failed.
-			gUSBModule->cancel_queued_transfers(directionIn ? device->bulk_in
-				: device->bulk_out);
-			acquire_sem_etc(device->notify, 1, B_RELATIVE_TIMEOUT, 0);
-		}
-	} while (result == B_INTERRUPTED);
-
-	if (result != B_OK) {
-		TRACE_ALWAYS("acquire_sem failed while waiting for data transfer\n");
-		return result;
-	}
-
-	return B_OK;
-}
-
-
-enum msgType
+static enum msgType
 my_get_msg_type(const usb_device_descriptor *desc, int index)
 {
 	for (uint32 i = 0; i < kDevicesCount; i++) {
@@ -408,258 +341,300 @@ my_get_msg_type(const usb_device_descriptor *desc, int index)
 			case 2:
 				return kDevices[i].type3;
 		}
-
 	}
 
 	return MSG_NONE;
 }
 
 
+//
+//#pragma mark - Bulk-only Functions
+//
 
-status_t
-my_modeswitch(my_device* device)
+
+static void
+my_callback(void *cookie, status_t status, void *data,
+	size_t actualLength)
 {
-	status_t err = B_OK;
-	if (device->type[0] == MSG_NONE)
-			return B_OK;
+	usb_modeswitch_info *info = (usb_modeswitch_info *)cookie;
+	info->status = status;
+	info->actual_length = actualLength;
+	release_sem(info->notify);
+}
+
+
+static status_t
+my_transfer_data(usb_modeswitch_info *info, bool directionIn, void *data,
+	size_t dataLength)
+{
+	status_t result = gUSBModule->queue_bulk(directionIn ? info->bulk_in
+		: info->bulk_out, data, dataLength, my_callback, info);
+	if (result != B_OK) {
+		TRACE_ALWAYS("failed to queue data transfer\n");
+		return result;
+	}
+
+	do {
+		bigtime_t timeout = 500000;
+		result = acquire_sem_etc(info->notify, 1, B_RELATIVE_TIMEOUT,
+			timeout);
+		if (result == B_TIMED_OUT) {
+			gUSBModule->cancel_queued_transfers(directionIn ? info->bulk_in
+				: info->bulk_out);
+			acquire_sem_etc(info->notify, 1, B_RELATIVE_TIMEOUT, 0);
+		}
+	} while (result == B_INTERRUPTED);
+
+	if (result != B_OK) {
+		TRACE_ALWAYS("acquire_sem failed while waiting for data transfer\n");
+		return result;
+	}
+
+	return B_OK;
+}
+
+
+static status_t
+my_modeswitch(usb_modeswitch_info *info)
+{
+	if (info->type[0] == MSG_NONE)
+		return B_OK;
+
 	for (int i = 0; i < 3; i++) {
-		if (device->type[i] == MSG_NONE)
+		if (info->type[i] == MSG_NONE)
 			break;
 
-		err = my_transfer_data(device, false, kDevicesMsg[device->type[i]],
-			sizeof(kDevicesMsg[device->type[i]]));
+		status_t err = my_transfer_data(info, false,
+			kDevicesMsg[info->type[i]],
+			sizeof(kDevicesMsg[info->type[i]]));
 		if (err != B_OK) {
 			TRACE_ALWAYS("send message %d failed\n", i + 1);
 			return err;
 		}
 
-		TRACE("device switched: %p\n", device);
+		TRACE("device switched: %" B_PRIu32 "\n", info->device);
 
 		char data[36];
-		err = my_transfer_data(device, true, data, sizeof(data));
+		err = my_transfer_data(info, true, data, sizeof(data));
 		if (err != B_OK) {
 			TRACE_ALWAYS("receive response %d failed 0x%" B_PRIx32 "\n",
-				i + 1, device->status);
+				i + 1, info->status);
 			return err;
 		}
-		TRACE("device switched (response length %ld)\n", device->actual_length);
+		TRACE("device switched (response length %ld)\n", info->actual_length);
 	}
 
-	TRACE("device switched: %p\n", device);
-
+	TRACE("device switched: %" B_PRIu32 "\n", info->device);
 	return B_OK;
 }
 
 
 //
-//#pragma mark - Device Attach/Detach Notifications and Callback
+//#pragma mark - Driver Module API
 //
 
 
-static status_t
-my_device_added(usb_device newDevice, void **cookie)
+static float
+usb_modeswitch_supports_device(device_node *parent)
 {
-	TRACE("device_added(0x%08" B_PRIx32 ")\n", newDevice);
-	my_device *device = (my_device *)malloc(sizeof(my_device));
-	device->device = newDevice;
-	device->removed = false;
-	device->interface = 0xff;
-	device->alternate_setting = 0;
+	TRACE("supports_device()\n");
+	const char *bus;
 
-	// scan through the interfaces to find our bulk-only data interface
-	const usb_configuration_info *configuration =
-		gUSBModule->get_configuration(newDevice);
-	if (configuration == NULL) {
-		free(device);
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "usb"))
+		return 0.0;
+
+	uint16 vendorId, productId;
+	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false) != B_OK)
+		return 0.0;
+	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+			&productId, false) != B_OK)
+		return 0.0;
+
+	// check against our device table
+	for (uint32 i = 0; i < kDevicesCount; i++) {
+		if (kDevices[i].desc.vendor != 0
+			&& kDevices[i].desc.vendor != vendorId)
+			continue;
+		if (kDevices[i].desc.product != 0
+			&& kDevices[i].desc.product != productId)
+			continue;
+		TRACE("USB modeswitch device found! vendor: 0x%04x, product: 0x%04x\n",
+			vendorId, productId);
+		return 0.6;
+	}
+
+	return 0.0;
+}
+
+
+static status_t
+usb_modeswitch_register_device(device_node *node)
+{
+	TRACE("register_device()\n");
+
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "USB Mode Switch"} },
+		{ NULL }
+	};
+
+	return gDeviceManager->register_node(node,
+		USB_MODESWITCH_DRIVER_MODULE_NAME, attrs, NULL, NULL);
+}
+
+
+static status_t
+usb_modeswitch_init_driver(device_node *node, void **cookie)
+{
+	TRACE("init_driver()\n");
+
+	usb_modeswitch_info *info = (usb_modeswitch_info *)malloc(
+		sizeof(usb_modeswitch_info));
+	if (info == NULL)
+		return B_NO_MEMORY;
+
+	memset(info, 0, sizeof(*info));
+	info->node = node;
+
+	// get USB device ID
+	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+			&info->device, true) != B_OK) {
+		free(info);
 		return B_ERROR;
 	}
 
+	// get device descriptor for message type lookup
+	const usb_device_descriptor *descriptor
+		= gUSBModule->get_device_descriptor(info->device);
+	if (descriptor == NULL) {
+		free(info);
+		return B_ERROR;
+	}
+
+	for (int i = 0; i < 3; i++)
+		info->type[i] = my_get_msg_type(descriptor, i);
+
+	if (info->type[0] == MSG_NONE) {
+		TRACE("no matching message type\n");
+		free(info);
+		return B_ERROR;
+	}
+
+	// find bulk endpoints
+	const usb_configuration_info *configuration
+		= gUSBModule->get_configuration(info->device);
+	if (configuration == NULL) {
+		free(info);
+		return B_ERROR;
+	}
+
+	bool hasIn = false, hasOut = false;
 	for (size_t i = 0; i < configuration->interface_count; i++) {
 		usb_interface_info *interface = configuration->interface[i].active;
 		if (interface == NULL)
 			continue;
 
-		if (true) {
-
-			bool hasIn = false;
-			bool hasOut = false;
-			for (size_t j = 0; j < interface->endpoint_count; j++) {
-				usb_endpoint_info *endpoint = &interface->endpoint[j];
-				if (endpoint == NULL
-					|| endpoint->descr->attributes != USB_ENDPOINT_ATTR_BULK)
-					continue;
-
-				if (!hasIn && (endpoint->descr->endpoint_address
-					& USB_ENDPOINT_ADDR_DIR_IN)) {
-					device->bulk_in = endpoint->handle;
-					hasIn = true;
-				} else if (!hasOut && (endpoint->descr->endpoint_address
-					& USB_ENDPOINT_ADDR_DIR_IN) == 0) {
-					device->bulk_out = endpoint->handle;
-					hasOut = true;
-				}
-
-				if (hasIn && hasOut)
-					break;
-			}
-
-			if (!(hasIn && hasOut))
+		for (size_t j = 0; j < interface->endpoint_count; j++) {
+			usb_endpoint_info *endpoint = &interface->endpoint[j];
+			if (endpoint == NULL
+				|| endpoint->descr->attributes != USB_ENDPOINT_ATTR_BULK)
 				continue;
 
-			device->interface = interface->descr->interface_number;
-			device->alternate_setting = interface->descr->alternate_setting;
+			if (!hasIn && (endpoint->descr->endpoint_address
+				& USB_ENDPOINT_ADDR_DIR_IN)) {
+				info->bulk_in = endpoint->handle;
+				hasIn = true;
+			} else if (!hasOut && (endpoint->descr->endpoint_address
+				& USB_ENDPOINT_ADDR_DIR_IN) == 0) {
+				info->bulk_out = endpoint->handle;
+				hasOut = true;
+			}
 
-			break;
+			if (hasIn && hasOut)
+				break;
 		}
+
+		if (hasIn && hasOut)
+			break;
 	}
 
-	if (device->interface == 0xff) {
-		TRACE_ALWAYS("no valid interface found\n");
-		free(device);
+	if (!(hasIn && hasOut)) {
+		TRACE_ALWAYS("no valid bulk endpoints found\n");
+		free(info);
 		return B_ERROR;
 	}
 
-	const usb_device_descriptor *descriptor
-		= gUSBModule->get_device_descriptor(newDevice);
-	if (descriptor == NULL) {
-		free(device);
-		return B_ERROR;
-	}
-	for (int i = 0; i < 3; i++) {
-		device->type[i] = my_get_msg_type(descriptor, i);
+	// create notification semaphore
+	info->notify = create_sem(0, DRIVER_NAME " callback notify");
+	if (info->notify < B_OK) {
+		status_t status = info->notify;
+		free(info);
+		return status;
 	}
 
-	mutex_init(&device->lock, DRIVER_NAME " device lock");
+	// perform the mode switch
+	status_t result = my_modeswitch(info);
+	if (result != B_OK)
+		TRACE_ALWAYS("modeswitch failed: %s\n", strerror(result));
 
-	sem_id callbackSem = create_sem(0, DRIVER_NAME " callback notify");
-	if (callbackSem < B_OK) {
-		mutex_destroy(&device->lock);
-		free(device);
-		return callbackSem;
-	}
-	device->notify = callbackSem;
+	*cookie = info;
+	return B_OK;
+}
 
-	mutex_lock(&gDeviceListLock);
-	device->link = gDeviceList;
-	gDeviceList = device;
-	mutex_unlock(&gDeviceListLock);
 
-	*cookie = device;
+static void
+usb_modeswitch_uninit_driver(void *_cookie)
+{
+	TRACE("uninit_driver()\n");
+	usb_modeswitch_info *info = (usb_modeswitch_info *)_cookie;
 
-	return my_modeswitch(device);
+	if (info->notify >= 0)
+		delete_sem(info->notify);
+	free(info);
 }
 
 
 static status_t
-my_device_removed(void *cookie)
+usb_modeswitch_register_child_devices(void *_cookie)
 {
-	TRACE("device_removed(%p)\n", cookie);
-	my_device *device = (my_device *)cookie;
-
-	mutex_lock(&gDeviceListLock);
-	if (gDeviceList == device) {
-		gDeviceList = device->link;
-	} else {
-		my_device *element = gDeviceList;
-		while (element) {
-			if (element->link == device) {
-				element->link = device->link;
-				break;
-			}
-
-			element = element->link;
-		}
-	}
-	gDeviceCount--;
-
-	device->removed = true;
-	gUSBModule->cancel_queued_transfers(device->bulk_in);
-	gUSBModule->cancel_queued_transfers(device->bulk_out);
-	my_free_device(device);
-
-	mutex_unlock(&gDeviceListLock);
+	// This driver does not publish any devfs entries.
+	// It only performs mode switching on device attach.
 	return B_OK;
 }
 
 
 //
-//#pragma mark - Driver Entry Points
+//#pragma mark -
 //
 
 
-status_t
-init_hardware()
-{
-	TRACE("init_hardware()\n");
-	return B_OK;
-}
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ B_USB_MODULE_NAME, (module_info **)&gUSBModule },
+	{ NULL }
+};
 
+struct driver_module_info sUsbModeSwitchDriver = {
+	{
+		USB_MODESWITCH_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
 
-status_t
-init_driver()
-{
-	TRACE("init_driver()\n");
-	static usb_notify_hooks notifyHooks = {
-		&my_device_added,
-		&my_device_removed
-	};
+	usb_modeswitch_supports_device,
+	usb_modeswitch_register_device,
+	usb_modeswitch_init_driver,
+	usb_modeswitch_uninit_driver,
+	usb_modeswitch_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
 
-	gDeviceList = NULL;
-	gDeviceCount = 0;
-	mutex_init(&gDeviceListLock, DRIVER_NAME " device list lock");
-
-	TRACE("trying module %s\n", B_USB_MODULE_NAME);
-	status_t result = get_module(B_USB_MODULE_NAME,
-		(module_info **)&gUSBModule);
-	if (result < B_OK) {
-		TRACE_ALWAYS("getting module failed 0x%08" B_PRIx32 "\n", result);
-		mutex_destroy(&gDeviceListLock);
-		return result;
-	}
-
-	size_t descriptorsSize = kDevicesCount * sizeof(usb_support_descriptor);
-	usb_support_descriptor *supportedDevices =
-		(usb_support_descriptor *)malloc(descriptorsSize);
-	if (supportedDevices == NULL) {
-		TRACE_ALWAYS("descriptor allocation failed\n");
-		put_module(B_USB_MODULE_NAME);
-		mutex_destroy(&gDeviceListLock);
-		return result;
-	}
-
-	for (uint32 i = 0; i < kDevicesCount; i++)
-		supportedDevices[i] = kDevices[i].desc;
-
-	gUSBModule->register_driver(DRIVER_NAME, supportedDevices, kDevicesCount,
-		NULL);
-	gUSBModule->install_notify(DRIVER_NAME, &notifyHooks);
-	free(supportedDevices);
-	return B_OK;
-}
-
-
-void
-uninit_driver()
-{
-	TRACE("uninit_driver()\n");
-	gUSBModule->uninstall_notify(DRIVER_NAME);
-	mutex_lock(&gDeviceListLock);
-	mutex_destroy(&gDeviceListLock);
-	put_module(B_USB_MODULE_NAME);
-}
-
-
-const char **
-publish_devices()
-{
-	TRACE("publish_devices()\n");
-	return NULL;
-}
-
-
-device_hooks *
-find_device(const char *name)
-{
-	TRACE("find_device()\n");
-	return NULL;
-}
+module_info *modules[] = {
+	(module_info *)&sUsbModeSwitchDriver,
+	NULL
+};

@@ -25,7 +25,14 @@
 #include "h2util.h"
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#include <device_manager.h>
+#include <bus/USB.h>
+
+#define H2_DRIVER_MODULE_NAME "drivers/bluetooth/h2generic/driver_v1"
+#define H2_DEVICE_MODULE_NAME "drivers/bluetooth/h2generic/device_v1"
+
+static device_manager_info *sDeviceManager;
+static bool sInitialized = false;
 
 // Modules
 static const char* usb_name = B_USB_MODULE_NAME;
@@ -40,7 +47,7 @@ struct net_buffer_module_info* nb = NULL;
 struct bluetooth_core_data_module_info* btCoreData = NULL;
 
 // Driver Global data
-static char* publish_names[MAX_BT_GENERIC_USB_DEVICES];
+static char* publish_names[MAX_BT_GENERIC_USB_DEVICES] __attribute__((unused));
 
 int32 dev_count = 0; // number of connected devices
 static bt_usb_dev* bt_usb_devices[MAX_BT_GENERIC_USB_DEVICES];
@@ -778,12 +785,13 @@ dump_driver(int argc, char** argv)
 }
 
 
-// called each time the driver is loaded by the kernel
-status_t
-init_driver(void)
+static status_t
+ensure_h2_initialized()
 {
+	if (sInitialized)
+		return B_OK;
+
 	CALLED();
-	int j;
 
 	if (get_module(BT_CORE_DATA_MODULE_NAME,
 		(module_info**)&btCoreData) != B_OK) {
@@ -792,163 +800,151 @@ init_driver(void)
 		return B_ERROR;
 	}
 
-	// BT devices MODULE INITS
 	if (get_module(btDevices_name, (module_info**)&btDevices) != B_OK) {
-		ERROR("%s: cannot get module '%s'\n", __func__, btDevices_name);
-		goto err_release3;
+		put_module(BT_CORE_DATA_MODULE_NAME);
+		return B_ERROR;
 	}
 
-	// HCI MODULE INITS
 	if (get_module(hci_name, (module_info**)&hci) != B_OK) {
-		ERROR("%s: cannot get module '%s'\n", __func__, hci_name);
-		goto err_release2;
+		put_module(btDevices_name);
+		put_module(BT_CORE_DATA_MODULE_NAME);
+		return B_ERROR;
 	}
 
-	// USB MODULE INITS
 	if (get_module(usb_name, (module_info**)&usb) != B_OK) {
-		ERROR("%s: cannot get module '%s'\n", __func__, usb_name);
-		goto err_release1;
+		put_module(hci_name);
+		put_module(btDevices_name);
+		put_module(BT_CORE_DATA_MODULE_NAME);
+		return B_ERROR;
 	}
 
 	if (get_module(NET_BUFFER_MODULE_NAME, (module_info**)&nb) != B_OK) {
-		ERROR("%s: cannot get module '%s'\n", __func__,
-			NET_BUFFER_MODULE_NAME);
-		goto err_release;
+		put_module(usb_name);
+		put_module(hci_name);
+		put_module(btDevices_name);
+		put_module(BT_CORE_DATA_MODULE_NAME);
+		return B_ERROR;
 	}
 
-	// GENERAL INITS
 	dev_table_sem = create_sem(1, BLUETOOTH_DEVICE_DEVFS_NAME "dev_table_lock");
 	if (dev_table_sem < 0) {
-		goto err;
+		put_module(NET_BUFFER_MODULE_NAME);
+		put_module(usb_name);
+		put_module(hci_name);
+		put_module(btDevices_name);
+		put_module(BT_CORE_DATA_MODULE_NAME);
+		return B_ERROR;
 	}
 
-	for (j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
+	for (int j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++)
 		bt_usb_devices[j] = NULL;
-	}
 
-	// Note: After here device_added and publish devices hooks are called
 	usb->register_driver(BLUETOOTH_DEVICE_DEVFS_NAME, supported_devices, 1, NULL);
 	usb->install_notify(BLUETOOTH_DEVICE_DEVFS_NAME, &notify_hooks);
 
 	add_debugger_command("bth2generic", &dump_driver,
 		"Lists H2 Transport device info");
 
+	sInitialized = true;
 	return B_OK;
-
-err:	// Releasing
-	put_module(NET_BUFFER_MODULE_NAME);
-err_release:
-	put_module(usb_name);
-err_release1:
-	put_module(hci_name);
-err_release2:
-	put_module(btDevices_name);
-err_release3:
-	put_module(BT_CORE_DATA_MODULE_NAME);
-
-	return B_ERROR;
 }
 
 
-// called just before the kernel unloads the driver
-void
-uninit_driver(void)
+/*	#pragma mark - driver module API */
+
+
+static float
+h2_supports_device(device_node *parent)
 {
-	CALLED();
-
-	int32 j;
-
-	for (j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
-
-		if (publish_names[j] != NULL)
-			free(publish_names[j]);
-
-		if (bt_usb_devices[j] != NULL) {
-			//	if (connected_dev != NULL) {
-			//		debugf("Device %p still exists.\n",	connected_dev);
-			//	}
-			ERROR("%s: %s still present?\n", __func__, bt_usb_devices[j]->name);
-			kill_device(bt_usb_devices[j]);
-		}
-	}
-
-	usb->uninstall_notify(BLUETOOTH_DEVICE_DEVFS_NAME);
-
-	remove_debugger_command("bth2generic", &dump_driver);
-
-	// Releasing modules
-	put_module(usb_name);
-	put_module(hci_name);
-	// TODO: netbuffers
-
-	delete_sem(dev_table_sem);
+	const char *bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "usb") == 0 && !sInitialized)
+		return 0.01;
+	return 0.0;
 }
 
 
-const char**
-publish_devices(void)
+static status_t
+h2_register_device(device_node *node)
 {
-	CALLED();
-	int32 j;
-	int32 i = 0;
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Bluetooth H2 USB Transport"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, H2_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
 
-	char* str;
 
-	for (j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
-		if (publish_names[j]) {
-			free(publish_names[j]);
-			publish_names[j] = NULL;
-		}
-	}
+static status_t
+h2_init_driver(device_node *node, void **cookie)
+{
+	status_t status = ensure_h2_initialized();
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
 
-	acquire_sem(dev_table_sem);
-	for (j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
+static void h2_uninit_driver(void *_cookie) {}
+
+static status_t
+h2_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+
+	for (int32 j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
 		if (bt_usb_devices[j] != NULL && bt_usb_devices[j]->connected) {
-			str = strdup(bt_usb_devices[j]->name);
-			if (str) {
-				publish_names[i++] = str;
-				TRACE("%s: publishing %s\n", __func__, bt_usb_devices[j]->name);
-			}
+			sDeviceManager->publish_device(node,
+				bt_usb_devices[j]->name, H2_DEVICE_MODULE_NAME);
 		}
 	}
-	release_sem_etc(dev_table_sem, 1, B_DO_NOT_RESCHEDULE);
-
-	publish_names[i] = NULL;
-	TRACE("%s: published %" B_PRId32 " devices\n", __func__, i);
-
-	// TODO: this method might make better memory use
-	// dev_names = (char**)malloc(sizeof(char*) * (dev_count + 1));
-	// if (dev_names) {
-	// for (i = 0; i < MAX_NUM_DEVS; i++) {
-	//	if ((dev != NULL) // dev + \n
-	//	&& (dev_names[i] = (char*)malloc(strlen(DEVICE_PATH) + 2))) {
-	//	sprintf(dev_names[i], "%s%ld", DEVICE_PATH, dev->num);
-	//	debugf("publishing \"%s\"\n", dev_names[i]);
-	//	}
-	// }
-
-	return (const char**)publish_names;
+	return B_OK;
 }
 
 
-static device_hooks hooks = {
-	device_open,
-	device_close,
-	device_free,
-	device_control,
-	device_read,
-	device_write,
-	NULL,
-	NULL,
-	NULL,
-	NULL
+static status_t h2_init_device(void *i, void **c)
+{ *c = i; return B_OK; }
+static void h2_uninit_device(void *c) {}
+
+static status_t h2_dm_open(void *i, const char *p, int m, void **c)
+{ return device_open(p, m, c); }
+static status_t h2_dm_close(void *c)
+{ return device_close(c); }
+static status_t h2_dm_free(void *c)
+{ return device_free(c); }
+static status_t h2_dm_read(void *c, off_t p, void *b, size_t *l)
+{ return device_read(c, p, b, l); }
+static status_t h2_dm_write(void *c, off_t p, const void *b, size_t *l)
+{ return device_write(c, p, b, l); }
+static status_t h2_dm_control(void *c, uint32 o, void *b, size_t l)
+{ return device_control(c, o, b, l); }
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
 };
 
+struct device_module_info sH2Device = {
+	{ H2_DEVICE_MODULE_NAME, 0, NULL },
+	h2_init_device, h2_uninit_device, NULL,
+	h2_dm_open, h2_dm_close, h2_dm_free,
+	h2_dm_read, h2_dm_write, NULL, h2_dm_control,
+	NULL, NULL
+};
 
-device_hooks*
-find_device(const char* name)
-{
-	CALLED();
+struct driver_module_info sH2Driver = {
+	{ H2_DRIVER_MODULE_NAME, 0, NULL },
+	h2_supports_device, h2_register_device,
+	h2_init_driver, h2_uninit_driver,
+	h2_register_child_devices, NULL, NULL
+};
 
-	return &hooks;
-}
+module_info *modules[] = {
+	(module_info *)&sH2Driver,
+	(module_info *)&sH2Device,
+	NULL
+};

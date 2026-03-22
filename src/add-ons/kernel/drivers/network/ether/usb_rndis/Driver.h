@@ -6,6 +6,7 @@
 #ifndef _USB_RNDIS_DRIVER_H_
 #define _USB_RNDIS_DRIVER_H_
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
@@ -15,20 +16,23 @@
 #include <util/kernel_cpp.h>
 
 #define DRIVER_NAME	"usb_rndis"
-#define MAX_DEVICES	8
 
 extern usb_module_info *gUSBModule;
+extern device_manager_info *gDeviceManager;
 
-extern "C" {
-status_t	usb_rndis_device_added(usb_device device, void **cookie);
-status_t	usb_rndis_device_removed(void *cookie);
+class RNDISDevice;
 
-status_t	init_hardware();
-void		uninit_driver();
+// bus manager device interface for peripheral driver
+typedef struct {
+	driver_module_info info;
+} usb_device_interface;
 
-const char **publish_devices();
-device_hooks *find_device(const char *name);
-}
+typedef struct {
+	device_node*			node;
+	::usb_device			usb_device;
+	usb_device_interface*	usb;
+	RNDISDevice*			device;
+} usb_rndis_driver_info;
 
 #if TRACE_RNDIS
 #define TRACE(x...)			dprintf(DRIVER_NAME ": " x)

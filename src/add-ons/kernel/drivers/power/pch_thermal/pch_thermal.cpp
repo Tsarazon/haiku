@@ -11,7 +11,7 @@
 #include <Drivers.h>
 #include <Errors.h>
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <bus/PCI.h>
 
 #include <stdio.h>

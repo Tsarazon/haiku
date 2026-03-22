@@ -24,7 +24,7 @@
 #include <AGP.h>
 #include <KernelExport.h>
 #include <OS.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <SupportDefs.h>
 
 #undef TRACE
@@ -174,277 +174,274 @@ const struct supported_device {
 
 };
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#include <device_manager.h>
+
+#define INTEL_DRIVER_MODULE_NAME "drivers/graphics/intel_extreme/driver_v1"
+#define INTEL_DEVICE_MODULE_NAME "drivers/graphics/intel_extreme/device_v1"
+
+static device_manager_info* sDeviceManager;
+static bool sInitialized = false;
 
 char* gDeviceNames[MAX_CARDS + 1];
 intel_info* gDeviceInfo[MAX_CARDS];
-pci_module_info* gPCI;
+pci_device_module_info* gPCI;
+pci_device* gPCIDev;
 agp_gart_module_info* gGART;
 mutex gLock;
 
 
-static status_t
-get_next_intel_extreme(int32* _cookie, pci_info &info, uint32 &type)
-{
-	int32 index = *_cookie;
+/* get_next_intel_extreme removed — device_manager handles discovery */
 
-	// find devices
 
-	for (; gPCI->get_nth_pci_info(index, &info) == B_OK; index++) {
-		// check vendor
-		if (info.vendor_id != VENDOR_ID_INTEL
-			|| info.class_base != PCI_display
-			|| (info.class_sub != PCI_vga && info.class_sub != PCI_display_other))
-			continue;
-
-		// check device
-		for (uint32 i = 0; i < sizeof(kSupportedDevices)
-				/ sizeof(kSupportedDevices[0]); i++) {
-			if (info.device_id == kSupportedDevices[i].device_id) {
-				type = i;
-				*_cookie = index + 1;
-				ERROR("%s: Intel gfx deviceID: 0x%04x\n", __func__, info.device_id);
-				return B_OK;
-			}
-		}
-	}
-
-	return B_ENTRY_NOT_FOUND;
-}
+static const struct {
+	unsigned short	id;
+	enum pch_info	info;
+	const char*		name;
+} kPCHDevices[] = {
+	{ INTEL_PCH_IBX_DEVICE_ID,    INTEL_PCH_IBX, "Ibex Peak" },
+	{ INTEL_PCH_CPT_DEVICE_ID,    INTEL_PCH_CPT, "CougarPoint" },
+	{ INTEL_PCH_PPT_DEVICE_ID,    INTEL_PCH_CPT, "PantherPoint" },
+	{ INTEL_PCH_LPT_DEVICE_ID,    INTEL_PCH_LPT, "LynxPoint" },
+	{ INTEL_PCH_LPT_LP_DEVICE_ID, INTEL_PCH_LPT, "LynxPoint LP" },
+	{ INTEL_PCH_WPT_DEVICE_ID,    INTEL_PCH_LPT, "WildcatPoint" },
+	{ INTEL_PCH_WPT_LP_DEVICE_ID, INTEL_PCH_LPT, "WildcatPoint LP" },
+	{ INTEL_PCH_SPT_DEVICE_ID,    INTEL_PCH_SPT, "SunrisePoint" },
+	{ INTEL_PCH_SPT_LP_DEVICE_ID, INTEL_PCH_SPT, "SunrisePoint LP" },
+	{ INTEL_PCH_KBP_DEVICE_ID,    INTEL_PCH_SPT, "Kaby Lake" },
+	{ INTEL_PCH_GMP_DEVICE_ID,    INTEL_PCH_CNP, "Gemini Lake" },
+	{ INTEL_PCH_CNP_DEVICE_ID,    INTEL_PCH_CNP, "Cannon Lake" },
+	{ INTEL_PCH_CNP_LP_DEVICE_ID, INTEL_PCH_CNP, "Cannon Lake LP" },
+	{ INTEL_PCH_APL_LP_DEVICE_ID, INTEL_PCH_CNP, "Apollo Lake" },
+	{ INTEL_PCH_CMP_DEVICE_ID,    INTEL_PCH_CNP, "Comet Lake" },
+	{ INTEL_PCH_CMP2_DEVICE_ID,   INTEL_PCH_CNP, "Comet Lake 2" },
+	{ INTEL_PCH_CMP_V_DEVICE_ID,  INTEL_PCH_SPT, "Comet Lake V" },
+	{ INTEL_PCH_ICP_DEVICE_ID,    INTEL_PCH_ICP, "Ice Lake" },
+	{ INTEL_PCH_ICP2_DEVICE_ID,   INTEL_PCH_ICP, "Ice Lake 2" },
+	{ INTEL_PCH_MCC_DEVICE_ID,    INTEL_PCH_MCC, "Mule Creek Canyon" },
+	{ INTEL_PCH_TGP_DEVICE_ID,    INTEL_PCH_TGP, "Tiger Lake" },
+	{ INTEL_PCH_TGP2_DEVICE_ID,   INTEL_PCH_TGP, "Tiger Lake 2" },
+	{ INTEL_PCH_JSP_DEVICE_ID,    INTEL_PCH_JSP, "Jasper Lake" },
+	{ INTEL_PCH_ADP_DEVICE_ID,    INTEL_PCH_ADP, "Alder Lake" },
+	{ INTEL_PCH_ADP2_DEVICE_ID,   INTEL_PCH_ADP, "Alder Lake 2" },
+	{ INTEL_PCH_ADP3_DEVICE_ID,   INTEL_PCH_ADP, "Alder Lake 3" },
+	{ INTEL_PCH_ADP4_DEVICE_ID,   INTEL_PCH_ADP, "Alder Lake 4" },
+	{ INTEL_PCH_ADP5_DEVICE_ID,   INTEL_PCH_ADP, "Alder Lake 5" },
+};
 
 
 static enum pch_info
 detect_intel_pch()
 {
+	// PCH detection scans all PCI devices for the ISA bridge.
+	// This is a cross-device query requiring the legacy PCI module.
+	pci_module_info* pciLegacy;
+	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pciLegacy) != B_OK)
+		return INTEL_PCH_NONE;
+
+	enum pch_info result = INTEL_PCH_NONE;
 	pci_info info;
 
-	// find devices
-	for (int32 i = 0; gPCI->get_nth_pci_info(i, &info) == B_OK; i++) {
-		// check vendor
+	for (int32 i = 0; pciLegacy->get_nth_pci_info(i, &info) == B_OK; i++) {
 		if (info.vendor_id != VENDOR_ID_INTEL
 			|| info.class_base != PCI_bridge
-			|| info.class_sub != PCI_isa) {
+			|| info.class_sub != PCI_isa)
 			continue;
-		}
 
-		// check device
 		unsigned short id = info.device_id & INTEL_PCH_DEVICE_ID_MASK;
 		ERROR("%s: Intel PCH deviceID: 0x%04x\n", __func__, info.device_id);
-		switch(id) {
-			case INTEL_PCH_IBX_DEVICE_ID:
-				ERROR("%s: Found Ibex Peak PCH\n", __func__);
-				return INTEL_PCH_IBX;
-			case INTEL_PCH_CPT_DEVICE_ID:
-				ERROR("%s: Found CougarPoint PCH\n", __func__);
-				return INTEL_PCH_CPT;
-			case INTEL_PCH_PPT_DEVICE_ID:
-				ERROR("%s: Found PantherPoint PCH\n", __func__);
-				return INTEL_PCH_CPT;
-			case INTEL_PCH_LPT_DEVICE_ID:
-			case INTEL_PCH_LPT_LP_DEVICE_ID:
-				ERROR("%s: Found LynxPoint PCH\n", __func__);
-				return INTEL_PCH_LPT;
-			case INTEL_PCH_WPT_DEVICE_ID:
-			case INTEL_PCH_WPT_LP_DEVICE_ID:
-				ERROR("%s: Found WildcatPoint PCH\n", __func__);
-				return INTEL_PCH_LPT;
-			case INTEL_PCH_SPT_DEVICE_ID:
-			case INTEL_PCH_SPT_LP_DEVICE_ID:
-				ERROR("%s: Found SunrisePoint PCH\n", __func__);
-				return INTEL_PCH_SPT;
-			case INTEL_PCH_KBP_DEVICE_ID:
-				ERROR("%s: Found Kaby Lake PCH\n", __func__);
-				return INTEL_PCH_SPT;
-			case INTEL_PCH_GMP_DEVICE_ID:
-				ERROR("%s: Found Gemini Lake PCH\n", __func__);
-				return INTEL_PCH_CNP;
-			case INTEL_PCH_CNP_DEVICE_ID:
-			case INTEL_PCH_CNP_LP_DEVICE_ID:
-				ERROR("%s: Found Cannon Lake PCH\n", __func__);
-				return INTEL_PCH_CNP;
-			case INTEL_PCH_APL_LP_DEVICE_ID:
-				ERROR("%s: Found Apollo Lake PCH\n", __func__);
-				return INTEL_PCH_CNP;
-			case INTEL_PCH_CMP_DEVICE_ID:
-			case INTEL_PCH_CMP2_DEVICE_ID:
-				ERROR("%s: Found Comet Lake PCH\n", __func__);
-				return INTEL_PCH_CNP;
-			case INTEL_PCH_CMP_V_DEVICE_ID:
-				ERROR("%s: Found Comet Lake V PCH\n", __func__);
-				return INTEL_PCH_SPT;
-			case INTEL_PCH_ICP_DEVICE_ID:
-			case INTEL_PCH_ICP2_DEVICE_ID:
-				ERROR("%s: Found Ice Lake PCH\n", __func__);
-				return INTEL_PCH_ICP;
-			case INTEL_PCH_MCC_DEVICE_ID:
-				ERROR("%s: Found Mule Creek Canyon PCH\n", __func__);
-				return INTEL_PCH_MCC;
-			case INTEL_PCH_TGP_DEVICE_ID:
-			case INTEL_PCH_TGP2_DEVICE_ID:
-				ERROR("%s: Found Tiger Lake PCH\n", __func__);
-				return INTEL_PCH_TGP;
-			case INTEL_PCH_JSP_DEVICE_ID:
-				ERROR("%s: Found Jasper Lake PCH\n", __func__);
-				return INTEL_PCH_JSP;
-			case INTEL_PCH_ADP_DEVICE_ID:
-			case INTEL_PCH_ADP2_DEVICE_ID:
-			case INTEL_PCH_ADP3_DEVICE_ID:
-			case INTEL_PCH_ADP4_DEVICE_ID:
-			case INTEL_PCH_ADP5_DEVICE_ID:
-				ERROR("%s: Found Alder Lake PCH\n", __func__);
-				return INTEL_PCH_ADP;
+
+		for (size_t j = 0; j < B_COUNT_OF(kPCHDevices); j++) {
+			if (id == kPCHDevices[j].id) {
+				ERROR("%s: Found %s PCH\n", __func__, kPCHDevices[j].name);
+				result = kPCHDevices[j].info;
+				break;
+			}
 		}
+
+		if (result != INTEL_PCH_NONE)
+			break;
 	}
 
-	ERROR("%s: No PCH detected.\n", __func__);
-	return INTEL_PCH_NONE;
-}
-
-
-extern "C" const char**
-publish_devices(void)
-{
-	CALLED();
-	return (const char**)gDeviceNames;
-}
-
-
-extern "C" status_t
-init_hardware(void)
-{
-	CALLED();
-
-	status_t status = get_module(B_PCI_MODULE_NAME,(module_info**)&gPCI);
-	if (status != B_OK) {
-		ERROR("pci module unavailable\n");
-		return status;
-	}
-
-	int32 cookie = 0;
-	uint32 type;
-	pci_info info;
-	status = get_next_intel_extreme(&cookie, info, type);
+	if (result == INTEL_PCH_NONE)
+		ERROR("%s: No PCH detected.\n", __func__);
 
 	put_module(B_PCI_MODULE_NAME);
-	return status;
+	return result;
 }
 
 
-extern "C" status_t
-init_driver(void)
+static int32 sNumFound = 0;
+
+static status_t
+add_intel_device_from_node(device_node *node)
 {
-	CALLED();
+	if (sNumFound >= MAX_CARDS)
+		return B_NO_MORE_FDS;
 
-	status_t status = get_module(B_PCI_MODULE_NAME, (module_info**)&gPCI);
-	if (status != B_OK) {
-		ERROR("pci module unavailable\n");
-		return status;
+	// Get pci_device_module_info from parent node
+	device_node *parent = sDeviceManager->get_parent_node(node);
+	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
+		(void **)&gPCIDev);
+	sDeviceManager->put_node(parent);
+
+	if (!sInitialized) {
+		status_t status = get_module(B_AGP_GART_MODULE_NAME,
+			(module_info**)&gGART);
+		if (status != B_OK)
+			return status;
+
+		mutex_init(&gLock, "intel extreme ksync");
+		sInitialized = true;
 	}
 
-	status = get_module(B_AGP_GART_MODULE_NAME, (module_info**)&gGART);
-	if (status != B_OK) {
-		ERROR("AGP GART module unavailable\n");
-		put_module(B_PCI_MODULE_NAME);
-		return status;
-	}
+	pci_info* info = (pci_info*)malloc(sizeof(pci_info));
+	if (info == NULL)
+		return B_NO_MEMORY;
 
-	mutex_init(&gLock, "intel extreme ksync");
+	gPCI->get_pci_info(gPCIDev, info);
 
-	// find the PCH device (if any)
-	enum pch_info pchInfo = detect_intel_pch();
-
-	// find devices
-
-	int32 found = 0;
-
-	for (int32 cookie = 0; found < MAX_CARDS;) {
-		pci_info* info = (pci_info*)malloc(sizeof(pci_info));
-		if (info == NULL)
-			break;
-
-		uint32 type;
-		status = get_next_intel_extreme(&cookie, *info, type);
-		if (status < B_OK) {
-			free(info);
-			break;
-		}
-
-		// create device names & allocate device info structure
-
-		char name[64];
-		sprintf(name, "graphics/intel_extreme_%02x%02x%02x",
-			 info->bus, info->device,
-			 info->function);
-
-		gDeviceNames[found] = strdup(name);
-		if (gDeviceNames[found] == NULL)
-			break;
-
-		gDeviceInfo[found] = (intel_info*)malloc(sizeof(intel_info));
-		if (gDeviceInfo[found] == NULL) {
-			free(gDeviceNames[found]);
+	// Find device type in supported list
+	uint32 type = 0;
+	bool found = false;
+	for (uint32 i = 0; i < sizeof(kSupportedDevices)
+			/ sizeof(kSupportedDevices[0]); i++) {
+		if (info->device_id == kSupportedDevices[i].device_id) {
+			type = i;
+			found = true;
 			break;
 		}
-
-		// initialize the structure for later use
-
-		memset((void*)gDeviceInfo[found], 0, sizeof(intel_info));
-		gDeviceInfo[found]->init_status = B_NO_INIT;
-		gDeviceInfo[found]->id = found;
-		gDeviceInfo[found]->pci = info;
-		gDeviceInfo[found]->registers = info->u.h0.base_registers[0];
-		gDeviceInfo[found]->device_identifier = kSupportedDevices[type].name;
-		gDeviceInfo[found]->device_type = kSupportedDevices[type].type;
-		gDeviceInfo[found]->pch_info = pchInfo;
-
-		dprintf(DEVICE_NAME ": (%" B_PRId32 ") %s, revision = 0x%x\n", found,
-			kSupportedDevices[type].name, info->revision);
-
-		found++;
 	}
 
-	gDeviceNames[found] = NULL;
-
-	if (found == 0) {
-		mutex_destroy(&gLock);
-		put_module(B_AGP_GART_MODULE_NAME);
-		put_module(B_PCI_MODULE_NAME);
-		return ENODEV;
+	if (!found) {
+		free(info);
+		return B_ERROR;
 	}
 
+	char name[64];
+	sprintf(name, "graphics/intel_extreme_%02x%02x%02x",
+		info->bus, info->device, info->function);
+
+	gDeviceNames[sNumFound] = strdup(name);
+	if (gDeviceNames[sNumFound] == NULL) {
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	gDeviceInfo[sNumFound] = (intel_info*)malloc(sizeof(intel_info));
+	if (gDeviceInfo[sNumFound] == NULL) {
+		free(gDeviceNames[sNumFound]);
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	memset((void*)gDeviceInfo[sNumFound], 0, sizeof(intel_info));
+	gDeviceInfo[sNumFound]->init_status = B_NO_INIT;
+	gDeviceInfo[sNumFound]->id = sNumFound;
+	gDeviceInfo[sNumFound]->pci = info;
+	gDeviceInfo[sNumFound]->registers = info->u.h0.base_registers[0];
+	gDeviceInfo[sNumFound]->device_identifier = kSupportedDevices[type].name;
+	gDeviceInfo[sNumFound]->device_type = kSupportedDevices[type].type;
+	gDeviceInfo[sNumFound]->pch_info = detect_intel_pch();
+
+	dprintf(DEVICE_NAME ": (%" B_PRId32 ") %s, revision = 0x%x\n", sNumFound,
+		kSupportedDevices[type].name, info->revision);
+
+	sNumFound++;
+	gDeviceNames[sNumFound] = NULL;
 	return B_OK;
 }
 
 
-extern "C" void
-uninit_driver(void)
+static float
+intel_supports_device(device_node *parent)
 {
-	CALLED();
+	const char *bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "pci"))
+		return 0.0;
 
-	mutex_destroy(&gLock);
+	uint16 vendorId = 0;
+	uint8 classBase = 0;
+	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorId, false);
+	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
 
-	// free device related structures
-	char* name;
-	for (int32 index = 0; (name = gDeviceNames[index]) != NULL; index++) {
-		free(gDeviceInfo[index]);
-		free(name);
-	}
+	if (vendorId == VENDOR_ID_INTEL && classBase == PCI_display)
+		return 0.6;
 
-	put_module(B_AGP_GART_MODULE_NAME);
-	put_module(B_PCI_MODULE_NAME);
+	return 0.0;
 }
 
 
-extern "C" device_hooks*
-find_device(const char* name)
+static status_t
+intel_register_device(device_node *node)
 {
-	CALLED();
-
-	int index;
-	for (index = 0; gDeviceNames[index] != NULL; index++) {
-		if (!strcmp(name, gDeviceNames[index]))
-			return &gDeviceHooks;
-	}
-
-	return NULL;
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Intel Extreme Graphics"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, INTEL_DRIVER_MODULE_NAME, attrs, NULL, NULL);
 }
+
+
+static status_t
+intel_init_driver(device_node *node, void **cookie)
+{
+	status_t status = add_intel_device_from_node(node);
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
+
+static void intel_uninit_driver(void *_cookie) {}
+
+static status_t
+intel_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+	for (int i = 0; gDeviceNames[i] != NULL; i++)
+		sDeviceManager->publish_device(node, gDeviceNames[i], INTEL_DEVICE_MODULE_NAME);
+	return B_OK;
+}
+
+static status_t intel_init_device(void *i, void **c) { *c = i; return B_OK; }
+static void intel_uninit_device(void *c) {}
+
+static status_t intel_dm_open(void *i, const char *p, int m, void **c)
+{ return gDeviceHooks.open(p, m, c); }
+static status_t intel_dm_close(void *c) { return gDeviceHooks.close(c); }
+static status_t intel_dm_free(void *c) { return gDeviceHooks.free(c); }
+static status_t intel_dm_read(void *c, off_t p, void *b, size_t *l)
+{ return gDeviceHooks.read(c, p, b, l); }
+static status_t intel_dm_write(void *c, off_t p, const void *b, size_t *l)
+{ return gDeviceHooks.write(c, p, b, l); }
+static status_t intel_dm_control(void *c, uint32 o, void *b, size_t l)
+{ return gDeviceHooks.control(c, o, b, l); }
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sIntelDevice = {
+	{ INTEL_DEVICE_MODULE_NAME, 0, NULL },
+	intel_init_device, intel_uninit_device, NULL,
+	intel_dm_open, intel_dm_close, intel_dm_free,
+	intel_dm_read, intel_dm_write, NULL, intel_dm_control,
+	NULL, NULL
+};
+
+struct driver_module_info sIntelDriver = {
+	{ INTEL_DRIVER_MODULE_NAME, 0, NULL },
+	intel_supports_device, intel_register_device,
+	intel_init_driver, intel_uninit_driver,
+	intel_register_child_devices, NULL, NULL
+};
+
+module_info *modules[] = {
+	(module_info *)&sIntelDriver,
+	(module_info *)&sIntelDevice,
+	NULL
+};

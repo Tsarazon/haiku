@@ -6,8 +6,9 @@
 	Gerald Zajac
 */
 
+#include <device_manager.h>
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <drivers/bios.h>
 #include <malloc.h>
 #include <stdio.h>
@@ -40,7 +41,11 @@
 #define M64_BIOS_SIZE		0x10000		// 64KB
 #define R128_BIOS_SIZE		0x10000		// 64KB
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;	// revision of driver API used
+#define ATI_DRIVER_MODULE_NAME "drivers/graphics/ati/driver_v1"
+#define ATI_DEVICE_MODULE_NAME "drivers/graphics/ati/device_v1"
+
+static device_manager_info* sDeviceManager;
+static bool sInitialized = false;
 
 #define VENDOR_ID 0x1002	// ATI vendor ID
 
@@ -168,7 +173,9 @@ struct DeviceInfo {
 static Benaphore		gLock;
 static DeviceInfo		gDeviceInfo[MAX_DEVICES];
 static char*			gDeviceNames[MAX_DEVICES + 1];
-static pci_module_info*	gPCI;
+static pci_device_module_info*	gPCI;
+static pci_device*			gPCIDev;
+static uint32				gNumDevices = 0;
 
 
 // Prototypes for device hook functions.
@@ -199,16 +206,14 @@ static device_hooks gDeviceHooks =
 static inline uint32
 GetPCI(pci_info& info, uint8 offset, uint8 size)
 {
-	return gPCI->read_pci_config(info.bus, info.device, info.function, offset,
-		size);
+	return gPCI->read_pci_config(gPCIDev, offset, size);
 }
 
 
 static inline void
 SetPCI(pci_info& info, uint8 offset, uint8 size, uint32 value)
 {
-	gPCI->write_pci_config(info.bus, info.device, info.function, offset, size,
-		value);
+	gPCI->write_pci_config(gPCIDev, offset, size, value);
 }
 
 
@@ -873,154 +878,121 @@ InitDevice(DeviceInfo& di)
 }
 
 
-static const ChipInfo*
-GetNextSupportedDevice(uint32& pciIndex, pci_info& pciInfo)
+/* GetNextSupportedDevice removed — device_manager handles discovery */
+
+
+
+//	#pragma mark - device_manager API
+
+
+static status_t
+add_ati_device_from_node(device_node *node)
 {
-	// Search the PCI devices for a device that is supported by this driver.
-	// The search starts at the device specified by argument pciIndex, and
-	// continues until a supported device is found or there are no more devices
-	// to examine.  Argument pciIndex is incremented after each device is
-	// examined.
+	if (gNumDevices >= MAX_DEVICES)
+		return B_NO_MORE_FDS;
 
-	// If a supported device is found, return a pointer to the struct containing
-	// the chip info; else return NULL.
+	// Get pci_device_module_info from parent node
+	device_node *parent = sDeviceManager->get_parent_node(node);
+	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
+		(void **)&gPCIDev);
+	sDeviceManager->put_node(parent);
 
-	while (gPCI->get_nth_pci_info(pciIndex, &pciInfo) == B_OK) {
-
-		if (pciInfo.vendor_id == VENDOR_ID) {
-
-			// Search the table of supported devices to find a chip/device that
-			// matches device ID of the current PCI device.
-
-			const ChipInfo* pDevice = chipTable;
-
-			while (pDevice->chipID != 0) {	// end of table?
-				if (pDevice->chipID == pciInfo.device_id) {
-					// Matching device/chip found.  If chip is 264VT, reject it
-					// if its version is zero since the mode can not be set on
-					// that chip.
-
-					if (pDevice->chipType == MACH64_264VT
-							&& (pciInfo.revision & 0x7) == 0)
-						break;
-
-					return pDevice;		// matching device/chip found
-				}
-
-				pDevice++;
-			}
-		}
-
-		pciIndex++;
+	if (!sInitialized) {
+		status_t status = gLock.Init("ATI driver lock");
+		if (status < B_OK)
+			return status;
+		sInitialized = true;
 	}
 
-	return NULL;		// no supported device found
-}
+	DeviceInfo& di = gDeviceInfo[gNumDevices];
+	gPCI->get_pci_info(gPCIDev, &di.pciInfo);
 
+	// Find matching chip in table
+	const ChipInfo* pDevice = chipTable;
+	while (pDevice->chipID != 0) {
+		if (pDevice->chipID == di.pciInfo.device_id)
+			break;
+		pDevice++;
+	}
 
-
-//	#pragma mark - Kernel Interface
-
-
-status_t
-init_hardware(void)
-{
-	// Return B_OK if a device supported by this driver is found; otherwise,
-	// return B_ERROR so the driver will be unloaded.
-
-	if (get_module(B_PCI_MODULE_NAME, (module_info**)&gPCI) != B_OK)
-		return B_ERROR;		// unable to access PCI bus
-
-	// Check pci devices for a device supported by this driver.
-
-	uint32 pciIndex = 0;
-	pci_info pciInfo;
-	const ChipInfo* pDevice = GetNextSupportedDevice(pciIndex, pciInfo);
-
-	TRACE("init_hardware() - %s\n",
-		pDevice == NULL ? "no supported devices" : "device supported");
-
-	put_module(B_PCI_MODULE_NAME);		// put away the module manager
-
-	return (pDevice == NULL ? B_ERROR : B_OK);
-}
-
-
-status_t
-init_driver(void)
-{
-	// Get handle for the pci bus.
-
-	if (get_module(B_PCI_MODULE_NAME, (module_info**)&gPCI) != B_OK)
+	if (pDevice->chipID == 0)
 		return B_ERROR;
 
-	status_t status = gLock.Init("ATI driver lock");
-	if (status < B_OK)
-		return status;
+	sprintf(di.name, "graphics/" DEVICE_FORMAT,
+		di.pciInfo.vendor_id, di.pciInfo.device_id,
+		di.pciInfo.bus, di.pciInfo.device, di.pciInfo.function);
+	TRACE("init_driver() match found; name: %s\n", di.name);
 
-	// Get info about all the devices supported by this driver.
-
-	uint32 pciIndex = 0;
-	uint32 count = 0;
-
-	while (count < MAX_DEVICES) {
-		DeviceInfo& di = gDeviceInfo[count];
-
-		const ChipInfo* pDevice = GetNextSupportedDevice(pciIndex, di.pciInfo);
-		if (pDevice == NULL)
-			break;			// all supported devices have been obtained
-
-		// Compose device name.
-		sprintf(di.name, "graphics/" DEVICE_FORMAT,
-				  di.pciInfo.vendor_id, di.pciInfo.device_id,
-				  di.pciInfo.bus, di.pciInfo.device, di.pciInfo.function);
-		TRACE("init_driver() match found; name: %s\n", di.name);
-
-		gDeviceNames[count] = di.name;
-		di.openCount = 0;		// mark driver as available for R/W open
-		di.sharedArea = -1;		// indicate shared area not yet created
-		di.sharedInfo = NULL;
-		di.pChipInfo = pDevice;
-		count++;
-		pciIndex++;
-	}
-
-	gDeviceNames[count] = NULL;	// terminate list with null pointer
-
-	TRACE("init_driver() %" B_PRIu32 " supported devices\n", count);
+	gDeviceNames[gNumDevices] = di.name;
+	di.openCount = 0;
+	di.sharedArea = -1;
+	di.sharedInfo = NULL;
+	di.pChipInfo = pDevice;
+	gNumDevices++;
+	gDeviceNames[gNumDevices] = NULL;
 
 	return B_OK;
 }
 
 
-void
-uninit_driver(void)
+static float
+ati_supports_device(device_node *parent)
 {
-	// Free the driver data.
+	const char *bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "pci"))
+		return 0.0;
 
-	gLock.Delete();
-	put_module(B_PCI_MODULE_NAME);	// put the pci module away
+	uint16 vendorId = 0;
+	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+		&vendorId, false);
+	if (vendorId == VENDOR_ID)
+		return 0.6;
+
+	return 0.0;
 }
 
 
-const char**
-publish_devices(void)
+static status_t
+ati_register_device(device_node *node)
 {
-	return (const char**)gDeviceNames;	// return list of supported devices
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "ATI Graphics"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, ATI_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
 
 
-device_hooks*
-find_device(const char* name)
+static status_t
+ati_init_driver(device_node *node, void **cookie)
 {
-	int i = 0;
-	while (gDeviceNames[i] != NULL) {
-		if (strcmp(name, gDeviceNames[i]) == 0)
-			return &gDeviceHooks;
-		i++;
+	status_t status = add_ati_device_from_node(node);
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
+
+
+static void
+ati_uninit_driver(void *_cookie)
+{
+}
+
+
+static status_t
+ati_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+	for (int i = 0; gDeviceNames[i] != NULL; i++) {
+		sDeviceManager->publish_device(node, gDeviceNames[i],
+			ATI_DEVICE_MODULE_NAME);
 	}
-
-	return NULL;
+	return B_OK;
 }
 
 
@@ -1227,3 +1199,59 @@ device_ioctl(void* dev, uint32 msg, void* buffer, size_t bufferLength)
 
 	return B_DEV_INVALID_IOCTL;
 }
+
+
+//	#pragma mark - device module wrappers
+
+
+static status_t ati_init_device(void *_info, void **_cookie)
+{ *_cookie = _info; return B_OK; }
+
+static void ati_uninit_device(void *_cookie) {}
+
+static status_t ati_dm_open(void *_info, const char *path, int openMode,
+	void **_cookie)
+{ return gDeviceHooks.open(path, openMode, _cookie); }
+
+static status_t ati_dm_close(void *cookie)
+{ return gDeviceHooks.close(cookie); }
+
+static status_t ati_dm_free(void *cookie)
+{ return gDeviceHooks.free(cookie); }
+
+static status_t ati_dm_read(void *cookie, off_t pos, void *buf, size_t *len)
+{ return gDeviceHooks.read(cookie, pos, buf, len); }
+
+static status_t ati_dm_write(void *cookie, off_t pos, const void *buf,
+	size_t *len)
+{ return gDeviceHooks.write(cookie, pos, buf, len); }
+
+static status_t ati_dm_control(void *cookie, uint32 op, void *buf, size_t len)
+{ return gDeviceHooks.control(cookie, op, buf, len); }
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sAtiDevice = {
+	{ ATI_DEVICE_MODULE_NAME, 0, NULL },
+	ati_init_device, ati_uninit_device, NULL,
+	ati_dm_open, ati_dm_close, ati_dm_free,
+	ati_dm_read, ati_dm_write, NULL, ati_dm_control,
+	NULL, NULL
+};
+
+struct driver_module_info sAtiDriver = {
+	{ ATI_DRIVER_MODULE_NAME, 0, NULL },
+	ati_supports_device, ati_register_device,
+	ati_init_driver, ati_uninit_driver,
+	ati_register_child_devices, NULL, NULL
+};
+
+module_info *modules[] = {
+	(module_info *)&sAtiDriver,
+	(module_info *)&sAtiDevice,
+	NULL
+};

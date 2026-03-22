@@ -50,7 +50,7 @@ typedef struct agp_gart_module_info {
 	uint32		(*set_agp_mode)(uint32 command);
 
 	/* GART functionality */
-	aperture_id	(*map_aperture)(uint8 bus, uint8 device, uint8 function,
+	aperture_id	(*map_aperture)(struct pci_info *info,
 					size_t size, addr_t *_apertureBase);
 	aperture_id	(*map_custom_aperture)(gart_bus_module_info *module,
 					addr_t *_apertureBase);
@@ -83,7 +83,7 @@ struct agp_gart_bus_module_info {
 
 	// TODO: add some stuff for non-generic AGP support as well
 
-	status_t	(*create_aperture)(uint8 bus, uint8 device, uint8 function,
+	status_t	(*create_aperture)(struct pci_info *info,
 					size_t size, void **_aperture);
 	void		(*delete_aperture)(void *aperture);
 

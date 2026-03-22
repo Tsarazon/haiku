@@ -9,11 +9,13 @@
 #include "int.h"
 #include "msi.h"
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <ACPI.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
+#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,10 +31,22 @@
 #define TEST_HPET
 #define HPET64 0
 
+
+#define HPET_DRIVER_MODULE_NAME "drivers/timer/hpet/driver_v1"
+#define HPET_DEVICE_MODULE_NAME "drivers/timer/hpet/device_v1"
+#define HPET_DEVICE_ID_GENERATOR "hpet/device_id"
+
+// HPET ACPI hardware ID
+#define HPET_ACPI_HID "PNP0103"
+
+
 static struct hpet_regs *sHPETRegs;
 static uint64 sHPETPeriod;
 
 static area_id sHPETArea;
+static acpi_module_info* sAcpi;
+static device_manager_info* sDeviceManager;
+static int32 sOpenCount;
 
 
 struct hpet_timer_cookie {
@@ -42,36 +56,21 @@ struct hpet_timer_cookie {
 	hpet_timer* timer;
 };
 
+typedef struct {
+	device_node*	node;
+} hpet_driver_info;
+
+
 ////////////////////////////////////////////////////////////////////////////////
 
-static status_t hpet_open(const char*, uint32, void**);
+static status_t hpet_open(void*, const char*, int, void**);
 static status_t hpet_close(void*);
 static status_t hpet_free(void*);
 static status_t hpet_control(void*, uint32, void*, size_t);
-static ssize_t hpet_read(void*, off_t, void*, size_t*);
-static ssize_t hpet_write(void*, off_t, const void*, size_t*);
+static status_t hpet_read(void*, off_t, void*, size_t*);
+static status_t hpet_write(void*, off_t, const void*, size_t*);
 
 ////////////////////////////////////////////////////////////////////////////////
-
-static const char* hpet_name[] = {
-    "misc/hpet",
-    NULL
-};
-
-
-device_hooks hpet_hooks = {
-	hpet_open,
-	hpet_close,
-	hpet_free,
-	hpet_control,
-	hpet_read,
-	hpet_write,
-};
-
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-
-static acpi_module_info* sAcpi;
-static int32 sOpenCount;
 
 
 static inline bigtime_t
@@ -84,8 +83,8 @@ hpet_convert_timeout(const bigtime_t &relativeTimeout)
 #endif
 	bigtime_t converted = (1000000000ULL / sHPETPeriod) * relativeTimeout;
 
-	dprintf("counter: %lld, relativeTimeout: %lld, converted: %lld\n",
-		counter, relativeTimeout, converted);
+	dprintf("counter: %" B_PRId64 ", relativeTimeout: %" B_PRId64
+		", converted: %" B_PRId64 "\n", counter, relativeTimeout, converted);
 
 	return converted + counter;
 }
@@ -101,8 +100,6 @@ hpet_set_hardware_timer(bigtime_t relativeTimeout, hpet_timer *timer)
 		relativeTimeout = MIN_TIMEOUT;
 
 	bigtime_t timerValue = hpet_convert_timeout(relativeTimeout);
-
-	//dprintf("comparator: %lld, new value: %lld\n", timer->u0.comparator64, timerValue);
 
 #if HPET64
 	timer->u0.comparator64 = timerValue;
@@ -120,31 +117,8 @@ hpet_set_hardware_timer(bigtime_t relativeTimeout, hpet_timer *timer)
 static status_t
 hpet_clear_hardware_timer(hpet_timer *timer)
 {
-	// Disable timer interrupt
 	timer->config &= ~HPET_CONF_TIMER_INT_ENABLE;
 	return B_OK;
-}
-
-
-static int32
-hpet_timer_interrupt(void *arg)
-{
-	//dprintf("HPET timer_interrupt!!!!\n");
-	hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)arg;
-	hpet_timer* timer = &sHPETRegs->timer[hpetCookie->number];
-
-	int32 intStatus = 1 << hpetCookie->number;
-	if (!HPET_GET_CONF_TIMER_INT_IS_LEVEL(timer)
-			|| (sHPETRegs->interrupt_status & intStatus)) {
-		// clear interrupt status
-		sHPETRegs->interrupt_status |= intStatus;
-		hpet_clear_hardware_timer(timer);
-		
-		release_sem_etc(hpetCookie->sem, 1, B_DO_NOT_RESCHEDULE);
-		return B_HANDLED_INTERRUPT;
-	}
-
-	return B_UNHANDLED_INTERRUPT;
 }
 
 
@@ -162,92 +136,84 @@ hpet_set_enabled(bool enabled)
 static status_t
 hpet_set_legacy(bool enabled)
 {
-	if (!HPET_IS_LEGACY_CAPABLE(sHPETRegs)) {
-		dprintf("hpet_init: HPET doesn't support legacy mode.\n");
+	if (!HPET_IS_LEGACY_CAPABLE(sHPETRegs))
 		return B_NOT_SUPPORTED;
-	}
 
 	if (enabled)
 		sHPETRegs->config |= HPET_CONF_MASK_LEGACY;
 	else
 		sHPETRegs->config &= ~HPET_CONF_MASK_LEGACY;
-
 	return B_OK;
 }
 
 
 #ifdef TRACE_HPET
 static void
-hpet_dump_timer(volatile struct hpet_timer *timer)
+hpet_dump_timer(hpet_timer *timer)
 {
-	dprintf("HPET Timer %ld:\n", (timer - sHPETRegs->timer));
-	dprintf("CAP/CONFIG register: 0x%llx\n", timer->config);
-	dprintf("Capabilities:\n");
-	dprintf("\troutable IRQs: ");
-	uint32 interrupts = (uint32)HPET_GET_CAP_TIMER_ROUTE(timer);
-	for (int i = 0; i < 32; i++) {
-		if (interrupts & (1 << i))
-			dprintf("%d ", i);
-	}
-
-	dprintf("\n\tsupports FSB delivery: %s\n",
-			timer->config & HPET_CAP_TIMER_FSB_INT_DEL ? "Yes" : "No");
-
-	dprintf("Configuration:\n");
-	dprintf("\tFSB Enabled: %s\n",
-		timer->config & HPET_CONF_TIMER_FSB_ENABLE ? "Yes" : "No");
-	dprintf("\tInterrupt Enabled: %s\n",
-		timer->config & HPET_CONF_TIMER_INT_ENABLE ? "Yes" : "No");
-	dprintf("\tTimer type: %s\n",
-		timer->config & HPET_CONF_TIMER_TYPE ? "Periodic" : "OneShot");
-	dprintf("\tInterrupt Type: %s\n",
-		HPET_GET_CONF_TIMER_INT_IS_LEVEL(timer) ? "Level" : "Edge");
-
-	dprintf("\tconfigured IRQ: %lld\n",
-		HPET_GET_CONF_TIMER_INT_ROUTE(timer));
-
-	if (timer->config & HPET_CONF_TIMER_FSB_ENABLE) {
-		dprintf("\tfsb_route[0]: 0x%llx\n", timer->fsb_route[0]);
-		dprintf("\tfsb_route[1]: 0x%llx\n", timer->fsb_route[1]);
-	}
+	dprintf("hpet_dump_timer: config: 0x%" B_PRIx64 ", comparator: %"
+		B_PRIu64 ", fsb_route: 0x%" B_PRIx64 " 0x%" B_PRIx64 "\n",
+		timer->config, timer->u0.comparator64,
+		timer->fsb_route[0], timer->fsb_route[1]);
+	dprintf("\tint route cap: 0x%08x, "
+		"int type: %s, int route: %u\n",
+		(unsigned)HPET_GET_CONF_TIMER_INT_ROUTE_CAP(timer),
+		HPET_GET_CONF_TIMER_INT_IS_LEVEL(timer) ? "level" : "edge",
+		(unsigned)HPET_GET_CONF_TIMER_INT_ROUTE(timer));
 }
 #endif
+
+
+static int32
+hpet_timer_interrupt(void *arg)
+{
+	hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)arg;
+	hpet_timer* timer = &sHPETRegs->timer[hpetCookie->number];
+
+	int32 intStatus = 1 << hpetCookie->number;
+
+	if (!HPET_GET_CONF_TIMER_INT_IS_LEVEL(timer)
+			|| (sHPETRegs->interrupt_status & intStatus)) {
+		sHPETRegs->interrupt_status |= intStatus;
+		hpet_clear_hardware_timer(timer);
+
+		release_sem_etc(hpetCookie->sem, 1, B_DO_NOT_RESCHEDULE);
+		return B_HANDLED_INTERRUPT;
+	}
+
+	return B_UNHANDLED_INTERRUPT;
+}
 
 
 static status_t
 hpet_init_timer(hpet_timer_cookie* cookie)
 {
-	struct hpet_timer *timer = cookie->timer;
+	hpet_timer* timer = cookie->timer;
 
-	uint32 interrupts = (uint32)HPET_GET_CAP_TIMER_ROUTE(timer);
-
-	// TODO: Check if the interrupt is already used, and try another
-	int32 interrupt = -1;	
-	for (int i = 0; i < 32; i++) {
-		if (interrupts & (1 << i)) {
-			interrupt = i;
+	uint32 interrupt = 0;
+	uint64 route = HPET_GET_CONF_TIMER_INT_ROUTE_CAP(timer);
+	for (interrupt = 0; interrupt < 32; interrupt++) {
+		if (route & (1 << interrupt))
 			break;
-		}
 	}
 
-	if (interrupt == -1) {
-		dprintf("hpet_init_timer(): timer can't be routed to any interrupt!");
+	if (interrupt == 32) {
+		dprintf("hpet_init_timer: no IRQ route found\n");
 		return B_ERROR;
 	}
-	// Non-periodic mode
-	timer->config &= ~HPET_CONF_TIMER_TYPE;
+
+	timer->config &= ~(HPET_CONF_TIMER_INT_ROUTE_MASK
+		| HPET_CONF_TIMER_TYPE
+		| HPET_CONF_TIMER_FSB_ENABLE);
 
 	// level triggered
-	timer->config |= HPET_CONF_TIMER_INT_TYPE;
-
-	// Disable FSB/MSI
-	timer->config &= ~HPET_CONF_TIMER_FSB_ENABLE;
+	timer->config |= HPET_CONF_TIMER_INT_IS_LEVEL;
 
 #if HPET64
-	//disable 32 bit mode
+	// enable 64 bit mode
 	timer->config &= ~HPET_CONF_TIMER_32MODE;
 #else
-	//enable 32 bit mode
+	// enable 32 bit mode
 	timer->config |= HPET_CONF_TIMER_32MODE;
 #endif
 
@@ -255,9 +221,11 @@ hpet_init_timer(hpet_timer_cookie* cookie)
 		& HPET_CONF_TIMER_INT_ROUTE_MASK;
 
 	cookie->irq = interrupt = HPET_GET_CONF_TIMER_INT_ROUTE(timer);
-	status_t status = install_io_interrupt_handler(interrupt, &hpet_timer_interrupt, cookie, 0);
+	status_t status = install_io_interrupt_handler(interrupt,
+		&hpet_timer_interrupt, cookie, 0);
 	if (status != B_OK) {
-		dprintf("hpet_init_timer(): cannot install interrupt handler: %s\n", strerror(status));
+		dprintf("hpet_init_timer(): cannot install interrupt handler: %s\n",
+			strerror(status));
 		return status;
 	}
 #ifdef TRACE_HPET
@@ -292,9 +260,9 @@ hpet_init()
 	sHPETPeriod = HPET_GET_PERIOD(sHPETRegs);
 
 	TRACE(("hpet_init: HPET is at %p.\n"
-			"\tVendor ID: %llx, rev: %llx, period: %lld\n",
-		sHPETRegs, HPET_GET_VENDOR_ID(sHPETRegs), HPET_GET_REVID(sHPETRegs),
-		sHPETPeriod));
+			"\tVendor ID: 0x%04x, rev: 0x%02x, period: %" B_PRIu64 "\n",
+		sHPETRegs, (unsigned)HPET_GET_VENDOR_ID(sHPETRegs),
+		(unsigned)HPET_GET_REVID(sHPETRegs), sHPETPeriod));
 
 	status_t status = hpet_set_enabled(false);
 	if (status != B_OK)
@@ -306,16 +274,18 @@ hpet_init()
 
 	uint32 numTimers = HPET_GET_NUM_TIMERS(sHPETRegs) + 1;
 
-	TRACE(("hpet_init: HPET supports %lu timers, is %s bits wide, "
+	TRACE(("hpet_init: HPET supports %" B_PRIu32 " timers, is %s bits wide, "
 			"and is %sin legacy mode.\n",
 			numTimers, HPET_IS_64BIT(sHPETRegs) ? "64" : "32",
 			sHPETRegs->config & HPET_CONF_MASK_LEGACY ? "" : "not "));
 
-	TRACE(("hpet_init: configuration: 0x%llx, timer_interrupts: 0x%llx\n",
+	TRACE(("hpet_init: configuration: 0x%" B_PRIx64
+		", timer_interrupts: 0x%" B_PRIx64 "\n",
 		sHPETRegs->config, sHPETRegs->interrupt_status));
 
 	if (numTimers < 3) {
-		dprintf("hpet_init: HPET does not have at least 3 timers. Skipping.\n");
+		dprintf("hpet_init: HPET does not have at least 3 timers. "
+			"Skipping.\n");
 		return B_ERROR;
 	}
 
@@ -341,88 +311,11 @@ hpet_init()
 }
 
 
-////////////////////////////////////////////////////////////////////////////////
+//	#pragma mark - device module API
 
 
 status_t
-init_hardware(void)
-{
-	return B_OK;
-}
-
-
-status_t
-init_driver(void)
-{
-	sOpenCount = 0;
-
-	status_t status = get_module(B_ACPI_MODULE_NAME, (module_info**)&sAcpi);
-	if (status < B_OK)
-		return status;
-
-	acpi_hpet *hpetTable;
-	status = sAcpi->get_table(ACPI_HPET_SIGNATURE, 0,
-		(void**)&hpetTable);
-	
-	if (status != B_OK) {
-		put_module(B_ACPI_MODULE_NAME);
-		return status;
-	}
-
-	sHPETArea = map_physical_memory("HPET registries",
-					hpetTable->hpet_address.address,
-					B_PAGE_SIZE,
-					B_ANY_KERNEL_ADDRESS,
-					B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
-					(void**)&sHPETRegs);
-
-	if (sHPETArea < 0) {
-		put_module(B_ACPI_MODULE_NAME);	
-		return sHPETArea;
-	}
-
-	status = hpet_init();
-	if (status != B_OK) {
-		delete_area(sHPETArea);
-		put_module(B_ACPI_MODULE_NAME);
-	}
-
-	return status;
-}
-
-
-void
-uninit_driver(void)
-{
-	hpet_set_enabled(false);
-
-	if (sHPETArea > 0)
-		delete_area(sHPETArea);
-
-	put_module(B_ACPI_MODULE_NAME);
-}
-
-
-const char**
-publish_devices(void)
-{
-	return hpet_name;
-}
-
-
-device_hooks*
-find_device(const char* name)
-{
-	return &hpet_hooks;
-}
-
-
-////////////////////////////////////////////////////////////////////////////////
-//	#pragma mark -
-
-
-status_t
-hpet_open(const char* name, uint32 flags, void** cookie)
+hpet_open(void* _info, const char* name, int openMode, void** cookie)
 {
 	*cookie = NULL;
 
@@ -445,7 +338,8 @@ hpet_open(const char* name, uint32 flags, void** cookie)
 		return sem;
 	}
 
-	hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)malloc(sizeof(hpet_timer_cookie));
+	hpet_timer_cookie* hpetCookie
+		= (hpet_timer_cookie*)malloc(sizeof(hpet_timer_cookie));
 	if (hpetCookie == NULL) {
 		delete_sem(sem);
 		atomic_add(&sOpenCount, -1);
@@ -461,7 +355,8 @@ hpet_open(const char* name, uint32 flags, void** cookie)
 
 	status_t status = hpet_init_timer(hpetCookie);
 	if (status != B_OK)
-		dprintf("hpet_open: initializing timer failed: %s\n", strerror(status));
+		dprintf("hpet_open: initializing timer failed: %s\n",
+			strerror(status));
 
 	hpet_set_enabled(true);
 
@@ -478,7 +373,7 @@ hpet_open(const char* name, uint32 flags, void** cookie)
 
 status_t
 hpet_close(void* cookie)
-{	
+{
 	if (sHPETRegs == NULL)
 		return B_NO_INIT;
 
@@ -488,7 +383,8 @@ hpet_close(void* cookie)
 
 	dprintf("hpet_close (%d)\n", hpetCookie->number);
 	hpet_clear_hardware_timer(&sHPETRegs->timer[hpetCookie->number]);
-	remove_io_interrupt_handler(hpetCookie->irq, &hpet_timer_interrupt, hpetCookie);
+	remove_io_interrupt_handler(hpetCookie->irq, &hpet_timer_interrupt,
+		hpetCookie);
 
 	return B_OK;
 }
@@ -496,11 +392,11 @@ hpet_close(void* cookie)
 
 status_t
 hpet_free(void* cookie)
-{	
+{
 	if (sHPETRegs == NULL)
 		return B_NO_INIT;
-	
-	hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)cookie;	
+
+	hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)cookie;
 
 	delete_sem(hpetCookie->sem);
 
@@ -520,34 +416,225 @@ hpet_control(void* cookie, uint32 op, void* arg, size_t length)
 		case HPET_WAIT_TIMER:
 		{
 			bigtime_t value = *(bigtime_t*)arg;
-			dprintf("hpet: wait timer (%d) for %lld...\n", hpetCookie->number, value);
-			hpet_set_hardware_timer(value, &sHPETRegs->timer[hpetCookie->number]);
-			status = acquire_sem_etc(hpetCookie->sem, 1, B_CAN_INTERRUPT, B_INFINITE_TIMEOUT);
+			dprintf("hpet: wait timer (%d) for %" B_PRId64 "...\n",
+				hpetCookie->number, value);
+			hpet_set_hardware_timer(value,
+				&sHPETRegs->timer[hpetCookie->number]);
+			status = acquire_sem_etc(hpetCookie->sem, 1, B_CAN_INTERRUPT,
+				B_INFINITE_TIMEOUT);
 			break;
 		}
 		default:
-			break;		
-			
+			break;
 	}
 
 	return status;
 }
 
 
-ssize_t
+status_t
 hpet_read(void* cookie, off_t position, void* buffer, size_t* numBytes)
 {
-	//hpet_timer_cookie* hpetCookie = (hpet_timer_cookie*)cookie;
 	*(uint64*)buffer = sHPETRegs->u0.counter64;
-
-	return sizeof(uint64);
+	*numBytes = sizeof(uint64);
+	return B_OK;
 }
 
 
-ssize_t
+status_t
 hpet_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 {
 	*numBytes = 0;
 	return B_NOT_ALLOWED;
 }
 
+
+//	#pragma mark - driver module API
+
+
+static float
+hpet_supports_device(device_node *parent)
+{
+	const char *bus;
+
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "acpi"))
+		return 0.0;
+
+	// match HPET ACPI device (PNP0103)
+	const char *hid;
+	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &hid,
+			false) != B_OK || strcmp(hid, HPET_ACPI_HID)) {
+		return 0.0;
+	}
+
+	TRACE(("HPET device found via ACPI!\n"));
+	return 0.6;
+}
+
+
+static status_t
+hpet_register_device(device_node *node)
+{
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "HPET Timer"} },
+		{ NULL }
+	};
+
+	return sDeviceManager->register_node(node, HPET_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+hpet_init_driver(device_node *node, void **cookie)
+{
+	TRACE(("hpet_init_driver()\n"));
+
+	sOpenCount = 0;
+
+	// get ACPI module for table lookup
+	status_t status = get_module(B_ACPI_MODULE_NAME, (module_info**)&sAcpi);
+	if (status < B_OK)
+		return status;
+
+	acpi_hpet *hpetTable;
+	status = sAcpi->get_table(ACPI_HPET_SIGNATURE, 0,
+		(void**)&hpetTable);
+
+	if (status != B_OK) {
+		put_module(B_ACPI_MODULE_NAME);
+		return status;
+	}
+
+	sHPETArea = map_physical_memory("HPET registries",
+		hpetTable->hpet_address.address,
+		B_PAGE_SIZE,
+		B_ANY_KERNEL_ADDRESS,
+		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
+		(void**)&sHPETRegs);
+
+	if (sHPETArea < 0) {
+		put_module(B_ACPI_MODULE_NAME);
+		return sHPETArea;
+	}
+
+	status = hpet_init();
+	if (status != B_OK) {
+		delete_area(sHPETArea);
+		put_module(B_ACPI_MODULE_NAME);
+		return status;
+	}
+
+	hpet_driver_info *info = (hpet_driver_info *)malloc(
+		sizeof(hpet_driver_info));
+	if (info == NULL) {
+		hpet_set_enabled(false);
+		delete_area(sHPETArea);
+		put_module(B_ACPI_MODULE_NAME);
+		return B_NO_MEMORY;
+	}
+
+	info->node = node;
+	*cookie = info;
+	return B_OK;
+}
+
+
+static void
+hpet_uninit_driver(void *_cookie)
+{
+	TRACE(("hpet_uninit_driver()\n"));
+	hpet_driver_info *info = (hpet_driver_info *)_cookie;
+
+	hpet_set_enabled(false);
+
+	if (sHPETArea > 0)
+		delete_area(sHPETArea);
+
+	put_module(B_ACPI_MODULE_NAME);
+	free(info);
+}
+
+
+static status_t
+hpet_register_child_devices(void *_cookie)
+{
+	hpet_driver_info *info = (hpet_driver_info *)_cookie;
+
+	return sDeviceManager->publish_device(info->node, "misc/hpet",
+		HPET_DEVICE_MODULE_NAME);
+}
+
+
+//	#pragma mark - device init/uninit
+
+
+static status_t
+hpet_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+hpet_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sHpetDevice = {
+	{
+		HPET_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	hpet_init_device,
+	hpet_uninit_device,
+	NULL,	// device_removed
+
+	hpet_open,
+	hpet_close,
+	hpet_free,
+	hpet_read,
+	hpet_write,
+	NULL,	// io
+	hpet_control,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sHpetDriver = {
+	{
+		HPET_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	hpet_supports_device,
+	hpet_register_device,
+	hpet_init_driver,
+	hpet_uninit_driver,
+	hpet_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
+
+module_info *modules[] = {
+	(module_info *)&sHpetDriver,
+	(module_info *)&sHpetDevice,
+	NULL
+};

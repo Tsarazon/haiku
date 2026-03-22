@@ -8,11 +8,13 @@
 #ifndef _USB_SERIAL_DRIVER_H_
 #define _USB_SERIAL_DRIVER_H_
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
 #include <USB3.h>
 
+#include <bus/USB.h>
 #include <usb/USB_cdc.h>
 
 #include <lock.h>
@@ -36,20 +38,18 @@ extern "C" {
 
 extern usb_module_info *gUSBModule;
 extern tty_module_info *gTTYModule;
+extern device_manager_info *gDeviceManager;
 extern struct ddomain gSerialDomain;
 
+class SerialDevice;
+
+// Global device list for TTY service routing
+extern SerialDevice *gSerialDevices[DEVICES_COUNT];
+extern sem_id gDriverLock;
+
 extern "C" {
-status_t	usb_serial_device_added(usb_device device, void **cookie);
-status_t	usb_serial_device_removed(void *cookie);
-
-status_t	init_hardware();
-void		uninit_driver();
-
 bool		usb_serial_service(struct tty *tty, uint32 op, void *buffer,
 				size_t length);
-
-const char **publish_devices();
-device_hooks *find_device(const char *name);
 }
 
 #endif //_USB_SERIAL_DRIVER_H_

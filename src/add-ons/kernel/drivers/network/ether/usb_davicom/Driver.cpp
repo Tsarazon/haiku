@@ -14,20 +14,25 @@
 #include "Driver.h"
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
+#include <bus/USB.h>
 #include <lock.h>
-#include <util/AutoLock.h>
 
 #include "DavicomDevice.h"
 #include "Settings.h"
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
-static const char *sDeviceBaseName = "net/usb_davicom/";
-DavicomDevice *gDavicomDevices[MAX_DEVICES];
-char *gDeviceNames[MAX_DEVICES + 1];
+#define DEVICE_BASE_NAME "net/usb_davicom/"
+
 usb_module_info *gUSBModule = NULL;
-mutex gDriverLock;
+device_manager_info *gDeviceManager = NULL;
+
+
+#define USB_DAVICOM_DRIVER_MODULE_NAME "drivers/network/usb_davicom/driver_v1"
+#define USB_DAVICOM_DEVICE_MODULE_NAME "drivers/network/usb_davicom/device_v1"
+#define USB_DAVICOM_DEVICE_ID_GENERATOR	"usb_davicom/device_id"
 
 
 // IMPORTANT: keep entries sorted by ids to let the
@@ -46,64 +51,65 @@ DeviceInfo gSupportedDevices[] = {
 };
 
 
-DavicomDevice *
-lookup_and_create_device(usb_device device)
+static bool
+is_supported_device(uint16 vendorId, uint16 productId)
 {
-	const usb_device_descriptor *deviceDescriptor
-		= gUSBModule->get_device_descriptor(device);
+	uint32 id = vendorId << 16 | productId;
+	int left = -1;
+	int right = B_COUNT_OF(gSupportedDevices);
+	while ((right - left) > 1) {
+		int i = (left + right) / 2;
+		((gSupportedDevices[i].Key() < id) ? left : right) = i;
+	}
+	return right < (int)B_COUNT_OF(gSupportedDevices)
+		&& gSupportedDevices[right].Key() == id;
+}
 
+
+//	#pragma mark - device module API
+
+
+static status_t
+usb_davicom_init_device(void* _info, void** _cookie)
+{
+	TRACE("init_device()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_info;
+
+	device_node* parent = gDeviceManager->get_parent_node(info->node);
+	gDeviceManager->get_driver(parent, (driver_module_info**)&info->usb,
+		(void**)&info->usb_device);
+	gDeviceManager->put_node(parent);
+
+	usb_device device;
+	if (gDeviceManager->get_attr_uint32(info->node, USB_DEVICE_ID_ITEM,
+			&device, true) != B_OK)
+		return B_ERROR;
+
+	// look up device info for this vendor/product pair
+	const usb_device_descriptor* deviceDescriptor
+		= gUSBModule->get_device_descriptor(device);
 	if (deviceDescriptor == NULL) {
-		TRACE_ALWAYS("Error of getting USB device descriptor.\n");
-		return NULL;
+		TRACE_ALWAYS("Error getting USB device descriptor.\n");
+		return B_ERROR;
 	}
 
-	TRACE("trying %#06x:%#06x.\n",
-			deviceDescriptor->vendor_id, deviceDescriptor->product_id);
-
-	// use binary search to lookup device in table
 	uint32 id = deviceDescriptor->vendor_id << 16
-					| deviceDescriptor->product_id;
-	int left  = -1;
+		| deviceDescriptor->product_id;
+	int left = -1;
 	int right = B_COUNT_OF(gSupportedDevices);
 	while ((right - left) > 1) {
 		int i = (left + right) / 2;
 		((gSupportedDevices[i].Key() < id) ? left : right) = i;
 	}
 
-	if (gSupportedDevices[right].Key() == id)
-		return new DavicomDevice(device, gSupportedDevices[right]);
-
-	TRACE_ALWAYS("Search for %#x failed %d-%d.\n", id, left, right);
-	return NULL;
-}
-
-
-status_t
-usb_davicom_device_added(usb_device device, void **cookie)
-{
-	*cookie = NULL;
-
-	MutexLocker lock(gDriverLock); // released on exit
-
-	// check if this is a replug of an existing device first
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i] == NULL)
-			continue;
-
-		if (gDavicomDevices[i]->CompareAndReattach(device) != B_OK)
-			continue;
-
-		TRACE("The device is plugged back. Use entry at %ld.\n", i);
-		*cookie = gDavicomDevices[i];
-		return B_OK;
+	if (right >= (int)B_COUNT_OF(gSupportedDevices)
+			|| gSupportedDevices[right].Key() != id) {
+		TRACE_ALWAYS("Device not found in supported list.\n");
+		return B_ERROR;
 	}
 
-	// no such device yet, create a new one
-	DavicomDevice *davicomDevice = lookup_and_create_device(device);
-	if (davicomDevice == 0) {
-		return ENODEV;
-	}
-
+	DavicomDevice* davicomDevice
+		= new DavicomDevice(device, gSupportedDevices[right]);
 	status_t status = davicomDevice->InitCheck();
 	if (status < B_OK) {
 		delete davicomDevice;
@@ -116,135 +122,44 @@ usb_davicom_device_added(usb_device device, void **cookie)
 		return status;
 	}
 
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i] != NULL)
-			continue;
-
-		gDavicomDevices[i] = davicomDevice;
-		*cookie = davicomDevice;
-
-		TRACE("New device is added at %ld.\n", i);
-		return B_OK;
-	}
-
-	// no space for the device
-	TRACE_ALWAYS("Error: no more device entries availble.\n");
-
-	delete davicomDevice;
-	return B_ERROR;
-}
-
-
-status_t
-usb_davicom_device_removed(void *cookie)
-{
-	MutexLocker lock(gDriverLock); // released on exit
-
-	DavicomDevice *device = (DavicomDevice *)cookie;
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i] == device) {
-			if (device->IsOpen()) {
-				// the device will be deleted upon being freed
-				device->Removed();
-			} else {
-				gDavicomDevices[i] = NULL;
-				delete device;
-				TRACE("Device at %ld deleted.\n", i);
-			}
-			break;
-		}
-	}
-
+	info->device = davicomDevice;
+	*_cookie = info;
 	return B_OK;
 }
 
 
-// #pragma mark -
-
-
-status_t
-init_hardware()
+static void
+usb_davicom_uninit_device(void* _cookie)
 {
-	return B_OK;
+	TRACE("uninit_device()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_cookie;
+	delete info->device;
+	info->device = NULL;
 }
 
 
-status_t
-init_driver()
+static void
+usb_davicom_device_removed(void* _cookie)
 {
-	status_t status = get_module(B_USB_MODULE_NAME,
-		(module_info **)&gUSBModule);
-	if (status < B_OK)
-		return status;
-
-	load_settings();
-
-	TRACE_ALWAYS("%s\n", kVersion);
-
-	for (int32 i = 0; i < MAX_DEVICES; i++)
-		gDavicomDevices[i] = NULL;
-
-	gDeviceNames[0] = NULL;
-	mutex_init(&gDriverLock, DRIVER_NAME"_devices");
-
-	static usb_notify_hooks notifyHooks = {
-		&usb_davicom_device_added,
-		&usb_davicom_device_removed
-	};
-
-	const size_t count = B_COUNT_OF(gSupportedDevices);
-	static usb_support_descriptor sDescriptors[count] = {{ 0 }};
-
-	for (size_t i = 0; i < count; i++) {
-		sDescriptors[i].vendor  = gSupportedDevices[i].VendorId();
-		sDescriptors[i].product = gSupportedDevices[i].ProductId();
-	}
-
-	gUSBModule->register_driver(DRIVER_NAME, sDescriptors, count, NULL);
-	gUSBModule->install_notify(DRIVER_NAME, &notifyHooks);
-	return B_OK;
-}
-
-
-void
-uninit_driver()
-{
-	gUSBModule->uninstall_notify(DRIVER_NAME);
-	mutex_lock(&gDriverLock);
-
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i]) {
-			delete gDavicomDevices[i];
-			gDavicomDevices[i] = NULL;
-		}
-	}
-
-	for (int32 i = 0; gDeviceNames[i]; i++) {
-		free(gDeviceNames[i]);
-		gDeviceNames[i] = NULL;
-	}
-
-	mutex_destroy(&gDriverLock);
-	put_module(B_USB_MODULE_NAME);
-
-	release_settings();
+	TRACE("device_removed()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_cookie;
+	if (info->device != NULL)
+		info->device->Removed();
 }
 
 
 static status_t
-usb_davicom_open(const char *name, uint32 flags, void **cookie)
+usb_davicom_open(void* _info, const char* path, int openMode, void** _cookie)
 {
-	MutexLocker lock(gDriverLock); // released on exit
+	TRACE("open()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_info;
 
-	*cookie = NULL;
-	status_t status = ENODEV;
-	int32 index = strtol(name + strlen(sDeviceBaseName), NULL, 10);
-	if (index >= 0 && index < MAX_DEVICES && gDavicomDevices[index]) {
-		status = gDavicomDevices[index]->Open(flags);
-		*cookie = gDavicomDevices[index];
-	}
+	status_t status = info->device->Open(openMode);
+	if (status != B_OK)
+		return status;
 
-	return status;
+	*_cookie = info->device;
+	return B_OK;
 }
 
 
@@ -285,68 +200,159 @@ static status_t
 usb_davicom_free(void *cookie)
 {
 	DavicomDevice *device = (DavicomDevice *)cookie;
-
-	MutexLocker lock(gDriverLock); // released on exit
-
-	status_t status = device->Free();
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i] == device) {
-			// the device is removed already but as it was open the
-			// removed hook has not deleted the object
-			gDavicomDevices[i] = NULL;
-			delete device;
-			TRACE("Device at %ld deleted.\n", i);
-			break;
-		}
-	}
-
-	return status;
+	return device->Free();
 }
 
 
-const char **
-publish_devices()
+//	#pragma mark - driver module API
+
+
+static float
+usb_davicom_supports_device(device_node *parent)
 {
-	for (int32 i = 0; gDeviceNames[i]; i++) {
-		free(gDeviceNames[i]);
-		gDeviceNames[i] = NULL;
-	}
+	TRACE("supports_device()\n");
+	const char *bus;
 
-	MutexLocker lock(gDriverLock); // released on exit
+	// make sure parent is really the usb bus manager
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
 
-	int32 deviceCount = 0;
-	for (int32 i = 0; i < MAX_DEVICES; i++) {
-		if (gDavicomDevices[i] == NULL)
-			continue;
+	if (strcmp(bus, "usb"))
+		return 0.0;
 
-		gDeviceNames[deviceCount] = (char *)malloc(strlen(sDeviceBaseName) + 4);
-		if (gDeviceNames[deviceCount]) {
-			sprintf(gDeviceNames[deviceCount], "%s%" B_PRId32, sDeviceBaseName, i);
-			TRACE("publishing %s\n", gDeviceNames[deviceCount]);
-			deviceCount++;
-		} else
-			TRACE_ALWAYS("Error: out of memory during allocating dev.name.\n");
-	}
+	// check vendor/product ID against our supported device table
+	uint16 vendorId, productId;
+	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false) != B_OK)
+		return 0.0;
+	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+			&productId, false) != B_OK)
+		return 0.0;
 
-	gDeviceNames[deviceCount] = NULL;
-	return (const char **)&gDeviceNames[0];
+	if (!is_supported_device(vendorId, productId))
+		return 0.0;
+
+	TRACE("Davicom device found! vendor: 0x%04x, product: 0x%04x\n",
+		vendorId, productId);
+
+	return 0.6;
 }
 
 
-device_hooks *
-find_device(const char *name)
+static status_t
+usb_davicom_register_device(device_node *node)
 {
-	static device_hooks deviceHooks = {
-		usb_davicom_open,
-		usb_davicom_close,
-		usb_davicom_free,
-		usb_davicom_control,
-		usb_davicom_read,
-		usb_davicom_write,
-		NULL,				// select
-		NULL				// deselect
+	TRACE("register_device()\n");
+
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "USB Davicom DM9601"} },
+		{ NULL }
 	};
 
-	return &deviceHooks;
+	return gDeviceManager->register_node(node, USB_DAVICOM_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
 
+
+static status_t
+usb_davicom_init_driver(device_node *node, void **cookie)
+{
+	TRACE("init_driver()\n");
+
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)malloc(
+		sizeof(usb_davicom_driver_info));
+	if (info == NULL)
+		return B_NO_MEMORY;
+
+	memset(info, 0, sizeof(*info));
+	info->node = node;
+
+	load_settings();
+
+	*cookie = info;
+	return B_OK;
+}
+
+
+static void
+usb_davicom_uninit_driver(void *_cookie)
+{
+	TRACE("uninit_driver()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_cookie;
+
+	release_settings();
+	free(info);
+}
+
+
+static status_t
+usb_davicom_register_child_devices(void* _cookie)
+{
+	TRACE("register_child_devices()\n");
+	usb_davicom_driver_info* info = (usb_davicom_driver_info*)_cookie;
+
+	int32 id = gDeviceManager->create_id(USB_DAVICOM_DEVICE_ID_GENERATOR);
+	if (id < 0)
+		return id;
+
+	char name[64];
+	snprintf(name, sizeof(name), DEVICE_BASE_NAME "%" B_PRId32, id);
+
+	return gDeviceManager->publish_device(info->node, name,
+		USB_DAVICOM_DEVICE_MODULE_NAME);
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ B_USB_MODULE_NAME, (module_info**)&gUSBModule },
+	{ NULL }
+};
+
+struct device_module_info sUsbDavicomDevice = {
+	{
+		USB_DAVICOM_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	usb_davicom_init_device,
+	usb_davicom_uninit_device,
+	usb_davicom_device_removed,
+
+	usb_davicom_open,
+	usb_davicom_close,
+	usb_davicom_free,
+	usb_davicom_read,
+	usb_davicom_write,
+	NULL,	// io
+	usb_davicom_control,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sUsbDavicomDriver = {
+	{
+		USB_DAVICOM_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	usb_davicom_supports_device,
+	usb_davicom_register_device,
+	usb_davicom_init_driver,
+	usb_davicom_uninit_driver,
+	usb_davicom_register_child_devices,
+	NULL,	// rescan
+	NULL,	// removed
+};
+
+module_info* modules[] = {
+	(module_info*)&sUsbDavicomDriver,
+	(module_info*)&sUsbDavicomDevice,
+	NULL
+};

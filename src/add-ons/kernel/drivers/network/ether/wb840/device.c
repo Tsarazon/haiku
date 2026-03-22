@@ -24,8 +24,8 @@ extern pci_info* gDevList[];
 
 static int32 sOpenMask = 0;
 
-static status_t
-wb840_open(const char* name, uint32 flags, void** cookie)
+status_t
+wb840_open(void* _info, const char* name, int flags, void** cookie)
 {
 	char* deviceName = NULL;
 	int32 i;
@@ -63,8 +63,7 @@ wb840_open(const char* name, uint32 flags, void** cookie)
 	data->deviceName = gDevNameList[i];
 	data->blockFlag = 0;
 	data->reg_base = data->pciInfo->u.h0.base_registers[0];	
-	data->wb_cachesize = gPci->read_pci_config(data->pciInfo->bus,
-		data->pciInfo->device, data->pciInfo->function, PCI_line_size,
+	data->wb_cachesize = gPci->read_pci_config(gPciDev, PCI_line_size,
 		sizeof(PCI_line_size)) & 0xff;
 		
 	wb_read_eeprom(data, &data->MAC_Address, 0, 3, false);
@@ -132,7 +131,7 @@ err:
 }
 
 
-static status_t
+status_t
 wb840_read(void* cookie, off_t position, void* buf, size_t* num_bytes)
 {
 	wb_device* device = (wb_device*)cookie;
@@ -203,7 +202,7 @@ wb840_read(void* cookie, off_t position, void* buf, size_t* num_bytes)
 }
 
 
-static status_t
+status_t
 wb840_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
 {
 	wb_device* device = (wb_device*)cookie;
@@ -270,7 +269,7 @@ wb840_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
 }
 
 
-static status_t
+status_t
 wb840_control (void* cookie, uint32 op, void* arg, size_t len)
 {
 	wb_device* data = (wb_device*)cookie;
@@ -333,7 +332,7 @@ wb840_control (void* cookie, uint32 op, void* arg, size_t len)
 }
 
 
-static status_t
+status_t
 wb840_close(void* cookie)
 {
 	wb_device* device = (wb_device*)cookie;
@@ -357,7 +356,7 @@ wb840_close(void* cookie)
 }
 
 
-static status_t
+status_t
 wb840_free(void* cookie)
 {
 	wb_device* device = (wb_device*)cookie;
@@ -374,16 +373,4 @@ wb840_free(void* cookie)
 }
 
 
-device_hooks
-gDeviceHooks = {
-	wb840_open, 	/* -> open entry point */
-	wb840_close, 	/* -> close entry point */
-	wb840_free,		/* -> free cookie */
-	wb840_control, 	/* -> control entry point */
-	wb840_read,		/* -> read entry point */
-	wb840_write,	/* -> write entry point */
-	NULL,
-	NULL,
-	NULL,
-	NULL
-};
+/* device_hooks replaced by device_module_info in driver.c */

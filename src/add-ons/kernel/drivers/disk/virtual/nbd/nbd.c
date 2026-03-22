@@ -781,23 +781,22 @@ device_hooks nbd_hooks={
 #pragma mark ==== driver hooks ====
 #endif
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#include <device_manager.h>
+#include <string.h>
+
+#define NBD_DRIVER_MODULE_NAME "drivers/disk/nbd/driver_v1"
+#define NBD_DEVICE_MODULE_NAME "drivers/disk/nbd/device_v1"
+
+static device_manager_info *sNbdDeviceManager;
+static bool sNbdPublished = false;
 
 static char *nbd_name[MAX_NBDS+1] = {
 	NULL
 };
 
 
-status_t
-init_hardware (void)
-{
-	PRINT((DP ">%s()\n", __FUNCTION__));
-	return B_OK;
-}
-
-
-status_t
-init_driver (void)
+static status_t
+nbd_do_init(void)
 {
 	status_t err;
 	int i, j;
@@ -868,8 +867,8 @@ init_driver (void)
 }
 
 
-void
-uninit_driver (void)
+static void
+nbd_do_uninit(void)
 {
 	int i;
 	PRINT((DP ">%s()\n", __FUNCTION__));
@@ -878,26 +877,97 @@ uninit_driver (void)
 		mutex_destroy(&nbd_devices[i].ben);
 	}
 	ksocket_cleanup();
-	/* HACK */
 	if (gDelayUnload)
 		snooze(BONE_TEARDOWN_DELAY);
 }
 
 
-const char**
-publish_devices()
+/*	#pragma mark - device_manager API */
+
+static float nbd_supports_device(device_node *parent)
 {
-	PRINT((DP ">%s()\n", __FUNCTION__));
-	return (const char **)nbd_name;
+	const char *bus;
+	if (sNbdDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "pci") == 0 && !sNbdPublished)
+		return 0.01;
+	return 0.0;
 }
 
-
-device_hooks*
-find_device(const char* name)
+static status_t nbd_register_device(device_node *node)
 {
-	PRINT((DP ">%s(%s)\n", __FUNCTION__, name));
-	return &nbd_hooks;
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "NBD"} },
+		{ NULL }
+	};
+	return sNbdDeviceManager->register_node(node, NBD_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
+
+static status_t nbd_init_driver(device_node *node, void **cookie)
+{
+	status_t status = nbd_do_init();
+	if (status != B_OK) return status;
+	*cookie = node;
+	return B_OK;
+}
+
+static void nbd_uninit_driver(void *c)
+{
+	nbd_do_uninit();
+	sNbdPublished = false;
+}
+
+static status_t nbd_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+	if (sNbdPublished) return B_OK;
+	sNbdPublished = true;
+	for (int i = 0; nbd_name[i] != NULL; i++)
+		sNbdDeviceManager->publish_device(node, nbd_name[i],
+			NBD_DEVICE_MODULE_NAME);
+	return B_OK;
+}
+
+static status_t nbd_init_device(void *i, void **c) { *c = i; return B_OK; }
+static void nbd_uninit_device(void *c) {}
+
+static status_t nbd_dm_open(void *i, const char *p, int m, void **c)
+{ return nbd_hooks.open(p, m, c); }
+static status_t nbd_dm_close(void *c) { return nbd_hooks.close(c); }
+static status_t nbd_dm_free(void *c) { return nbd_hooks.free(c); }
+static status_t nbd_dm_read(void *c, off_t p, void *b, size_t *l)
+{ return nbd_hooks.read(c, p, b, l); }
+static status_t nbd_dm_write(void *c, off_t p, const void *b, size_t *l)
+{ return nbd_hooks.write(c, p, b, l); }
+static status_t nbd_dm_control(void *c, uint32 o, void *b, size_t l)
+{ return nbd_hooks.control(c, o, b, l); }
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sNbdDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sNbdDevice = {
+	{ NBD_DEVICE_MODULE_NAME, 0, NULL },
+	nbd_init_device, nbd_uninit_device, NULL,
+	nbd_dm_open, nbd_dm_close, nbd_dm_free,
+	nbd_dm_read, nbd_dm_write, NULL, nbd_dm_control,
+	NULL, NULL
+};
+
+struct driver_module_info sNbdDriver = {
+	{ NBD_DRIVER_MODULE_NAME, 0, NULL },
+	nbd_supports_device, nbd_register_device,
+	nbd_init_driver, nbd_uninit_driver,
+	nbd_register_child_devices, NULL, NULL
+};
+
+module_info *modules[] = {
+	(module_info *)&sNbdDriver,
+	(module_info *)&sNbdDevice,
+	NULL
+};
 
 
 struct nbd_device*

@@ -7,7 +7,7 @@
 
 #include <Drivers.h>
 #include <ISA.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 #define POKE_DEVICE_NAME		"poke"

@@ -21,7 +21,7 @@
 #include <AGP.h>
 #include <KernelExport.h>
 #include <OS.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <SupportDefs.h>
 
 
@@ -660,184 +660,196 @@ const struct supported_device {
 };
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#include <device_manager.h>
+
+#define RADEON_DRIVER_MODULE_NAME "drivers/graphics/radeon_hd/driver_v1"
+#define RADEON_DEVICE_MODULE_NAME "drivers/graphics/radeon_hd/device_v1"
+
+static device_manager_info* sDeviceManager;
+static bool sInitialized = false;
 
 
 char* gDeviceNames[MAX_CARDS + 1];
 radeon_info* gDeviceInfo[MAX_CARDS];
-pci_module_info* gPCI;
+pci_device_module_info* gPCI;
+pci_device* gPCIDev;
 mutex gLock;
 
 
+static int32 sNumFound = 0;
+
+
 static status_t
-get_next_radeon_hd(int32* _cookie, pci_info &info, uint32 &type)
+add_radeon_device_from_node(device_node *node)
 {
-	int32 index = *_cookie;
+	if (sNumFound >= MAX_CARDS)
+		return B_NO_MORE_FDS;
 
-	// find devices
+	device_node *parent = sDeviceManager->get_parent_node(node);
+	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
+		(void **)&gPCIDev);
+	sDeviceManager->put_node(parent);
 
-	for (; gPCI->get_nth_pci_info(index, &info) == B_OK; index++) {
-		// check vendor
-		if (info.vendor_id != VENDOR_ID_ATI
-			|| info.class_base != PCI_display
-			|| info.class_sub != PCI_vga)
-			continue;
-
-		// check device
-		for (uint32 i = 0; i < sizeof(kSupportedDevices)
-				/ sizeof(kSupportedDevices[0]); i++) {
-			if (info.device_id == kSupportedDevices[i].pciID) {
-				type = i;
-				*_cookie = index + 1;
-				return B_OK;
-			}
-		}
+	if (!sInitialized) {
+		mutex_init(&gLock, "radeon hd ksync");
+		sInitialized = true;
 	}
 
-	return B_ENTRY_NOT_FOUND;
-}
+	pci_info* info = (pci_info*)malloc(sizeof(pci_info));
+	if (info == NULL)
+		return B_NO_MEMORY;
 
+	gPCI->get_pci_info(gPCIDev, info);
 
-extern "C" const char**
-publish_devices(void)
-{
-	TRACE("%s\n", __func__);
-	return (const char**)gDeviceNames;
-}
-
-
-extern "C" status_t
-init_hardware(void)
-{
-	TRACE("%s\n", __func__);
-
-	status_t status = get_module(B_PCI_MODULE_NAME, (module_info**)&gPCI);
-	if (status != B_OK) {
-		ERROR("%s: ERROR: pci module unavailable\n", __func__);
-		return status;
-	}
-
-	int32 cookie = 0;
-	uint32 type;
-	pci_info info;
-	status = get_next_radeon_hd(&cookie, info, type);
-
-	put_module(B_PCI_MODULE_NAME);
-	return status;
-}
-
-
-extern "C" status_t
-init_driver(void)
-{
-	TRACE("%s\n", __func__);
-
-	status_t status = get_module(B_PCI_MODULE_NAME, (module_info**)&gPCI);
-	if (status != B_OK) {
-		ERROR("%s: ERROR: pci module unavailable\n", __func__);
-		return status;
-	}
-
-	mutex_init(&gLock, "radeon hd ksync");
-
-	// find devices
-
-	int32 found = 0;
-
-	for (int32 cookie = 0; found < MAX_CARDS;) {
-		pci_info* info = (pci_info*)malloc(sizeof(pci_info));
-		if (info == NULL)
-			break;
-
-		uint32 type;
-		status = get_next_radeon_hd(&cookie, *info, type);
-		if (status < B_OK) {
-			free(info);
+	// Find device type in supported list
+	uint32 type = 0;
+	bool found = false;
+	for (uint32 i = 0; i < sizeof(kSupportedDevices)
+			/ sizeof(kSupportedDevices[0]); i++) {
+		if (info->device_id == kSupportedDevices[i].pciID) {
+			type = i;
+			found = true;
 			break;
 		}
-
-		// create device names & allocate device info structure
-
-		char name[64];
-		sprintf(name, "graphics/radeon_hd_%02x%02x%02x",
-			info->bus, info->device,
-			info->function);
-
-		gDeviceNames[found] = strdup(name);
-		if (gDeviceNames[found] == NULL)
-			break;
-
-		gDeviceInfo[found] = (radeon_info*)malloc(sizeof(radeon_info));
-		if (gDeviceInfo[found] == NULL) {
-			free(gDeviceNames[found]);
-			break;
-		}
-
-		// initialize the structure for later use
-
-		memset(gDeviceInfo[found], 0, sizeof(radeon_info));
-		gDeviceInfo[found]->init_status = B_NO_INIT;
-		gDeviceInfo[found]->id = found;
-		gDeviceInfo[found]->pci = info;
-		gDeviceInfo[found]->registers = info->u.h0.base_registers[0];
-		gDeviceInfo[found]->pciID = kSupportedDevices[type].pciID;
-		gDeviceInfo[found]->deviceName = kSupportedDevices[type].deviceName;
-		gDeviceInfo[found]->chipsetID = kSupportedDevices[type].chipsetID;
-		gDeviceInfo[found]->dceMajor = kSupportedDevices[type].dceMajor;
-		gDeviceInfo[found]->dceMinor = kSupportedDevices[type].dceMinor;
-		gDeviceInfo[found]->chipsetFlags = kSupportedDevices[type].chipsetFlags;
-
-		ERROR("%s: GPU(%" B_PRId32 ") %s, revision = 0x%x\n", __func__, found,
-			kSupportedDevices[type].deviceName, info->revision);
-
-		found++;
 	}
 
-	gDeviceNames[found] = NULL;
-
-	if (found == 0) {
-		mutex_destroy(&gLock);
-		put_module(B_AGP_GART_MODULE_NAME);
-		put_module(B_PCI_MODULE_NAME);
-		ERROR("%s: no supported devices found\n", __func__);
-		return ENODEV;
+	if (!found) {
+		free(info);
+		return B_ERROR;
 	}
 
+	char name[64];
+	sprintf(name, "graphics/radeon_hd_%02x%02x%02x",
+		info->bus, info->device, info->function);
+
+	gDeviceNames[sNumFound] = strdup(name);
+	if (gDeviceNames[sNumFound] == NULL) {
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	gDeviceInfo[sNumFound] = (radeon_info*)malloc(sizeof(radeon_info));
+	if (gDeviceInfo[sNumFound] == NULL) {
+		free(gDeviceNames[sNumFound]);
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	memset(gDeviceInfo[sNumFound], 0, sizeof(radeon_info));
+	gDeviceInfo[sNumFound]->init_status = B_NO_INIT;
+	gDeviceInfo[sNumFound]->id = sNumFound;
+	gDeviceInfo[sNumFound]->pci = info;
+	gDeviceInfo[sNumFound]->registers = info->u.h0.base_registers[0];
+	gDeviceInfo[sNumFound]->pciID = kSupportedDevices[type].pciID;
+	gDeviceInfo[sNumFound]->deviceName = kSupportedDevices[type].deviceName;
+	gDeviceInfo[sNumFound]->chipsetID = kSupportedDevices[type].chipsetID;
+	gDeviceInfo[sNumFound]->dceMajor = kSupportedDevices[type].dceMajor;
+	gDeviceInfo[sNumFound]->dceMinor = kSupportedDevices[type].dceMinor;
+	gDeviceInfo[sNumFound]->chipsetFlags = kSupportedDevices[type].chipsetFlags;
+
+	ERROR("%s: GPU(%" B_PRId32 ") %s, revision = 0x%x\n", __func__, sNumFound,
+		kSupportedDevices[type].deviceName, info->revision);
+
+	sNumFound++;
+	gDeviceNames[sNumFound] = NULL;
 	return B_OK;
 }
 
 
-extern "C" void
-uninit_driver(void)
+static float
+radeon_supports_device(device_node *parent)
 {
-	TRACE("%s\n", __func__);
+	const char *bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if (strcmp(bus, "pci"))
+		return 0.0;
 
-	mutex_destroy(&gLock);
+	uint16 vendorId = 0;
+	uint8 classBase = 0;
+	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorId, false);
+	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
 
-	// free device related structures
-	char* name;
-	for (int32 index = 0; (name = gDeviceNames[index]) != NULL; index++) {
-		free(gDeviceInfo[index]);
-		free(name);
-	}
+	if (vendorId == VENDOR_ID_ATI && classBase == PCI_display)
+		return 0.6;
 
-	put_module(B_PCI_MODULE_NAME);
+	return 0.0;
 }
 
 
-extern "C" device_hooks*
-find_device(const char* name)
+static status_t
+radeon_register_device(device_node *node)
 {
-	int index;
-
-	TRACE("%s\n", __func__);
-
-	for (index = 0; gDeviceNames[index] != NULL; index++) {
-		if (!strcmp(name, gDeviceNames[index]))
-			return &gDeviceHooks;
-	}
-
-	ERROR("%s: %s wasn't found!\n", __func__, name);
-	return NULL;
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Radeon HD Graphics"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, RADEON_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
+
+
+static status_t
+radeon_init_driver(device_node *node, void **cookie)
+{
+	status_t status = add_radeon_device_from_node(node);
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
+
+static void radeon_uninit_driver(void *_cookie) {}
+
+static status_t
+radeon_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+	for (int i = 0; gDeviceNames[i] != NULL; i++)
+		sDeviceManager->publish_device(node, gDeviceNames[i],
+			RADEON_DEVICE_MODULE_NAME);
+	return B_OK;
+}
+
+static status_t radeon_init_device(void *i, void **c) { *c = i; return B_OK; }
+static void radeon_uninit_device(void *c) {}
+
+static status_t radeon_dm_open(void *i, const char *p, int m, void **c)
+{ return gDeviceHooks.open(p, m, c); }
+static status_t radeon_dm_close(void *c) { return gDeviceHooks.close(c); }
+static status_t radeon_dm_free(void *c) { return gDeviceHooks.free(c); }
+static status_t radeon_dm_read(void *c, off_t p, void *b, size_t *l)
+{ return gDeviceHooks.read(c, p, b, l); }
+static status_t radeon_dm_write(void *c, off_t p, const void *b, size_t *l)
+{ return gDeviceHooks.write(c, p, b, l); }
+static status_t radeon_dm_control(void *c, uint32 o, void *b, size_t l)
+{ return gDeviceHooks.control(c, o, b, l); }
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sRadeonDevice = {
+	{ RADEON_DEVICE_MODULE_NAME, 0, NULL },
+	radeon_init_device, radeon_uninit_device, NULL,
+	radeon_dm_open, radeon_dm_close, radeon_dm_free,
+	radeon_dm_read, radeon_dm_write, NULL, radeon_dm_control,
+	NULL, NULL
+};
+
+struct driver_module_info sRadeonDriver = {
+	{ RADEON_DRIVER_MODULE_NAME, 0, NULL },
+	radeon_supports_device, radeon_register_device,
+	radeon_init_driver, radeon_uninit_driver,
+	radeon_register_child_devices, NULL, NULL
+};
+
+module_info *modules[] = {
+	(module_info *)&sRadeonDriver,
+	(module_info *)&sRadeonDevice,
+	NULL
+};
 

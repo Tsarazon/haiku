@@ -13,6 +13,7 @@
 #define _USB_DAVICOM_DRIVER_H_
 
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <USB3.h>
 
@@ -21,26 +22,25 @@
 //#define UDAV_TRACE
 
 #define DRIVER_NAME	"usb_davicom"
-#define MAX_DEVICES	8
 
 
 const char* const kVersion = "ver.0.9.5";
 extern usb_module_info *gUSBModule;
+extern device_manager_info *gDeviceManager;
 
+class DavicomDevice;
 
-extern "C" {
+// bus manager device interface for peripheral driver
+typedef struct {
+	driver_module_info info;
+} usb_device_interface;
 
-status_t	usb_davicom_device_added(usb_device device, void **cookie);
-status_t	usb_davicom_device_removed(void *cookie);
-
-status_t	init_hardware();
-void		uninit_driver();
-
-const char **publish_devices();
-device_hooks *find_device(const char *name);
-
-}
+typedef struct {
+	device_node*			node;
+	::usb_device			usb_device;
+	usb_device_interface*	usb;
+	DavicomDevice*			device;
+} usb_davicom_driver_info;
 
 
 #endif // _USB_DAVICOM_DRIVER_H_
-

@@ -6,11 +6,14 @@
 #ifndef _USB_HID_DRIVER_H_
 #define _USB_HID_DRIVER_H_
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
 #include <USB3.h>
 #include <util/kernel_cpp.h>
+
+#include <bus/USB.h>
 
 #include "DeviceList.h"
 
@@ -23,17 +26,8 @@
 #define USB_DEFAULT_CONFIGURATION		0
 
 extern usb_module_info *gUSBModule;
+extern device_manager_info *gDeviceManager;
 extern DeviceList *gDeviceList;
-
-extern "C" {
-status_t		usb_hid_device_added(usb_device device, void **cookie);
-status_t		usb_hid_device_removed(void *cookie);
-
-status_t		init_hardware();
-void			uninit_driver();
-const char **	publish_devices();
-device_hooks *	find_device(const char *name);
-}
 
 #define	TRACE(x...)			/*dprintf(DRIVER_NAME ": " x)*/
 #define TRACE_ALWAYS(x...)	dprintf(DRIVER_NAME ": " x)

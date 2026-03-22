@@ -8,6 +8,7 @@
 
 #include <ISA.h>
 #include <KernelExport.h>
+#include <bus/PCI.h>
 
 #include <lock.h>
 
@@ -17,6 +18,8 @@
 extern char* gDeviceNames[];
 extern vesa_info* gDeviceInfo[];
 extern isa_module_info* gISA;
+extern pci_device_module_info* gPCI;
+extern pci_device* gPCIDev;
 extern mutex gLock;
 
 #endif  /* DRIVER_H */

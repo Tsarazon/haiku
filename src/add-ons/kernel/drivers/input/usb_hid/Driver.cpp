@@ -18,7 +18,12 @@
 
 #include <new>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+
+#define USB_HID_DRIVER_MODULE_NAME "drivers/input/usb_hid/driver_v1"
+#define USB_HID_DEVICE_MODULE_NAME "drivers/input/usb_hid/device_v1"
 
 
 struct device_cookie {
@@ -27,12 +32,12 @@ struct device_cookie {
 };
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
 usb_module_info *gUSBModule = NULL;
+device_manager_info *gDeviceManager = NULL;
 DeviceList *gDeviceList = NULL;
 static int32 sParentCookie = 0;
 static mutex sDriverLock;
-static usb_support_descriptor *sSupportDescriptors;
+static bool sInitialized = false;
 
 
 usb_support_descriptor gBlackListedDevices[] = {
@@ -50,184 +55,34 @@ int32 gBlackListedDeviceCount
 	= sizeof(gBlackListedDevices) / sizeof(gBlackListedDevices[0]);
 
 
-// #pragma mark - notify hooks
+typedef struct {
+	device_node*	node;
+	usb_device		usb_dev;
+	int32			parentCookie;
+	bool			devicesFound;
+} usb_hid_driver_info;
 
 
-status_t
-usb_hid_device_added(usb_device device, void **cookie)
+// Ensure global state is initialized once
+static void
+ensure_globals_initialized()
 {
-	TRACE("device_added()\n");
-	const usb_device_descriptor *deviceDescriptor
-		= gUSBModule->get_device_descriptor(device);
+	if (sInitialized)
+		return;
 
-	TRACE("vendor id: 0x%04x; product id: 0x%04x\n",
-		deviceDescriptor->vendor_id, deviceDescriptor->product_id);
-
-	for (int32 i = 0; i < gBlackListedDeviceCount; i++) {
-		usb_support_descriptor &entry = gBlackListedDevices[i];
-		if ((entry.vendor != 0
-				&& deviceDescriptor->vendor_id != entry.vendor)
-			|| (entry.product != 0
-				&& deviceDescriptor->product_id != entry.product)) {
-			continue;
-		}
-
-		return B_ERROR;
-	}
-
-	const usb_configuration_info *config
-		= gUSBModule->get_nth_configuration(device, USB_DEFAULT_CONFIGURATION);
-	if (config == NULL) {
-		TRACE_ALWAYS("cannot get default configuration\n");
-		return B_ERROR;
-	}
-
-	// ensure default configuration is set
-	status_t result = gUSBModule->set_configuration(device, config);
-	if (result != B_OK) {
-		TRACE_ALWAYS("set_configuration() failed 0x%08" B_PRIx32 "\n", result);
-		return result;
-	}
-
-	// refresh config
-	config = gUSBModule->get_configuration(device);
-	if (config == NULL) {
-		TRACE_ALWAYS("cannot get current configuration\n");
-		return B_ERROR;
-	}
-
-	bool devicesFound = false;
-	int32 parentCookie = atomic_add(&sParentCookie, 1);
-	for (size_t i = 0; i < config->interface_count; i++) {
-		const usb_interface_info *interface = config->interface[i].active;
-		if (interface == NULL || interface->descr == NULL)
-			continue;
-
-		uint8 interfaceClass = interface->descr->interface_class;
-		TRACE("interface %" B_PRIuSIZE ": class: %u; subclass: %u; protocol: "
-			"%u\n",	i, interfaceClass, interface->descr->interface_subclass,
-			interface->descr->interface_protocol);
-
-		// check for quirky devices first
-		int32 quirkyIndex = -1;
-		for (int32 j = 0; j < gQuirkyDeviceCount; j++) {
-			usb_hid_quirky_device &quirky = gQuirkyDevices[j];
-			if ((quirky.vendor_id != 0
-					&& deviceDescriptor->vendor_id != quirky.vendor_id)
-				|| (quirky.product_id != 0
-					&& deviceDescriptor->product_id != quirky.product_id)
-				|| (quirky.device_class != 0
-					&& interfaceClass != quirky.device_class)
-				|| (quirky.device_subclass != 0
-					&& interface->descr->interface_subclass
-						!= quirky.device_subclass)
-				|| (quirky.device_protocol != 0
-					&& interface->descr->interface_protocol
-						!= quirky.device_protocol)) {
-				continue;
-			}
-
-			quirkyIndex = j;
-			break;
-		}
-
-		if (quirkyIndex >= 0 || interfaceClass == USB_INTERFACE_CLASS_HID) {
-			mutex_lock(&sDriverLock);
-			HIDDevice *hidDevice
-				= new(std::nothrow) HIDDevice(device, config, i, quirkyIndex);
-
-			if (hidDevice != NULL && hidDevice->InitCheck() == B_OK) {
-				hidDevice->SetParentCookie(parentCookie);
-
-				for (uint32 i = 0;; i++) {
-					ProtocolHandler *handler = hidDevice->ProtocolHandlerAt(i);
-					if (handler == NULL)
-						break;
-
-					// As devices can be un- and replugged at will, we cannot
-					// simply rely on a device count. If there is just one
-					// keyboard, this does not mean that it uses the 0 name.
-					// There might have been two keyboards and the one using 0
-					// might have been unplugged. So we just generate names
-					// until we find one that is not currently in use.
-					int32 index = 0;
-					char pathBuffer[B_DEV_NAME_LENGTH];
-					const char *basePath = handler->BasePath();
-					while (true) {
-						sprintf(pathBuffer, "%s%" B_PRId32, basePath, index++);
-						if (gDeviceList->FindDevice(pathBuffer) == NULL) {
-							// this name is still free, use it
-							handler->SetPublishPath(strdup(pathBuffer));
-							break;
-						}
-					}
-
-					gDeviceList->AddDevice(handler->PublishPath(), handler);
-					devicesFound = true;
-				}
-			} else
-				delete hidDevice;
-
-			mutex_unlock(&sDriverLock);
-		}
-	}
-
-	if (!devicesFound)
-		return B_ERROR;
-
-	*cookie = (void *)(addr_t)parentCookie;
-	return B_OK;
+	gDeviceList = new(std::nothrow) DeviceList();
+	mutex_init(&sDriverLock, "usb hid driver lock");
+	sInitialized = true;
 }
 
 
-status_t
-usb_hid_device_removed(void *cookie)
-{
-	mutex_lock(&sDriverLock);
-	int32 parentCookie = (int32)(addr_t)cookie;
-	TRACE("device_removed(%" B_PRId32 ")\n", parentCookie);
-
-	// removed device may contain multiple HID devices on multiple interfaces
-	// we must go through all published devices and remove all that belong to this parent
-	for (int32 i = 0; i < gDeviceList->CountDevices(); i++) {
-		ProtocolHandler *handler = (ProtocolHandler *)gDeviceList->DeviceAt(i);
-		if (!handler)
-			continue;
-
-		HIDDevice *device = handler->Device();
-		if (device->ParentCookie() != parentCookie)
-			continue;
-
-		// remove all the handlers
-		for (uint32 j = 0;; j++) {
-			handler = device->ProtocolHandlerAt(j);
-			if (handler == NULL)
-				break;
-
-			gDeviceList->RemoveDevice(NULL, handler);
-			i--; // device count changed, adjust index
-		}
-
-		// this handler's device belongs to the one removed
-		if (device->IsOpen()) {
-			// the device and it's handlers will be deleted in the free hook
-			device->Removed();
-		} else
-			delete device;
-	}
-
-	mutex_unlock(&sDriverLock);
-	return B_OK;
-}
-
-
-// #pragma mark - driver hooks
+//	#pragma mark - device module API
 
 
 static status_t
-usb_hid_open(const char *name, uint32 flags, void **_cookie)
+usb_hid_open(void *_info, const char *name, int openMode, void **_cookie)
 {
-	TRACE("open(%s, %" B_PRIu32 ", %p)\n", name, flags, _cookie);
+	TRACE("open(%s, %d)\n", name, openMode);
 
 	device_cookie *cookie = new(std::nothrow) device_cookie();
 	if (cookie == NULL)
@@ -243,7 +98,7 @@ usb_hid_open(const char *name, uint32 flags, void **_cookie)
 
 	status_t result = handler == NULL ? B_ENTRY_NOT_FOUND : B_OK;
 	if (result == B_OK)
-		result = handler->Open(flags, &cookie->cookie);
+		result = handler->Open(openMode, &cookie->cookie);
 
 	if (result != B_OK) {
 		delete cookie;
@@ -251,7 +106,6 @@ usb_hid_open(const char *name, uint32 flags, void **_cookie)
 	}
 
 	*_cookie = cookie;
-
 	return B_OK;
 }
 
@@ -273,8 +127,8 @@ usb_hid_write(void *_cookie, off_t position, const void *buffer,
 {
 	device_cookie *cookie = (device_cookie *)_cookie;
 
-	TRACE("write(%p, %" B_PRIu64 ", %p, %p (%lu)\n", cookie, position, buffer, numBytes,
-		numBytes != NULL ? *numBytes : 0);
+	TRACE("write(%p, %" B_PRIu64 ", %p, %p (%lu)\n", cookie, position,
+		buffer, numBytes, numBytes != NULL ? *numBytes : 0);
 	return cookie->handler->Write(&cookie->cookie, position, buffer, numBytes);
 }
 
@@ -324,118 +178,390 @@ usb_hid_free(void *_cookie)
 }
 
 
-//	#pragma mark - driver API
+//	#pragma mark - driver module API
 
 
-status_t
-init_hardware()
+static float
+usb_hid_supports_device(device_node *parent)
 {
-	TRACE("init_hardware() " __DATE__ " " __TIME__ "\n");
-	return B_OK;
+	TRACE("supports_device()\n");
+	const char *bus;
+
+	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "usb"))
+		return 0.0;
+
+	// check for HID class
+	uint8 deviceClass = 0;
+	device_attr *attr = NULL;
+	while (gDeviceManager->get_next_attr(parent, &attr) == B_OK) {
+		if (attr->type != B_UINT8_TYPE)
+			continue;
+
+		if (!strcmp(attr->name, USB_DEVICE_CLASS)) {
+			deviceClass = attr->value.ui8;
+			if (deviceClass == USB_INTERFACE_CLASS_HID) {
+				TRACE("USB HID device found!\n");
+
+				// check blacklist
+				uint16 vendorId = 0, productId = 0;
+				gDeviceManager->get_attr_uint16(parent,
+					B_DEVICE_VENDOR_ID, &vendorId, false);
+				gDeviceManager->get_attr_uint16(parent,
+					B_DEVICE_ID, &productId, false);
+				for (int32 i = 0; i < gBlackListedDeviceCount; i++) {
+					if ((gBlackListedDevices[i].vendor == 0
+							|| vendorId == gBlackListedDevices[i].vendor)
+						&& (gBlackListedDevices[i].product == 0
+							|| productId
+								== gBlackListedDevices[i].product)) {
+						TRACE("blacklisted device 0x%04x:0x%04x\n",
+							vendorId, productId);
+						return 0.0;
+					}
+				}
+
+				return 0.6;
+			}
+		}
+	}
+
+	// also check for quirky devices by vendor/product ID
+	uint16 vendorId = 0, productId = 0;
+	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false) == B_OK
+		&& gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+			&productId, false) == B_OK) {
+		for (int32 j = 0; j < gQuirkyDeviceCount; j++) {
+			if ((gQuirkyDevices[j].vendor_id == 0
+					|| vendorId == gQuirkyDevices[j].vendor_id)
+				&& (gQuirkyDevices[j].product_id == 0
+					|| productId == gQuirkyDevices[j].product_id)) {
+				TRACE("quirky HID device found!\n");
+				return 0.6;
+			}
+		}
+	}
+
+	return 0.0;
 }
 
 
-status_t
-init_driver()
+static status_t
+usb_hid_register_device(device_node *node)
 {
-	TRACE("init_driver() " __DATE__ " " __TIME__ "\n");
-	if (get_module(B_USB_MODULE_NAME, (module_info **)&gUSBModule) != B_OK)
-		return B_ERROR;
+	TRACE("register_device()\n");
 
-	gDeviceList = new(std::nothrow) DeviceList();
-	if (gDeviceList == NULL) {
-		put_module(B_USB_MODULE_NAME);
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "USB HID"} },
+		{ NULL }
+	};
+
+	return gDeviceManager->register_node(node, USB_HID_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+usb_hid_init_driver(device_node *node, void **cookie)
+{
+	TRACE("init_driver()\n");
+
+	ensure_globals_initialized();
+
+	usb_hid_driver_info *info = (usb_hid_driver_info *)malloc(
+		sizeof(usb_hid_driver_info));
+	if (info == NULL)
 		return B_NO_MEMORY;
+
+	memset(info, 0, sizeof(*info));
+	info->node = node;
+
+	// get USB device ID
+	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+			&info->usb_dev, true) != B_OK) {
+		free(info);
+		return B_ERROR;
 	}
 
-	mutex_init(&sDriverLock, "usb hid driver lock");
+	const usb_device_descriptor *deviceDescriptor
+		= gUSBModule->get_device_descriptor(info->usb_dev);
 
-	static usb_notify_hooks notifyHooks = {
-		&usb_hid_device_added,
-		&usb_hid_device_removed
-	};
+	TRACE("vendor id: 0x%04x; product id: 0x%04x\n",
+		deviceDescriptor->vendor_id, deviceDescriptor->product_id);
 
-	static usb_support_descriptor genericHIDSupportDescriptor = {
-		USB_INTERFACE_CLASS_HID, 0, 0, 0, 0
-	};
+	// blacklist check
+	for (int32 i = 0; i < gBlackListedDeviceCount; i++) {
+		usb_support_descriptor &entry = gBlackListedDevices[i];
+		if ((entry.vendor != 0
+				&& deviceDescriptor->vendor_id != entry.vendor)
+			|| (entry.product != 0
+				&& deviceDescriptor->product_id != entry.product)) {
+			continue;
+		}
+		free(info);
+		return B_ERROR;
+	}
 
-	int32 supportDescriptorCount = 1 + gQuirkyDeviceCount;
-	sSupportDescriptors
-		= new(std::nothrow) usb_support_descriptor[supportDescriptorCount];
-	if (sSupportDescriptors != NULL) {
-		sSupportDescriptors[0] = genericHIDSupportDescriptor;
-		for (int32 i = 0; i < gQuirkyDeviceCount; i++) {
-			usb_support_descriptor &descriptor = sSupportDescriptors[i + 1];
-			descriptor.dev_class = gQuirkyDevices[i].device_class;
-			descriptor.dev_subclass = gQuirkyDevices[i].device_subclass;
-			descriptor.dev_protocol = gQuirkyDevices[i].device_protocol;
-			descriptor.vendor = gQuirkyDevices[i].vendor_id;
-			descriptor.product = gQuirkyDevices[i].product_id;
+	const usb_configuration_info *config
+		= gUSBModule->get_nth_configuration(info->usb_dev,
+			USB_DEFAULT_CONFIGURATION);
+	if (config == NULL) {
+		TRACE_ALWAYS("cannot get default configuration\n");
+		free(info);
+		return B_ERROR;
+	}
+
+	status_t result = gUSBModule->set_configuration(info->usb_dev, config);
+	if (result != B_OK) {
+		TRACE_ALWAYS("set_configuration() failed 0x%08" B_PRIx32 "\n",
+			result);
+		free(info);
+		return result;
+	}
+
+	config = gUSBModule->get_configuration(info->usb_dev);
+	if (config == NULL) {
+		TRACE_ALWAYS("cannot get current configuration\n");
+		free(info);
+		return B_ERROR;
+	}
+
+	info->devicesFound = false;
+	info->parentCookie = atomic_add(&sParentCookie, 1);
+
+	for (size_t i = 0; i < config->interface_count; i++) {
+		const usb_interface_info *interface = config->interface[i].active;
+		if (interface == NULL || interface->descr == NULL)
+			continue;
+
+		uint8 interfaceClass = interface->descr->interface_class;
+		TRACE("interface %" B_PRIuSIZE ": class: %u; subclass: %u; "
+			"protocol: %u\n", i, interfaceClass,
+			interface->descr->interface_subclass,
+			interface->descr->interface_protocol);
+
+		// check for quirky devices first
+		int32 quirkyIndex = -1;
+		for (int32 j = 0; j < gQuirkyDeviceCount; j++) {
+			usb_hid_quirky_device &quirky = gQuirkyDevices[j];
+			if ((quirky.vendor_id != 0
+					&& deviceDescriptor->vendor_id != quirky.vendor_id)
+				|| (quirky.product_id != 0
+					&& deviceDescriptor->product_id != quirky.product_id)
+				|| (quirky.device_class != 0
+					&& interfaceClass != quirky.device_class)
+				|| (quirky.device_subclass != 0
+					&& interface->descr->interface_subclass
+						!= quirky.device_subclass)
+				|| (quirky.device_protocol != 0
+					&& interface->descr->interface_protocol
+						!= quirky.device_protocol)) {
+				continue;
+			}
+
+			quirkyIndex = j;
+			break;
 		}
 
-		gUSBModule->register_driver(DRIVER_NAME, sSupportDescriptors,
-			supportDescriptorCount, NULL);
-	} else {
-		// no memory for quirky devices, at least support proper HID
-		gUSBModule->register_driver(DRIVER_NAME, &genericHIDSupportDescriptor,
-			1, NULL);
+		if (quirkyIndex >= 0 || interfaceClass == USB_INTERFACE_CLASS_HID) {
+			mutex_lock(&sDriverLock);
+			HIDDevice *hidDevice
+				= new(std::nothrow) HIDDevice(info->usb_dev, config, i,
+					quirkyIndex);
+
+			if (hidDevice != NULL && hidDevice->InitCheck() == B_OK) {
+				hidDevice->SetParentCookie(info->parentCookie);
+
+				for (uint32 j = 0;; j++) {
+					ProtocolHandler *handler
+						= hidDevice->ProtocolHandlerAt(j);
+					if (handler == NULL)
+						break;
+
+					int32 index = 0;
+					char pathBuffer[B_DEV_NAME_LENGTH];
+					const char *basePath = handler->BasePath();
+					while (true) {
+						sprintf(pathBuffer, "%s%" B_PRId32, basePath,
+							index++);
+						if (gDeviceList->FindDevice(pathBuffer) == NULL) {
+							handler->SetPublishPath(strdup(pathBuffer));
+							break;
+						}
+					}
+
+					gDeviceList->AddDevice(handler->PublishPath(), handler);
+					info->devicesFound = true;
+				}
+			} else
+				delete hidDevice;
+
+			mutex_unlock(&sDriverLock);
+		}
 	}
 
-	gUSBModule->install_notify(DRIVER_NAME, &notifyHooks);
-	TRACE("init_driver() OK\n");
+	if (!info->devicesFound) {
+		free(info);
+		return B_ERROR;
+	}
+
+	*cookie = info;
 	return B_OK;
 }
 
 
-void
-uninit_driver()
+static void
+usb_hid_uninit_driver(void *_cookie)
 {
 	TRACE("uninit_driver()\n");
-	gUSBModule->uninstall_notify(DRIVER_NAME);
-	put_module(B_USB_MODULE_NAME);
-	delete[] sSupportDescriptors;
-	sSupportDescriptors = NULL;
-	delete gDeviceList;
-	gDeviceList = NULL;
-	mutex_destroy(&sDriverLock);
-}
+	usb_hid_driver_info *info = (usb_hid_driver_info *)_cookie;
 
+	mutex_lock(&sDriverLock);
+	int32 parentCookie = info->parentCookie;
 
-const char **
-publish_devices()
-{
-	TRACE("publish_devices()\n");
-	const char **publishList = gDeviceList->PublishDevices();
+	for (int32 i = 0; i < gDeviceList->CountDevices(); i++) {
+		ProtocolHandler *handler
+			= (ProtocolHandler *)gDeviceList->DeviceAt(i);
+		if (!handler)
+			continue;
 
-	int32 index = 0;
-	while (publishList[index] != NULL) {
-		TRACE("publishing %s\n", publishList[index]);
-		index++;
+		HIDDevice *device = handler->Device();
+		if (device->ParentCookie() != parentCookie)
+			continue;
+
+		for (uint32 j = 0;; j++) {
+			handler = device->ProtocolHandlerAt(j);
+			if (handler == NULL)
+				break;
+
+			gDeviceList->RemoveDevice(NULL, handler);
+			i--;
+		}
+
+		if (device->IsOpen()) {
+			device->Removed();
+		} else
+			delete device;
 	}
 
-	return publishList;
+	mutex_unlock(&sDriverLock);
+	free(info);
 }
 
 
-device_hooks *
-find_device(const char *name)
+static status_t
+usb_hid_register_child_devices(void *_cookie)
 {
-	static device_hooks hooks = {
-		usb_hid_open,
-		usb_hid_close,
-		usb_hid_free,
-		usb_hid_control,
-		usb_hid_read,
-		usb_hid_write,
-		NULL,				/* select */
-		NULL				/* deselect */
-	};
+	TRACE("register_child_devices()\n");
+	usb_hid_driver_info *info = (usb_hid_driver_info *)_cookie;
 
-	TRACE("find_device(%s)\n", name);
-	if (gDeviceList->FindDevice(name) == NULL) {
-		TRACE_ALWAYS("didn't find device %s\n", name);
-		return NULL;
+	// publish all protocol handler device paths
+	mutex_lock(&sDriverLock);
+	for (int32 i = 0; i < gDeviceList->CountDevices(); i++) {
+		ProtocolHandler *handler
+			= (ProtocolHandler *)gDeviceList->DeviceAt(i);
+		if (!handler)
+			continue;
+
+		HIDDevice *device = handler->Device();
+		if (device->ParentCookie() != info->parentCookie)
+			continue;
+
+		const char *path = handler->PublishPath();
+		if (path != NULL) {
+			status_t status = gDeviceManager->publish_device(info->node,
+				path, USB_HID_DEVICE_MODULE_NAME);
+			if (status != B_OK) {
+				TRACE_ALWAYS("publish_device(%s) failed: %" B_PRIx32 "\n",
+					path, status);
+			}
+		}
 	}
+	mutex_unlock(&sDriverLock);
 
-	return &hooks;
+	return B_OK;
 }
+
+
+static void
+usb_hid_driver_device_removed(void *_cookie)
+{
+	TRACE("driver_device_removed()\n");
+	// handled in uninit_driver
+}
+
+
+//	#pragma mark - device init/uninit
+
+
+static status_t
+usb_hid_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+usb_hid_uninit_device(void *_cookie)
+{
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ B_USB_MODULE_NAME, (module_info **)&gUSBModule },
+	{ NULL }
+};
+
+struct device_module_info sUsbHidDevice = {
+	{
+		USB_HID_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	usb_hid_init_device,
+	usb_hid_uninit_device,
+	NULL,	// device_removed
+
+	usb_hid_open,
+	usb_hid_close,
+	usb_hid_free,
+	usb_hid_read,
+	usb_hid_write,
+	NULL,	// io
+	usb_hid_control,
+
+	NULL,	// select
+	NULL,	// deselect
+};
+
+struct driver_module_info sUsbHidDriver = {
+	{
+		USB_HID_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	usb_hid_supports_device,
+	usb_hid_register_device,
+	usb_hid_init_driver,
+	usb_hid_uninit_driver,
+	usb_hid_register_child_devices,
+	NULL,	// rescan
+	usb_hid_driver_device_removed,
+};
+
+module_info *modules[] = {
+	(module_info *)&sUsbHidDriver,
+	(module_info *)&sUsbHidDevice,
+	NULL
+};

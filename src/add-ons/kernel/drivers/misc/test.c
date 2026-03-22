@@ -1,59 +1,24 @@
 /*
  * Copyright (c) 2007 Marcus Overhagen <marcus@overhagen.de>
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without restriction, 
- * including without limitation the rights to use, copy, modify, 
- * merge, publish, distribute, sublicense, and/or sell copies of 
- * the Software, and to permit persons to whom the Software is 
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be 
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
- * OTHER DEALINGS IN THE SOFTWARE.
+ * Permission is hereby granted under the terms of the MIT license.
  */
 
+#include <device_manager.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <Errors.h>
+#include <string.h>
 
-int32 			api_version = B_CUR_DRIVER_API_VERSION;
-static int32	sOpenMask;
+#define TEST_DRIVER_MODULE_NAME "drivers/misc/test/driver_v1"
+#define TEST_DEVICE_MODULE_NAME "drivers/misc/test/device_v1"
 
-status_t
-init_hardware(void)
-{
-	dprintf("test: init_hardware\n");
-	return B_OK;
-}
-
-
-status_t
-init_driver(void)
-{
-	dprintf("test: init_driver\n");
-	return B_OK;
-}
-
-
-void
-uninit_driver(void)
-{
-	dprintf("test: uninit_driver\n");
-}
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
+static int32 sOpenMask;
 
 
 static status_t
-driver_open(const char *name, uint32 flags, void** _cookie)
+driver_open(void* _info, const char* name, int flags, void** _cookie)
 {
 	dprintf("test: open\n");
 
@@ -62,6 +27,7 @@ driver_open(const char *name, uint32 flags, void** _cookie)
 		return B_BUSY;
 	}
 
+	*_cookie = NULL;
 	dprintf("test: open, success\n");
 	return B_OK;
 }
@@ -87,53 +53,107 @@ driver_free(void* cookie)
 
 
 static status_t
-driver_read(void* cookie, off_t position, void *buf, size_t* num_bytes)
+driver_read(void* cookie, off_t position, void* buf, size_t* num_bytes)
 {
 	dprintf("test: read\n");
-	*num_bytes = 0; // nothing to read
+	*num_bytes = 0;
 	return B_ERROR;
 }
 
 
 static status_t
-driver_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
+driver_write(void* cookie, off_t position, const void* buffer,
+	size_t* num_bytes)
 {
 	dprintf("test: write\n");
-	snooze(1000000);	// 1s
-	*num_bytes = 1;		// pretend 1 byte was written
+	snooze(1000000);
+	*num_bytes = 1;
 	return B_OK;
 }
 
 
 static status_t
-driver_control(void *cookie, uint32 op, void *arg, size_t len)
+driver_control(void* cookie, uint32 op, void* arg, size_t len)
 {
 	dprintf("test: control\n");
 	return B_ERROR;
 }
 
 
-const char**
-publish_devices(void)
+/*	#pragma mark - driver module API */
+
+
+static float
+test_supports_device(device_node* parent)
 {
-	static const char *names[] = {"misc/test/1", NULL};
-	dprintf("test: publish_devices\n");
-	return names;
+	const char* bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
 }
 
 
-device_hooks*
-find_device(const char* name)
+static status_t
+test_register_device(device_node* node)
 {
-	static device_hooks hooks = {
-		driver_open,
-		driver_close,
-		driver_free,
-		driver_control,
-		driver_read,
-		driver_write,
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Test Driver"} },
+		{ NULL }
 	};
-	dprintf("test: find_device\n");
-	return &hooks;
+	return sDeviceManager->register_node(node, TEST_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
 
+
+static status_t
+test_init_driver(device_node* node, void** cookie)
+{
+	*cookie = node;
+	return B_OK;
+}
+
+static void test_uninit_driver(void* c) { sPublished = false; }
+
+static status_t
+test_register_child_devices(void* _cookie)
+{
+	device_node* node = (device_node*)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
+	return sDeviceManager->publish_device(node, "misc/test/1",
+		TEST_DEVICE_MODULE_NAME);
+}
+
+static status_t test_init_device(void* i, void** c)
+{ *c = i; return B_OK; }
+static void test_uninit_device(void* c) {}
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sTestDevice = {
+	{ TEST_DEVICE_MODULE_NAME, 0, NULL },
+	test_init_device, test_uninit_device, NULL,
+	driver_open, driver_close, driver_free,
+	driver_read, driver_write, NULL, driver_control,
+	NULL, NULL
+};
+
+struct driver_module_info sTestDriver = {
+	{ TEST_DRIVER_MODULE_NAME, 0, NULL },
+	test_supports_device, test_register_device,
+	test_init_driver, test_uninit_driver,
+	test_register_child_devices, NULL, NULL
+};
+
+module_info* modules[] = {
+	(module_info*)&sTestDriver,
+	(module_info*)&sTestDevice,
+	NULL
+};

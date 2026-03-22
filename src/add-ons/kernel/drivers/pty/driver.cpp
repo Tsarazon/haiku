@@ -12,6 +12,7 @@
 #include <errno.h>
 
 #include <util/AutoLock.h>
+#include <device_manager.h>
 #include <Drivers.h>
 
 #include <team.h>
@@ -33,7 +34,13 @@ extern "C" {
 #define DRIVER_NAME "pty"
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#define PTY_DRIVER_MODULE_NAME "drivers/pty/driver_v1"
+#define PTY_DEVICE_MODULE_NAME "drivers/pty/device_v1"
+
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
+static bool sPtyInitialized = false;
+
 tty_module_info *gTTYModule = NULL;
 
 struct mutex gGlobalTTYLock;
@@ -48,42 +55,40 @@ struct tty* gSlaveTTYs[kNumTTYs];
 
 extern device_hooks gMasterPTYHooks, gSlavePTYHooks;
 
+// Forward declarations for hooks used in device_module_info wrappers
+static status_t master_open(const char *name, uint32 flags, void **_cookie);
+static status_t slave_open(const char *name, uint32 flags, void **_cookie);
+static status_t pty_close(void *_cookie);
+static status_t pty_free_cookie(void *_cookie);
+static status_t pty_ioctl(void *_cookie, uint32 op, void *buffer, size_t length);
+static status_t pty_read(void *_cookie, off_t offset, void *buffer, size_t *_length);
+static status_t pty_write(void *_cookie, off_t offset, const void *buffer, size_t *_length);
+static status_t pty_select(void *_cookie, uint8 event, uint32 ref, selectsync *sync);
+static status_t pty_deselect(void *_cookie, uint8 event, selectsync *sync);
 
-status_t
-init_hardware(void)
+
+static status_t
+ensure_pty_initialized()
 {
-	TRACE((DRIVER_NAME ": init_hardware()\n"));
-	return B_OK;
-}
+	if (sPtyInitialized)
+		return B_OK;
 
-
-status_t
-init_driver(void)
-{
-	status_t status = get_module(B_TTY_MODULE_NAME, (module_info **)&gTTYModule);
+	status_t status = get_module(B_TTY_MODULE_NAME,
+		(module_info **)&gTTYModule);
 	if (status < B_OK)
 		return status;
 
-	TRACE((DRIVER_NAME ": init_driver()\n"));
+	TRACE((DRIVER_NAME ": init pty\n"));
 
 	mutex_init(&gGlobalTTYLock, "tty global");
 	memset(gDeviceNames, 0, sizeof(gDeviceNames));
 	memset(gMasterTTYs, 0, sizeof(gMasterTTYs));
 	memset(gSlaveTTYs, 0, sizeof(gSlaveTTYs));
 
-	// create driver name array
-
 	char letter = 'p';
 	int8 digit = 0;
 
 	for (uint32 i = 0; i < kNumTTYs; i++) {
-		// For compatibility, we have to create the same mess in /dev/pt and
-		// /dev/tt as BeOS does: we publish devices p0, p1, ..., pf, r1, ...,
-		// sf. It would be nice if we could drop compatibility and create
-		// something better. In fact we already don't need the master devices
-		// anymore, since "/dev/ptmx" does the job. The slaves entries could
-		// be published on the fly when a master is opened (e.g via
-		// vfs_create_special_node()).
 		char buffer[64];
 
 		snprintf(buffer, sizeof(buffer), "pt/%c%x", letter, digit);
@@ -96,7 +101,10 @@ init_driver(void)
 			digit = 0, letter++;
 
 		if (!gDeviceNames[i] || !gDeviceNames[i + kNumTTYs]) {
-			uninit_driver();
+			for (int32 j = 0; j < (int32)kNumTTYs * 2; j++)
+				free(gDeviceNames[j]);
+			mutex_destroy(&gGlobalTTYLock);
+			put_module(B_TTY_MODULE_NAME);
 			return B_NO_MEMORY;
 		}
 	}
@@ -104,46 +112,128 @@ init_driver(void)
 	gDeviceNames[2 * kNumTTYs] = (char *)"ptmx";
 	gDeviceNames[2 * kNumTTYs + 1] = (char *)"tty";
 
+	sPtyInitialized = true;
 	return B_OK;
 }
 
 
-void
-uninit_driver(void)
+static bool
+is_master_device(const char* name)
 {
-	TRACE((DRIVER_NAME ": uninit_driver()\n"));
-
-	for (int32 i = 0; i < (int32)kNumTTYs * 2; i++)
-		free(gDeviceNames[i]);
-
-	mutex_destroy(&gGlobalTTYLock);
-
-	put_module(B_TTY_MODULE_NAME);
+	// pt/* and ptmx are master devices
+	return strncmp(name, "pt/", 3) == 0 || strcmp(name, "ptmx") == 0;
 }
 
 
-const char **
-publish_devices(void)
+//	#pragma mark - device_manager API
+
+
+static float
+pty_supports_device(device_node* parent)
 {
-	TRACE((DRIVER_NAME ": publish_devices()\n"));
-	return const_cast<const char **>(gDeviceNames);
+	const char* bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
 }
 
 
-device_hooks *
-find_device(const char *name)
+static status_t
+pty_register_device(device_node* node)
 {
-	TRACE((DRIVER_NAME ": find_device(\"%s\")\n", name));
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+			{.string = "Pseudo Terminals"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, PTY_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+pty_init_driver(device_node* node, void** cookie)
+{
+	status_t status = ensure_pty_initialized();
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
+
+static void pty_uninit_driver(void* c) { sPublished = false; }
+
+static status_t
+pty_register_child_devices(void* _cookie)
+{
+	device_node* node = (device_node*)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
 
 	for (uint32 i = 0; gDeviceNames[i] != NULL; i++) {
-		if (!strcmp(name, gDeviceNames[i])) {
-			return i < kNumTTYs || i == (2 * kNumTTYs)
-				? &gMasterPTYHooks : &gSlavePTYHooks;
-		}
+		sDeviceManager->publish_device(node, gDeviceNames[i],
+			PTY_DEVICE_MODULE_NAME);
 	}
-
-	return NULL;
+	return B_OK;
 }
+
+
+static status_t
+pty_dm_open(void* _info, const char* path, int openMode, void** _cookie)
+{
+	if (is_master_device(path))
+		return master_open(path, openMode, _cookie);
+	return slave_open(path, openMode, _cookie);
+}
+
+static status_t pty_dm_close(void* c)
+{ return pty_close(c); }
+static status_t pty_dm_free(void* c)
+{ return pty_free_cookie(c); }
+static status_t pty_dm_read(void* c, off_t p, void* b, size_t* l)
+{ return pty_read(c, p, b, l); }
+static status_t pty_dm_write(void* c, off_t p, const void* b, size_t* l)
+{ return pty_write(c, p, b, l); }
+static status_t pty_dm_ioctl(void* c, uint32 o, void* b, size_t l)
+{ return pty_ioctl(c, o, b, l); }
+static status_t pty_dm_select(void* c, uint8 e, selectsync* s)
+{ return pty_select(c, e, 0, s); }
+static status_t pty_dm_deselect(void* c, uint8 e, selectsync* s)
+{ return pty_deselect(c, e, s); }
+
+static status_t pty_init_device(void* i, void** c)
+{ *c = i; return B_OK; }
+static void pty_uninit_device(void* c) {}
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sPtyDevice = {
+	{ PTY_DEVICE_MODULE_NAME, 0, NULL },
+	pty_init_device, pty_uninit_device, NULL,
+	pty_dm_open, pty_dm_close, pty_dm_free,
+	pty_dm_read, pty_dm_write, NULL, pty_dm_ioctl,
+	pty_dm_select, pty_dm_deselect
+};
+
+struct driver_module_info sPtyDriver = {
+	{ PTY_DRIVER_MODULE_NAME, 0, NULL },
+	pty_supports_device, pty_register_device,
+	pty_init_driver, pty_uninit_driver,
+	pty_register_child_devices, NULL, NULL
+};
+
+module_info* modules[] = {
+	(module_info*)&sPtyDriver,
+	(module_info*)&sPtyDevice,
+	NULL
+};
 
 
 static int32

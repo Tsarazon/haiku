@@ -7,6 +7,7 @@
  */
 
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 
@@ -76,8 +77,12 @@ static struct console_desc {
 	console_module_info *module;
 } sConsole;
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+#define CONSOLE_DRIVER_MODULE_NAME "drivers/common/console/driver_v1"
+#define CONSOLE_DEVICE_MODULE_NAME "drivers/common/console/device_v1"
 
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
+static bool sConsoleInitialized = false;
 static int32 sOpenMask;
 
 
@@ -772,16 +777,17 @@ console_ioctl(void *cookie, uint32 op, void *buffer, size_t length)
 //	#pragma mark -
 
 
-status_t
-init_hardware(void)
+static status_t
+ensure_console_initialized()
 {
-	// iterate through the list of console modules until we find one that accepts the job
+	if (sConsoleInitialized)
+		return B_OK;
+
 	void *cookie = open_module_list("console");
 	if (cookie == NULL)
 		return B_ERROR;
 
 	bool found = false;
-
 	char buffer[B_FILE_NAME_LENGTH];
 	size_t bufferSize = sizeof(buffer);
 
@@ -793,18 +799,16 @@ init_hardware(void)
 			found = true;
 			break;
 		}
-
 		bufferSize = sizeof(buffer);
 	}
 
 	if (found) {
-		// set up the console structure
 		mutex_init(&sConsole.lock, "console lock");
 		sConsole.module->get_size(&sConsole.columns, &sConsole.lines);
-
 		reset_console(&sConsole);
 		gotoxy(&sConsole, 0, 0);
 		save_cur(&sConsole, true);
+		sConsoleInitialized = true;
 	}
 
 	close_module_list(cookie);
@@ -812,53 +816,121 @@ init_hardware(void)
 }
 
 
-const char **
-publish_devices(void)
-{
-	static const char *devices[] = {
-		DEVICE_NAME,
-		NULL
-	};
+//	#pragma mark - device_manager API
 
-	return devices;
+
+static status_t
+console_dm_open(void* _info, const char* path, int openMode, void** _cookie)
+{
+	return console_open(path, openMode, _cookie);
+}
+
+static status_t
+console_dm_close(void* cookie)
+{
+	return console_close(cookie);
+}
+
+static status_t
+console_dm_free(void* cookie)
+{
+	return console_freecookie(cookie);
+}
+
+static status_t
+console_dm_read(void* cookie, off_t pos, void* buf, size_t* len)
+{
+	return console_read(cookie, pos, buf, len);
+}
+
+static status_t
+console_dm_write(void* cookie, off_t pos, const void* buf, size_t* len)
+{
+	return console_write(cookie, pos, buf, len);
+}
+
+static status_t
+console_dm_ioctl(void* cookie, uint32 op, void* buf, size_t len)
+{
+	return console_ioctl(cookie, op, buf, len);
 }
 
 
-device_hooks *
-find_device(const char *name)
+static float
+console_supports_device(device_node* parent)
 {
-	static device_hooks hooks = {
-		&console_open,
-		&console_close,
-		&console_freecookie,
-		&console_ioctl,
-		&console_read,
-		&console_write,
-		/* Leave select/deselect/readv/writev undefined. The kernel will
-		 * use its own default implementation. The basic hooks above this
-		 * line MUST be defined, however. */
-		NULL,
-		NULL,
-		NULL,
-		NULL
-	};
-
-	if (!strcmp(name, DEVICE_NAME))
-		return &hooks;
-
-	return NULL;
+	const char* bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
 }
 
 
-status_t
-init_driver(void)
+static status_t
+console_register_device(device_node* node)
 {
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Console"} },
+		{ NULL }
+	};
+	return sDeviceManager->register_node(node, CONSOLE_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+console_init_driver(device_node* node, void** cookie)
+{
+	status_t status = ensure_console_initialized();
+	if (status != B_OK)
+		return status;
+	*cookie = node;
 	return B_OK;
 }
 
+static void console_uninit_driver(void* c) { sPublished = false; }
 
-void
-uninit_driver(void)
+static status_t
+console_register_child_devices(void* _cookie)
 {
+	device_node* node = (device_node*)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
+	return sDeviceManager->publish_device(node, DEVICE_NAME,
+		CONSOLE_DEVICE_MODULE_NAME);
 }
+
+static status_t console_init_device(void* i, void** c)
+{ *c = i; return B_OK; }
+static void console_uninit_device(void* c) {}
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sConsoleDevice = {
+	{ CONSOLE_DEVICE_MODULE_NAME, 0, NULL },
+	console_init_device, console_uninit_device, NULL,
+	console_dm_open, console_dm_close, console_dm_free,
+	console_dm_read, console_dm_write, NULL, console_dm_ioctl,
+	NULL, NULL
+};
+
+struct driver_module_info sConsoleDriver = {
+	{ CONSOLE_DRIVER_MODULE_NAME, 0, NULL },
+	console_supports_device, console_register_device,
+	console_init_driver, console_uninit_driver,
+	console_register_child_devices, NULL, NULL
+};
+
+module_info* modules[] = {
+	(module_info*)&sConsoleDriver,
+	(module_info*)&sConsoleDevice,
+	NULL
+};
 

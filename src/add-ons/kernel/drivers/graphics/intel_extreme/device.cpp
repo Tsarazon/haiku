@@ -19,7 +19,7 @@
 #define ERROR(x...) dprintf("intel_extreme: " x)
 #define CALLED() TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 #include <Drivers.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <SupportDefs.h>
 #include <graphic_driver.h>
 #include <image.h>

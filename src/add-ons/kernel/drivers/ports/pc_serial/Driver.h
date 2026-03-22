@@ -14,9 +14,10 @@
 
 #include <OS.h>
 #include <KernelExport.h>
+#include <device_manager.h>
 #include <Drivers.h>
 #include <ISA.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <string.h>
 
 #include <lock.h>
@@ -97,15 +98,6 @@ struct serial_support_descriptor {
 typedef struct serial_support_descriptor serial_support_descriptor;
 
 
-//struct serial_config_descriptor {
-//	bus_type bus;	// B_*_BUS
-//	struct serial_support_descriptor *descriptor;
-//	union {
-//		struct pci_info pci;
-//	} d;
-//};
-
-
 /* This one rounds the size to integral count of segs (segments) */
 #define ROUNDUP(size, seg) (((size) + (seg) - 1) & ~((seg) - 1))
 /* Default device buffer size */
@@ -138,29 +130,19 @@ typedef struct pc_serial_line_coding_s {
 extern isa_module_info *gISAModule;
 extern pci_module_info *gPCIModule;
 extern tty_module_info *gTTYModule;
+extern device_manager_info *gDeviceManager;
 extern struct ddomain gSerialDomain;
 
-extern "C" {
+// Global device list for TTY service routing
+extern SerialDevice *gSerialDevices[DEVICES_COUNT];
+extern sem_id gDriverLock;
 
-status_t	init_hardware();
-void		uninit_driver();
+extern "C" {
 
 bool		pc_serial_service(struct tty *tty, uint32 op, void *buffer,
 				size_t length);
 
 int32		pc_serial_interrupt(void *arg);
-
-status_t	pc_serial_open(const char *name, uint32 flags, void **cookie);
-status_t	pc_serial_read(void *cookie, off_t position, void *buffer, size_t *numBytes);
-status_t	pc_serial_write(void *cookie, off_t position, const void *buffer, size_t *numBytes);
-status_t	pc_serial_control(void *cookie, uint32 op, void *arg, size_t length);
-status_t	pc_serial_select(void *cookie, uint8 event, uint32 ref, selectsync *sync);
-status_t	pc_serial_deselect(void *coookie, uint8 event, selectsync *sync);
-status_t	pc_serial_close(void *cookie);
-status_t	pc_serial_free(void *cookie);
-
-const char **publish_devices();
-device_hooks *find_device(const char *name);
 
 }
 

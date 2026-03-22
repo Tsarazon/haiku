@@ -8,12 +8,12 @@
 #define _USB_AUDIO_DRIVER_H_
 
 
+#include <device_manager.h>
 #include <Drivers.h>
 #include <USB3.h>
 
 
 #define DRIVER_NAME	"usb_audio"
-#define MAX_DEVICES	8
 
 const char* const kVersion = "ver.0.0.5";
 
@@ -24,16 +24,21 @@ const uint32 kSamplesBufferCount = 2;
 
 
 extern usb_module_info* gUSBModule;
+extern device_manager_info* gDeviceManager;
 
-extern "C" status_t usb_audio_device_added(usb_device device, void** cookie);
-extern "C" status_t usb_audio_device_removed(void* cookie);
+class Device;
 
-extern "C" status_t init_hardware();
-extern "C" void uninit_driver();
+// bus manager device interface for peripheral driver
+typedef struct {
+	driver_module_info info;
+} usb_device_interface;
 
-extern "C" const char** publish_devices();
-extern "C" device_hooks *find_device(const char* name);
+typedef struct {
+	device_node*			node;
+	::usb_device			usb_device;
+	usb_device_interface*	usb;
+	Device*					device;
+} usb_audio_driver_info;
 
 
 #endif // _USB_AUDIO_DRIVER_H_
-

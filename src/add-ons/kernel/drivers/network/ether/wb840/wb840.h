@@ -35,7 +35,7 @@
 #ifndef __WB840_H
 #define __WB840_H
 
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <KernelExport.h>
 #include "ether_driver.h"
 

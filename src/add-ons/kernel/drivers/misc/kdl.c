@@ -1,69 +1,33 @@
 /*
  * Copyright (c) 2009 François Revol, <revol@free.fr>.
- *
- * Permission is hereby granted, free of charge, to any person
- * obtaining a copy of this software and associated documentation
- * files (the "Software"), to deal in the Software without restriction, 
- * including without limitation the rights to use, copy, modify, 
- * merge, publish, distribute, sublicense, and/or sell copies of 
- * the Software, and to permit persons to whom the Software is 
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be 
- * included in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES 
- * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND 
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT 
- * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
- * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR 
- * OTHER DEALINGS IN THE SOFTWARE.
+ * Permission is hereby granted under the terms of the MIT license.
  */
 
+#include <device_manager.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <Errors.h>
+#include <string.h>
 
-int32 			api_version = B_CUR_DRIVER_API_VERSION;
-static int32	sOpenMask;
+#define KDL_DRIVER_MODULE_NAME "drivers/misc/kdl/driver_v1"
+#define KDL_DEVICE_MODULE_NAME "drivers/misc/kdl/device_v1"
 
-status_t
-init_hardware(void)
-{
-	dprintf("kdl: init_hardware\n");
-	return B_OK;
-}
-
-
-status_t
-init_driver(void)
-{
-	dprintf("kdl: init_driver\n");
-	return B_OK;
-}
-
-
-void
-uninit_driver(void)
-{
-	dprintf("kdl: uninit_driver\n");
-}
+static device_manager_info* sDeviceManager;
+static bool sPublished = false;
+static int32 sOpenMask;
 
 
 static status_t
-driver_open(const char *name, uint32 flags, void** _cookie)
+driver_open(void* _info, const char* name, int flags, void** _cookie)
 {
 	dprintf("kdl: open\n");
-
-	// TODO: check for proper credencials! (root only ?)
 
 	if (atomic_or(&sOpenMask, 1)) {
 		dprintf("kdl: open, BUSY!\n");
 		return B_BUSY;
 	}
 
+	*_cookie = NULL;
 	dprintf("kdl: open, success\n");
 	return B_OK;
 }
@@ -72,8 +36,7 @@ driver_open(const char *name, uint32 flags, void** _cookie)
 static status_t
 driver_close(void* cookie)
 {
-	dprintf("kdl: close enter\n");
-	dprintf("kdl: close leave\n");
+	dprintf("kdl: close\n");
 	return B_OK;
 }
 
@@ -88,53 +51,107 @@ driver_free(void* cookie)
 
 
 static status_t
-driver_read(void* cookie, off_t position, void *buf, size_t* num_bytes)
+driver_read(void* cookie, off_t position, void* buf, size_t* num_bytes)
 {
 	dprintf("kdl: read\n");
 	panic("requested from kdl driver.");
-	*num_bytes = 0; // nothing to read
+	*num_bytes = 0;
 	return B_ERROR;
 }
 
 
 static status_t
-driver_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
+driver_write(void* cookie, off_t position, const void* buffer,
+	size_t* num_bytes)
 {
 	dprintf("kdl: write\n");
-	*num_bytes = 1;		// pretend 1 byte was written
+	*num_bytes = 1;
 	return B_OK;
 }
 
 
 static status_t
-driver_control(void *cookie, uint32 op, void *arg, size_t len)
+driver_control(void* cookie, uint32 op, void* arg, size_t len)
 {
 	dprintf("kdl: control\n");
 	return B_ERROR;
 }
 
 
-const char**
-publish_devices(void)
+/*	#pragma mark - driver module API */
+
+
+static float
+kdl_supports_device(device_node* parent)
 {
-	static const char *names[] = {"misc/kdl", NULL};
-	dprintf("kdl: publish_devices\n");
-	return names;
+	const char* bus;
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
+		&& !sPublished)
+		return 0.01;
+	return 0.0;
 }
 
 
-device_hooks*
-find_device(const char* name)
+static status_t
+kdl_register_device(device_node* node)
 {
-	static device_hooks hooks = {
-		driver_open,
-		driver_close,
-		driver_free,
-		driver_control,
-		driver_read,
-		driver_write,
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "KDL Entry"} },
+		{ NULL }
 	};
-	dprintf("kdl: find_device\n");
-	return &hooks;
+	return sDeviceManager->register_node(node, KDL_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
 }
 
+
+static status_t
+kdl_init_driver(device_node* node, void** cookie)
+{
+	*cookie = node;
+	return B_OK;
+}
+
+static void kdl_uninit_driver(void* c) { sPublished = false; }
+
+static status_t
+kdl_register_child_devices(void* _cookie)
+{
+	device_node* node = (device_node*)_cookie;
+	if (sPublished) return B_OK;
+	sPublished = true;
+	return sDeviceManager->publish_device(node, "misc/kdl",
+		KDL_DEVICE_MODULE_NAME);
+}
+
+static status_t kdl_init_device(void* i, void** c)
+{ *c = i; return B_OK; }
+static void kdl_uninit_device(void* c) {}
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sKdlDevice = {
+	{ KDL_DEVICE_MODULE_NAME, 0, NULL },
+	kdl_init_device, kdl_uninit_device, NULL,
+	driver_open, driver_close, driver_free,
+	driver_read, driver_write, NULL, driver_control,
+	NULL, NULL
+};
+
+struct driver_module_info sKdlDriver = {
+	{ KDL_DRIVER_MODULE_NAME, 0, NULL },
+	kdl_supports_device, kdl_register_device,
+	kdl_init_driver, kdl_uninit_driver,
+	kdl_register_child_devices, NULL, NULL
+};
+
+module_info* modules[] = {
+	(module_info*)&sKdlDriver,
+	(module_info*)&sKdlDevice,
+	NULL
+};

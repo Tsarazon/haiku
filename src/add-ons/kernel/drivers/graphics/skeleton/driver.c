@@ -8,9 +8,10 @@
 */
 
 /* standard kernel driver stuff */
+#include <device_manager.h>
 #include <KernelExport.h>
 #include <ISA.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <OS.h>
 #include <directories.h>
 #include <driver_settings.h>
@@ -32,15 +33,20 @@
 #include "DriverInterface.h"
 #include "macros.h"
 
-#define get_pci(o, s) (*pci_bus->read_pci_config)(pcii->bus, pcii->device, pcii->function, (o), (s))
-#define set_pci(o, s, v) (*pci_bus->write_pci_config)(pcii->bus, pcii->device, pcii->function, (o), (s), (v))
+#include <bus/PCI.h>
+
+#define get_pci(o, s) pci_bus->read_pci_config(pci_dev, (o), (s))
+#define set_pci(o, s, v) pci_bus->write_pci_config(pci_dev, (o), (s), (v))
 
 #define MAX_DEVICES	  8
 
 #define DEVICE_FORMAT "%04x_%04x_%02x%02x%02x" // apsed
 
-/* Tell the kernel what revision of the driver API we support */
-int32	api_version = B_CUR_DRIVER_API_VERSION; // apsed, was 2, is 2 in R5
+#define SKEL_DRIVER_MODULE_NAME "drivers/graphics/skel/driver_v1"
+#define SKEL_DEVICE_MODULE_NAME "drivers/graphics/skel/device_v1"
+#define SKEL_DEVICE_ID_GENERATOR "skel/device_id"
+
+static device_manager_info *sDeviceManager;
 
 /* these structures are private to the kernel driver */
 typedef struct device_info device_info;
@@ -68,7 +74,7 @@ typedef struct {
 } DeviceData;
 
 /* prototypes for our private functions */
-static status_t open_hook (const char* name, uint32 flags, void** cookie);
+static status_t open_hook (void* info, const char* name, int openMode, void** cookie);
 static status_t close_hook (void* dev);
 static status_t free_hook (void* dev);
 static status_t read_hook (void* dev, off_t pos, void* buf, size_t* len);
@@ -76,29 +82,17 @@ static status_t write_hook (void* dev, off_t pos, const void* buf, size_t* len);
 static status_t control_hook (void* dev, uint32 msg, void *buf, size_t len);
 static status_t map_device(device_info *di);
 static void unmap_device(device_info *di);
-static void probe_devices(void);
 static int32 eng_interrupt(void *data);
 
 static DeviceData		*pd;
 static isa_module_info	*isa_bus = NULL;
-static pci_module_info	*pci_bus = NULL;
-static agp_module_info	*agp_bus = NULL;
-static device_hooks graphics_device_hooks = {
-	open_hook,
-	close_hook,
-	free_hook,
-	control_hook,
-	read_hook,
-	write_hook,
-	NULL,
-	NULL,
-	NULL,
-	NULL
-};
+static pci_device_module_info	*pci_bus = NULL;
+static pci_device		*pci_dev = NULL;
+static agp_gart_module_info	*agp_bus = NULL;
 
 #define VENDOR_ID_NVIDIA	0x1106 /* Via */
 
-static uint16 nvidia_device_list[] = {
+static uint16 nvidia_device_list[] __attribute__((unused)) = {
 	0x3122, /*  */
 	0
 };
@@ -175,154 +169,185 @@ static void disable_vbi(vuint32 * regs)
 //	ENG_RG32(RG32_MAIN_INTE) = 0x00000000;
 }
 
-/*
-	init_hardware() - Returns B_OK if one is
-	found, otherwise returns B_ERROR so the driver will be unloaded.
-*/
-status_t
-init_hardware(void) {
-	long		pci_index = 0;
-	pci_info	pcii;
-	bool		found_one = false;
-
-	/* choke if we can't find the PCI bus */
-	if (get_module(B_PCI_MODULE_NAME, (module_info **)&pci_bus) != B_OK)
-		return B_ERROR;
-
-	/* choke if we can't find the ISA bus */
-	if (get_module(B_ISA_MODULE_NAME, (module_info **)&isa_bus) != B_OK)
-	{
-		put_module(B_PCI_MODULE_NAME);
-		return B_ERROR;
-	}
-
-	/* while there are more pci devices */
-	while ((*pci_bus->get_nth_pci_info)(pci_index, &pcii) == B_NO_ERROR) {
-		int vendor = 0;
-
-		/* if we match a supported vendor */
-		while (SupportedDevices[vendor].vendor) {
-			if (SupportedDevices[vendor].vendor == pcii.vendor_id) {
-				uint16 *devices = SupportedDevices[vendor].devices;
-				/* while there are more supported devices */
-				while (*devices) {
-					/* if we match a supported device */
-					if (*devices == pcii.device_id ) {
-
-						found_one = true;
-						goto done;
-					}
-					/* next supported device */
-					devices++;
-				}
-			}
-			vendor++;
-		}
-		/* next pci_info struct, please */
-		pci_index++;
-	}
-
-done:
-	/* put away the module manager */
-	put_module(B_PCI_MODULE_NAME);
-	return (found_one ? B_OK : B_ERROR);
-}
-
-status_t
-init_driver(void) {
+static void
+load_driver_settings_internal(void)
+{
 	void *settings_handle;
 
-	// get driver/accelerant settings, apsed
-	settings_handle  = load_driver_settings (DRIVER_PREFIX ".settings");
+	settings_handle = load_driver_settings(DRIVER_PREFIX ".settings");
 	if (settings_handle != NULL) {
 		const char *item;
 		char       *end;
 		uint32      value;
 
-		// for driver
-		item = get_driver_parameter (settings_handle, "accelerant", "", "");
-		if ((strlen (item) > 0) && (strlen (item) < sizeof (current_settings.accelerant) - 1)) {
-			strcpy (current_settings.accelerant, item);
+		item = get_driver_parameter(settings_handle, "accelerant", "", "");
+		if ((strlen(item) > 0) && (strlen(item) < sizeof(current_settings.accelerant) - 1)) {
+			strcpy(current_settings.accelerant, item);
 		}
-		current_settings.dumprom = get_driver_boolean_parameter (settings_handle, "dumprom", false, false);
+		current_settings.dumprom = get_driver_boolean_parameter(settings_handle, "dumprom", false, false);
 
-		// for accelerant
-		item = get_driver_parameter (settings_handle, "logmask", "0x00000000", "0x00000000");
-		value = strtoul (item, &end, 0);
+		item = get_driver_parameter(settings_handle, "logmask", "0x00000000", "0x00000000");
+		value = strtoul(item, &end, 0);
 		if (*end == '\0') current_settings.logmask = value;
 
-		item = get_driver_parameter (settings_handle, "memory", "0", "0");
-		value = strtoul (item, &end, 0);
+		item = get_driver_parameter(settings_handle, "memory", "0", "0");
+		value = strtoul(item, &end, 0);
 		if (*end == '\0') current_settings.memory = value;
 
-		current_settings.hardcursor = get_driver_boolean_parameter (settings_handle, "hardcursor", false, false);
-		current_settings.usebios = get_driver_boolean_parameter (settings_handle, "usebios", false, false);
-		current_settings.switchhead = get_driver_boolean_parameter (settings_handle, "switchhead", false, false);
-		current_settings.force_pci = get_driver_boolean_parameter (settings_handle, "force_pci", false, false);
-		current_settings.unhide_fw = get_driver_boolean_parameter (settings_handle, "unhide_fw", false, false);
-		current_settings.pgm_panel = get_driver_boolean_parameter (settings_handle, "pgm_panel", false, false);
+		current_settings.hardcursor = get_driver_boolean_parameter(settings_handle, "hardcursor", false, false);
+		current_settings.usebios = get_driver_boolean_parameter(settings_handle, "usebios", false, false);
+		current_settings.switchhead = get_driver_boolean_parameter(settings_handle, "switchhead", false, false);
+		current_settings.force_pci = get_driver_boolean_parameter(settings_handle, "force_pci", false, false);
+		current_settings.unhide_fw = get_driver_boolean_parameter(settings_handle, "unhide_fw", false, false);
+		current_settings.pgm_panel = get_driver_boolean_parameter(settings_handle, "pgm_panel", false, false);
 
-		unload_driver_settings (settings_handle);
+		unload_driver_settings(settings_handle);
+	}
+}
+
+
+/*	#pragma mark - driver module API */
+
+
+static float
+skel_supports_device(device_node *parent)
+{
+	const char *bus;
+	uint16 vendorId, deviceId;
+
+	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+		return -1;
+
+	if (strcmp(bus, "pci"))
+		return 0.0;
+
+	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+			&vendorId, false) != B_OK)
+		return 0.0;
+	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+			&deviceId, false) != B_OK)
+		return 0.0;
+
+	/* check against our supported devices table */
+	int vendor = 0;
+	while (SupportedDevices[vendor].vendor) {
+		if (SupportedDevices[vendor].vendor == vendorId) {
+			uint16 *devices = SupportedDevices[vendor].devices;
+			while (*devices) {
+				if (*devices == deviceId)
+					return 0.8;
+				devices++;
+			}
+		}
+		vendor++;
 	}
 
-	/* get a handle for the pci bus */
-	if (get_module(B_PCI_MODULE_NAME, (module_info **)&pci_bus) != B_OK)
-		return B_ERROR;
+	return 0.0;
+}
+
+
+static status_t
+skel_register_device(device_node *node)
+{
+	device_attr attrs[] = {
+		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Skeleton Graphics" } },
+		{ NULL }
+	};
+
+	return sDeviceManager->register_node(node, SKEL_DRIVER_MODULE_NAME,
+		attrs, NULL, NULL);
+}
+
+
+static status_t
+skel_init_driver(device_node *node, void **cookie)
+{
+	load_driver_settings_internal();
+
+	/* get pci_device_module_info from parent node */
+	{
+		device_node *parent = sDeviceManager->get_parent_node(node);
+		sDeviceManager->get_driver(parent, (driver_module_info **)&pci_bus,
+			(void **)&pci_dev);
+		sDeviceManager->put_node(parent);
+	}
 
 	/* get a handle for the isa bus */
 	if (get_module(B_ISA_MODULE_NAME, (module_info **)&isa_bus) != B_OK)
-	{
-		put_module(B_PCI_MODULE_NAME);
 		return B_ERROR;
-	}
 
 	/* get a handle for the agp bus if it exists */
-	get_module(B_AGP_MODULE_NAME, (module_info **)&agp_bus);
+	get_module(B_AGP_GART_MODULE_NAME, (module_info **)&agp_bus);
 
 	/* driver private data */
 	pd = (DeviceData *)calloc(1, sizeof(DeviceData));
 	if (!pd) {
+		put_module(B_ISA_MODULE_NAME);
+		return B_ERROR;
+	}
+
+	/* initialize the benaphore */
+	INIT_BEN(pd->kernel);
+
+	/* Get PCI info for this device */
+	{
+		pci_info *pcii = &(pd->di[0].pcii);
+		pci_bus->get_pci_info(pci_dev, pcii);
+
+		sprintf(pd->di[0].name, "graphics/" DEVICE_FORMAT,
+			pcii->vendor_id, pcii->device_id,
+			pcii->bus, pcii->device, pcii->function);
+
+		pd->device_names[0] = pd->di[0].name;
+		pd->di[0].is_open = 0;
+		pd->di[0].shared_area = -1;
+		pd->di[0].si = NULL;
+		pd->count = 1;
+		pd->device_names[1] = NULL;
+	}
+
+	if (pd->count == 0) {
+		DELETE_BEN(pd->kernel);
+		free(pd);
+		pd = NULL;
+		if (agp_bus) put_module(B_AGP_GART_MODULE_NAME);
+		put_module(B_ISA_MODULE_NAME);
 		put_module(B_PCI_MODULE_NAME);
 		return B_ERROR;
 	}
-	/* initialize the benaphore */
-	INIT_BEN(pd->kernel);
-	/* find all of our supported devices */
-	probe_devices();
+
+	*cookie = node;
 	return B_OK;
 }
 
-const char **
-publish_devices(void) {
-	/* return the list of supported devices */
-	return (const char **)pd->device_names;
-}
 
-device_hooks *
-find_device(const char *name) {
-	int index = 0;
-	while (pd->device_names[index]) {
-		if (strcmp(name, pd->device_names[index]) == 0)
-			return &graphics_device_hooks;
-		index++;
-	}
-	return NULL;
-
-}
-
-void uninit_driver(void) {
-
+static void
+skel_uninit_driver(void *_cookie)
+{
 	/* free the driver data */
-	DELETE_BEN(pd->kernel);
-	free(pd);
-	pd = NULL;
+	if (pd) {
+		DELETE_BEN(pd->kernel);
+		free(pd);
+		pd = NULL;
+	}
 
-	/* put the pci module away */
-	put_module(B_PCI_MODULE_NAME);
 	put_module(B_ISA_MODULE_NAME);
 
 	/* put the agp module away if it's there */
-	if (agp_bus) put_module(B_AGP_MODULE_NAME);
+	if (agp_bus) put_module(B_AGP_GART_MODULE_NAME);
+}
+
+
+static status_t
+skel_register_child_devices(void *_cookie)
+{
+	device_node *node = (device_node *)_cookie;
+
+	if (pd == NULL || pd->count == 0)
+		return B_ERROR;
+
+	return sDeviceManager->publish_device(node, pd->di[0].name,
+		SKEL_DEVICE_MODULE_NAME);
 }
 
 static status_t map_device(device_info *di)
@@ -495,7 +520,7 @@ static status_t map_device(device_info *di)
 	}
 //fixme: retest for card coldstart and PCI/virt_mem mapping!!
 	/* remember the DMA address of the frame buffer for BDirectWindow?? purposes */
-	si->framebuffer_pci = (void *) di->pcii.u.h0.base_registers_pci[frame_buffer];
+	si->framebuffer_pci = (void *)(addr_t)di->pcii.u.h0.base_registers_pci[frame_buffer];
 
 	// remember settings for use here and in accelerant
 	si->settings = current_settings;
@@ -521,58 +546,7 @@ static void unmap_device(device_info *di) {
 	di->regs = NULL;
 }
 
-static void probe_devices(void) {
-	uint32 pci_index = 0;
-	uint32 count = 0;
-	device_info *di = pd->di;
-
-	/* while there are more pci devices */
-	while ((count < MAX_DEVICES) && ((*pci_bus->get_nth_pci_info)(pci_index, &(di->pcii)) == B_NO_ERROR)) {
-		int vendor = 0;
-
-		/* if we match a supported vendor */
-		while (SupportedDevices[vendor].vendor) {
-			if (SupportedDevices[vendor].vendor == di->pcii.vendor_id) {
-				uint16 *devices = SupportedDevices[vendor].devices;
-				/* while there are more supported devices */
-				while (*devices) {
-					/* if we match a supported device */
-					if (*devices == di->pcii.device_id ) {
-						/* publish the device name */
-						sprintf(di->name, "graphics/" DEVICE_FORMAT,
-							di->pcii.vendor_id, di->pcii.device_id,
-							di->pcii.bus, di->pcii.device, di->pcii.function);
-
-						/* remember the name */
-						pd->device_names[count] = di->name;
-						/* mark the driver as available for R/W open */
-						di->is_open = 0;
-						/* mark areas as not yet created */
-						di->shared_area = -1;
-						/* mark pointer to shared data as invalid */
-						di->si = NULL;
-						/* inc pointer to device info */
-						di++;
-						/* inc count */
-						count++;
-						/* break out of these while loops */
-						goto next_device;
-					}
-					/* next supported device */
-					devices++;
-				}
-			}
-			vendor++;
-		}
-next_device:
-		/* next pci_info struct, please */
-		pci_index++;
-	}
-	/* propagate count */
-	pd->count = count;
-	/* terminate list of device names with a null pointer */
-	pd->device_names[pd->count] = NULL;
-}
+/* probe_devices removed — device_manager handles device discovery */
 
 static uint32 thread_interrupt_work(int32 *flags, vuint32 *regs, shared_info *si) {
 	uint32 handled = B_HANDLED_INTERRUPT;
@@ -593,7 +567,7 @@ eng_interrupt(void *data)
 	int32 handled = B_UNHANDLED_INTERRUPT;
 	device_info *di = (device_info *)data;
 	shared_info *si = di->si;
-	int32 *flags = &(si->flags);
+	int32 *flags = (int32 *)&(si->flags);
 	vuint32 *regs;
 
 	/* is someone already handling an interrupt for this device? */
@@ -618,7 +592,7 @@ exit0:
 	return handled;
 }
 
-static status_t open_hook (const char* name, uint32 flags, void** cookie) {
+static status_t open_hook (void* _info, const char* name, int flags, void** cookie) {
 	int32 index = 0;
 	device_info *di;
 	shared_info *si;
@@ -672,19 +646,23 @@ static status_t open_hook (const char* name, uint32 flags, void** cookie) {
 	switch ((((uint32)(si->device_id)) << 16) | si->vendor_id)
 	{
 	case 0x01a010de: /* Nvidia GeForce2 Integrated GPU */
-		/* device at bus #0, device #0, function #1 holds value at byte-index 0x7C */
-		si->ps.memory_size = 1024 * 1024 *
-			(((((*pci_bus->read_pci_config)(0, 0, 1, 0x7c, 4)) & 0x000007c0) >> 6) + 1);
-		/* last 64kB RAM is used for the BIOS (or something else?) */
-		si->ps.memory_size -= (64 * 1024);
-		break;
 	case 0x01f010de: /* Nvidia GeForce4 MX Integrated GPU */
-		/* device at bus #0, device #0, function #1 holds value at byte-index 0x84 */
-		si->ps.memory_size = 1024 * 1024 *
-			(((((*pci_bus->read_pci_config)(0, 0, 1, 0x84, 4)) & 0x000007f0) >> 4) + 1);
-		/* last 64kB RAM is used for the BIOS (or something else?) */
-		si->ps.memory_size -= (64 * 1024);
+	{
+		/* UMA: read memory size from host bridge (bus 0, device 0, function 1).
+		 * This is a cross-device query requiring legacy PCI module. */
+		pci_module_info* pciLegacy;
+		if (get_module(B_PCI_MODULE_NAME, (module_info**)&pciLegacy) == B_OK) {
+			uint8 regOffset = (si->vendor_id == 0x01a0) ? 0x7c : 0x84;
+			uint32 mask = (si->vendor_id == 0x01a0) ? 0x000007c0 : 0x000007f0;
+			uint32 shift = (si->vendor_id == 0x01a0) ? 6 : 4;
+			si->ps.memory_size = 1024 * 1024 *
+				((((pciLegacy->read_pci_config(0, 0, 1, regOffset, 4))
+					& mask) >> shift) + 1);
+			si->ps.memory_size -= (64 * 1024);
+			put_module(B_PCI_MODULE_NAME);
+		}
 		break;
+	}
 	default:
 		/* all other cards have own RAM: the amount of which is determined in the
 		 * accelerant. */
@@ -916,7 +894,7 @@ control_hook (void* dev, uint32 msg, void *buf, size_t len) {
 			if (nca->magic == SKEL_PRIVATE_DATA_MAGIC) {
 				if (agp_bus) {
 					nca->agp_bus = true;
-					(*agp_bus->enable_agp)(&(nca->cmd));
+					nca->cmd = (*agp_bus->set_agp_mode)(nca->cmd);
 				} else {
 					nca->agp_bus = false;
 					nca->cmd = 0;
@@ -985,3 +963,74 @@ control_hook (void* dev, uint32 msg, void *buf, size_t len) {
 	}
 	return result;
 }
+
+
+/*	#pragma mark - device init/uninit */
+
+
+static status_t
+skel_init_device(void *_info, void **_cookie)
+{
+	*_cookie = _info;
+	return B_OK;
+}
+
+
+static void
+skel_uninit_device(void *_cookie)
+{
+}
+
+
+/*	#pragma mark - module exports */
+
+
+module_dependency module_dependencies[] = {
+	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ NULL }
+};
+
+struct device_module_info sSkelDevice = {
+	{
+		SKEL_DEVICE_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	skel_init_device,
+	skel_uninit_device,
+	NULL,	/* device_removed */
+
+	open_hook,
+	close_hook,
+	free_hook,
+	read_hook,
+	write_hook,
+	NULL,	/* io */
+	control_hook,
+
+	NULL,	/* select */
+	NULL,	/* deselect */
+};
+
+struct driver_module_info sSkelDriver = {
+	{
+		SKEL_DRIVER_MODULE_NAME,
+		0,
+		NULL
+	},
+
+	skel_supports_device,
+	skel_register_device,
+	skel_init_driver,
+	skel_uninit_driver,
+	skel_register_child_devices,
+	NULL,	/* rescan */
+	NULL,	/* removed */
+};
+
+module_info *modules[] = {
+	(module_info *)&sSkelDriver,
+	(module_info *)&sSkelDevice,
+	NULL
+};

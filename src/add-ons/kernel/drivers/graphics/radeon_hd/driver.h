@@ -10,7 +10,7 @@
 
 
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 #include <kernel/lock.h>
@@ -32,23 +32,22 @@
 
 extern char* gDeviceNames[];
 extern radeon_info* gDeviceInfo[];
-extern pci_module_info* gPCI;
+extern pci_device_module_info* gPCI;
+extern pci_device* gPCIDev;
 extern mutex gLock;
 
 
 static inline uint32
 get_pci_config(pci_info* info, uint8 offset, uint8 size)
 {
-	return gPCI->read_pci_config(info->bus, info->device, info->function,
-		offset, size);
+	return gPCI->read_pci_config(gPCIDev, offset, size);
 }
 
 
 static inline void
 set_pci_config(pci_info* info, uint8 offset, uint8 size, uint32 value)
 {
-	gPCI->write_pci_config(info->bus, info->device, info->function, offset,
-		size, value);
+	gPCI->write_pci_config(gPCIDev, offset, size, value);
 }
 
 

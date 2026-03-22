@@ -447,13 +447,10 @@ init_interrupt_handler(intel_info &info)
 			info.irq = 0;
 	}
 
-	if (gPCI->get_msi_count(info.pci->bus,
-			info.pci->device, info.pci->function) >= 1) {
+	if (gPCI->get_msi_count(gPCIDev) >= 1) {
 		uint32 msiVector = 0;
-		if (gPCI->configure_msi(info.pci->bus, info.pci->device,
-				info.pci->function, 1, &msiVector) == B_OK
-			&& gPCI->enable_msi(info.pci->bus, info.pci->device,
-				info.pci->function) == B_OK) {
+		if (gPCI->configure_msi(gPCIDev, 1, &msiVector) == B_OK
+			&& gPCI->enable_msi(gPCIDev) == B_OK) {
 			TRACE("using message signaled interrupts\n");
 			info.irq = msiVector;
 			info.use_msi = true;
@@ -734,8 +731,7 @@ intel_extreme_init(intel_info &info)
 	CALLED();
 
 	// Map GART aperture
-	info.aperture = gGART->map_aperture(info.pci->bus, info.pci->device,
-		info.pci->function, 0, &info.aperture_base);
+	info.aperture = gGART->map_aperture(info.pci, 0, &info.aperture_base);
 	if (info.aperture < B_OK) {
 		ERROR("Could not map GART aperture: %s\n", strerror(info.aperture));
 		return info.aperture;
@@ -755,8 +751,7 @@ intel_extreme_init(intel_info &info)
 	}
 
 	// Enable power
-	gPCI->set_powerstate(info.pci->bus, info.pci->device, info.pci->function,
-		PCI_pm_state_d0);
+	gPCI->set_powerstate(gPCIDev, PCI_pm_state_d0);
 
 	memset((void*)info.shared_info, 0, sizeof(intel_shared_info));
 
@@ -972,10 +967,8 @@ intel_extreme_uninit(intel_info &info)
 
 		// Disable MSI if enabled
 		if (info.use_msi) {
-			gPCI->disable_msi(info.pci->bus,
-				info.pci->device, info.pci->function);
-			gPCI->unconfigure_msi(info.pci->bus,
-				info.pci->device, info.pci->function);
+			gPCI->disable_msi(gPCIDev);
+			gPCI->unconfigure_msi(gPCIDev);
 		}
 	}
 
