@@ -63,7 +63,7 @@ static const char *sVirtualDriveName[] = {
 	NULL
 };
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+// Legacy api_version removed — needs device_manager migration
 extern device_hooks sVirtualDriveHooks;
 
 lock driverlock;

@@ -7,7 +7,7 @@
 #include "bus.h"
 
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 #define DRIVER_MODULE_NAME "drivers/graphics/generic_driver/driver_v1"

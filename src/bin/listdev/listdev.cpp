@@ -14,7 +14,7 @@
 
 #include <drivers/device_manager.h>
 #include <drivers/module.h>
-#include <drivers/PCI.h>
+#include <drivers/bus/PCI.h>
 #include <drivers/bus/PCI.h>
 #include <drivers/bus/SCSI.h>
 #include <drivers/bus/USB.h>

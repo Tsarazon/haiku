@@ -15,7 +15,7 @@
 #include <KernelExport.h>
 #include <Locker.h>
 #include <module.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <fs/KPath.h>
 #include <util/AutoLock.h>

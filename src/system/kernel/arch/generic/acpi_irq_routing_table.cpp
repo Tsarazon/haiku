@@ -13,7 +13,7 @@
 
 #include <interrupts.h>
 
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 //#define TRACE_PRT

@@ -23,7 +23,7 @@
 
 #define DEVICE_NAME "misc/config"
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+/* Legacy api_version removed — needs device_manager migration */
 
 device_manager_info *gDeviceManager;
 

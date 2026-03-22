@@ -4,7 +4,7 @@
 #include <string.h>
 
 #include <AGP.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <KernelExport.h>
 
 
@@ -171,7 +171,9 @@ void
 test_gart()
 {
 	addr_t apertureBase;
-	aperture_id aperture = sGART->map_aperture(0, 0, 0, 0, &apertureBase);
+	pci_info pciInfo;
+	memset(&pciInfo, 0, sizeof(pciInfo));
+	aperture_id aperture = sGART->map_aperture(&pciInfo, 0, &apertureBase);
 	printf("Map Aperture: %ld, base %lx\n", aperture, apertureBase);
 
 	aperture_info info;

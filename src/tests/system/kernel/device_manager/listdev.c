@@ -5,7 +5,7 @@
 
 #include <drivers/device_manager.h>
 #include <drivers/module.h>
-#include <drivers/PCI.h>
+#include <drivers/bus/PCI.h>
 
 #include "config_driver.h"
 #include "dm_wrapper.h"

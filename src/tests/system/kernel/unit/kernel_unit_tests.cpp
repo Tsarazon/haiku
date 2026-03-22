@@ -22,7 +22,7 @@
 #include "lock/LockTestSuite.h"
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
+// Legacy api_version removed — uses device_manager
 
 static const char* sDeviceNames[] = {
 	"kernel_unit_tests",
