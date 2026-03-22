@@ -1,38 +1,6 @@
-/*
-Open Tracker License
-
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
-trademarks of Be Incorporated in the United States and other countries. Other
-brand product names are registered trademarks or trademarks of their respective
-holders.
-All rights reserved.
-*/
-
+// SPDX-License-Identifier: OpenTracker
+// Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+// See LICENSE for full terms.
 
 #include "ExpandoMenuBar.h"
 
@@ -91,7 +59,8 @@ TExpandoMenuBar::TExpandoMenuBar(menu_layout layout, TBarView* barView)
 	fPreviousDragTargetItem(NULL),
 	fLastMousedOverItem(NULL),
 	fLastClickedItem(NULL),
-	fLastClickTime(0)
+	fLastClickTime(0),
+	fFocusedItem(NULL)
 {
 	SetItemMargins(0.0f, 0.0f, 0.0f, 0.0f);
 	SetFont(be_plain_font);
@@ -302,6 +271,15 @@ TExpandoMenuBar::MouseDown(BPoint where)
 			// absorb the message
 	}
 
+	// taskbar: click on focused app toggles minimize
+	if (fBarView->AcrossBottom() && teamItem->IsFocused()) {
+		TShowHideMenuItem::TeamShowHideCommon(B_MINIMIZE_WINDOW,
+			teamItem->Teams(),
+			teamItem->Menu()->ConvertToScreen(teamItem->Frame()), true);
+		return;
+			// absorb the message
+	}
+
 	// double-click on an item brings the team to front
 	int32 clicks;
 	bigtime_t clickSpeed = 0;
@@ -386,6 +364,7 @@ TExpandoMenuBar::MouseMoved(BPoint where, uint32 code, const BMessage* message)
 
 	switch (code) {
 		case B_ENTERED_VIEW:
+		{
 			// fPreviousDragTargetItem should always be NULL here anyways.
 			if (fPreviousDragTargetItem != NULL)
 				_FinishedDrag();
@@ -393,6 +372,7 @@ TExpandoMenuBar::MouseMoved(BPoint where, uint32 code, const BMessage* message)
 			fBarView->CacheDragData(message);
 			fPreviousDragTargetItem = NULL;
 			break;
+		}
 
 		case B_OUTSIDE_VIEW:
 			// NOTE: Should not be here, but for the sake of defensive
@@ -547,6 +527,11 @@ TExpandoMenuBar::BuildItems()
 		// first build isn't complete until we've gotten here with an item
 		fFirstBuild = false;
 	}
+
+	// update focused item after rebuild
+	app_info appInfo;
+	if (be_roster->GetActiveAppInfo(&appInfo) == B_OK)
+		_UpdateFocusedItem(appInfo.team);
 }
 
 
@@ -708,6 +693,9 @@ TExpandoMenuBar::RemoveTeam(team_id team, bool partial)
 			if (item == fLastClickedItem)
 				fLastClickedItem = NULL;
 
+			if (item == fFocusedItem)
+				fFocusedItem = NULL;
+
 			delete item;
 			while ((windowItem = dynamic_cast<TWindowMenuItem*>(
 					ItemAt(i))) != NULL) {
@@ -732,27 +720,40 @@ TExpandoMenuBar::RemoveTeam(team_id team, bool partial)
 void
 TExpandoMenuBar::CheckItemSizes(int32 delta, bool reset)
 {
-	// horizontal only
 	if (fBarView == NULL || Vertical())
 		return;
 
 	if (fBarView->AcrossBottom()) {
-		// taskbar: fixed-width square items
-		float itemWidth = kTaskbarHeight
-			+ be_control_look->ComposeSpacing(kIconPadding);
-		SetMaxContentWidth(itemWidth);
-		int32 itemCount = CountItems();
-		for (int32 index = 0; ; index++) {
-			TTeamMenuItem* item = (TTeamMenuItem*)ItemAt(index);
-			if (item == NULL)
-				break;
-			item->SetOverrideWidth(itemWidth);
-		}
-		InvalidateLayout();
-		ResizeTo(itemWidth * itemCount, Frame().Height());
+		_CheckItemSizesTaskbar();
 		return;
 	}
 
+	_CheckItemSizesHorizontal(delta, reset);
+}
+
+
+void
+TExpandoMenuBar::_CheckItemSizesTaskbar()
+{
+	float itemWidth = kTaskbarHeight
+		+ be_control_look->ComposeSpacing(kIconPadding);
+	SetMaxContentWidth(itemWidth);
+
+	int32 itemCount = CountItems();
+	for (int32 index = 0; index < itemCount; index++) {
+		TTeamMenuItem* item = dynamic_cast<TTeamMenuItem*>(ItemAt(index));
+		if (item != NULL)
+			item->SetOverrideWidth(itemWidth);
+	}
+
+	InvalidateLayout();
+	ResizeTo(itemWidth * itemCount, Frame().Height());
+}
+
+
+void
+TExpandoMenuBar::_CheckItemSizesHorizontal(int32 delta, bool reset)
+{
 	// minimum two items before size overrun can occur
 	int32 itemCount = CountItems();
 	if (itemCount < 2)
@@ -1095,6 +1096,11 @@ TExpandoMenuBar::monitor_team_windows(void* arg)
 				}
 			}
 
+			// Track focused (active) application
+			app_info activeApp;
+			if (be_roster->GetActiveAppInfo(&activeApp) == B_OK)
+				teamMenu->_UpdateFocusedItem(activeApp.team);
+
 			// If any of the WindowMenuItems changed state, we need to force a
 			// repaint.
 			if (itemModified || resize) {
@@ -1112,6 +1118,33 @@ TExpandoMenuBar::monitor_team_windows(void* arg)
 		snooze(150000);
 	}
 	return B_OK;
+}
+
+
+void
+TExpandoMenuBar::_UpdateFocusedItem(team_id team)
+{
+	TTeamMenuItem* newFocused = NULL;
+
+	int32 itemCount = CountItems();
+	for (int32 i = 0; i < itemCount; i++) {
+		TTeamMenuItem* item = dynamic_cast<TTeamMenuItem*>(ItemAt(i));
+		if (item != NULL && item->Teams()->HasItem((void*)(addr_t)team)) {
+			newFocused = item;
+			break;
+		}
+	}
+
+	if (newFocused == fFocusedItem)
+		return;
+
+	if (fFocusedItem != NULL)
+		fFocusedItem->SetFocused(false);
+
+	fFocusedItem = newFocused;
+
+	if (fFocusedItem != NULL)
+		fFocusedItem->SetFocused(true);
 }
 
 

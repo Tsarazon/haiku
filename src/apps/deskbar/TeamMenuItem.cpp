@@ -1,38 +1,6 @@
-/*
-Open Tracker License
-
-Terms and Conditions
-
-Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of
-this software and associated documentation files (the "Software"), to deal in
-the Software without restriction, including without limitation the rights to
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
-of the Software, and to permit persons to whom the Software is furnished to do
-so, subject to the following conditions:
-
-The above copyright notice and this permission notice applies to all licensees
-and shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF TITLE, MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-BE INCORPORATED BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
-AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION
-WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-Except as contained in this notice, the name of Be Incorporated shall not be
-used in advertising or otherwise to promote the sale, use or other dealings in
-this Software without prior written authorization from Be Incorporated.
-
-Tracker(TM), Be(R), BeOS(R), and BeIA(TM) are trademarks or registered
-trademarks of Be Incorporated in the United States and other countries. Other
-brand product names are registered trademarks or trademarks of their respective
-holders.
-All rights reserved.
-*/
-
+// SPDX-License-Identifier: OpenTracker
+// Copyright (c) 1991-2000, Be Incorporated. All rights reserved.
+// See LICENSE for full terms.
 
 #include "TeamMenuItem.h"
 
@@ -199,6 +167,17 @@ TTeamMenuItem::SetIcon(BBitmap* icon) {
 
 
 void
+TTeamMenuItem::SetFocused(bool focused)
+{
+	if (fIsFocused != focused) {
+		fIsFocused = focused;
+		if (Menu() != NULL)
+			Menu()->Invalidate(Frame());
+	}
+}
+
+
+void
 TTeamMenuItem::GetContentSize(float* width, float* height)
 {
 	BMenuItem::GetContentSize(width, height);
@@ -220,9 +199,8 @@ TTeamMenuItem::GetContentSize(float* width, float* height)
 		} else if (!fBarView->Vertical()) {
 			if (fBarView->AcrossBottom()) {
 				// taskbar: square items
-				const float iconPadding
-					= be_control_look->ComposeSpacing(kIconPadding);
-				*width = kTaskbarHeight + iconPadding;
+				*width = kTaskbarHeight
+					+ be_control_look->ComposeSpacing(kIconPadding);
 			} else {
 				TExpandoMenuBar* menu = static_cast<TExpandoMenuBar*>(Menu());
 				*width = menu->MaxHorizontalItemWidth();
@@ -249,58 +227,13 @@ TTeamMenuItem::Draw()
 	rgb_color menuColor = ui_color(B_MENU_BACKGROUND_COLOR);
 	bool canHandle = !fBarView->Dragging()
 		|| fBarView->AppCanHandleTypes(Signature());
-	uint32 flags = 0;
-	if (_IsSelected() && canHandle)
-		flags |= BControlLook::B_ACTIVATED;
 
-	uint32 borders = BControlLook::B_TOP_BORDER;
-	if (fBarView->Vertical()) {
-		menu->SetHighColor(tint_color(menuColor, B_DARKEN_1_TINT));
-		borders |= BControlLook::B_LEFT_BORDER
-			| BControlLook::B_RIGHT_BORDER;
-		menu->StrokeLine(frame.LeftBottom(), frame.RightBottom());
-		frame.bottom--;
-
-		be_control_look->DrawMenuBarBackground(menu, frame, frame,
-			menuColor, flags, borders);
-	} else {
-		if (fBarView->AcrossBottom()) {
-			// flat taskbar style
-			rgb_color bgColor = menuColor;
-			if (_IsSelected() && canHandle)
-				bgColor = tint_color(menuColor, B_DARKEN_1_TINT);
-
-			menu->SetHighColor(bgColor);
-			menu->FillRect(frame);
-
-			// persistent thin accent bar for all running apps
-			menu->SetHighColor(kAccentColor);
-			BRect runIndicator(frame.left + 4,
-				frame.bottom - kAccentBarRunning + 1,
-				frame.right - 4, frame.bottom);
-			menu->FillRect(runIndicator);
-
-			// wider accent bar on hover
-			if (_IsSelected() && canHandle) {
-				BRect accent(frame.left + 2,
-					frame.bottom - kAccentBarHeight + 1,
-					frame.right - 2, frame.bottom);
-				menu->FillRect(accent);
-			}
-		} else {
-			// horizontal top: existing BControlLook style
-			if (flags & BControlLook::B_ACTIVATED)
-				menu->SetHighColor(tint_color(menuColor, B_DARKEN_3_TINT));
-			else
-				menu->SetHighColor(tint_color(menuColor, 1.22));
-			borders |= BControlLook::B_BOTTOM_BORDER;
-			menu->StrokeLine(frame.LeftTop(), frame.LeftBottom());
-			frame.left++;
-
-			be_control_look->DrawButtonBackground(menu, frame, frame,
-				menuColor, flags, borders);
-		}
-	}
+	if (fBarView->AcrossBottom())
+		_DrawBackgroundTaskbar(menu, frame, menuColor, canHandle);
+	else if (fBarView->Vertical())
+		_DrawBackgroundVertical(menu, frame, menuColor, canHandle);
+	else
+		_DrawBackgroundHorizontal(menu, frame, menuColor, canHandle);
 
 	menu->MovePenTo(ContentLocation());
 	DrawContent();
@@ -315,105 +248,12 @@ TTeamMenuItem::DrawContent()
 	BMenu* menu = Menu();
 	BRect frame = Frame();
 
-	if (fIcon != NULL && fBarView->AcrossBottom()) {
-		// taskbar: centered scaled icon, no label
-		if (fIcon->ColorSpace() == B_RGBA32) {
-			menu->SetDrawingMode(B_OP_ALPHA);
-			menu->SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
-		} else
-			menu->SetDrawingMode(B_OP_OVER);
-
-		BRect iconBounds = fIcon->Bounds();
-		float targetSize = floorf(kTaskbarHeight * 0.55f);
-		BRect destRect(0, 0, targetSize, targetSize);
-
-		float offsetx = frame.left
-			+ floorf((frame.Width() - targetSize) / 2);
-		float offsety = frame.top
-			+ floorf((frame.Height() - targetSize) / 2)
-			- ceilf(kAccentBarHeight / 2);
-		destRect.OffsetTo(offsetx, offsety);
-
-		menu->DrawBitmapAsync(fIcon, iconBounds, destRect);
+	if (fBarView->AcrossBottom()) {
+		_DrawContentTaskbar(menu, frame);
 		return;
 	}
 
-	if (fIcon != NULL) {
-		if (fIcon->ColorSpace() == B_RGBA32) {
-			menu->SetDrawingMode(B_OP_ALPHA);
-			menu->SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
-		} else
-			menu->SetDrawingMode(B_OP_OVER);
-
-		BRect iconBounds = fIcon->Bounds();
-		BRect updateRect = iconBounds;
-		BPoint contentLocation = ContentLocation();
-		BPoint drawLocation = contentLocation + BPoint(sHPad, sVPad);
-		const int32 large = be_control_look->ComposeIconSize(B_LARGE_ICON)
-			.IntegerWidth() + 1;
-
-		if (static_cast<TBarApp*>(be_app)->Settings()->hideLabels
-			|| (fBarView->Vertical() && iconBounds.Width() > large)) {
-			// determine icon location (centered horizontally)
-			float offsetx = contentLocation.x
-				+ floorf((frame.Width() - iconBounds.Width()) / 2);
-			float offsety = contentLocation.y + sVPad + kGutter;
-
-			// draw icon
-			updateRect.OffsetTo(BPoint(offsetx, offsety));
-			menu->DrawBitmapAsync(fIcon, updateRect);
-
-			// determine label position (below icon)
-			drawLocation.x = floorf((frame.Width() - fLabelWidth) / 2);
-			drawLocation.y = frame.top + sVPad + iconBounds.Height() + sVPad;
-		} else {
-			// determine icon location (centered vertically)
-			float offsetx = contentLocation.x + sHPad;
-			float offsety = contentLocation.y +
-				floorf((frame.Height() - iconBounds.Height()) / 2);
-
-			// draw icon
-			updateRect.OffsetTo(BPoint(offsetx, offsety));
-			menu->DrawBitmapAsync(fIcon, updateRect);
-
-			// determine label position (centered vertically)
-			drawLocation.x += iconBounds.Width() + sLabelOffset;
-			drawLocation.y = frame.top
-				+ ceilf((frame.Height() - fLabelHeight) / 2);
-		}
-
-		menu->MovePenTo(drawLocation);
-	}
-
-	// override the drawing of the content when the item is disabled
-	// the wrong lowcolor is used when the item is disabled since the
-	// text color does not change
-	menu->SetDrawingMode(B_OP_OVER);
-	menu->SetHighColor(ui_color(B_MENU_ITEM_TEXT_COLOR));
-
-	bool canHandle = !fBarView->Dragging()
-		|| fBarView->AppCanHandleTypes(Signature());
-	if (_IsSelected() && IsEnabled() && canHandle)
-		menu->SetLowColor(tint_color(ui_color(B_MENU_BACKGROUND_COLOR),
-			B_HIGHLIGHT_BACKGROUND_TINT));
-	else
-		menu->SetLowColor(ui_color(B_MENU_BACKGROUND_COLOR));
-
-	if (IsSelected())
-		menu->SetHighColor(ui_color(B_MENU_SELECTED_ITEM_TEXT_COLOR));
-	else
-		menu->SetHighColor(ui_color(B_MENU_ITEM_TEXT_COLOR));
-
-	menu->MovePenBy(0, fLabelAscent);
-
-	// draw label
-	if (!static_cast<TBarApp*>(be_app)->Settings()->hideLabels) {
-		float labelWidth = menu->StringWidth(Label());
-		BPoint penLocation = menu->PenLocation();
-		// truncate to max width
-		float offset = penLocation.x - frame.left;
-		menu->DrawString(Label(labelWidth + offset));
-	}
+	_DrawContentWithIcon(menu, frame);
 
 	// draw expander arrow
 	if (fBarView->Vertical()
@@ -537,6 +377,205 @@ TTeamMenuItem::ExpanderBounds() const
 }
 
 
+//	#pragma mark - Background drawing (mode-specific)
+
+
+void
+TTeamMenuItem::_DrawBackgroundTaskbar(BMenu* menu, BRect frame,
+	rgb_color menuColor, bool canHandle)
+{
+	rgb_color bgColor = menuColor;
+	if (_IsSelected() && canHandle)
+		bgColor = tint_color(menuColor, B_DARKEN_1_TINT);
+
+	menu->SetHighColor(bgColor);
+	menu->FillRect(frame);
+
+	rgb_color accent = TaskbarAccentColor();
+
+	// thin running indicator for all items
+	BRect runIndicator(frame.left + 4, frame.bottom - kAccentBarRunning + 1,
+		frame.right - 4, frame.bottom);
+	menu->SetHighColor(accent);
+	menu->FillRect(runIndicator);
+
+	// focused app gets a wider, brighter bar
+	if (fIsFocused) {
+		BRect focusBar(frame.left + 2, frame.bottom - kAccentBarHeight + 1,
+			frame.right - 2, frame.bottom);
+		menu->SetHighColor(accent);
+		menu->FillRect(focusBar);
+	} else if (_IsSelected() && canHandle) {
+		// hovered but not focused: semi-transparent accent
+		rgb_color hoverAccent = accent;
+		hoverAccent.alpha = 160;
+		menu->SetHighColor(hoverAccent);
+		menu->SetDrawingMode(B_OP_ALPHA);
+		BRect hoverBar(frame.left + 2, frame.bottom - kAccentBarHeight + 1,
+			frame.right - 2, frame.bottom);
+		menu->FillRect(hoverBar);
+		menu->SetDrawingMode(B_OP_COPY);
+	}
+}
+
+
+void
+TTeamMenuItem::_DrawBackgroundVertical(BMenu* menu, BRect frame,
+	rgb_color menuColor, bool canHandle)
+{
+	uint32 flags = 0;
+	if (_IsSelected() && canHandle)
+		flags |= BControlLook::B_ACTIVATED;
+
+	uint32 borders = BControlLook::B_TOP_BORDER
+		| BControlLook::B_LEFT_BORDER
+		| BControlLook::B_RIGHT_BORDER;
+
+	menu->SetHighColor(tint_color(menuColor, B_DARKEN_1_TINT));
+	menu->StrokeLine(frame.LeftBottom(), frame.RightBottom());
+	frame.bottom--;
+
+	be_control_look->DrawMenuBarBackground(menu, frame, frame,
+		menuColor, flags, borders);
+}
+
+
+void
+TTeamMenuItem::_DrawBackgroundHorizontal(BMenu* menu, BRect frame,
+	rgb_color menuColor, bool canHandle)
+{
+	uint32 flags = 0;
+	if (_IsSelected() && canHandle)
+		flags |= BControlLook::B_ACTIVATED;
+
+	uint32 borders = BControlLook::B_TOP_BORDER
+		| BControlLook::B_BOTTOM_BORDER;
+
+	if (flags & BControlLook::B_ACTIVATED)
+		menu->SetHighColor(tint_color(menuColor, B_DARKEN_3_TINT));
+	else
+		menu->SetHighColor(tint_color(menuColor, 1.22));
+
+	menu->StrokeLine(frame.LeftTop(), frame.LeftBottom());
+	frame.left++;
+
+	be_control_look->DrawButtonBackground(menu, frame, frame,
+		menuColor, flags, borders);
+}
+
+
+//	#pragma mark - Content drawing (mode-specific)
+
+
+void
+TTeamMenuItem::_DrawContentTaskbar(BMenu* menu, BRect frame)
+{
+	if (fIcon == NULL)
+		return;
+
+	if (fIcon->ColorSpace() == B_RGBA32) {
+		menu->SetDrawingMode(B_OP_ALPHA);
+		menu->SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
+	} else
+		menu->SetDrawingMode(B_OP_OVER);
+
+	BRect iconBounds = fIcon->Bounds();
+	float targetSize = floorf(kTaskbarHeight * 0.55f);
+	BRect destRect(0, 0, targetSize, targetSize);
+
+	float offsetx = frame.left
+		+ floorf((frame.Width() - targetSize) / 2);
+	float offsety = frame.top
+		+ floorf((frame.Height() - targetSize) / 2)
+		- ceilf(kAccentBarHeight / 2);
+	destRect.OffsetTo(offsetx, offsety);
+
+	menu->DrawBitmapAsync(fIcon, iconBounds, destRect);
+}
+
+
+void
+TTeamMenuItem::_DrawContentWithIcon(BMenu* menu, BRect frame)
+{
+	if (fIcon != NULL) {
+		if (fIcon->ColorSpace() == B_RGBA32) {
+			menu->SetDrawingMode(B_OP_ALPHA);
+			menu->SetBlendingMode(B_PIXEL_ALPHA, B_ALPHA_OVERLAY);
+		} else
+			menu->SetDrawingMode(B_OP_OVER);
+
+		BRect iconBounds = fIcon->Bounds();
+		BRect updateRect = iconBounds;
+		BPoint contentLocation = ContentLocation();
+		BPoint drawLocation = contentLocation + BPoint(sHPad, sVPad);
+		const int32 large = be_control_look->ComposeIconSize(B_LARGE_ICON)
+			.IntegerWidth() + 1;
+
+		if (static_cast<TBarApp*>(be_app)->Settings()->hideLabels
+			|| (fBarView->Vertical() && iconBounds.Width() > large)) {
+			// determine icon location (centered horizontally)
+			float offsetx = contentLocation.x
+				+ floorf((frame.Width() - iconBounds.Width()) / 2);
+			float offsety = contentLocation.y + sVPad + kGutter;
+
+			// draw icon
+			updateRect.OffsetTo(BPoint(offsetx, offsety));
+			menu->DrawBitmapAsync(fIcon, updateRect);
+
+			// determine label position (below icon)
+			drawLocation.x = floorf((frame.Width() - fLabelWidth) / 2);
+			drawLocation.y = frame.top + sVPad + iconBounds.Height() + sVPad;
+		} else {
+			// determine icon location (centered vertically)
+			float offsetx = contentLocation.x + sHPad;
+			float offsety = contentLocation.y +
+				floorf((frame.Height() - iconBounds.Height()) / 2);
+
+			// draw icon
+			updateRect.OffsetTo(BPoint(offsetx, offsety));
+			menu->DrawBitmapAsync(fIcon, updateRect);
+
+			// determine label position (centered vertically)
+			drawLocation.x += iconBounds.Width() + sLabelOffset;
+			drawLocation.y = frame.top
+				+ ceilf((frame.Height() - fLabelHeight) / 2);
+		}
+
+		menu->MovePenTo(drawLocation);
+	}
+
+	// override the drawing of the content when the item is disabled
+	// the wrong lowcolor is used when the item is disabled since the
+	// text color does not change
+	menu->SetDrawingMode(B_OP_OVER);
+	menu->SetHighColor(ui_color(B_MENU_ITEM_TEXT_COLOR));
+
+	bool canHandle = !fBarView->Dragging()
+		|| fBarView->AppCanHandleTypes(Signature());
+	if (_IsSelected() && IsEnabled() && canHandle)
+		menu->SetLowColor(tint_color(ui_color(B_MENU_BACKGROUND_COLOR),
+			B_HIGHLIGHT_BACKGROUND_TINT));
+	else
+		menu->SetLowColor(ui_color(B_MENU_BACKGROUND_COLOR));
+
+	if (IsSelected())
+		menu->SetHighColor(ui_color(B_MENU_SELECTED_ITEM_TEXT_COLOR));
+	else
+		menu->SetHighColor(ui_color(B_MENU_ITEM_TEXT_COLOR));
+
+	menu->MovePenBy(0, fLabelAscent);
+
+	// draw label
+	if (!static_cast<TBarApp*>(be_app)->Settings()->hideLabels) {
+		float labelWidth = menu->StringWidth(Label());
+		BPoint penLocation = menu->PenLocation();
+		// truncate to max width
+		float offset = penLocation.x - frame.left;
+		menu->DrawString(Label(labelWidth + offset));
+	}
+}
+
+
 //	#pragma mark - Private methods
 
 
@@ -582,6 +621,7 @@ TTeamMenuItem::_Init(BList* team, BBitmap* icon, char* name, char* signature,
 	fLabelHeight = fLabelAscent + fLabelDescent;
 
 	fOverriddenSelected = false;
+	fIsFocused = false;
 
 	fExpanded = false;
 	fArrowDirection = BControlLook::B_RIGHT_ARROW;
