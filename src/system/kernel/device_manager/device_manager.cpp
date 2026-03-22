@@ -13,7 +13,7 @@
 
 #include <KernelExport.h>
 #include <module.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <boot_device.h>
 #include <device_manager_defs.h>
@@ -1664,6 +1664,7 @@ device_node::_GetNextDriverPath(void*& cookie, KPath& _path)
 				if (sRootNode == this) {
 					_AddPath(*stack, "busses/pci");
 					_AddPath(*stack, "bus_managers");
+					_AddPath(*stack, "drivers");
 				} else if (!generic) {
 					_AddPath(*stack, "drivers");
 					_AddPath(*stack, "busses/virtio");
@@ -1805,14 +1806,21 @@ device_node::_AlwaysRegisterDynamic()
 	get_attr_uint16(this, B_DEVICE_SUB_TYPE, &subType, false);
 
 	switch (type) {
+		case PCI_mass_storage:
+		case PCI_network:
+		case PCI_display:
+		case PCI_multimedia:
+		case PCI_base_peripheral:
+		case PCI_input:
 		case PCI_serial_bus:
 		case PCI_bridge:
+		case PCI_wireless:
 		case PCI_encryption_decryption:
+		case PCI_simple_communications:
 		case 0:
 			return true;
 	}
 	return false;
-		// TODO: we may want to be a bit more specific in the future
 }
 
 

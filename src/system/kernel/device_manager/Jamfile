@@ -10,8 +10,6 @@ KernelMergeObject kernel_device_manager.o :
 	FileDevice.cpp
 	id_generator.cpp
 	io_resources.cpp
-	legacy_drivers.cpp
-
 	dma_resources.cpp
 	io_requests.cpp
 	IOCache.cpp

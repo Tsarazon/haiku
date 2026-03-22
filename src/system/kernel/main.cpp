@@ -348,8 +348,7 @@ main2(void* /*unused*/)
 	boot_splash_set_stage(BOOT_SPLASH_STAGE_3_INIT_DEVICES);
 	device_manager_init(&sKernelArgs);
 
-	TRACE("Add preloaded old-style drivers\n");
-	legacy_driver_add_preloaded(&sKernelArgs);
+	/* Legacy driver loading removed — all drivers use device_manager */
 
 	interrupts_init_post_device_manager(&sKernelArgs);
 

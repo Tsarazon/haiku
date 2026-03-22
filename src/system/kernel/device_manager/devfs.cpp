@@ -41,7 +41,7 @@
 #include "BaseDevice.h"
 #include "FileDevice.h"
 #include "IORequest.h"
-#include "legacy_drivers.h"
+/* legacy_drivers.h removed — all drivers use device_manager */
 
 
 //#define TRACE_DEVFS
@@ -236,7 +236,6 @@ scan_for_drivers_if_needed(devfs_vnode* dir)
 	// scan for drivers at this path
 	static int32 updateCycle = 1;
 	device_manager_probe(path.Path(), updateCycle++);
-	legacy_driver_probe(path.Path());
 
 	dir->stream.u.dir.scanned = scan_mode();
 	return B_OK;
@@ -1917,7 +1916,6 @@ devfs_std_ops(int32 op, ...)
 				"Prints information on a devfs cookie given by <address>.\n",
 				0);
 
-			legacy_driver_init();
 			return B_OK;
 
 		case B_MODULE_UNINIT:
@@ -2260,12 +2258,17 @@ devfs_rescan_driver(const char* driverName)
 {
 	TRACE(("devfs_rescan_driver: %s\n", driverName));
 
-	return legacy_driver_rescan(driverName);
+	// Legacy driver rescan no longer supported — all drivers use device_manager
+	(void)driverName;
+	return B_NOT_SUPPORTED;
 }
 
 
 extern "C" status_t
 devfs_publish_device(const char* path, device_hooks* hooks)
 {
-	return legacy_driver_publish(path, hooks);
+	// Legacy driver publish no longer supported — all drivers use device_manager
+	(void)path;
+	(void)hooks;
+	return B_NOT_SUPPORTED;
 }
