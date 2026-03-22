@@ -14,6 +14,7 @@
 #define __PS2_COMMON_H
 
 
+#include <device_manager.h>
 #include <ISA.h>
 #include <Drivers.h>
 #include <KernelExport.h>
@@ -46,6 +47,8 @@
 
 // global variables
 extern isa_module_info *gIsa;
+extern device_manager_info *gDeviceManager;
+extern device_node *gPS2DeviceNode;
 
 extern device_hooks gKeyboardDeviceHooks;
 extern device_hooks gPointingDeviceHooks;

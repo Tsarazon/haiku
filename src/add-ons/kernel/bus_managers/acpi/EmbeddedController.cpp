@@ -39,7 +39,7 @@
 #include <condition_variable.h>
 #include <Errors.h>
 #include <KernelExport.h>
-#include <drivers/PCI.h>
+#include <drivers/bus/PCI.h>
 
 
 #define ACPI_EC_DRIVER_NAME "drivers/power/acpi_embedded_controller/driver_v1"

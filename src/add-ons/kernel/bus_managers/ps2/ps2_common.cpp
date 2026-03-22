@@ -29,6 +29,8 @@
 
 
 isa_module_info *gIsa = NULL;
+device_manager_info *gDeviceManager = NULL;
+device_node *gPS2DeviceNode = NULL;
 bool gActiveMultiplexingEnabled = false;
 bool gSetupComplete = false;
 mutex gControllerLock;

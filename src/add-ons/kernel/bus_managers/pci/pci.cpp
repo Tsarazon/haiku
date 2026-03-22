@@ -9,7 +9,7 @@
 #include <string.h>
 #include <KernelExport.h>
 #define __HAIKU_PCI_BUS_MANAGER_TESTING 1
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <arch/generic/msi.h>
 #if defined(__i386__) || defined(__x86_64__)
 #include <arch/x86/msi.h>

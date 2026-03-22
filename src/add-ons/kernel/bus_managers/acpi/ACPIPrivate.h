@@ -12,7 +12,7 @@
 #include <device_manager.h>
 #include <KernelExport.h>
 #include <ACPI.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 // name of ACPI root module
 #define ACPI_ROOT_MODULE_NAME 	"bus_managers/acpi/root/driver_v1"

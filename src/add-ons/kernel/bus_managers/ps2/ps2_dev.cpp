@@ -205,7 +205,8 @@ ps2_dev_publish(ps2_dev* dev)
 		return;
 
 	if (atomic_get(&dev->flags) & PS2_FLAG_KEYB) {
-		status = devfs_publish_device(dev->name, &gKeyboardDeviceHooks);
+		status = gDeviceManager->publish_device(gPS2DeviceNode, dev->name,
+			"bus_managers/ps2/keyboard/device_v1");
 	} else {
 		// Check if this is the "pass-through" device and wait until
 		// the parent_dev goes to enabled state. It is required to prevent
@@ -229,14 +230,15 @@ ps2_dev_publish(ps2_dev* dev)
 			device_hooks* hooks;
 			status = ps2_dev_detect_pointing(dev, &hooks);
 			if (status == B_OK) {
-				status = devfs_publish_device(dev->name, hooks);
+				status = gDeviceManager->publish_device(gPS2DeviceNode,
+					dev->name, "bus_managers/ps2/pointing/device_v1");
 			}
 		}
 	}
 
 	dev->active = true;
 
-	INFO("ps2: devfs_publish_device %s, status = 0x%08" B_PRIx32 "\n",
+	INFO("ps2: publish_device %s, status = 0x%08" B_PRIx32 "\n",
 		dev->name, status);
 }
 

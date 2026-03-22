@@ -16,7 +16,7 @@
 #include <ACPI.h>
 #include <dpc.h>
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <safemode.h>
 

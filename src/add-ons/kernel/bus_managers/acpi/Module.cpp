@@ -15,7 +15,7 @@ extern "C" {
 #include "acpi.h"
 }
 #include <dpc.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 
 //#define TRACE_ACPI_MODULE

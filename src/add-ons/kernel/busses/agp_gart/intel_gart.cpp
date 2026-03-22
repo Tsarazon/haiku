@@ -19,7 +19,7 @@
 
 #include <AGP.h>
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <new>
 
@@ -809,14 +809,13 @@ intel_map(intel_info &info)
 
 
 status_t
-intel_create_aperture(uint8 bus, uint8 device, uint8 function, size_t size,
-	void** _aperture)
+intel_create_aperture(struct pci_info *info, size_t size, void** _aperture)
 {
 	// TODO: we currently only support a single AGP bridge!
-	if ((bus != sInfo.bridge.bus || device != sInfo.bridge.device
-			|| function != sInfo.bridge.function)
-		&& (bus != sInfo.display.bus || device != sInfo.display.device
-			|| function != sInfo.display.function))
+	if ((info->bus != sInfo.bridge.bus || info->device != sInfo.bridge.device
+			|| info->function != sInfo.bridge.function)
+		&& (info->bus != sInfo.display.bus || info->device != sInfo.display.device
+			|| info->function != sInfo.display.function))
 		return B_BAD_VALUE;
 
 	sInfo.aperture_size = size;

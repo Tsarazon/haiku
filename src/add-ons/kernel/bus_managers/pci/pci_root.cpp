@@ -7,7 +7,7 @@
 
 
 #include <device_manager.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <drivers/ACPI.h>
 #include <drivers/bus/FDT.h>
 

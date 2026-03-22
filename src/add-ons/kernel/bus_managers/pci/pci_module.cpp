@@ -6,7 +6,7 @@
  */
 
 
-#include <PCI.h>
+#include <bus/PCI.h>
 #include "pci_msi.h"
 
 #include "pci_private.h"

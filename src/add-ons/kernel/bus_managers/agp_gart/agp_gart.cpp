@@ -28,7 +28,7 @@
 #include <stdlib.h>
 
 #include <KernelExport.h>
-#include <PCI.h>
+#include <bus/PCI.h>
 
 #include <util/OpenHashTable.h>
 #include <kernel/lock.h>
@@ -948,8 +948,7 @@ set_agp_mode(uint32 command)
 
 
 static aperture_id
-map_aperture(uint8 bus, uint8 device, uint8 function, size_t size,
-	addr_t *_apertureBase)
+map_aperture(struct pci_info *info, size_t size, addr_t *_apertureBase)
 {
 	void *iterator = open_module_list("busses/agp_gart");
 	status_t status = B_ENTRY_NOT_FOUND;
@@ -966,8 +965,7 @@ map_aperture(uint8 bus, uint8 device, uint8 function, size_t size,
 		agp_gart_bus_module_info *module;
 		if (get_module(name, (module_info **)&module) == B_OK) {
 			void *privateAperture;
-			status = module->create_aperture(bus, device, function, size,
-				&privateAperture);
+			status = module->create_aperture(info, size, &privateAperture);
 			if (status < B_OK) {
 				put_module(name);
 				continue;

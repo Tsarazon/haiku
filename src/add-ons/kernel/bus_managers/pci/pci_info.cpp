@@ -6,7 +6,7 @@
 
 #include <KernelExport.h>
 #define __HAIKU_PCI_BUS_MANAGER_TESTING 1
-#include <PCI.h>
+#include <bus/PCI.h>
 #include <string.h>
 #include "pci_info.h"
 #include "pci_private.h"

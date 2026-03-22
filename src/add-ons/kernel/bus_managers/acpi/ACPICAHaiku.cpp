@@ -125,7 +125,7 @@
 #	include <KernelExport.h>
 
 #	include <dpc.h>
-#	include <PCI.h>
+#	include <bus/PCI.h>
 
 #	include <boot_item.h>
 #	include <kernel.h>
