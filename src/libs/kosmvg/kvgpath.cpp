@@ -26,15 +26,6 @@ Path::Impl* alloc_impl() {
     return p;
 }
 
-void retain(Path::Impl* p) {
-    if (p) p->ref();
-}
-
-void release(Path::Impl* p) {
-    if (p && p->deref())
-        delete p;
-}
-
 // COW: ensure the impl is uniquely owned before mutation.
 Path::Impl* cow(Path::Impl*& p) {
     if (!p) {
@@ -53,7 +44,7 @@ Path::Impl* cow(Path::Impl*& p) {
     copy->num_contours = p->num_contours;
     copy->num_curves   = p->num_curves;
     copy->start_point  = p->start_point;
-    release(p);
+    impl_release(p);
     p = copy;
     return copy;
 }
@@ -527,36 +518,11 @@ CubicSplit split_cubic(Point p0, Point p1, Point p2, Point p3, float t) {
 // -- Path lifecycle --
 
 Path::Path() : m_impl(nullptr) {}
-
-Path::~Path() {
-    release(m_impl);
-}
-
-Path::Path(const Path& other) : m_impl(other.m_impl) {
-    retain(m_impl);
-}
-
-Path::Path(Path&& other) noexcept : m_impl(other.m_impl) {
-    other.m_impl = nullptr;
-}
-
-Path& Path::operator=(const Path& other) {
-    if (this != &other) {
-        retain(other.m_impl);
-        release(m_impl);
-        m_impl = other.m_impl;
-    }
-    return *this;
-}
-
-Path& Path::operator=(Path&& other) noexcept {
-    if (this != &other) {
-        release(m_impl);
-        m_impl = other.m_impl;
-        other.m_impl = nullptr;
-    }
-    return *this;
-}
+Path::~Path()                          { impl_release(m_impl); }
+Path::Path(const Path& other)          : m_impl(other.m_impl) { impl_retain(m_impl); }
+Path::Path(Path&& other) noexcept      : m_impl(other.m_impl) { other.m_impl = nullptr; }
+Path& Path::operator=(const Path& other)   { impl_assign(m_impl, other.m_impl); return *this; }
+Path& Path::operator=(Path&& other) noexcept { impl_move(m_impl, other.m_impl); return *this; }
 
 Path::operator bool() const {
     return m_impl && !m_impl->commands.empty();
@@ -862,6 +828,9 @@ Path Path::dashed(float offset, std::span<const float> dashes) const {
 }
 
 Path Path::trimmed(float begin_frac, float end_frac, TrimMode mode) const {
+    // NOTE: trimmed() flattens curves before trimming. The result is a
+    // polyline approximation. For animated stroke-dashoffset (Lottie),
+    // consider caching the flattened path or passing a pre-flattened path.
     if (!m_impl || m_impl->commands.empty())
         return {};
 

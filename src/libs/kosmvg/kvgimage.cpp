@@ -19,13 +19,8 @@ namespace kvg {
 
 // -- Helpers --
 
-// Write accessor for free functions that construct Image objects.
-// Member functions (create, load, etc.) have direct access to m_impl;
-// free helpers (image_from_stbi*) use this instead.
-static Image::Impl*& impl_ref(Image& img) {
-    static_assert(sizeof(Image) == sizeof(void*));
-    return *reinterpret_cast<Image::Impl**>(&img);
-}
+// Helpers return Impl* to avoid UB from reinterpret_cast on Image.
+// Callers (Image::load — member functions) set m_impl directly.
 
 static Image::Impl* make_impl(int width, int height, int stride,
                                PixelFormat format, const ColorSpace& space) {
@@ -67,7 +62,39 @@ static Image::Impl* cow_detach(Image::Impl*& impl) {
     std::memcpy(fresh->data, impl->data, buf_size);
     fresh->owns_data = true;
 
-    if (impl->deref()) delete impl;
+    impl_release(impl);
+    impl = fresh;
+    return fresh;
+}
+
+// Metadata-only COW detach: shares pixel data with the original Impl
+// via a release callback. Avoids copying pixels when only headroom
+// or color_space changes.
+static Image::Impl* cow_detach_metadata(Image::Impl*& impl) {
+    if (!impl) return nullptr;
+    if (impl->count() == 1)
+        return impl;
+
+    auto* fresh = new Image::Impl;
+    fresh->width = impl->width;
+    fresh->height = impl->height;
+    fresh->stride = impl->stride;
+    fresh->format = impl->format;
+    fresh->color_space_ = impl->color_space_;
+    fresh->headroom_ = impl->headroom_;
+
+    // Share pixel data: keep original alive via release callback.
+    fresh->data = impl->data;
+    fresh->owns_data = false;
+    Image::Impl* original = impl;
+    original->ref();
+    fresh->release_fn = [](void* ctx) {
+        auto* orig = static_cast<Image::Impl*>(ctx);
+        if (orig->deref()) delete orig;
+    };
+    fresh->release_ctx = original;
+
+    impl_release(impl);
     impl = fresh;
     return fresh;
 }
@@ -76,36 +103,11 @@ static Image::Impl* cow_detach(Image::Impl*& impl) {
 
 Image::Image() : m_impl(nullptr) {}
 
-Image::~Image() {
-    if (m_impl && m_impl->deref())
-        delete m_impl;
-}
-
-Image::Image(const Image& o) : m_impl(o.m_impl) {
-    if (m_impl) m_impl->ref();
-}
-
-Image::Image(Image&& o) noexcept : m_impl(o.m_impl) {
-    o.m_impl = nullptr;
-}
-
-Image& Image::operator=(const Image& o) {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        if (m_impl) m_impl->ref();
-    }
-    return *this;
-}
-
-Image& Image::operator=(Image&& o) noexcept {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        o.m_impl = nullptr;
-    }
-    return *this;
-}
+Image::~Image()                          { impl_release(m_impl); }
+Image::Image(const Image& o)             : m_impl(o.m_impl) { impl_retain(m_impl); }
+Image::Image(Image&& o) noexcept         : m_impl(o.m_impl) { o.m_impl = nullptr; }
+Image& Image::operator=(const Image& o)   { impl_assign(m_impl, o.m_impl); return *this; }
+Image& Image::operator=(Image&& o) noexcept { impl_move(m_impl, o.m_impl); return *this; }
 
 Image::operator bool() const {
     return m_impl && m_impl->data;
@@ -139,7 +141,7 @@ Image Image::with_headroom(float hr) const {
     detail::clear_last_error();
     if (!m_impl) return {};
     Image result(*this);
-    if (auto* p = cow_detach(result.m_impl))
+    if (auto* p = cow_detach_metadata(result.m_impl))
         p->headroom_ = hr;
     return result;
 }
@@ -241,7 +243,7 @@ std::optional<ImageFileInfo> Image::info(std::span<const std::byte> data) {
 
 // -- Load: stbi → Image --
 
-static Image image_from_stbi(stbi::Image<uint8_t> src) {
+static Image::Impl* impl_from_stbi(stbi::Image<uint8_t> src) {
     int w = src.width();
     int h = src.height();
     int stride = aligned_stride(w, PixelFormat::ARGB32_Premultiplied);
@@ -253,7 +255,7 @@ static Image image_from_stbi(stbi::Image<uint8_t> src) {
     if (!impl->data) {
         delete impl;
         detail::set_last_error(Error::OutOfMemory);
-        return {};
+        return nullptr;
     }
     impl->owns_data = true;
 
@@ -267,14 +269,12 @@ static Image image_from_stbi(stbi::Image<uint8_t> src) {
             w, 1, src_stride);
     }
 
-    Image img;
-    impl_ref(img) = impl;
-    return img;
+    return impl;
 }
 
 // HDR path: load float data, tonemap to 8-bit ARGB premul,
 // record headroom so the HDR range is at least documented.
-static Image image_from_stbi_f(stbi::Image<float> src) {
+static Image::Impl* impl_from_stbi_f(stbi::Image<float> src) {
     int w = src.width();
     int h = src.height();
     int ch = src.channels();
@@ -287,7 +287,7 @@ static Image image_from_stbi_f(stbi::Image<float> src) {
     if (!impl->data) {
         delete impl;
         detail::set_last_error(Error::OutOfMemory);
-        return {};
+        return nullptr;
     }
     impl->owns_data = true;
 
@@ -304,8 +304,8 @@ static Image image_from_stbi_f(stbi::Image<float> src) {
         if (lum > peak) peak = lum;
     }
 
-    // Tonemap: Reinhard per-channel, scale to [0..255].
-    // This is a simple operator; preserves relative brightness.
+    // Tonemap: linear peak normalization, scale to [0..255].
+    // This preserves relative ratios but does not compress highlights.
     float inv_peak = 1.0f / peak;
     for (int y = 0; y < h; ++y) {
         auto* dst = reinterpret_cast<uint32_t*>(
@@ -317,7 +317,7 @@ static Image image_from_stbi_f(stbi::Image<float> src) {
             float b = ch >= 3 ? fp[idx + 2] : r;
             float a = ch == 4 ? fp[idx + 3] : (ch == 2 ? fp[idx + 1] : 1.0f);
 
-            // Simple Reinhard tonemap.
+            // Linear peak normalization.
             r = r * inv_peak;
             g = g * inv_peak;
             b = b * inv_peak;
@@ -337,9 +337,7 @@ static Image image_from_stbi_f(stbi::Image<float> src) {
 
     impl->headroom_ = peak;
 
-    Image img;
-    impl_ref(img) = impl;
-    return img;
+    return impl;
 }
 
 // -- load(filename) --
@@ -360,7 +358,9 @@ Image Image::load(const char* filename) {
             detail::set_last_error(Error::ImageDecodeError);
             return {};
         }
-        return image_from_stbi_f(std::move(src));
+        Image img;
+        img.m_impl = impl_from_stbi_f(std::move(src));
+        return img;
     }
 
     auto src = stbi::load(filename,
@@ -369,7 +369,9 @@ Image Image::load(const char* filename) {
         detail::set_last_error(Error::ImageDecodeError);
         return {};
     }
-    return image_from_stbi(std::move(src));
+    Image img;
+    img.m_impl = impl_from_stbi(std::move(src));
+    return img;
 }
 
 // -- load(span) --
@@ -393,7 +395,9 @@ Image Image::load(std::span<const std::byte> data) {
             detail::set_last_error(Error::ImageDecodeError);
             return {};
         }
-        return image_from_stbi_f(std::move(src));
+        Image img;
+        img.m_impl = impl_from_stbi_f(std::move(src));
+        return img;
     }
 
     auto src = stbi::load(buf,
@@ -402,7 +406,9 @@ Image Image::load(std::span<const std::byte> data) {
         detail::set_last_error(Error::ImageDecodeError);
         return {};
     }
-    return image_from_stbi(std::move(src));
+    Image img;
+    img.m_impl = impl_from_stbi(std::move(src));
+    return img;
 }
 
 // -- load_base64 --
@@ -502,7 +508,7 @@ Image Image::converted(PixelFormat fmt, const ColorSpace& space) const {
 
     if (fmt == m_impl->format) {
         Image result(*this);
-        if (auto* p = cow_detach(result.m_impl))
+        if (auto* p = cow_detach_metadata(result.m_impl))
             p->color_space_ = space;
         return result;
     }
@@ -596,34 +602,19 @@ Image Image::blurred(float radius) const {
     int h = m_impl->height;
 
     if (m_impl->format == PixelFormat::A8) {
-        int tmp_stride = aligned_stride(w, PixelFormat::ARGB32_Premultiplied);
-        size_t tmp_size = static_cast<size_t>(tmp_stride) * h;
-        std::vector<unsigned char> tmp(tmp_size);
-
-        for (int y = 0; y < h; ++y) {
-            const auto* src = m_impl->data + static_cast<size_t>(y) * m_impl->stride;
-            auto* dst = reinterpret_cast<uint32_t*>(
-                tmp.data() + static_cast<size_t>(y) * tmp_stride);
-            for (int x = 0; x < w; ++x)
-                dst[x] = pack_argb(src[x], 0, 0, 0);
-        }
-
-        gaussian_blur(tmp.data(), w, h, tmp_stride, radius);
-
         int new_stride = aligned_stride(w, PixelFormat::A8);
         auto* impl = make_impl(w, h, new_stride, PixelFormat::A8, m_impl->color_space_);
-        impl->data = static_cast<unsigned char*>(std::malloc(
-            static_cast<size_t>(new_stride) * h));
+        size_t buf_size = static_cast<size_t>(new_stride) * h;
+        impl->data = static_cast<unsigned char*>(std::malloc(buf_size));
         if (!impl->data) { delete impl; return *this; }
         impl->owns_data = true;
 
-        for (int y = 0; y < h; ++y) {
-            auto* src = reinterpret_cast<const uint32_t*>(
-                tmp.data() + static_cast<size_t>(y) * tmp_stride);
-            auto* dst = impl->data + static_cast<size_t>(y) * new_stride;
-            for (int x = 0; x < w; ++x)
-                dst[x] = pixel_alpha(src[x]);
-        }
+        for (int y = 0; y < h; ++y)
+            std::memcpy(impl->data + static_cast<size_t>(y) * new_stride,
+                        m_impl->data + static_cast<size_t>(y) * m_impl->stride,
+                        static_cast<size_t>(w));
+
+        gaussian_blur_alpha(impl->data, w, h, new_stride, radius);
 
         Image img;
         img.m_impl = impl;
@@ -706,6 +697,7 @@ Image Image::alpha_mask() const {
 namespace {
 
 // Bilinear (used by InterpolationQuality::Low)
+// Uses integer bilerp_argb from kvgutils.hpp for ~3x faster channel mixing.
 uint32_t sample_bilinear(const uint32_t* data, int w, int h,
                          int stride32, float fx, float fy) {
     int x0 = static_cast<int>(std::floor(fx));
@@ -723,20 +715,14 @@ uint32_t sample_bilinear(const uint32_t* data, int w, int h,
     uint32_t p01 = data[static_cast<size_t>(y1) * stride32 + x0];
     uint32_t p11 = data[static_cast<size_t>(y1) * stride32 + x1];
 
-    float w00 = (1 - dx) * (1 - dy);
-    float w10 = dx * (1 - dy);
-    float w01 = (1 - dx) * dy;
-    float w11 = dx * dy;
+    uint32_t fx256 = static_cast<uint32_t>(dx * 256.0f + 0.5f);
+    uint32_t fy256 = static_cast<uint32_t>(dy * 256.0f + 0.5f);
+    if (fx256 > 256) fx256 = 256;
+    if (fy256 > 256) fy256 = 256;
 
-    auto mix = [&](int shift) -> uint8_t {
-        float v = ((p00 >> shift) & 0xFF) * w00
-                + ((p10 >> shift) & 0xFF) * w10
-                + ((p01 >> shift) & 0xFF) * w01
-                + ((p11 >> shift) & 0xFF) * w11;
-        return static_cast<uint8_t>(std::clamp(v + 0.5f, 0.0f, 255.0f));
-    };
-
-    return pack_argb(mix(24), mix(16), mix(8), mix(0));
+    uint32_t top    = bilerp_argb(p00, p10, fx256);
+    uint32_t bottom = bilerp_argb(p01, p11, fx256);
+    return bilerp_argb(top, bottom, fy256);
 }
 
 float sample_bilinear_a8(const unsigned char* data, int w, int h,
@@ -903,6 +889,84 @@ float sample_lanczos_a8(const unsigned char* data, int w, int h,
     return v;
 }
 
+// -- Separable 2-pass resampling (bicubic / lanczos) --
+// Pass 1: resample rows (src_w → dst_w), output to tmp[dst_w × src_h].
+// Pass 2: resample columns (src_h → dst_h), output to dst[dst_w × dst_h].
+// Reduces bicubic from 16 to 8 texel reads, lanczos from 36 to 12.
+
+using KernelFunc = float(*)(float);
+
+void resample_h(const uint32_t* src, int src_w, int src_h, int src_stride32,
+                uint32_t* dst, int dst_w,
+                KernelFunc kernel, int radius) {
+    float sx = static_cast<float>(src_w) / dst_w;
+    for (int y = 0; y < src_h; ++y) {
+        const uint32_t* s_row = src + static_cast<size_t>(y) * src_stride32;
+        uint32_t* d_row = dst + static_cast<size_t>(y) * dst_w;
+        for (int x = 0; x < dst_w; ++x) {
+            float center = (x + 0.5f) * sx - 0.5f;
+            int ic = static_cast<int>(std::floor(center));
+            float dc = center - ic;
+
+            float ch[4] = {};
+            float wsum = 0.0f;
+            for (int k = -radius + 1; k <= radius; ++k) {
+                float w = kernel(dc - k);
+                wsum += w;
+                int ix = std::clamp(ic + k, 0, src_w - 1);
+                uint32_t px = s_row[ix];
+                ch[0] += ((px >> 24) & 0xFF) * w;
+                ch[1] += ((px >> 16) & 0xFF) * w;
+                ch[2] += ((px >> 8)  & 0xFF) * w;
+                ch[3] += (px         & 0xFF) * w;
+            }
+            if (wsum > 1e-6f) {
+                float inv = 1.0f / wsum;
+                for (float& c : ch) c *= inv;
+            }
+            auto cl = [](float v) -> uint8_t {
+                return static_cast<uint8_t>(std::clamp(v + 0.5f, 0.0f, 255.0f));
+            };
+            d_row[x] = pack_argb(cl(ch[0]), cl(ch[1]), cl(ch[2]), cl(ch[3]));
+        }
+    }
+}
+
+void resample_v(const uint32_t* src, int src_w, int src_h,
+                uint32_t* dst, int dst_h,
+                KernelFunc kernel, int radius) {
+    float sy = static_cast<float>(src_h) / dst_h;
+    for (int y = 0; y < dst_h; ++y) {
+        float center = (y + 0.5f) * sy - 0.5f;
+        int ic = static_cast<int>(std::floor(center));
+        float dc = center - ic;
+
+        uint32_t* d_row = dst + static_cast<size_t>(y) * src_w;
+        for (int x = 0; x < src_w; ++x) {
+            float ch[4] = {};
+            float wsum = 0.0f;
+            for (int k = -radius + 1; k <= radius; ++k) {
+                float w = kernel(dc - k);
+                wsum += w;
+                int iy = std::clamp(ic + k, 0, src_h - 1);
+                uint32_t px = src[static_cast<size_t>(iy) * src_w + x];
+                ch[0] += ((px >> 24) & 0xFF) * w;
+                ch[1] += ((px >> 16) & 0xFF) * w;
+                ch[2] += ((px >> 8)  & 0xFF) * w;
+                ch[3] += (px         & 0xFF) * w;
+            }
+            if (wsum > 1e-6f) {
+                float inv = 1.0f / wsum;
+                for (float& c : ch) c *= inv;
+            }
+            auto cl = [](float v) -> uint8_t {
+                return static_cast<uint8_t>(std::clamp(v + 0.5f, 0.0f, 255.0f));
+            };
+            d_row[x] = pack_argb(cl(ch[0]), cl(ch[1]), cl(ch[2]), cl(ch[3]));
+        }
+    }
+}
+
 } // anonymous namespace
 
 // -- scaled (by dimensions) --
@@ -1007,39 +1071,52 @@ Image Image::scaled(int new_width, int new_height,
     float sx = static_cast<float>(w) / new_width;
     float sy = static_cast<float>(h) / new_height;
 
-    for (int y = 0; y < new_height; ++y) {
-        auto* dst_row = reinterpret_cast<uint32_t*>(
-            impl->data + static_cast<size_t>(y) * new_stride);
-        float fy = (y + 0.5f) * sy - 0.5f;
+    // Separable 2-pass for Medium (Mitchell, radius 2) and High (Lanczos-3, radius 3).
+    // Horizontal pass: src[w × h] → tmp[new_width × h]
+    // Vertical pass:   tmp[new_width × h] → dst[new_width × new_height]
+    if (quality == InterpolationQuality::Medium || quality == InterpolationQuality::High) {
+        KernelFunc kernel = (quality == InterpolationQuality::High) ? lanczos3 : mitchell;
+        int radius = (quality == InterpolationQuality::High) ? 3 : 2;
 
-        for (int x = 0; x < new_width; ++x) {
-            float fx = (x + 0.5f) * sx - 0.5f;
+        std::vector<uint32_t> tmp(static_cast<size_t>(new_width) * h);
+        resample_h(src32, w, h, src_stride32, tmp.data(), new_width, kernel, radius);
+        std::vector<uint32_t> tmp2(static_cast<size_t>(new_width) * new_height);
+        resample_v(tmp.data(), new_width, h, tmp2.data(), new_height, kernel, radius);
 
-            uint32_t argb;
-            switch (quality) {
-            case InterpolationQuality::None: {
-                int ix = std::clamp(static_cast<int>(fx + 0.5f), 0, w - 1);
-                int iy = std::clamp(static_cast<int>(fy + 0.5f), 0, h - 1);
-                argb = src32[static_cast<size_t>(iy) * src_stride32 + ix];
-                break;
+        for (int y = 0; y < new_height; ++y) {
+            const uint32_t* s = tmp2.data() + static_cast<size_t>(y) * new_width;
+            auto* d = reinterpret_cast<uint32_t*>(
+                impl->data + static_cast<size_t>(y) * new_stride);
+            if (needs_conv) {
+                for (int x = 0; x < new_width; ++x)
+                    d[x] = pixel_from_argb_premul(s[x], m_impl->format);
+            } else {
+                std::memcpy(d, s, static_cast<size_t>(new_width) * 4);
             }
-            case InterpolationQuality::Low:
-                argb = sample_bilinear(src32, w, h, src_stride32, fx, fy);
-                break;
-            case InterpolationQuality::Medium:
-                argb = sample_bicubic(src32, w, h, src_stride32, fx, fy);
-                break;
-            case InterpolationQuality::High:
-                argb = sample_lanczos(src32, w, h, src_stride32, fx, fy);
-                break;
-            default:
-                argb = sample_bilinear(src32, w, h, src_stride32, fx, fy);
-                break;
-            }
+        }
+    } else {
+        // Per-pixel path for None and Low (bilinear).
+        for (int y = 0; y < new_height; ++y) {
+            auto* dst_row = reinterpret_cast<uint32_t*>(
+                impl->data + static_cast<size_t>(y) * new_stride);
+            float fy = (y + 0.5f) * sy - 0.5f;
 
-            dst_row[x] = needs_conv
-                ? pixel_from_argb_premul(argb, m_impl->format)
-                : argb;
+            for (int x = 0; x < new_width; ++x) {
+                float fx = (x + 0.5f) * sx - 0.5f;
+
+                uint32_t argb;
+                if (quality == InterpolationQuality::None) {
+                    int ix = std::clamp(static_cast<int>(fx + 0.5f), 0, w - 1);
+                    int iy = std::clamp(static_cast<int>(fy + 0.5f), 0, h - 1);
+                    argb = src32[static_cast<size_t>(iy) * src_stride32 + ix];
+                } else {
+                    argb = sample_bilinear(src32, w, h, src_stride32, fx, fy);
+                }
+
+                dst_row[x] = needs_conv
+                    ? pixel_from_argb_premul(argb, m_impl->format)
+                    : argb;
+            }
         }
     }
 
@@ -1119,6 +1196,10 @@ std::vector<unsigned char> to_rgba_straight(const Image::Impl* p) {
 }
 
 // HDR write: reconstruct float data using headroom metadata.
+// NOTE: The reconstructed HDR is an approximation. If the Image was loaded
+// from HDR and stored as 8-bit internally, the original dynamic range was
+// lost during tonemap + quantization. The output preserves the headroom
+// scale factor but not the original per-pixel precision.
 std::vector<float> to_rgba_hdr(const Image::Impl* p) {
     int w = p->width;
     int h = p->height;

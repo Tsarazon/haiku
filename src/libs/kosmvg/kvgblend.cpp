@@ -29,17 +29,7 @@ inline uint32_t sample_gradient(const Gradient::Impl* grad, float t) {
     return sample_gradient_argb(grad, t);
 }
 
-// Bilinear lerp between two premultiplied ARGB pixels.
-// frac is in [0, 256].
-inline uint32_t bilerp_argb(uint32_t a, uint32_t b, uint32_t frac) {
-    if (frac == 0)   return a;
-    if (frac == 256) return b;
-    uint32_t inv = 256 - frac;
-    // Process RB and AG pairs in parallel (no overflow: each channel * 256 fits in 24 bits)
-    uint32_t rb = (((a & 0x00FF00FF) * inv + (b & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
-    uint32_t ag = ((((a >> 8) & 0x00FF00FF) * inv + ((b >> 8) & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
-    return (ag << 8) | rb;
-}
+// bilerp_argb is defined in kvgutils.hpp
 
 // Paint source: generate premultiplied ARGB for a pixel at (px, py)
 
@@ -111,6 +101,27 @@ inline uint32_t generate_color(const PaintSource& paint, int px, int py) {
         float t = angle / two_pi;
         t = std::fmod(t, 1.0f);
         if (t < 0.0f) t += 1.0f;
+        return gradient_pixel(paint.gradient, t);
+    }
+
+    case PaintKind::DiamondGradient: {
+        float cx = paint.grad_values[0], cy = paint.grad_values[1];
+        float hw = paint.grad_values[2], hh = paint.grad_values[3];
+        float cos_a = paint.grad_values[4], sin_a = paint.grad_values[5];
+
+        Point gp = paint.grad_inv_valid
+            ? paint.grad_inv_transform.apply(Point(float(px) + 0.5f, float(py) + 0.5f))
+            : Point(float(px) + 0.5f, float(py) + 0.5f);
+
+        float dx = gp.x - cx;
+        float dy = gp.y - cy;
+        // Rotate into diamond-local coordinates.
+        float lx = dx * cos_a + dy * sin_a;
+        float ly = -dx * sin_a + dy * cos_a;
+        // Diamond distance: L1 norm scaled by half-axes.
+        float t = (hw > 0 ? std::abs(lx) / hw : 0.0f)
+                + (hh > 0 ? std::abs(ly) / hh : 0.0f);
+        t = std::clamp(t, 0.0f, 1.0f);
         return gradient_pixel(paint.gradient, t);
     }
 
@@ -658,52 +669,6 @@ uint32_t dither_pixel_srgb(uint32_t premul, int px, int py) {
 
 namespace {
 
-// Row-indexed clip span access.
-// Spans are sorted by y (from rasterizer). We build y -> [begin,end)
-// index so per-pixel clip lookup is O(spans_in_row) not O(total_spans).
-
-struct ClipRowIndex {
-    int y_min = 0;
-    int y_max = 0;
-    std::vector<int> row_start; // row_start[y - y_min] = first span index for row y
-    std::vector<int> row_end;   // row_end[y - y_min]   = one-past-last span index
-
-    void build(const SpanBuffer& buf) {
-        row_start.clear();
-        row_end.clear();
-        if (buf.spans.empty()) return;
-
-        y_min = buf.spans.front().y;
-        y_max = buf.spans.back().y + 1;
-        int h = y_max - y_min;
-        row_start.resize(h, 0);
-        row_end.resize(h, 0);
-
-        int n = static_cast<int>(buf.spans.size());
-        int i = 0;
-        while (i < n) {
-            int y = buf.spans[i].y;
-            int ri = y - y_min;
-            row_start[ri] = i;
-            while (i < n && buf.spans[i].y == y) ++i;
-            row_end[ri] = i;
-        }
-    }
-
-    bool empty() const { return row_start.empty(); }
-
-    uint8_t coverage_at(const SpanBuffer& buf, int x, int y) const {
-        if (y < y_min || y >= y_max) return 0;
-        int ri = y - y_min;
-        for (int i = row_start[ri]; i < row_end[ri]; ++i) {
-            auto& s = buf.spans[i];
-            if (x < s.x) return 0; // sorted by x, no point looking further
-            if (x < s.x + s.len) return s.coverage;
-        }
-        return 0;
-    }
-};
-
 // =========================================================================
 //  Row-based gradient fetchers
 //  Fill a scanline buffer with gradient colors, avoiding per-pixel overhead.
@@ -940,6 +905,43 @@ void fetch_conic_row(uint32_t* buffer, const PaintSource& paint,
     }
 }
 
+void fetch_diamond_row(uint32_t* buffer, const PaintSource& paint,
+                       int y, int x, int length) {
+    const auto* gi = paint.gradient;
+    float cx = paint.grad_values[0], cy = paint.grad_values[1];
+    float hw = paint.grad_values[2], hh = paint.grad_values[3];
+    float cos_a = paint.grad_values[4], sin_a = paint.grad_values[5];
+
+    float inv_hw = (hw > 0) ? 1.0f / hw : 0.0f;
+    float inv_hh = (hh > 0) ? 1.0f / hh : 0.0f;
+
+    float px0 = float(x) + 0.5f, py = float(y) + 0.5f;
+    float gx0, gy0;
+    float step_x, step_y;
+    if (paint.grad_inv_valid) {
+        const auto& m = paint.grad_inv_transform;
+        gx0 = m.a * px0 + m.c * py + m.tx;
+        gy0 = m.b * px0 + m.d * py + m.ty;
+        step_x = m.a;
+        step_y = m.b;
+    } else {
+        gx0 = px0;
+        gy0 = py;
+        step_x = 1.0f;
+        step_y = 0.0f;
+    }
+
+    for (int i = 0; i < length; ++i) {
+        float dx = (gx0 + float(i) * step_x) - cx;
+        float dy = (gy0 + float(i) * step_y) - cy;
+        float lx =  dx * cos_a + dy * sin_a;
+        float ly = -dx * sin_a + dy * cos_a;
+        float t = std::abs(lx) * inv_hw + std::abs(ly) * inv_hh;
+        t = std::clamp(t, 0.0f, 1.0f);
+        buffer[i] = gradient_pixel(gi, t);
+    }
+}
+
 // Specialized blend span for gradient + Normal + SourceOver + sRGB.
 // Fetches a whole row of gradient colors via the appropriate row fetcher,
 // then composites the row in a tight loop.
@@ -973,6 +975,8 @@ void blend_span_gradient_srcover(
         fetch_radial_row(fetch_buf, *params.paint, y, x0, length); break;
     case PaintKind::ConicGradient:
         fetch_conic_row(fetch_buf, *params.paint, y, x0, length); break;
+    case PaintKind::DiamondGradient:
+        fetch_diamond_row(fetch_buf, *params.paint, y, x0, length); break;
     default:
         return;
     }
@@ -1318,7 +1322,8 @@ void blend(const BlendParams& params, const SpanBuffer& span_buffer,
     bool use_fast_gradient = fast_common
                           && (effective.paint->kind == PaintKind::LinearGradient
                            || effective.paint->kind == PaintKind::RadialGradient
-                           || effective.paint->kind == PaintKind::ConicGradient)
+                           || effective.paint->kind == PaintKind::ConicGradient
+                           || effective.paint->kind == PaintKind::DiamondGradient)
                           && effective.paint->gradient != nullptr;
 
     if (use_fast_solid) {

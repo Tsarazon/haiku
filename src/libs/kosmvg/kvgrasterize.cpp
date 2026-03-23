@@ -114,6 +114,13 @@ void span_buffer_extents(const SpanBuffer& buf, Rect& extents) {
 
 void span_buffer_intersect(SpanBuffer& dst, const SpanBuffer& a, const SpanBuffer& b) {
     dst.reset();
+    if (a.spans.empty() || b.spans.empty()) return;
+
+    // Bounds early-out: if Y ranges don't overlap, result is empty.
+    int a_y0 = a.spans.front().y, a_y1 = a.spans.back().y;
+    int b_y0 = b.spans.front().y, b_y1 = b.spans.back().y;
+    if (a_y1 < b_y0 || b_y1 < a_y0) return;
+
     dst.spans.reserve(std::max(a.spans.size(), b.spans.size()));
 
     auto* a_it  = a.spans.data();
@@ -121,17 +128,36 @@ void span_buffer_intersect(SpanBuffer& dst, const SpanBuffer& a, const SpanBuffe
     auto* b_it  = b.spans.data();
     auto* b_end = b_it + b.spans.size();
 
-    while (a_it < a_end && b_it < b_end) {
-        if (b_it->y > a_it->y) { ++a_it; continue; }
-        if (a_it->y != b_it->y) { ++b_it; continue; }
+    // Skip to the overlapping Y range.
+    if (a_y0 < b_y0) {
+        a_it = std::lower_bound(a_it, a_end, b_y0,
+            [](const Span& s, int y) { return s.y < y; });
+    } else if (b_y0 < a_y0) {
+        b_it = std::lower_bound(b_it, b_end, a_y0,
+            [](const Span& s, int y) { return s.y < y; });
+    }
 
+    while (a_it < a_end && b_it < b_end) {
+        if (a_it->y < b_it->y) {
+            // Skip a spans to b's current Y via binary search.
+            a_it = std::lower_bound(a_it, a_end, b_it->y,
+                [](const Span& s, int y) { return s.y < y; });
+            continue;
+        }
+        if (b_it->y < a_it->y) {
+            b_it = std::lower_bound(b_it, b_end, a_it->y,
+                [](const Span& s, int y) { return s.y < y; });
+            continue;
+        }
+
+        // Same Y — intersect X ranges.
         int ax1 = a_it->x;
         int ax2 = ax1 + a_it->len;
         int bx1 = b_it->x;
         int bx2 = bx1 + b_it->len;
 
-        if (bx1 < ax1 && bx2 < ax1) { ++b_it; continue; }
-        if (ax1 < bx1 && ax2 < bx1) { ++a_it; continue; }
+        if (bx2 <= ax1) { ++b_it; continue; }
+        if (ax2 <= bx1) { ++a_it; continue; }
 
         int x = std::max(ax1, bx1);
         int len = std::min(ax2, bx2) - x;

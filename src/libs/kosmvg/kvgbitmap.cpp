@@ -372,6 +372,30 @@ void BitmapContext::composite(const Image& src, const IntRect& src_rect,
     int src_bpp = pixel_format_info(si->format).bpp;
     int dst_bpp = pixel_format_info(m_impl->render_format).bpp;
 
+    // Fast path: both ARGB32_Premultiplied — skip per-pixel format conversion.
+    bool src_is_argb = (si->format == PixelFormat::ARGB32_Premultiplied
+                     || si->format == PixelFormat::BGRA32_Premultiplied);
+    bool dst_is_argb = (m_impl->render_format == PixelFormat::ARGB32_Premultiplied
+                     || m_impl->render_format == PixelFormat::BGRA32_Premultiplied);
+
+    if (src_is_argb && dst_is_argb && src_bpp == 4 && dst_bpp == 4) {
+        for (int y = 0; y < sh; ++y) {
+            const auto* s32 = reinterpret_cast<const uint32_t*>(
+                si->data + (sy0 + y) * si->stride);
+            auto* d32 = reinterpret_cast<uint32_t*>(
+                m_impl->render_data + (dst_y + y) * m_impl->render_stride);
+
+            for (int x = 0; x < sw; ++x) {
+                uint32_t src_px = s32[sx0 + x];
+                if (opa_byte < 255)
+                    src_px = byte_mul(src_px, opa_byte);
+                d32[dst_x + x] = composite_pixel(src_px, d32[dst_x + x], op, blend,
+                                                  m_impl->working_space);
+            }
+        }
+        return;
+    }
+
     for (int y = 0; y < sh; ++y) {
         const auto* s_row = si->data + (sy0 + y) * si->stride;
         auto* d_row = m_impl->render_data + (dst_y + y) * m_impl->render_stride;
@@ -460,27 +484,7 @@ void BitmapContext::apply_blur(float radius) {
     PixelFormat fmt = m_impl->render_format;
 
     if (fmt == PixelFormat::A8) {
-        // A8 is 1 byte/pixel; gaussian_blur operates on ARGB32 (4 bytes/pixel).
-        // Expand to ARGB32, blur, extract alpha back.
-        int argb_stride = w * 4;
-        argb_stride = (argb_stride + 15) & ~15;
-        std::vector<unsigned char> argb_buf(static_cast<size_t>(h) * argb_stride, 0);
-
-        for (int y = 0; y < h; ++y) {
-            const auto* src_row = m_impl->render_data + y * m_impl->render_stride;
-            auto* dst_row = reinterpret_cast<uint32_t*>(argb_buf.data() + y * argb_stride);
-            for (int x = 0; x < w; ++x)
-                dst_row[x] = pack_argb(src_row[x], 0, 0, 0);
-        }
-
-        gaussian_blur(argb_buf.data(), w, h, argb_stride, radius);
-
-        for (int y = 0; y < h; ++y) {
-            const auto* src_row = reinterpret_cast<const uint32_t*>(argb_buf.data() + y * argb_stride);
-            auto* dst_row = m_impl->render_data + y * m_impl->render_stride;
-            for (int x = 0; x < w; ++x)
-                dst_row[x] = pixel_alpha(src_row[x]);
-        }
+        gaussian_blur_alpha(m_impl->render_data, w, h, m_impl->render_stride, radius);
         return;
     }
 
@@ -525,10 +529,66 @@ void BitmapContext::apply_blur(float radius) {
 void BitmapContext::apply_color_matrix(const ColorMatrix& cm) {
     if (!m_impl || !m_impl->render_data) return;
 
+    // Identity early-out.
+    const auto& m = cm.m;
+    bool is_identity = (m[0]==1 && m[1]==0 && m[2]==0 && m[3]==0 && m[4]==0
+                     && m[5]==0 && m[6]==1 && m[7]==0 && m[8]==0 && m[9]==0
+                     && m[10]==0 && m[11]==0 && m[12]==1 && m[13]==0 && m[14]==0
+                     && m[15]==0 && m[16]==0 && m[17]==0 && m[18]==1 && m[19]==0);
+    if (is_identity) return;
+
     int w = m_impl->render_width;
     int h = m_impl->render_height;
     int bpp = pixel_format_info(m_impl->render_format).bpp;
 
+    // Alpha-preserving fast-path: when the matrix does not modify alpha
+    // (row 3 = [0,0,0,1,0]) and format is ARGB32_Premultiplied, we can
+    // apply the 3x3 RGB sub-matrix directly in premultiplied integer space
+    // with fixed-point arithmetic, skipping float unpremultiply/repremultiply.
+    bool alpha_identity = (m[15]==0 && m[16]==0 && m[17]==0 && m[18]==1 && m[19]==0);
+    bool no_bias = (m[4]==0 && m[9]==0 && m[14]==0);
+    bool no_alpha_coupling = (m[3]==0 && m[8]==0 && m[13]==0);
+    bool is_argb = (m_impl->render_format == PixelFormat::ARGB32_Premultiplied
+                 || m_impl->render_format == PixelFormat::BGRA32_Premultiplied);
+
+    if (alpha_identity && no_bias && no_alpha_coupling && is_argb && bpp == 4) {
+        // Fixed-point 8.8: multiply coefficients by 256.
+        int m00 = static_cast<int>(std::lroundf(m[0] * 256.0f));
+        int m01 = static_cast<int>(std::lroundf(m[1] * 256.0f));
+        int m02 = static_cast<int>(std::lroundf(m[2] * 256.0f));
+        int m10 = static_cast<int>(std::lroundf(m[5] * 256.0f));
+        int m11 = static_cast<int>(std::lroundf(m[6] * 256.0f));
+        int m12 = static_cast<int>(std::lroundf(m[7] * 256.0f));
+        int m20 = static_cast<int>(std::lroundf(m[10] * 256.0f));
+        int m21 = static_cast<int>(std::lroundf(m[11] * 256.0f));
+        int m22 = static_cast<int>(std::lroundf(m[12] * 256.0f));
+
+        for (int y = 0; y < h; ++y) {
+            auto* row = reinterpret_cast<uint32_t*>(
+                m_impl->render_data + y * m_impl->render_stride);
+            for (int x = 0; x < w; ++x) {
+                uint32_t px = row[x];
+                int pr = red(px), pg = green(px), pb = blue(px);
+
+                int nr = (m00 * pr + m01 * pg + m02 * pb + 128) >> 8;
+                int ng = (m10 * pr + m11 * pg + m12 * pb + 128) >> 8;
+                int nb = (m20 * pr + m21 * pg + m22 * pb + 128) >> 8;
+
+                int a = pixel_alpha(px);
+                nr = std::clamp(nr, 0, a);
+                ng = std::clamp(ng, 0, a);
+                nb = std::clamp(nb, 0, a);
+
+                row[x] = pack_argb(static_cast<uint8_t>(a),
+                                   static_cast<uint8_t>(nr),
+                                   static_cast<uint8_t>(ng),
+                                   static_cast<uint8_t>(nb));
+            }
+        }
+        return;
+    }
+
+    // General path: float unpremultiply → matrix → clamp → repremultiply.
     for (int y = 0; y < h; ++y) {
         auto* row = m_impl->render_data + y * m_impl->render_stride;
 
@@ -541,23 +601,20 @@ void BitmapContext::apply_color_matrix(const ColorMatrix& cm) {
             } else {
                 uint32_t px = pixel_to_argb_premul(
                     reinterpret_cast<uint32_t*>(row)[x], m_impl->render_format);
-                // Un-premultiply for matrix application.
                 auto rgba = unpremultiply_f(px);
                 r = rgba.r; g = rgba.g; b = rgba.b; a = rgba.a;
             }
 
-            // Apply 4×5 matrix: [R' G' B' A'] = M * [R G B A 1]^T
-            float nr = cm.m[0]*r + cm.m[1]*g + cm.m[2]*b + cm.m[3]*a + cm.m[4];
-            float ng = cm.m[5]*r + cm.m[6]*g + cm.m[7]*b + cm.m[8]*a + cm.m[9];
-            float nb = cm.m[10]*r + cm.m[11]*g + cm.m[12]*b + cm.m[13]*a + cm.m[14];
-            float na = cm.m[15]*r + cm.m[16]*g + cm.m[17]*b + cm.m[18]*a + cm.m[19];
+            float nr = m[0]*r + m[1]*g + m[2]*b + m[3]*a + m[4];
+            float ng = m[5]*r + m[6]*g + m[7]*b + m[8]*a + m[9];
+            float nb = m[10]*r + m[11]*g + m[12]*b + m[13]*a + m[14];
+            float na = m[15]*r + m[16]*g + m[17]*b + m[18]*a + m[19];
 
             nr = std::clamp(nr, 0.0f, 1.0f);
             ng = std::clamp(ng, 0.0f, 1.0f);
             nb = std::clamp(nb, 0.0f, 1.0f);
             na = std::clamp(na, 0.0f, 1.0f);
 
-            // Re-premultiply and pack.
             Color result{nr, ng, nb, na};
             uint32_t out = result.premultiplied().to_argb32();
 

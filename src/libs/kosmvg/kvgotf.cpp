@@ -22,6 +22,11 @@ void GlyphSink::line_to(float x, float y) const {
     func(ctx, OutlineCmd::line_to, &p, 1);
 }
 
+void GlyphSink::quad_to(float cx, float cy, float x, float y) const {
+    OutlinePoint pts[2] = {{cx, cy}, {x, y}};
+    func(ctx, OutlineCmd::quad_to, pts, 2);
+}
+
 void GlyphSink::cubic_to(float x1, float y1, float x2, float y2,
                           float x3, float y3) const {
     OutlinePoint pts[3] = {{x1, y1}, {x2, y2}, {x3, y3}};
@@ -271,6 +276,8 @@ std::optional<FontData> FontData::open(std::span<const uint8_t> data,
         }
     }
     if (f.m_index_map == 0) return std::nullopt;
+
+    f.resolve_kern_subtables();
 
     return f;
 }
@@ -690,18 +697,7 @@ int FontData::parse_tt_glyph(uint16_t glyph, const GlyphSink& sink,
     return hmetrics(glyph).advance_width;
 }
 
-// Emit a quadratic bezier as a cubic into the sink.
-static void emit_quad_as_cubic(const GlyphSink& sink,
-                                float ox, float oy,    // on-curve start
-                                float cx, float cy,    // off-curve control
-                                float ex, float ey) {  // on-curve end
-    // Exact degree elevation: quad(P0,P1,P2) → cubic(P0, P0+2/3(P1-P0), P2+2/3(P1-P2), P2)
-    float c1x = ox + (2.0f / 3.0f) * (cx - ox);
-    float c1y = oy + (2.0f / 3.0f) * (cy - oy);
-    float c2x = ex + (2.0f / 3.0f) * (cx - ex);
-    float c2y = ey + (2.0f / 3.0f) * (cy - ey);
-    sink.cubic_to(c1x, c1y, c2x, c2y, ex, ey);
-}
+// TrueType quadratics are now emitted directly via sink.quad_to().
 
 int FontData::parse_tt_simple(const uint8_t* glyph_ptr, int num_contours,
                                const GlyphSink& sink) const {
@@ -830,7 +826,7 @@ int FontData::parse_tt_simple(const uint8_t* glyph_ptr, int num_contours,
 
             if (on) {
                 if (was_off) {
-                    emit_quad_as_cubic(sink, last_on_x, last_on_y, cx, cy2, px, py);
+                    sink.quad_to(cx, cy2, px, py);
                 } else {
                     sink.line_to(px, py);
                 }
@@ -842,7 +838,7 @@ int FontData::parse_tt_simple(const uint8_t* glyph_ptr, int num_contours,
                     // Implied on-curve midpoint
                     float mx = (cx + px) * 0.5f;
                     float my = (cy2 + py) * 0.5f;
-                    emit_quad_as_cubic(sink, last_on_x, last_on_y, cx, cy2, mx, my);
+                    sink.quad_to(cx, cy2, mx, my);
                     last_on_x = mx;
                     last_on_y = my;
                 }
@@ -858,14 +854,14 @@ int FontData::parse_tt_simple(const uint8_t* glyph_ptr, int num_contours,
             if (was_off) {
                 float mx = (cx + scx) * 0.5f;
                 float my = (cy2 + scy) * 0.5f;
-                emit_quad_as_cubic(sink, last_on_x, last_on_y, cx, cy2, mx, my);
+                sink.quad_to(cx, cy2, mx, my);
                 last_on_x = mx;
                 last_on_y = my;
             }
-            emit_quad_as_cubic(sink, last_on_x, last_on_y, scx, scy, sx, sy);
+            sink.quad_to(scx, scy, sx, sy);
         } else {
             if (was_off) {
-                emit_quad_as_cubic(sink, last_on_x, last_on_y, cx, cy2, sx, sy);
+                sink.quad_to(cx, cy2, sx, sy);
             } else if (last_on_x != sx || last_on_y != sy) {
                 sink.line_to(sx, sy);
             }
@@ -1436,21 +1432,86 @@ static int extract_xadvance(const uint8_t* d, size_t dsz, size_t rec_off, uint16
 }
 
 int FontData::kern_gpos(uint16_t g1, uint16_t g2) const {
-    uint32_t gpos = m_tables.gpos;
-    if (!gpos) return 0;
+    if (m_kern_subtable_count == 0) return 0;
     auto* d = m_data.data();
     size_t dsz = m_data.size();
 
-    // GPOS header: version(4) + scriptListOff(2) + featureListOff(2) + lookupListOff(2)
-    if (gpos + 10 > dsz) return 0;
+    for (int i = 0; i < m_kern_subtable_count; ++i) {
+        const auto& ks = m_kern_subtables[i];
+        uint32_t subtable = ks.offset;
+
+        if (ks.format == 1) {
+            if (subtable + 10 > dsz) continue;
+            int vr1_sz = value_record_size(ks.vfmt1);
+            int vr2_sz = value_record_size(ks.vfmt2);
+
+            uint32_t cov_off = subtable + read_u16(d + subtable + 2);
+            int cov_idx = coverage_index(d, dsz, cov_off, g1);
+            if (cov_idx < 0) continue;
+
+            uint16_t pair_set_count = read_u16(d + subtable + 8);
+            if (cov_idx >= pair_set_count) continue;
+            uint32_t pairset = subtable + read_u16(d + subtable + 10 + cov_idx * 2);
+            if (pairset + 2 > dsz) continue;
+            int pvr_count = read_u16(d + pairset);
+            int pair_size = 2 + vr1_sz + vr2_sz;
+
+            int lo = 0, hi = pvr_count - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) >> 1;
+                size_t poff = pairset + 2 + static_cast<size_t>(mid) * pair_size;
+                if (poff + 2 > dsz) break;
+                uint16_t second = read_u16(d + poff);
+                if (g2 < second) hi = mid - 1;
+                else if (g2 > second) lo = mid + 1;
+                else return extract_xadvance(d, dsz, poff + 2, ks.vfmt1);
+            }
+
+        } else if (ks.format == 2) {
+            if (subtable + 16 > dsz) continue;
+
+            uint32_t cov_off = subtable + read_u16(d + subtable + 2);
+            if (coverage_index(d, dsz, cov_off, g1) < 0) continue;
+
+            uint32_t cd1_off = subtable + read_u16(d + subtable + 8);
+            uint32_t cd2_off = subtable + read_u16(d + subtable + 10);
+            uint16_t c1count = read_u16(d + subtable + 12);
+            uint16_t c2count = read_u16(d + subtable + 14);
+            if (c1count == 0 || c2count == 0) continue;
+
+            uint16_t cls1 = classdef_lookup(d, dsz, cd1_off, g1);
+            uint16_t cls2 = classdef_lookup(d, dsz, cd2_off, g2);
+            if (cls1 >= c1count || cls2 >= c2count) continue;
+
+            int vr1_sz = value_record_size(ks.vfmt1);
+            int vr2_sz = value_record_size(ks.vfmt2);
+            int rec_sz = vr1_sz + vr2_sz;
+            size_t rec_off = subtable + 16
+                + static_cast<size_t>(cls1) * c2count * rec_sz
+                + static_cast<size_t>(cls2) * rec_sz;
+
+            int val = extract_xadvance(d, dsz, rec_off, ks.vfmt1);
+            if (val != 0) return val;
+        }
+    }
+    return 0;
+}
+
+void FontData::resolve_kern_subtables() {
+    m_kern_subtable_count = 0;
+    uint32_t gpos = m_tables.gpos;
+    if (!gpos) return;
+    auto* d = m_data.data();
+    size_t dsz = m_data.size();
+
+    if (gpos + 10 > dsz) return;
     uint32_t feature_list = gpos + read_u16(d + gpos + 6);
     uint32_t lookup_list  = gpos + read_u16(d + gpos + 8);
 
-    // Find 'kern' feature in feature list
-    if (feature_list + 2 > dsz) return 0;
+    if (feature_list + 2 > dsz) return;
     int feature_count = read_u16(d + feature_list);
 
-    for (int fi = 0; fi < feature_count; ++fi) {
+    for (int fi = 0; fi < feature_count && m_kern_subtable_count < kMaxKernSubtables; ++fi) {
         uint32_t frec = feature_list + 2 + static_cast<uint32_t>(fi) * 6;
         if (frec + 6 > dsz) break;
         if (!tag_eq(d + frec, "kern")) continue;
@@ -1459,7 +1520,7 @@ int FontData::kern_gpos(uint16_t g1, uint16_t g2) const {
         if (ftable + 4 > dsz) continue;
         int lookup_count = read_u16(d + ftable + 2);
 
-        for (int li = 0; li < lookup_count; ++li) {
+        for (int li = 0; li < lookup_count && m_kern_subtable_count < kMaxKernSubtables; ++li) {
             if (ftable + 4 + (li + 1) * 2 > dsz) break;
             uint16_t lookup_idx = read_u16(d + ftable + 4 + li * 2);
 
@@ -1471,100 +1532,40 @@ int FontData::kern_gpos(uint16_t g1, uint16_t g2) const {
             uint32_t lookup = lookup_list + read_u16(d + lookup_list + 2 + lookup_idx * 2);
             if (lookup + 6 > dsz) continue;
             uint16_t lookup_type = read_u16(d + lookup);
-            // Extension lookup (type 9) — resolve to the real type
             bool is_extension = (lookup_type == 9);
             if (lookup_type != 2 && lookup_type != 9) continue;
 
             int subtable_count = read_u16(d + lookup + 4);
-            for (int si = 0; si < subtable_count; ++si) {
+            for (int si = 0; si < subtable_count && m_kern_subtable_count < kMaxKernSubtables; ++si) {
                 if (lookup + 6 + (si + 1) * 2 > dsz) break;
                 uint32_t subtable = lookup + read_u16(d + lookup + 6 + si * 2);
                 if (subtable + 4 > dsz) continue;
 
-                // Resolve Extension subtable
                 if (is_extension) {
                     if (subtable + 8 > dsz) continue;
                     uint16_t ext_fmt = read_u16(d + subtable);
                     if (ext_fmt != 1) continue;
                     uint16_t ext_type = read_u16(d + subtable + 2);
-                    if (ext_type != 2) continue; // only PairAdjustment
+                    if (ext_type != 2) continue;
                     subtable = subtable + read_u32(d + subtable + 4);
                     if (subtable + 4 > dsz) continue;
                 }
 
                 uint16_t pos_fmt = read_u16(d + subtable);
+                if (pos_fmt != 1 && pos_fmt != 2) continue;
 
-                if (pos_fmt == 1) {
-                    // Format 1: Individual pairs
-                    if (subtable + 10 > dsz) continue;
-                    uint16_t vfmt1 = read_u16(d + subtable + 4);
-                    uint16_t vfmt2 = read_u16(d + subtable + 6);
-                    if (!(vfmt1 & 0x04)) continue; // need XAdvance
+                uint16_t vfmt1 = (subtable + 6 <= dsz) ? read_u16(d + subtable + 4) : 0;
+                uint16_t vfmt2 = (subtable + 8 <= dsz) ? read_u16(d + subtable + 6) : 0;
+                if (!(vfmt1 & 0x04)) continue;
 
-                    int vr1_sz = value_record_size(vfmt1);
-                    int vr2_sz = value_record_size(vfmt2);
-
-                    uint32_t cov_off = subtable + read_u16(d + subtable + 2);
-                    int cov_idx = coverage_index(d, dsz, cov_off, g1);
-                    if (cov_idx < 0) continue;
-
-                    uint16_t pair_set_count = read_u16(d + subtable + 8);
-                    if (cov_idx >= pair_set_count) continue;
-                    uint32_t pairset = subtable + read_u16(d + subtable + 10 + cov_idx * 2);
-                    if (pairset + 2 > dsz) continue;
-                    int pvr_count = read_u16(d + pairset);
-                    int pair_size = 2 + vr1_sz + vr2_sz;
-
-                    // Binary search for g2 in PairSet
-                    int lo = 0, hi = pvr_count - 1;
-                    while (lo <= hi) {
-                        int mid = (lo + hi) >> 1;
-                        size_t poff = pairset + 2 + static_cast<size_t>(mid) * pair_size;
-                        if (poff + 2 > dsz) break;
-                        uint16_t second = read_u16(d + poff);
-                        if (g2 < second) hi = mid - 1;
-                        else if (g2 > second) lo = mid + 1;
-                        else return extract_xadvance(d, dsz, poff + 2, vfmt1);
-                    }
-
-                } else if (pos_fmt == 2) {
-                    // Format 2: Class-based pairs
-                    // Layout: posFormat(2) coverageOff(2) vfmt1(2) vfmt2(2)
-                    //         classDef1Off(2) classDef2Off(2) class1Count(2) class2Count(2)
-                    //         class1Records[c1count * c2count * (vr1_sz + vr2_sz)]
-                    if (subtable + 16 > dsz) continue;
-                    uint16_t vfmt1 = read_u16(d + subtable + 4);
-                    uint16_t vfmt2 = read_u16(d + subtable + 6);
-                    if (!(vfmt1 & 0x04)) continue; // need XAdvance
-
-                    // Coverage check: g1 must be covered
-                    uint32_t cov_off = subtable + read_u16(d + subtable + 2);
-                    if (coverage_index(d, dsz, cov_off, g1) < 0) continue;
-
-                    uint32_t cd1_off = subtable + read_u16(d + subtable + 8);
-                    uint32_t cd2_off = subtable + read_u16(d + subtable + 10);
-                    uint16_t c1count = read_u16(d + subtable + 12);
-                    uint16_t c2count = read_u16(d + subtable + 14);
-                    if (c1count == 0 || c2count == 0) continue;
-
-                    uint16_t cls1 = classdef_lookup(d, dsz, cd1_off, g1);
-                    uint16_t cls2 = classdef_lookup(d, dsz, cd2_off, g2);
-                    if (cls1 >= c1count || cls2 >= c2count) continue;
-
-                    int vr1_sz = value_record_size(vfmt1);
-                    int vr2_sz = value_record_size(vfmt2);
-                    int rec_sz = vr1_sz + vr2_sz;
-                    size_t rec_off = subtable + 16
-                        + static_cast<size_t>(cls1) * c2count * rec_sz
-                        + static_cast<size_t>(cls2) * rec_sz;
-
-                    int val = extract_xadvance(d, dsz, rec_off, vfmt1);
-                    if (val != 0) return val;
-                }
+                auto& ks = m_kern_subtables[m_kern_subtable_count++];
+                ks.offset = subtable;
+                ks.format = pos_fmt;
+                ks.vfmt1 = vfmt1;
+                ks.vfmt2 = vfmt2;
             }
         }
     }
-    return 0;
 }
 
 // Name table

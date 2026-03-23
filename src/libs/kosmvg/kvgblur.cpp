@@ -118,64 +118,23 @@ void box_blur_h(const uint32_t* src, uint32_t* dst,
     }
 }
 
-// Vertical box blur pass on premultiplied ARGB32 columns.
-// Supports in-place operation (src == dst) via per-column temp buffer.
-void box_blur_v(const uint32_t* src, uint32_t* dst,
-                int width, int height, int stride_bytes, int radius) {
-    if (radius <= 0) {
-        if (src != dst)
-            std::memcpy(dst, src, static_cast<size_t>(height) * stride_bytes);
-        return;
-    }
-    int diam = 2 * radius + 1;
-    int stride32 = stride_bytes / 4;
+// -- Block transpose helper --
+// Transposes a 2D buffer in 8x8 cache-friendly blocks.
+// src_stride / dst_stride are in element count (not bytes).
 
-    // When src == dst the sliding window would read already-written
-    // pixels above.  Snapshot each column before overwriting.
-    std::vector<uint32_t> col_buf;
-    if (src == dst)
-        col_buf.resize(static_cast<size_t>(height));
+constexpr int kTransposeBlock = 8;
 
-    for (int x = 0; x < width; ++x) {
-        const uint32_t* col_src;
-        int col_stride;
-
-        if (src == dst) {
-            for (int y = 0; y < height; ++y)
-                col_buf[static_cast<size_t>(y)] = src[y * stride32 + x];
-            col_src = col_buf.data();
-            col_stride = 1;
-        } else {
-            col_src = src + x;
-            col_stride = stride32;
-        }
-
-        uint32_t acc_a = 0, acc_r = 0, acc_g = 0, acc_b = 0;
-
-        for (int y = -radius; y <= radius; ++y) {
-            int iy = std::clamp(y, 0, height - 1);
-            uint32_t px = col_src[iy * col_stride];
-            acc_a += pixel_alpha(px);
-            acc_r += red(px);
-            acc_g += green(px);
-            acc_b += blue(px);
-        }
-
-        for (int y = 0; y < height; ++y) {
-            dst[y * stride32 + x] = pack_argb(
-                static_cast<uint8_t>(acc_a / diam),
-                static_cast<uint8_t>(acc_r / diam),
-                static_cast<uint8_t>(acc_g / diam),
-                static_cast<uint8_t>(acc_b / diam));
-
-            int add_y = std::min(y + radius + 1, height - 1);
-            int rem_y = std::max(y - radius, 0);
-            uint32_t add_px = col_src[add_y * col_stride];
-            uint32_t rem_px = col_src[rem_y * col_stride];
-            acc_a += pixel_alpha(add_px) - pixel_alpha(rem_px);
-            acc_r += red(add_px)   - red(rem_px);
-            acc_g += green(add_px) - green(rem_px);
-            acc_b += blue(add_px)  - blue(rem_px);
+template<typename T>
+void transpose_block(const T* src, int src_stride, T* dst, int dst_stride,
+                     int width, int height) {
+    for (int by = 0; by < height; by += kTransposeBlock) {
+        int bh = std::min(kTransposeBlock, height - by);
+        for (int bx = 0; bx < width; bx += kTransposeBlock) {
+            int bw = std::min(kTransposeBlock, width - bx);
+            for (int dy = 0; dy < bh; ++dy)
+                for (int dx = 0; dx < bw; ++dx)
+                    dst[(bx + dx) * dst_stride + (by + dy)]
+                        = src[(by + dy) * src_stride + (bx + dx)];
         }
     }
 }
@@ -219,39 +178,28 @@ void box_blur_h_alpha(const unsigned char* src, unsigned char* dst,
 }
 
 void box_blur_v_alpha(const unsigned char* src, unsigned char* dst,
-                      int width, int height, int stride, int radius) {
+                      int width, int height, int stride, int radius,
+                      unsigned char* scratch_a = nullptr,
+                      unsigned char* scratch_b = nullptr) {
     if (radius <= 0) {
         if (src != dst)
             std::memcpy(dst, src, static_cast<size_t>(height) * stride);
         return;
     }
     int diam = 2 * radius + 1;
+    int t_stride = height;
+    size_t t_size = static_cast<size_t>(width) * height;
 
-    // XY-flip optimization: transpose 8x8 blocks before vertical pass
-    // to make column access cache-friendly (sequential memory access).
-    constexpr int kBlock = 8;
-    std::vector<unsigned char> transposed(static_cast<size_t>(width) * height);
-    int t_stride = height; // transposed: width and height swapped
+    // Use caller-provided scratch or allocate locally.
+    std::vector<unsigned char> local_a, local_b;
+    if (!scratch_a) { local_a.resize(t_size); scratch_a = local_a.data(); }
+    if (!scratch_b) { local_b.resize(t_size); scratch_b = local_b.data(); }
 
-    // Transpose src into transposed (height x width → width x height)
-    for (int by = 0; by < height; by += kBlock) {
-        int bh = std::min(kBlock, height - by);
-        for (int bx = 0; bx < width; bx += kBlock) {
-            int bw = std::min(kBlock, width - bx);
-            for (int dy = 0; dy < bh; ++dy)
-                for (int dx = 0; dx < bw; ++dx)
-                    transposed[(bx + dx) * t_stride + (by + dy)]
-                        = src[(by + dy) * stride + (bx + dx)];
-        }
-    }
-
-    // Now blur "horizontally" on the transposed buffer (= vertical in original space)
-    std::vector<unsigned char> t_dst(transposed.size());
-    std::vector<unsigned char> row_buf(static_cast<size_t>(height));
+    transpose_block(src, stride, scratch_a, t_stride, width, height);
 
     for (int col = 0; col < width; ++col) {
-        const unsigned char* row_src = transposed.data() + col * t_stride;
-        unsigned char* row_dst_p = t_dst.data() + col * t_stride;
+        const unsigned char* row_src = scratch_a + col * t_stride;
+        unsigned char* row_dst_p = scratch_b + col * t_stride;
 
         uint32_t acc = 0;
         for (int y = -radius; y <= radius; ++y)
@@ -264,23 +212,14 @@ void box_blur_v_alpha(const unsigned char* src, unsigned char* dst,
         }
     }
 
-    // Transpose back
-    for (int by = 0; by < height; by += kBlock) {
-        int bh = std::min(kBlock, height - by);
-        for (int bx = 0; bx < width; bx += kBlock) {
-            int bw = std::min(kBlock, width - bx);
-            for (int dy = 0; dy < bh; ++dy)
-                for (int dx = 0; dx < bw; ++dx)
-                    dst[(by + dy) * stride + (bx + dx)]
-                        = t_dst[(bx + dx) * t_stride + (by + dy)];
-        }
-    }
+    transpose_block(scratch_b, t_stride, dst, stride, height, width);
 }
 
 // XY-flip optimization for ARGB vertical blur pass.
-// Transposes in 8x8 blocks for cache-coherent column access.
 void box_blur_v_flip(const uint32_t* src, uint32_t* dst,
-                     int width, int height, int stride_bytes, int radius) {
+                     int width, int height, int stride_bytes, int radius,
+                     uint32_t* scratch_a = nullptr,
+                     uint32_t* scratch_b = nullptr) {
     if (radius <= 0) {
         if (src != dst)
             std::memcpy(dst, src, static_cast<size_t>(height) * stride_bytes);
@@ -288,29 +227,18 @@ void box_blur_v_flip(const uint32_t* src, uint32_t* dst,
     }
     int diam = 2 * radius + 1;
     int stride32 = stride_bytes / 4;
+    int t_stride = height;
+    size_t t_count = static_cast<size_t>(width) * height;
 
-    constexpr int kBlock = 8;
-    int t_stride = height; // transposed dimensions
-    std::vector<uint32_t> transposed(static_cast<size_t>(width) * height);
+    std::vector<uint32_t> local_a, local_b;
+    if (!scratch_a) { local_a.resize(t_count); scratch_a = local_a.data(); }
+    if (!scratch_b) { local_b.resize(t_count); scratch_b = local_b.data(); }
 
-    // Transpose src into transposed buffer (8x8 blocks)
-    for (int by = 0; by < height; by += kBlock) {
-        int bh = std::min(kBlock, height - by);
-        for (int bx = 0; bx < width; bx += kBlock) {
-            int bw = std::min(kBlock, width - bx);
-            for (int dy = 0; dy < bh; ++dy)
-                for (int dx = 0; dx < bw; ++dx)
-                    transposed[(bx + dx) * t_stride + (by + dy)]
-                        = src[(by + dy) * stride32 + (bx + dx)];
-        }
-    }
-
-    // Blur "horizontally" on transposed data (= vertical in original space)
-    std::vector<uint32_t> t_dst(transposed.size());
+    transpose_block(src, stride32, scratch_a, t_stride, width, height);
 
     for (int col = 0; col < width; ++col) {
-        const uint32_t* row_src = transposed.data() + col * t_stride;
-        uint32_t* row_dst_p = t_dst.data() + col * t_stride;
+        const uint32_t* row_src = scratch_a + col * t_stride;
+        uint32_t* row_dst_p = scratch_b + col * t_stride;
 
         uint32_t acc_a = 0, acc_r = 0, acc_g = 0, acc_b = 0;
         for (int y = -radius; y <= radius; ++y) {
@@ -340,17 +268,7 @@ void box_blur_v_flip(const uint32_t* src, uint32_t* dst,
         }
     }
 
-    // Transpose back to dst
-    for (int by = 0; by < height; by += kBlock) {
-        int bh = std::min(kBlock, height - by);
-        for (int bx = 0; bx < width; bx += kBlock) {
-            int bw = std::min(kBlock, width - bx);
-            for (int dy = 0; dy < bh; ++dy)
-                for (int dx = 0; dx < bw; ++dx)
-                    dst[(by + dy) * stride32 + (bx + dx)]
-                        = t_dst[(bx + dx) * t_stride + (by + dy)];
-        }
-    }
+    transpose_block(scratch_b, t_stride, dst, stride32, height, width);
 }
 
 } // anonymous namespace
@@ -373,12 +291,16 @@ void gaussian_blur_alpha(unsigned char* data, int width, int height,
     tmp.resize(buf_size);
 
     // 3 passes: H→V with XY-flip for vertical
+    // Pre-allocate transpose scratch once for all 3 vertical passes.
+    size_t t_size = static_cast<size_t>(width) * height;
+    std::vector<unsigned char> scratch_a(t_size), scratch_b(t_size);
+
     box_blur_h_alpha(data, tmp.data(), width, height, stride, radii[0]);
-    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[0]);
+    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[0], scratch_a.data(), scratch_b.data());
     box_blur_h_alpha(data, tmp.data(), width, height, stride, radii[1]);
-    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[1]);
+    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[1], scratch_a.data(), scratch_b.data());
     box_blur_h_alpha(data, tmp.data(), width, height, stride, radii[2]);
-    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[2]);
+    box_blur_v_alpha(tmp.data(), data, width, height, stride, radii[2], scratch_a.data(), scratch_b.data());
 }
 
 void gaussian_blur(unsigned char* data, int width, int height,
@@ -406,15 +328,19 @@ void gaussian_blur(unsigned char* data, int width, int height,
     auto* dst = reinterpret_cast<uint32_t*>(tmp.data());
 
     // 3 passes: H→V with XY-flip for cache-friendly vertical access
+    // Pre-allocate transpose scratch once for all 3 vertical passes.
+    size_t t_count = static_cast<size_t>(width) * height;
+    std::vector<uint32_t> scratch_a(t_count), scratch_b(t_count);
+
     // Pass 1
     box_blur_h(src, dst, width, height, stride, radii[0]);
-    box_blur_v_flip(dst, src, width, height, stride, radii[0]);
+    box_blur_v_flip(dst, src, width, height, stride, radii[0], scratch_a.data(), scratch_b.data());
     // Pass 2
     box_blur_h(src, dst, width, height, stride, radii[1]);
-    box_blur_v_flip(dst, src, width, height, stride, radii[1]);
+    box_blur_v_flip(dst, src, width, height, stride, radii[1], scratch_a.data(), scratch_b.data());
     // Pass 3
     box_blur_h(src, dst, width, height, stride, radii[2]);
-    box_blur_v_flip(dst, src, width, height, stride, radii[2]);
+    box_blur_v_flip(dst, src, width, height, stride, radii[2], scratch_a.data(), scratch_b.data());
 
     // Result is back in src (= data), done.
 }

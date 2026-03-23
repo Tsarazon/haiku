@@ -58,7 +58,8 @@ enum class Error {
     FileIOError,
     FontParseError,
     ImageDecodeError,
-    PathParseError
+    PathParseError,
+    NotImplemented
 };
 
 /// Last error from a factory method that returned a null object.
@@ -899,6 +900,9 @@ public:
     [[nodiscard]] Path reversed() const;
 
     // -- Boolean ops --
+    // NOTE: Boolean operations flatten all curves to line segments before
+    // computing the result. The returned Path is a polygon approximation
+    // of the mathematically correct boolean result.
 
     [[nodiscard]] Path united(const Path& other, FillRule rule = FillRule::Winding) const;
     [[nodiscard]] Path intersected(const Path& other, FillRule rule = FillRule::Winding) const;
@@ -1488,13 +1492,23 @@ public:
 
     // -- Graphics state stack --
 
+    /// Opaque cookie returned by save_state(). Pass to restore_state()
+    /// to validate stack depth in debug builds.
+    struct StateCookie { std::size_t depth = 0; };
+
     /// Push a copy of the current graphics state onto the stack.
     /// Saves: CTM, clip, fill/stroke colors, line style, blend mode,
     /// alpha, shadow, font, text drawing mode, interpolation quality.
     void save_state();
 
+    /// Overload returning a cookie for depth validation.
+    [[nodiscard]] StateCookie save_state_cookie();
+
     /// Pop and restore the most recently saved graphics state.
     void restore_state();
+
+    /// Pop and validate depth against the cookie. Debug assert on mismatch.
+    void restore_state(StateCookie cookie);
 
     /// RAII guard: calls save_state() on construction, restore_state() on destruction.
     class StateGuard {
@@ -1565,6 +1579,32 @@ public:
     void set_fill_pattern(const Pattern& pattern);
     void set_stroke_pattern(const Pattern& pattern);
 
+    // -- Fill / stroke gradients --
+    // Set a gradient as the fill/stroke source for subsequent draw calls.
+    // Overrides fill_color and fill_pattern. Geometry is in user space.
+
+    void set_fill_linear_gradient(const Gradient& grad, Point start, Point end);
+    void set_fill_radial_gradient(const Gradient& grad,
+                                  Point start_center, float start_radius,
+                                  Point end_center, float end_radius);
+    void set_fill_conic_gradient(const Gradient& grad,
+                                 Point center, float start_angle = 0.0f);
+    void set_fill_diamond_gradient(const Gradient& grad,
+                                   Point center, float half_width, float half_height,
+                                   float angle = 0.0f);
+    void clear_fill_gradient();
+
+    void set_stroke_linear_gradient(const Gradient& grad, Point start, Point end);
+    void set_stroke_radial_gradient(const Gradient& grad,
+                                    Point start_center, float start_radius,
+                                    Point end_center, float end_radius);
+    void set_stroke_conic_gradient(const Gradient& grad,
+                                   Point center, float start_angle = 0.0f);
+    void set_stroke_diamond_gradient(const Gradient& grad,
+                                     Point center, float half_width, float half_height,
+                                     float angle = 0.0f);
+    void clear_stroke_gradient();
+
     // -- Stroke parameters --
 
     void set_line_width(float width);
@@ -1617,6 +1657,22 @@ public:
 
     void set_should_antialias(bool aa);
     [[nodiscard]] bool should_antialias() const;
+
+    // -- Flatten tolerance --
+
+    /// Path flattening tolerance in user-space units (default: 0.25).
+    /// Lower values give smoother curves at the cost of more geometry.
+    void set_flatten_tolerance(float tolerance);
+    [[nodiscard]] float flatten_tolerance() const;
+
+    // -- Mask filter --
+
+    /// Set a mask filter applied to the coverage mask of subsequent
+    /// fill/stroke operations. MaskFilter blurs the shape edges before
+    /// colorization — use for soft shadows, glow, feathered strokes.
+    /// Pass a default MaskFilter (sigma=0) to clear.
+    void set_mask_filter(const MaskFilter& mf);
+    [[nodiscard]] MaskFilter mask_filter() const;
 
     // -- Interpolation quality --
 
@@ -1691,6 +1747,26 @@ public:
     void stroke_round_rect(const Rect& rect, float radius);
     void stroke_round_rect(const Rect& rect, const CornerRadii& radii);
 
+    // -- Inline color overloads --
+    // Convenience: temporarily override fill/stroke color for a single call.
+    // State is restored after the call. No permanent side effects.
+
+    void fill_path(const Path& path, const Color& color,
+                   FillRule rule = FillRule::Winding);
+    void stroke_path(const Path& path, const Color& color);
+    void fill_rect(const Rect& rect, const Color& color);
+    void stroke_rect(const Rect& rect, const Color& color);
+    void fill_ellipse(const Rect& rect, const Color& color);
+    void fill_round_rect(const Rect& rect, float radius, const Color& color);
+    void fill_round_rect(const Rect& rect, const CornerRadii& radii, const Color& color);
+
+    // -- Line / triangle convenience --
+
+    void stroke_line(Point from, Point to);
+    void stroke_line(Point from, Point to, const Color& color);
+    void fill_triangle(Point a, Point b, Point c);
+    void fill_triangle(Point a, Point b, Point c, const Color& color);
+
     // -- Gradient drawing --
     // Gradients are drawn into the current clip. Typical pattern:
     //     ctx.save_state();
@@ -1725,6 +1801,14 @@ public:
                              Point center, float start_angle,
                              const AffineTransform* gradient_transform = nullptr,
                              GradientDrawingOptions options = GradientDrawingOptions::None);
+
+    /// Diamond (rhombus) gradient centered at a point. half_width/half_height
+    /// define the diamond axes in user space. angle rotates the diamond.
+    void draw_diamond_gradient(const Gradient& gradient,
+                               Point center, float half_width, float half_height,
+                               float angle = 0.0f,
+                               const AffineTransform* gradient_transform = nullptr,
+                               GradientDrawingOptions options = GradientDrawingOptions::None);
 
     // -- Shading drawing --
     // Procedural color function. Unlike Gradient (discrete stops),
@@ -1789,6 +1873,7 @@ public:
     void begin_transparency_layer(float opacity = 1.0f);
     void begin_transparency_layer(float opacity, const Rect& bounds);
     void begin_transparency_layer(float opacity, BlendMode blend);
+    void begin_transparency_layer(float opacity, const Rect& bounds, BlendMode blend);
     void end_transparency_layer();
 
     /// RAII guard: begins a transparency layer on construction,

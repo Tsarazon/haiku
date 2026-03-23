@@ -7,6 +7,9 @@
 
 namespace kvg {
 
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "Pixel format identity assumes little-endian");
+
 // Byte layout reminder:
 //   ARGB32_Premultiplied: uint32 = (A<<24)|(R<<16)|(G<<8)|B
 //                         On LE memory: bytes are [B, G, R, A]

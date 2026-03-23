@@ -64,6 +64,19 @@ void Context::restore_state() {
     m_impl->states.pop();
 }
 
+Context::StateCookie Context::save_state_cookie() {
+    if (!m_impl) return {};
+    m_impl->states.push();
+    return {m_impl->states.depth()};
+}
+
+void Context::restore_state(StateCookie cookie) {
+    if (!m_impl) return;
+    assert(m_impl->states.depth() == cookie.depth
+           && "restore_state: stack depth mismatch (mismatched save/restore)");
+    restore_state();
+}
+
 // -- CTM --
 
 void Context::concat_ctm(const AffineTransform& t) {
@@ -236,6 +249,7 @@ void Context::set_fill_color(const Color& c) {
     auto& st = m_impl->state();
     st.fill_color = c;
     st.has_fill_pattern = false;
+    st.fill_gradient.kind = PaintKind::Solid;
 }
 
 void Context::set_fill_color(float r, float g, float b, float a) {
@@ -247,6 +261,7 @@ void Context::set_stroke_color(const Color& c) {
     auto& st = m_impl->state();
     st.stroke_color = c;
     st.has_stroke_pattern = false;
+    st.stroke_gradient.kind = PaintKind::Solid;
 }
 
 void Context::set_stroke_color(float r, float g, float b, float a) {
@@ -270,6 +285,7 @@ void Context::set_fill_pattern(const Pattern& pattern) {
     auto& st = m_impl->state();
     st.fill_pattern = pattern;
     st.has_fill_pattern = static_cast<bool>(pattern);
+    st.fill_gradient.kind = PaintKind::Solid;
 }
 
 void Context::set_stroke_pattern(const Pattern& pattern) {
@@ -277,6 +293,97 @@ void Context::set_stroke_pattern(const Pattern& pattern) {
     auto& st = m_impl->state();
     st.stroke_pattern = pattern;
     st.has_stroke_pattern = static_cast<bool>(pattern);
+    st.stroke_gradient.kind = PaintKind::Solid;
+}
+
+// -- Fill / stroke gradients --
+
+static void setup_gradient_info(State::GradientInfo& gi, PaintKind kind,
+                                const Gradient& grad, const float* vals, int nvals) {
+    gi.kind = kind;
+    gi.gradient = grad;
+    for (int i = 0; i < nvals && i < 6; ++i) gi.values[i] = vals[i];
+    for (int i = nvals; i < 6; ++i) gi.values[i] = 0.0f;
+}
+
+void Context::set_fill_linear_gradient(const Gradient& grad, Point start, Point end) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[4] = {start.x, start.y, end.x, end.y};
+    setup_gradient_info(st.fill_gradient, PaintKind::LinearGradient, grad, v, 4);
+    st.has_fill_pattern = false;
+}
+
+void Context::set_fill_radial_gradient(const Gradient& grad,
+                                       Point sc, float sr, Point ec, float er) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[6] = {sc.x, sc.y, sr, ec.x, ec.y, er};
+    setup_gradient_info(st.fill_gradient, PaintKind::RadialGradient, grad, v, 6);
+    st.has_fill_pattern = false;
+}
+
+void Context::set_fill_conic_gradient(const Gradient& grad,
+                                      Point center, float start_angle) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[3] = {center.x, center.y, start_angle};
+    setup_gradient_info(st.fill_gradient, PaintKind::ConicGradient, grad, v, 3);
+    st.has_fill_pattern = false;
+}
+
+void Context::set_fill_diamond_gradient(const Gradient& grad,
+                                        Point center, float hw, float hh, float angle) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[6] = {center.x, center.y, hw, hh, std::cos(angle), std::sin(angle)};
+    setup_gradient_info(st.fill_gradient, PaintKind::DiamondGradient, grad, v, 6);
+    st.has_fill_pattern = false;
+}
+
+void Context::clear_fill_gradient() {
+    if (!m_impl) return;
+    m_impl->state().fill_gradient.kind = PaintKind::Solid;
+}
+
+void Context::set_stroke_linear_gradient(const Gradient& grad, Point start, Point end) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[4] = {start.x, start.y, end.x, end.y};
+    setup_gradient_info(st.stroke_gradient, PaintKind::LinearGradient, grad, v, 4);
+    st.has_stroke_pattern = false;
+}
+
+void Context::set_stroke_radial_gradient(const Gradient& grad,
+                                         Point sc, float sr, Point ec, float er) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[6] = {sc.x, sc.y, sr, ec.x, ec.y, er};
+    setup_gradient_info(st.stroke_gradient, PaintKind::RadialGradient, grad, v, 6);
+    st.has_stroke_pattern = false;
+}
+
+void Context::set_stroke_conic_gradient(const Gradient& grad,
+                                        Point center, float start_angle) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[3] = {center.x, center.y, start_angle};
+    setup_gradient_info(st.stroke_gradient, PaintKind::ConicGradient, grad, v, 3);
+    st.has_stroke_pattern = false;
+}
+
+void Context::set_stroke_diamond_gradient(const Gradient& grad,
+                                          Point center, float hw, float hh, float angle) {
+    if (!m_impl) return;
+    auto& st = m_impl->state();
+    float v[6] = {center.x, center.y, hw, hh, std::cos(angle), std::sin(angle)};
+    setup_gradient_info(st.stroke_gradient, PaintKind::DiamondGradient, grad, v, 6);
+    st.has_stroke_pattern = false;
+}
+
+void Context::clear_stroke_gradient() {
+    if (!m_impl) return;
+    m_impl->state().stroke_gradient.kind = PaintKind::Solid;
 }
 
 // -- Stroke parameters --
@@ -425,6 +532,30 @@ bool Context::should_antialias() const {
     return m_impl->state().antialias;
 }
 
+// -- Flatten tolerance --
+
+void Context::set_flatten_tolerance(float tolerance) {
+    if (!m_impl) return;
+    m_impl->state().flatten_tolerance = std::max(0.01f, tolerance);
+}
+
+float Context::flatten_tolerance() const {
+    if (!m_impl) return 0.25f;
+    return m_impl->state().flatten_tolerance;
+}
+
+// -- Mask filter --
+
+void Context::set_mask_filter(const MaskFilter& mf) {
+    if (!m_impl) return;
+    m_impl->state().mask_filter = mf;
+}
+
+MaskFilter Context::mask_filter() const {
+    if (!m_impl) return {};
+    return m_impl->state().mask_filter;
+}
+
 // -- Interpolation quality --
 
 void Context::set_interpolation_quality(InterpolationQuality q) {
@@ -477,6 +608,97 @@ bool Context::tone_mapping() const {
 //  Internal helpers
 
 
+// -- MaskFilter: blur coverage mask and apply style --
+// Shared by do_fill() and do_stroke(). Modifies spans in-place.
+
+void apply_mask_filter(SpanBuffer& spans, const MaskFilter& mf) {
+    if (mf.is_none() || spans.spans.empty()) return;
+
+    Rect extents;
+    span_buffer_extents(spans, extents);
+    if (extents.empty()) return;
+
+    float blur_rad = mf.blur_radius();
+    int expand = static_cast<int>(std::ceil(blur_rad));
+
+    int bx = static_cast<int>(std::floor(extents.x())) - expand;
+    int by = static_cast<int>(std::floor(extents.y())) - expand;
+    int bw = static_cast<int>(std::ceil(extents.width())) + 2 * expand + 2;
+    int bh = static_cast<int>(std::ceil(extents.height())) + 2 * expand + 2;
+    if (bw <= 0 || bh <= 0) { spans.spans.clear(); return; }
+
+    // Rasterize span coverage into an alpha-only buffer.
+    int mask_stride = bw;
+    std::vector<unsigned char> mask_buf(static_cast<size_t>(bh) * mask_stride, 0);
+
+    for (const auto& span : spans.spans) {
+        int my = span.y - by;
+        if (my < 0 || my >= bh) continue;
+        for (int i = 0; i < span.len; ++i) {
+            int mx = span.x + i - bx;
+            if (mx >= 0 && mx < bw)
+                mask_buf[my * mask_stride + mx] = span.coverage;
+        }
+    }
+
+    // Save pre-blur mask for Style processing.
+    std::vector<unsigned char> orig_mask;
+    if (mf.style != MaskFilter::Style::Normal)
+        orig_mask = mask_buf;
+
+    // Blur the alpha mask directly (no ARGB round-trip).
+    if (blur_rad > 0.0f)
+        gaussian_blur_alpha(mask_buf.data(), bw, bh, mask_stride, blur_rad);
+
+    // Apply MaskFilter::Style.
+    switch (mf.style) {
+    case MaskFilter::Style::Normal:
+        break;
+    case MaskFilter::Style::Solid:
+        for (int y = 0; y < bh; ++y)
+            for (int x = 0; x < bw; ++x) {
+                int idx = y * mask_stride + x;
+                if (orig_mask[idx] > 0)
+                    mask_buf[idx] = std::max(mask_buf[idx], orig_mask[idx]);
+            }
+        break;
+    case MaskFilter::Style::Outer:
+        for (int y = 0; y < bh; ++y)
+            for (int x = 0; x < bw; ++x) {
+                int idx = y * mask_stride + x;
+                if (orig_mask[idx] > 0)
+                    mask_buf[idx] = 0;
+            }
+        break;
+    case MaskFilter::Style::Inner:
+        for (int y = 0; y < bh; ++y)
+            for (int x = 0; x < bw; ++x) {
+                int idx = y * mask_stride + x;
+                if (orig_mask[idx] == 0)
+                    mask_buf[idx] = 0;
+                else
+                    mask_buf[idx] = std::min(mask_buf[idx], orig_mask[idx]);
+            }
+        break;
+    }
+
+    // Rebuild spans from processed mask.
+    spans.spans.clear();
+    for (int y = 0; y < bh; ++y) {
+        int abs_y = by + y;
+        int run_start = -1;
+        uint8_t run_cov = 0;
+        for (int x = 0; x <= bw; ++x) {
+            uint8_t c = (x < bw) ? mask_buf[y * mask_stride + x] : 0;
+            if (c > 0 && c == run_cov) continue;
+            if (run_start >= 0 && run_cov > 0)
+                spans.spans.push_back({bx + run_start, x - run_start, abs_y, run_cov});
+            if (c > 0) { run_start = x; run_cov = c; }
+            else { run_start = -1; run_cov = 0; }
+        }
+    }
+}
+
 namespace {
 
 float effective_opacity(const State& st) {
@@ -490,7 +712,52 @@ PaintSource make_solid_paint(const Color& c) {
     return ps;
 }
 
+PaintSource make_gradient_paint(const State::GradientInfo& gi,
+                               const AffineTransform& ctm) {
+    PaintSource ps;
+    ps.kind = gi.kind;
+    ps.gradient = gradient_impl(gi.gradient);
+    ps.gradient->ensure_colortable();
+    ps.grad_spread = gi.gradient.spread();
+
+    // Transform geometry from user space to device space.
+    if (gi.kind == PaintKind::LinearGradient) {
+        Point s = ctm.apply({gi.values[0], gi.values[1]});
+        Point e = ctm.apply({gi.values[2], gi.values[3]});
+        ps.grad_values[0] = s.x; ps.grad_values[1] = s.y;
+        ps.grad_values[2] = e.x; ps.grad_values[3] = e.y;
+    } else if (gi.kind == PaintKind::RadialGradient) {
+        // Radial: transform centers, scale radii by average scale factor.
+        Point sc = ctm.apply({gi.values[0], gi.values[1]});
+        Point ec = ctm.apply({gi.values[3], gi.values[4]});
+        float avg_scale = std::sqrt(std::abs(ctm.a * ctm.d - ctm.b * ctm.c));
+        ps.grad_values[0] = sc.x; ps.grad_values[1] = sc.y;
+        ps.grad_values[2] = gi.values[2] * avg_scale;
+        ps.grad_values[3] = ec.x; ps.grad_values[4] = ec.y;
+        ps.grad_values[5] = gi.values[5] * avg_scale;
+    } else if (gi.kind == PaintKind::ConicGradient) {
+        Point c = ctm.apply({gi.values[0], gi.values[1]});
+        ps.grad_values[0] = c.x; ps.grad_values[1] = c.y;
+        ps.grad_values[2] = gi.values[2]; // start_angle
+    } else if (gi.kind == PaintKind::DiamondGradient) {
+        Point c = ctm.apply({gi.values[0], gi.values[1]});
+        float avg_scale = std::sqrt(std::abs(ctm.a * ctm.d - ctm.b * ctm.c));
+        ps.grad_values[0] = c.x; ps.grad_values[1] = c.y;
+        ps.grad_values[2] = gi.values[2] * avg_scale; // half_w
+        ps.grad_values[3] = gi.values[3] * avg_scale; // half_h
+        ps.grad_values[4] = gi.values[4]; // cos_angle
+        ps.grad_values[5] = gi.values[5]; // sin_angle
+    }
+
+    ps.grad_transform = AffineTransform::identity();
+    ps.grad_inv_transform = AffineTransform::identity();
+    ps.grad_inv_valid = true;
+    return ps;
+}
+
 PaintSource make_fill_paint(const State& st) {
+    if (st.fill_gradient.kind != PaintKind::Solid && st.fill_gradient.gradient)
+        return make_gradient_paint(st.fill_gradient, st.matrix);
     if (st.has_fill_pattern) {
         PaintSource ps;
         ps.kind = PaintKind::PatternDraw;
@@ -501,6 +768,8 @@ PaintSource make_fill_paint(const State& st) {
 }
 
 PaintSource make_stroke_paint(const State& st) {
+    if (st.stroke_gradient.kind != PaintKind::Solid && st.stroke_gradient.gradient)
+        return make_gradient_paint(st.stroke_gradient, st.matrix);
     if (st.has_stroke_pattern) {
         PaintSource ps;
         ps.kind = PaintKind::PatternDraw;
@@ -528,64 +797,17 @@ BlendParams make_blend_params(Context::Impl& ctx, const PaintSource& paint) {
 }
 
 // Source-over composite for a single pixel (premultiplied ARGB).
+// Uses byte_mul for rounding consistency with the blend pipeline.
 inline uint32_t composite_src_over(uint32_t src, uint32_t dst) {
     uint32_t sa = pixel_alpha(src);
     if (sa == 255) return src;
     if (sa == 0)   return dst;
     uint32_t inv_sa = 255 - sa;
-    return pack_argb(
-        static_cast<uint8_t>(std::min(255u, sa + (uint32_t(pixel_alpha(dst)) * inv_sa) / 255)),
-        static_cast<uint8_t>(std::min(255u, red(src)   + (uint32_t(red(dst))   * inv_sa) / 255)),
-        static_cast<uint8_t>(std::min(255u, green(src) + (uint32_t(green(dst)) * inv_sa) / 255)),
-        static_cast<uint8_t>(std::min(255u, blue(src)  + (uint32_t(blue(dst))  * inv_sa) / 255)));
+    uint32_t t = byte_mul(dst, inv_sa);
+    uint32_t rb = ((src & 0xFF00FF) + (t & 0xFF00FF));
+    uint32_t ag = ((src >> 8) & 0xFF00FF) + ((t >> 8) & 0xFF00FF);
+    return (ag << 8 & 0xFF00FF00) | (rb & 0x00FF00FF);
 }
-
-// Row index for O(1) scanline lookup into a SpanBuffer.
-// Replaces per-pixel binary search with direct row access.
-struct ClipRowIndex {
-    int min_y = 0;
-    int max_y = -1;
-    // For each row y in [min_y, max_y]: row_starts[y - min_y] is the index
-    // of the first span on that row, row_ends[y - min_y] is one past the last.
-    std::vector<int> row_starts;
-    std::vector<int> row_ends;
-
-    void build(const SpanBuffer& buf) {
-        if (buf.spans.empty()) return;
-        min_y = buf.spans.front().y;
-        max_y = buf.spans.back().y;
-        int rows = max_y - min_y + 1;
-        row_starts.assign(static_cast<size_t>(rows), -1);
-        row_ends.assign(static_cast<size_t>(rows), -1);
-
-        for (int i = 0, n = static_cast<int>(buf.spans.size()); i < n; ++i) {
-            int ry = buf.spans[i].y - min_y;
-            if (row_starts[ry] < 0)
-                row_starts[ry] = i;
-            row_ends[ry] = i + 1;
-        }
-    }
-
-    // Find coverage for pixel (px, py). Returns 0 if not in clip.
-    // out_in_clip is set to true if the pixel falls within a clip span.
-    uint8_t lookup(const SpanBuffer& buf, int px, int py, bool& out_in_clip) const {
-        out_in_clip = false;
-        if (py < min_y || py > max_y) return 0;
-        int ry = py - min_y;
-        int start = row_starts[ry];
-        if (start < 0) return 0;
-        int end = row_ends[ry];
-        for (int i = start; i < end; ++i) {
-            const auto& s = buf.spans[i];
-            if (px >= s.x && px < s.x + s.len) {
-                out_in_clip = true;
-                return s.coverage;
-            }
-            if (s.x > px) break;
-        }
-        return 0;
-    }
-};
 
 void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow& shd) {
     if (shd.is_none()) return;
@@ -664,9 +886,8 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
                     static_cast<uint8_t>((sb * alpha + 127) / 255));
 
                 if (st.clipping) {
-                    bool in_clip = false;
-                    uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
-                    if (!in_clip) continue;
+                    uint8_t cov = clip_idx.coverage_at(st.clip_spans, dst_x, dst_y);
+                    if (cov == 0) continue;
                     src = byte_mul(src, cov);
                 }
 
@@ -714,9 +935,8 @@ void draw_shadow(Context::Impl& ctx, const SpanBuffer& shape_spans, const Shadow
                 if (pixel_alpha(src) == 0) continue;
 
                 if (st.clipping) {
-                    bool in_clip = false;
-                    uint8_t cov = clip_idx.lookup(st.clip_spans, dst_x, dst_y, in_clip);
-                    if (!in_clip) continue;
+                    uint8_t cov = clip_idx.coverage_at(st.clip_spans, dst_x, dst_y);
+                    if (cov == 0) continue;
                     src = byte_mul(src, cov);
                 }
 
@@ -734,106 +954,12 @@ void do_fill(Context::Impl& ctx, const Path::Impl& pi, FillRule rule, const Mask
     rasterize(spans, pi, st.matrix, ctx.clip_rect, nullptr, rule, st.antialias);
     if (spans.spans.empty()) return;
 
-    // Apply MaskFilter (blur the coverage mask before colorization).
-    if (mf && !mf->is_none()) {
-        Rect extents;
-        span_buffer_extents(spans, extents);
-        if (extents.empty()) return;
-
-        float blur_rad = mf->blur_radius();
-        int expand = static_cast<int>(std::ceil(blur_rad));
-
-        int bx = static_cast<int>(std::floor(extents.x())) - expand;
-        int by = static_cast<int>(std::floor(extents.y())) - expand;
-        int bw = static_cast<int>(std::ceil(extents.width())) + 2 * expand + 2;
-        int bh = static_cast<int>(std::ceil(extents.height())) + 2 * expand + 2;
-        if (bw <= 0 || bh <= 0) return;
-
-        int mask_stride = bw;
-        std::vector<unsigned char> mask_buf(static_cast<size_t>(bh) * mask_stride, 0);
-
-        for (const auto& span : spans.spans) {
-            int my = span.y - by;
-            if (my < 0 || my >= bh) continue;
-            for (int i = 0; i < span.len; ++i) {
-                int mx = span.x + i - bx;
-                if (mx >= 0 && mx < bw)
-                    mask_buf[my * mask_stride + mx] = span.coverage;
-            }
-        }
-
-        // Save original (pre-blur) mask for Style processing.
-        std::vector<unsigned char> orig_mask;
-        if (mf->style != MaskFilter::Style::Normal)
-            orig_mask = mask_buf;
-
-        if (blur_rad > 0.0f) {
-            int argb_stride = bw * 4;
-            std::vector<unsigned char> argb_buf(static_cast<size_t>(bh) * argb_stride, 0);
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    uint8_t c = mask_buf[y * mask_stride + x];
-                    reinterpret_cast<uint32_t*>(argb_buf.data() + y * argb_stride)[x] =
-                        pack_argb(c, 0, 0, 0);
-                }
-            gaussian_blur(argb_buf.data(), bw, bh, argb_stride, blur_rad);
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x)
-                    mask_buf[y * mask_stride + x] =
-                        pixel_alpha(reinterpret_cast<uint32_t*>(argb_buf.data() + y * argb_stride)[x]);
-        }
-
-        // Apply MaskFilter::Style.
-        switch (mf->style) {
-        case MaskFilter::Style::Normal:
-            // Blurred mask used as-is.
-            break;
-        case MaskFilter::Style::Solid:
-            // Interior stays fully opaque; outer blur fringe is kept.
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] > 0)
-                        mask_buf[idx] = std::max(mask_buf[idx], orig_mask[idx]);
-                }
-            break;
-        case MaskFilter::Style::Outer:
-            // Only the blur region outside the original shape.
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] > 0)
-                        mask_buf[idx] = 0;
-                }
-            break;
-        case MaskFilter::Style::Inner:
-            // Only the blur region inside the original shape.
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] == 0)
-                        mask_buf[idx] = 0;
-                    else
-                        mask_buf[idx] = std::min(mask_buf[idx], orig_mask[idx]);
-                }
-            break;
-        }
-
-        // Rebuild spans from processed mask.
-        spans.spans.clear();
-        for (int y = 0; y < bh; ++y) {
-            int abs_y = by + y;
-            int run_start = -1;
-            uint8_t run_cov = 0;
-            for (int x = 0; x <= bw; ++x) {
-                uint8_t c = (x < bw) ? mask_buf[y * mask_stride + x] : 0;
-                if (c > 0 && c == run_cov) continue;
-                if (run_start >= 0 && run_cov > 0)
-                    spans.spans.push_back({bx + run_start, x - run_start, abs_y, run_cov});
-                if (c > 0) { run_start = x; run_cov = c; }
-                else { run_start = -1; run_cov = 0; }
-            }
-        }
+    // Apply MaskFilter: explicit parameter takes priority, then state.
+    const MaskFilter* effective_mf = mf;
+    if (!effective_mf && !st.mask_filter.is_none())
+        effective_mf = &st.mask_filter;
+    if (effective_mf && !effective_mf->is_none()) {
+        apply_mask_filter(spans, *effective_mf);
         if (spans.spans.empty()) return;
     }
 
@@ -860,99 +986,12 @@ void do_stroke(Context::Impl& ctx, const Path::Impl& pi, const MaskFilter* mf) {
     rasterize(spans, pi, st.matrix, ctx.clip_rect, &st.stroke, FillRule::Winding, st.antialias);
     if (spans.spans.empty()) return;
 
-    // Apply MaskFilter (blur the coverage mask before colorization).
-    if (mf && !mf->is_none()) {
-        Rect extents;
-        span_buffer_extents(spans, extents);
-        if (extents.empty()) return;
-
-        float blur_rad = mf->blur_radius();
-        int expand = static_cast<int>(std::ceil(blur_rad));
-
-        int bx = static_cast<int>(std::floor(extents.x())) - expand;
-        int by = static_cast<int>(std::floor(extents.y())) - expand;
-        int bw = static_cast<int>(std::ceil(extents.width())) + 2 * expand + 2;
-        int bh = static_cast<int>(std::ceil(extents.height())) + 2 * expand + 2;
-        if (bw <= 0 || bh <= 0) return;
-
-        int mask_stride = bw;
-        std::vector<unsigned char> mask_buf(static_cast<size_t>(bh) * mask_stride, 0);
-
-        for (const auto& span : spans.spans) {
-            int my = span.y - by;
-            if (my < 0 || my >= bh) continue;
-            for (int i = 0; i < span.len; ++i) {
-                int mx = span.x + i - bx;
-                if (mx >= 0 && mx < bw)
-                    mask_buf[my * mask_stride + mx] = span.coverage;
-            }
-        }
-
-        std::vector<unsigned char> orig_mask;
-        if (mf->style != MaskFilter::Style::Normal)
-            orig_mask = mask_buf;
-
-        if (blur_rad > 0.0f) {
-            int argb_stride = bw * 4;
-            std::vector<unsigned char> argb_buf(static_cast<size_t>(bh) * argb_stride, 0);
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    uint8_t c = mask_buf[y * mask_stride + x];
-                    reinterpret_cast<uint32_t*>(argb_buf.data() + y * argb_stride)[x] =
-                        pack_argb(c, 0, 0, 0);
-                }
-            gaussian_blur(argb_buf.data(), bw, bh, argb_stride, blur_rad);
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x)
-                    mask_buf[y * mask_stride + x] =
-                        pixel_alpha(reinterpret_cast<uint32_t*>(argb_buf.data() + y * argb_stride)[x]);
-        }
-
-        switch (mf->style) {
-        case MaskFilter::Style::Normal:
-            break;
-        case MaskFilter::Style::Solid:
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] > 0)
-                        mask_buf[idx] = std::max(mask_buf[idx], orig_mask[idx]);
-                }
-            break;
-        case MaskFilter::Style::Outer:
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] > 0)
-                        mask_buf[idx] = 0;
-                }
-            break;
-        case MaskFilter::Style::Inner:
-            for (int y = 0; y < bh; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    int idx = y * mask_stride + x;
-                    if (orig_mask[idx] == 0)
-                        mask_buf[idx] = 0;
-                    else
-                        mask_buf[idx] = std::min(mask_buf[idx], orig_mask[idx]);
-                }
-            break;
-        }
-
-        spans.spans.clear();
-        for (int y = 0; y < bh; ++y) {
-            int abs_y = by + y;
-            int run_start = -1;
-            uint8_t run_cov = 0;
-            for (int x = 0; x <= bw; ++x) {
-                uint8_t c = (x < bw) ? mask_buf[y * mask_stride + x] : 0;
-                if (c > 0 && c == run_cov) continue;
-                if (run_start >= 0 && run_cov > 0)
-                    spans.spans.push_back({bx + run_start, x - run_start, abs_y, run_cov});
-                if (c > 0) { run_start = x; run_cov = c; }
-                else { run_start = -1; run_cov = 0; }
-            }
-        }
+    // Apply MaskFilter: explicit parameter takes priority, then state.
+    const MaskFilter* effective_mf = mf;
+    if (!effective_mf && !st.mask_filter.is_none())
+        effective_mf = &st.mask_filter;
+    if (effective_mf && !effective_mf->is_none()) {
+        apply_mask_filter(spans, *effective_mf);
         if (spans.spans.empty()) return;
     }
 
@@ -1034,6 +1073,7 @@ void Context::fill_rect(const Rect& rect) {
 
     if (axis_aligned && st.shadow.is_none()
         && !(st.has_fill_pattern && st.fill_pattern)
+        && st.fill_gradient.kind == PaintKind::Solid
         && st.mask_filter.is_none()) {
         // Transform rect corners
         float x0 = m.a * rect.x() + m.tx;
@@ -1055,6 +1095,27 @@ void Context::fill_rect(const Rect& rect) {
 
         int span_width = ix1 - ix0;
         int span_height = iy1 - iy0;
+
+        // Ultra-fast path: solid opaque SourceOver + Normal blend + no clip
+        // → direct memfill, no blend pipeline at all.
+        float eff_alpha = st.opacity * st.alpha;
+        bool is_simple = !st.clipping
+            && !st.has_fill_pattern
+            && st.op == CompositeOp::SourceOver
+            && st.blend_mode == BlendMode::Normal
+            && eff_alpha >= (1.0f - 1.0f/512.0f)
+            && st.fill_color.a() >= (1.0f - 1.0f/512.0f)
+            && (m_impl->render_format == PixelFormat::ARGB32_Premultiplied
+             || m_impl->render_format == PixelFormat::BGRA32_Premultiplied);
+        if (is_simple) {
+            uint32_t px = st.fill_color.premultiplied().to_argb32();
+            for (int y = iy0; y < iy1; ++y) {
+                auto* row = reinterpret_cast<uint32_t*>(
+                    m_impl->render_data + y * m_impl->render_stride);
+                memfill32(row + ix0, span_width, px);
+            }
+            return;
+        }
 
         SpanBuffer& spans = m_impl->fill_spans;
         spans.reset();
@@ -1135,6 +1196,75 @@ void Context::stroke_round_rect(const Rect& rect, float radius) {
 void Context::stroke_round_rect(const Rect& rect, const CornerRadii& radii) {
     auto path = Path::Builder{}.add_round_rect(rect, radii).build();
     stroke_path(path);
+}
+
+// -- Inline color overloads --
+
+void Context::fill_path(const Path& path, const Color& color, FillRule rule) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_path(path, rule);
+}
+
+void Context::stroke_path(const Path& path, const Color& color) {
+    StateGuard g(*this);
+    set_stroke_color(color);
+    stroke_path(path);
+}
+
+void Context::fill_rect(const Rect& rect, const Color& color) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_rect(rect);
+}
+
+void Context::stroke_rect(const Rect& rect, const Color& color) {
+    StateGuard g(*this);
+    set_stroke_color(color);
+    stroke_rect(rect);
+}
+
+void Context::fill_ellipse(const Rect& rect, const Color& color) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_ellipse(rect);
+}
+
+void Context::fill_round_rect(const Rect& rect, float radius, const Color& color) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_round_rect(rect, radius);
+}
+
+void Context::fill_round_rect(const Rect& rect, const CornerRadii& radii, const Color& color) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_round_rect(rect, radii);
+}
+
+// -- Line / triangle convenience --
+
+void Context::stroke_line(Point from, Point to) {
+    auto path = Path::Builder{}.move_to(from.x, from.y).line_to(to.x, to.y).build();
+    stroke_path(path);
+}
+
+void Context::stroke_line(Point from, Point to, const Color& color) {
+    StateGuard g(*this);
+    set_stroke_color(color);
+    stroke_line(from, to);
+}
+
+void Context::fill_triangle(Point a, Point b, Point c) {
+    auto path = Path::Builder{}
+        .move_to(a.x, a.y).line_to(b.x, b.y).line_to(c.x, c.y).close().build();
+    fill_path(path);
+}
+
+void Context::fill_triangle(Point a, Point b, Point c, const Color& color) {
+    StateGuard g(*this);
+    set_fill_color(color);
+    fill_triangle(a, b, c);
 }
 
 
@@ -1440,6 +1570,102 @@ void Context::draw_conic_gradient(const Gradient& gradient,
     }
 }
 
+void Context::draw_diamond_gradient(const Gradient& gradient,
+                                    Point center, float half_width, float half_height,
+                                    float angle,
+                                    const AffineTransform* gradient_transform,
+                                    GradientDrawingOptions options) {
+    if (!m_impl || !m_impl->render_data || !gradient) return;
+    auto& st = m_impl->state();
+
+    SpanBuffer draw_spans;
+    prepare_clip_spans(*m_impl, draw_spans);
+    if (draw_spans.spans.empty()) return;
+
+    AffineTransform xform = st.matrix;
+    if (gradient_transform)
+        xform = xform * (*gradient_transform);
+
+    Point dev_center = xform.apply(center);
+    float avg_scale = std::sqrt(std::abs(xform.a * xform.d - xform.b * xform.c));
+    float dev_hw = half_width * avg_scale;
+    float dev_hh = half_height * avg_scale;
+    float cos_a = std::cos(angle), sin_a = std::sin(angle);
+
+    bool draws_before = (options & GradientDrawingOptions::DrawsBeforeStart);
+    bool draws_after  = (options & GradientDrawingOptions::DrawsAfterEnd);
+
+    if (draws_before && draws_after) {
+        if (!st.shadow.is_none())
+            draw_shadow(*m_impl, draw_spans, st.shadow);
+
+        PaintSource paint;
+        paint.kind = PaintKind::DiamondGradient;
+        paint.gradient = gradient_impl(gradient);
+        paint.gradient->ensure_colortable();
+        paint.grad_spread = gradient.spread();
+        paint.grad_values[0] = dev_center.x;
+        paint.grad_values[1] = dev_center.y;
+        paint.grad_values[2] = dev_hw;
+        paint.grad_values[3] = dev_hh;
+        paint.grad_values[4] = cos_a;
+        paint.grad_values[5] = sin_a;
+        paint.grad_transform = AffineTransform::identity();
+        paint.grad_inv_transform = AffineTransform::identity();
+        paint.grad_inv_valid = true;
+
+        BlendParams params = make_blend_params(*m_impl, paint);
+        blend(params, draw_spans, m_impl->clip_rect, st.clipping ? &st.clip_spans : nullptr);
+        return;
+    }
+
+    // Per-pixel path with range checks.
+    if (!st.shadow.is_none())
+        draw_shadow(*m_impl, draw_spans, st.shadow);
+
+    const auto* gi = gradient_impl(gradient);
+    gi->ensure_colortable();
+
+    float inv_hw = (dev_hw > 0) ? 1.0f / dev_hw : 0.0f;
+    float inv_hh = (dev_hh > 0) ? 1.0f / dev_hh : 0.0f;
+
+    float eff_op = effective_opacity(st);
+    uint32_t op8 = static_cast<uint32_t>(eff_op * 255.0f + 0.5f);
+    bool apply_op = (eff_op < 1.0f);
+    const ColorSpace* ws = m_impl->working_space;
+    bool do_dither = st.dithering;
+
+    for (const auto& span : draw_spans.spans) {
+        auto* row = reinterpret_cast<uint32_t*>(
+            m_impl->render_data + span.y * m_impl->render_stride);
+        for (int i = 0; i < span.len; ++i) {
+            int px = span.x + i;
+            if (px < 0 || px >= m_impl->render_width) continue;
+
+            float dx = (px + 0.5f) - dev_center.x;
+            float dy = (span.y + 0.5f) - dev_center.y;
+            float lx =  dx * cos_a + dy * sin_a;
+            float ly = -dx * sin_a + dy * cos_a;
+            float t = std::abs(lx) * inv_hw + std::abs(ly) * inv_hh;
+
+            if (t < 0.0f && !draws_before) continue;
+            if (t > 1.0f && !draws_after)  continue;
+            t = std::clamp(t, 0.0f, 1.0f);
+
+            uint32_t src = sample_gradient_argb(gi, t);
+            if (span.coverage < 255)
+                src = byte_mul(src, span.coverage);
+            if (apply_op)
+                src = byte_mul(src, op8);
+            if (pixel_alpha(src) == 0) continue;
+            uint32_t result = composite_pixel(src, row[px], st.op, st.blend_mode, ws);
+            if (do_dither)
+                result = dither_pixel_srgb(result, px, span.y);
+            row[px] = result;
+        }
+    }
+}
+
 
 //  Shading drawing
 
@@ -1675,22 +1901,15 @@ void Context::draw_vertices(VertexMode mode,
     bool has_tex = !tex_coords.empty() && fill_img;
     bool has_colors = !colors.empty();
 
-    // Helper: binary search clip spans by y, then linear scan within row.
+    // Build row-indexed clip lookup once for all triangles.
+    ClipRowIndex clip_idx;
+    if (st.clipping && !st.clip_spans.spans.empty())
+        clip_idx.build(st.clip_spans);
+
     auto clip_coverage_at = [&](int x, int y) -> uint8_t {
         if (!st.clipping) return 255;
-        const auto& spans = st.clip_spans.spans;
-        if (spans.empty()) return 0;
-
-        // Binary search for first span with span.y >= y
-        auto it = std::lower_bound(spans.begin(), spans.end(), y,
-            [](const Span& s, int target_y) { return s.y < target_y; });
-
-        for (; it != spans.end() && it->y == y; ++it) {
-            if (x >= it->x && x < it->x + it->len)
-                return it->coverage;
-            if (it->x > x) break; // spans sorted by x within row
-        }
-        return 0;
+        if (clip_idx.empty()) return 0;
+        return clip_idx.coverage_at(st.clip_spans, x, y);
     };
 
     // Helper: sample fill image at UV coordinates (nearest-neighbor, clamped).
@@ -1732,6 +1951,11 @@ void Context::draw_vertices(VertexMode mode,
         Color c1 = has_colors ? colors[i1] : st.fill_color;
         Color c2 = has_colors ? colors[i2] : st.fill_color;
 
+        // Pre-convert vertex colors to premultiplied ARGB32 for fast interpolation.
+        uint32_t pc0 = c0.premultiplied().to_argb32();
+        uint32_t pc1 = c1.premultiplied().to_argb32();
+        uint32_t pc2 = c2.premultiplied().to_argb32();
+
         Point uv0, uv1, uv2;
         if (has_tex) {
             uv0 = tex_coords[i0];
@@ -1762,14 +1986,17 @@ void Context::draw_vertices(VertexMode mode,
 
                     // Modulate with interpolated vertex color if colors are provided.
                     if (has_colors) {
-                        Color interp{
-                            c0.r() * w0 + c1.r() * w1 + c2.r() * w2,
-                            c0.g() * w0 + c1.g() * w1 + c2.g() * w2,
-                            c0.b() * w0 + c1.b() * w1 + c2.b() * w2,
-                            c0.a() * w0 + c1.a() * w1 + c2.a() * w2
+                        auto lerp_ch = [](uint32_t c0, uint32_t c1, uint32_t c2,
+                                          int shift, float w0, float w1, float w2) -> uint32_t {
+                            float v = ((c0 >> shift) & 0xFF) * w0
+                                    + ((c1 >> shift) & 0xFF) * w1
+                                    + ((c2 >> shift) & 0xFF) * w2;
+                            return static_cast<uint32_t>(std::clamp(v + 0.5f, 0.0f, 255.0f));
                         };
-                        // Modulate: multiply texture color by vertex color component-wise.
-                        uint32_t vc = interp.premultiplied().to_argb32();
+                        uint32_t vc = (lerp_ch(pc0, pc1, pc2, 24, w0, w1, w2) << 24)
+                                    | (lerp_ch(pc0, pc1, pc2, 16, w0, w1, w2) << 16)
+                                    | (lerp_ch(pc0, pc1, pc2, 8,  w0, w1, w2) << 8)
+                                    |  lerp_ch(pc0, pc1, pc2, 0,  w0, w1, w2);
                         uint32_t sa = pixel_alpha(src);
                         if (sa > 0) {
                             uint32_t va = pixel_alpha(vc);
@@ -1781,14 +2008,19 @@ void Context::draw_vertices(VertexMode mode,
                         }
                     }
                 } else {
-                    // Color-only path (original behavior).
-                    Color interp{
-                        c0.r() * w0 + c1.r() * w1 + c2.r() * w2,
-                        c0.g() * w0 + c1.g() * w1 + c2.g() * w2,
-                        c0.b() * w0 + c1.b() * w1 + c2.b() * w2,
-                        c0.a() * w0 + c1.a() * w1 + c2.a() * w2
+                    // Color-only path: interpolate premultiplied ARGB components directly.
+                    auto lerp_ch = [](uint32_t c0, uint32_t c1, uint32_t c2,
+                                      int shift, float w0, float w1, float w2) -> uint32_t {
+                        float v = ((c0 >> shift) & 0xFF) * w0
+                                + ((c1 >> shift) & 0xFF) * w1
+                                + ((c2 >> shift) & 0xFF) * w2;
+                        return static_cast<uint32_t>(std::clamp(v + 0.5f, 0.0f, 255.0f));
                     };
-                    src = interp.premultiplied().to_argb32();
+                    uint32_t a = lerp_ch(pc0, pc1, pc2, 24, w0, w1, w2);
+                    uint32_t r = lerp_ch(pc0, pc1, pc2, 16, w0, w1, w2);
+                    uint32_t g = lerp_ch(pc0, pc1, pc2, 8,  w0, w1, w2);
+                    uint32_t b = lerp_ch(pc0, pc1, pc2, 0,  w0, w1, w2);
+                    src = (a << 24) | (r << 16) | (g << 8) | b;
                 }
 
                 // Apply opacity.
@@ -2002,6 +2234,77 @@ void Context::begin_transparency_layer(float layer_opacity, BlendMode blend) {
     st.layer = std::move(layer);
     m_impl->render_data = image_data_mut(st.layer->surface);
     m_impl->render_stride = stride;
+}
+
+void Context::begin_transparency_layer(float layer_opacity, const Rect& bounds, BlendMode blend) {
+    if (!m_impl || !m_impl->render_data) return;
+
+    save_state();
+    auto& st = m_impl->state();
+
+    int full_w = m_impl->render_width;
+    int full_h = m_impl->render_height;
+    int bpp = pixel_format_info(m_impl->render_format).bpp;
+
+    IntRect layer_rect = m_impl->clip_rect;
+    {
+        Rect dev_bounds = st.matrix.apply_to_rect(bounds);
+        IntRect b;
+        b.x = static_cast<int>(std::floor(dev_bounds.x()));
+        b.y = static_cast<int>(std::floor(dev_bounds.y()));
+        b.w = static_cast<int>(std::ceil(dev_bounds.x() + dev_bounds.width())) - b.x;
+        b.h = static_cast<int>(std::ceil(dev_bounds.y() + dev_bounds.height())) - b.y;
+
+        int ix0 = std::max(b.x, layer_rect.x);
+        int iy0 = std::max(b.y, layer_rect.y);
+        int ix1 = std::min(b.x + b.w, layer_rect.x + layer_rect.w);
+        int iy1 = std::min(b.y + b.h, layer_rect.y + layer_rect.h);
+        if (ix0 < ix1 && iy0 < iy1)
+            layer_rect = {ix0, iy0, ix1 - ix0, iy1 - iy0};
+        else {
+            restore_state();
+            return;
+        }
+    }
+
+    int layer_w = layer_rect.w;
+    int layer_h = layer_rect.h;
+    int stride = (layer_w * bpp + 15) & ~15;
+
+    LayerInfo layer;
+    layer.alpha = std::clamp(layer_opacity, 0.0f, 1.0f);
+    layer.blend_mode = blend;
+    layer.op = st.op;
+    layer.device_bounds = layer_rect;
+    layer.parent_clip_rect = m_impl->clip_rect;
+
+    layer.parent_surface = Image::create(full_w, full_h, m_impl->render_stride,
+                                         m_impl->render_format,
+                                         ColorSpace::srgb(),
+                                         {m_impl->render_data,
+                                          static_cast<size_t>(full_h) * m_impl->render_stride});
+
+    std::vector<unsigned char> zero(static_cast<size_t>(layer_h) * stride, 0);
+    layer.surface = Image::create(layer_w, layer_h, stride, m_impl->render_format,
+                                  ColorSpace::srgb(),
+                                  {zero.data(), zero.size()});
+
+    auto* layer_data = image_data_mut(layer.surface);
+    if (!layer_data) {
+        restore_state();
+        return;
+    }
+
+    st.layer = std::move(layer);
+    m_impl->render_data = image_data_mut(st.layer->surface);
+    m_impl->render_width = layer_w;
+    m_impl->render_height = layer_h;
+    m_impl->render_stride = stride;
+    m_impl->clip_rect = {0, 0, layer_w, layer_h};
+
+    st.matrix = AffineTransform::translated(
+        -static_cast<float>(layer_rect.x),
+        -static_cast<float>(layer_rect.y)) * st.matrix;
 }
 
 void Context::end_transparency_layer() {

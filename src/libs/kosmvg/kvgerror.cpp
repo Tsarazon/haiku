@@ -23,6 +23,7 @@ const char* error_string(Error e) {
     case Error::FontParseError:    return "font parse error";
     case Error::ImageDecodeError:  return "image decode error";
     case Error::PathParseError:    return "path parse error";
+    case Error::NotImplemented:    return "not implemented";
     }
     return "unknown error";
 }

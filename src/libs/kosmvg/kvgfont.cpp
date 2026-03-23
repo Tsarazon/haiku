@@ -39,9 +39,12 @@ struct Font::Impl : RefCounted {
 
     struct GlyphPathEntry {
         Path path;
+        uint32_t generation = 0;
     };
+    static constexpr int kMaxCacheSize = 4096;
     mutable std::shared_mutex cache_mutex;
     mutable std::unordered_map<uint16_t, GlyphPathEntry> path_cache;
+    mutable uint32_t cache_generation = 0;
 
     GlyphPathEntry cached_glyph_path(uint16_t glyph) const;
 
@@ -122,6 +125,10 @@ Font::Impl::cached_glyph_path(uint16_t glyph) const {
             case otf::OutlineCmd::line_to:
                 bld.line_to(pts[0].x, pts[0].y);
                 break;
+            case otf::OutlineCmd::quad_to:
+                bld.quad_to(pts[0].x, pts[0].y,
+                            pts[1].x, pts[1].y);
+                break;
             case otf::OutlineCmd::cubic_to:
                 bld.cubic_to(pts[0].x, pts[0].y,
                              pts[1].x, pts[1].y,
@@ -147,6 +154,21 @@ Font::Impl::cached_glyph_path(uint16_t glyph) const {
     if (it != path_cache.end())
         return it->second;
 
+    // Evict oldest entries when cache is full.
+    if (static_cast<int>(path_cache.size()) >= kMaxCacheSize) {
+        uint32_t min_gen = cache_generation;
+        for (auto& [k, v] : path_cache)
+            if (v.generation < min_gen) min_gen = v.generation;
+        uint32_t threshold = min_gen + (cache_generation - min_gen) / 2;
+        for (auto ci = path_cache.begin(); ci != path_cache.end(); ) {
+            if (ci->second.generation <= threshold)
+                ci = path_cache.erase(ci);
+            else
+                ++ci;
+        }
+    }
+
+    entry.generation = ++cache_generation;
     auto [inserted, _] = path_cache.emplace(glyph, std::move(entry));
     return inserted->second;
 }
@@ -160,41 +182,11 @@ Font::Impl::~Impl() {
 
 
 Font::Font() : m_impl(nullptr) {}
-
-Font::~Font() {
-    if (m_impl && m_impl->deref())
-        delete m_impl;
-}
-
-Font::Font(const Font& other) : m_impl(other.m_impl) {
-    if (m_impl)
-        m_impl->ref();
-}
-
-Font::Font(Font&& other) noexcept : m_impl(other.m_impl) {
-    other.m_impl = nullptr;
-}
-
-Font& Font::operator=(const Font& other) {
-    if (this != &other) {
-        if (m_impl && m_impl->deref())
-            delete m_impl;
-        m_impl = other.m_impl;
-        if (m_impl)
-            m_impl->ref();
-    }
-    return *this;
-}
-
-Font& Font::operator=(Font&& other) noexcept {
-    if (this != &other) {
-        if (m_impl && m_impl->deref())
-            delete m_impl;
-        m_impl = other.m_impl;
-        other.m_impl = nullptr;
-    }
-    return *this;
-}
+Font::~Font()                          { impl_release(m_impl); }
+Font::Font(const Font& other)          : m_impl(other.m_impl) { impl_retain(m_impl); }
+Font::Font(Font&& other) noexcept      : m_impl(other.m_impl) { other.m_impl = nullptr; }
+Font& Font::operator=(const Font& other)   { impl_assign(m_impl, other.m_impl); return *this; }
+Font& Font::operator=(Font&& other) noexcept { impl_move(m_impl, other.m_impl); return *this; }
 
 Font::operator bool() const {
     return m_impl != nullptr;
@@ -323,10 +315,9 @@ Font Font::with_variations(std::span<const FontVariation> /*axes*/) const {
     if (!m_impl || !m_impl->otf.has_fvar())
         return {};
     // Variable font instance creation requires a gvar interpolation engine.
-    // The gvar table parser is not yet implemented, so we cannot produce
-    // variation instances at this time. Return a clone at default values
-    // with the same size.
-    return with_size(m_impl->size_);
+    // The gvar table parser is not yet implemented.
+    detail::set_last_error(Error::NotImplemented);
+    return {};
 }
 
 // Font: variable font queries
@@ -636,41 +627,11 @@ size_t Font::table_size(uint32_t tag) const {
 
 
 FontCollection::FontCollection() : m_impl(new Impl) {}
-
-FontCollection::~FontCollection() {
-    if (m_impl && m_impl->deref())
-        delete m_impl;
-}
-
-FontCollection::FontCollection(const FontCollection& other) : m_impl(other.m_impl) {
-    if (m_impl)
-        m_impl->ref();
-}
-
-FontCollection::FontCollection(FontCollection&& other) noexcept : m_impl(other.m_impl) {
-    other.m_impl = nullptr;
-}
-
-FontCollection& FontCollection::operator=(const FontCollection& other) {
-    if (this != &other) {
-        if (m_impl && m_impl->deref())
-            delete m_impl;
-        m_impl = other.m_impl;
-        if (m_impl)
-            m_impl->ref();
-    }
-    return *this;
-}
-
-FontCollection& FontCollection::operator=(FontCollection&& other) noexcept {
-    if (this != &other) {
-        if (m_impl && m_impl->deref())
-            delete m_impl;
-        m_impl = other.m_impl;
-        other.m_impl = nullptr;
-    }
-    return *this;
-}
+FontCollection::~FontCollection()                                    { impl_release(m_impl); }
+FontCollection::FontCollection(const FontCollection& other)          : m_impl(other.m_impl) { impl_retain(m_impl); }
+FontCollection::FontCollection(FontCollection&& other) noexcept      : m_impl(other.m_impl) { other.m_impl = nullptr; }
+FontCollection& FontCollection::operator=(const FontCollection& other)   { impl_assign(m_impl, other.m_impl); return *this; }
+FontCollection& FontCollection::operator=(FontCollection&& other) noexcept { impl_move(m_impl, other.m_impl); return *this; }
 
 FontCollection::operator bool() const {
     return m_impl != nullptr;
@@ -923,7 +884,11 @@ int FontCollection::load_system(float default_size) {
 #if defined(__APPLE__)
     loaded += load_dir("/Library/Fonts", default_size);
     loaded += load_dir("/System/Library/Fonts", default_size);
-#elif defined(__linux__) || defined(__HAIKU__)
+#elif defined(__HAIKU__)
+    loaded += load_dir("/boot/system/data/fonts/otfonts", default_size);
+    loaded += load_dir("/boot/system/data/fonts/ttfonts", default_size);
+    loaded += load_dir("/boot/home/config/non-packaged/data/fonts", default_size);
+#elif defined(__linux__)
     loaded += load_dir("/usr/share/fonts", default_size);
     loaded += load_dir("/usr/local/share/fonts", default_size);
 #endif

@@ -85,8 +85,9 @@ struct KernPair {
 };
 
 // -- GlyphSink: type-erased callback for outline data --
-// Contract: sink receives only MoveToPoint, AddLineToPoint, AddCurve, CloseSubpath.
-// No AddQuadCurve — TrueType quadratics are converted to cubics by the parser.
+// Contract: sink receives MoveToPoint, AddLineToPoint, AddQuadCurve,
+// AddCurve, CloseSubpath. TrueType quadratics are emitted directly
+// via quad_to (2 points: control, end).
 // CloseSubpath receives n=0, pts=nullptr.
 
 struct GlyphSink {
@@ -96,6 +97,7 @@ struct GlyphSink {
 
     void move_to(float x, float y) const;
     void line_to(float x, float y) const;
+    void quad_to(float cx, float cy, float x, float y) const;
     void cubic_to(float x1, float y1, float x2, float y2, float x3, float y3) const;
     void close() const;
 };
@@ -265,6 +267,18 @@ private:
 
     bool m_is_cff = false;
     CFFData m_cff;
+
+    // Cached GPOS kern subtable offsets (resolved at open time).
+    static constexpr int kMaxKernSubtables = 8;
+    struct KernSubtable {
+        uint32_t offset = 0;
+        uint16_t format = 0;   // PairPos format (1 or 2)
+        uint16_t vfmt1 = 0;
+        uint16_t vfmt2 = 0;
+    };
+    KernSubtable m_kern_subtables[kMaxKernSubtables];
+    int m_kern_subtable_count = 0;
+    void resolve_kern_subtables();
 
     int locate_glyph(uint16_t glyph) const;
     int parse_tt_glyph(uint16_t glyph, const GlyphSink& sink, int depth) const;

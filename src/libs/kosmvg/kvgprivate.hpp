@@ -59,6 +59,38 @@ struct RefCounted {
     }
 };
 
+// -- Impl lifecycle helpers --
+// Eliminate copy-paste in the 7 refcounted public classes.
+
+template<typename T>
+void impl_retain(T* p) noexcept { if (p) p->ref(); }
+
+template<typename T>
+void impl_release(T*& p) noexcept {
+    if (p && p->deref()) delete p;
+    p = nullptr;
+}
+
+/// Assign with retain/release (copy-assign helper).
+template<typename T>
+void impl_assign(T*& dst, T* src) noexcept {
+    if (dst != src) {
+        impl_retain(src);
+        if (dst && dst->deref()) delete dst;
+        dst = src;
+    }
+}
+
+/// Move-assign helper.
+template<typename T>
+void impl_move(T*& dst, T*& src) noexcept {
+    if (&dst != &src) {
+        if (dst && dst->deref()) delete dst;
+        dst = src;
+        src = nullptr;
+    }
+}
+
 // -- Helpers: points-per-command --
 
 inline constexpr int points_per_command(PathElement cmd) {
@@ -298,6 +330,19 @@ struct LayerInfo {
     CompositeOp op = CompositeOp::SourceOver;
 };
 
+// -- Paint kind (needed by State::GradientInfo) --
+
+enum class PaintKind {
+    Solid,
+    LinearGradient,
+    RadialGradient,
+    ConicGradient,
+    DiamondGradient,
+    Texture,
+    PatternDraw,
+    Shading
+};
+
 // -- Graphics state --
 
 struct State {
@@ -324,6 +369,7 @@ struct State {
     bool        pixel_snap           = false;
     bool        tone_mapping         = false;
     float       scale_factor         = 1.0f;
+    float       flatten_tolerance    = 0.25f;
     int         color_palette_index  = 0;
 
     // Fill/stroke patterns (set via set_fill_pattern / set_stroke_pattern).
@@ -331,6 +377,16 @@ struct State {
     Pattern     stroke_pattern;
     bool        has_fill_pattern     = false;
     bool        has_stroke_pattern   = false;
+
+    // Fill/stroke gradient (set via set_fill_gradient / set_stroke_gradient).
+    // kind == Solid means no gradient is set.
+    struct GradientInfo {
+        PaintKind kind = PaintKind::Solid;
+        Gradient  gradient;
+        float     values[6] = {};
+    };
+    GradientInfo fill_gradient;
+    GradientInfo stroke_gradient;
 
     std::optional<LayerInfo> layer;
 };
@@ -444,16 +500,6 @@ inline uint8_t extract_coverage(uint32_t pixel, MaskMode mode) {
 // what color source to use for each span. Context methods set this
 // up before calling blend().
 
-enum class PaintKind {
-    Solid,
-    LinearGradient,
-    RadialGradient,
-    ConicGradient,
-    Texture,
-    PatternDraw,
-    Shading
-};
-
 struct PaintSource {
     PaintKind kind = PaintKind::Solid;
 
@@ -463,9 +509,10 @@ struct PaintSource {
     // Gradient
     const Gradient::Impl* gradient = nullptr;
     float grad_values[6] = {};
-    // Linear: x1, y1, x2, y2
-    // Radial: cx, cy, cr, fx, fy, fr
-    // Conic:  cx, cy, start_angle
+    // Linear:  x1, y1, x2, y2
+    // Radial:  cx, cy, cr, fx, fy, fr
+    // Conic:   cx, cy, start_angle
+    // Diamond: cx, cy, half_w, half_h, cos_angle, sin_angle
     AffineTransform grad_transform;
     AffineTransform grad_inv_transform; // pre-computed inverse (avoids per-pixel inversion)
     bool grad_inv_valid = false;
@@ -685,6 +732,59 @@ void span_buffer_copy(SpanBuffer& dst, const SpanBuffer& src);
 bool span_buffer_contains(const SpanBuffer& buf, float x, float y);
 void span_buffer_extents(const SpanBuffer& buf, Rect& extents);
 void span_buffer_intersect(SpanBuffer& dst, const SpanBuffer& a, const SpanBuffer& b);
+
+// -- Row-indexed clip span lookup --
+// Builds a y → [begin, end) index over a SpanBuffer so that per-pixel
+// clip coverage queries are O(spans_in_row) instead of O(total_spans).
+
+struct ClipRowIndex {
+    int y_min = 0;
+    int y_max = 0; // exclusive
+    std::vector<int> row_start;
+    std::vector<int> row_end;
+
+    void build(const SpanBuffer& buf) {
+        row_start.clear();
+        row_end.clear();
+        if (buf.spans.empty()) return;
+
+        y_min = buf.spans.front().y;
+        y_max = buf.spans.back().y + 1;
+        int h = y_max - y_min;
+        row_start.resize(static_cast<size_t>(h), 0);
+        row_end.resize(static_cast<size_t>(h), 0);
+
+        int n = static_cast<int>(buf.spans.size());
+        int i = 0;
+        while (i < n) {
+            int y = buf.spans[i].y;
+            int ri = y - y_min;
+            row_start[ri] = i;
+            while (i < n && buf.spans[i].y == y) ++i;
+            row_end[ri] = i;
+        }
+    }
+
+    [[nodiscard]] bool empty() const { return row_start.empty(); }
+
+    [[nodiscard]] uint8_t coverage_at(const SpanBuffer& buf, int x, int y) const {
+        if (y < y_min || y >= y_max) return 0;
+        int ri = y - y_min;
+        for (int i = row_start[ri]; i < row_end[ri]; ++i) {
+            const auto& s = buf.spans[i];
+            if (x < s.x) return 0;
+            if (x < s.x + s.len) return s.coverage;
+        }
+        return 0;
+    }
+};
+
+// -- MaskFilter application --
+// Blurs the coverage mask in a SpanBuffer according to the MaskFilter
+// parameters (sigma, style). Modifies spans in-place.
+// Used by do_fill() and do_stroke() in kvgcontext.cpp.
+
+void apply_mask_filter(SpanBuffer& spans, const MaskFilter& mf);
 
 // -- Rasterize path into spans --
 

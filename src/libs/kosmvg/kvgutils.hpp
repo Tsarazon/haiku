@@ -92,6 +92,17 @@ inline uint32_t byte_mul(uint32_t x, uint32_t a) {
     return x;
 }
 
+/// Bilinear interpolation between two premultiplied ARGB pixels.
+/// frac is in [0, 256].
+inline uint32_t bilerp_argb(uint32_t a, uint32_t b, uint32_t frac) {
+    if (frac == 0)   return a;
+    if (frac == 256) return b;
+    uint32_t inv = 256 - frac;
+    uint32_t rb = (((a & 0x00FF00FF) * inv + (b & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+    uint32_t ag = ((((a >> 8) & 0x00FF00FF) * inv + ((b >> 8) & 0x00FF00FF) * frac) >> 8) & 0x00FF00FF;
+    return (ag << 8) | rb;
+}
+
 namespace blend_ops {
 
 inline constexpr uint8_t multiply(uint8_t a, uint8_t b) {

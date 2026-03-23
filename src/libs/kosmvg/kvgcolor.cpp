@@ -11,36 +11,11 @@ namespace kvg {
 
 // -- ColorSpace lifecycle --
 
-ColorSpace::~ColorSpace() {
-    if (m_impl && m_impl->deref())
-        delete m_impl;
-}
-
-ColorSpace::ColorSpace(const ColorSpace& o) : m_impl(o.m_impl) {
-    if (m_impl) m_impl->ref();
-}
-
-ColorSpace::ColorSpace(ColorSpace&& o) noexcept : m_impl(o.m_impl) {
-    o.m_impl = nullptr;
-}
-
-ColorSpace& ColorSpace::operator=(const ColorSpace& o) {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        if (m_impl) m_impl->ref();
-    }
-    return *this;
-}
-
-ColorSpace& ColorSpace::operator=(ColorSpace&& o) noexcept {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        o.m_impl = nullptr;
-    }
-    return *this;
-}
+ColorSpace::~ColorSpace()                          { impl_release(m_impl); }
+ColorSpace::ColorSpace(const ColorSpace& o)        : m_impl(o.m_impl) { impl_retain(m_impl); }
+ColorSpace::ColorSpace(ColorSpace&& o) noexcept    : m_impl(o.m_impl) { o.m_impl = nullptr; }
+ColorSpace& ColorSpace::operator=(const ColorSpace& o)   { impl_assign(m_impl, o.m_impl); return *this; }
+ColorSpace& ColorSpace::operator=(ColorSpace&& o) noexcept { impl_move(m_impl, o.m_impl); return *this; }
 
 ColorSpace::operator bool() const { return m_impl != nullptr; }
 
@@ -296,7 +271,7 @@ std::optional<Color> Color::parse(std::string_view css) {
     }
 
     // Detect function name
-    enum class Func { None, RGB, HSL };
+    enum class Func { None, RGB, HSL, HWB };
     Func fn = Func::None;
     const char* saved = it;
     if (skip_string(it, end, "rgba")) {
@@ -316,6 +291,12 @@ std::optional<Color> Color::parse(std::string_view css) {
             if (skip_string(it, end, "hsl")) {
                 fn = Func::HSL;
             }
+        }
+    }
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "hwb")) {
+            fn = Func::HWB;
         }
     }
 
@@ -390,6 +371,49 @@ std::optional<Color> Color::parse(std::string_view css) {
                            std::clamp(l, 0.0f, 1.0f), a);
     }
 
+    if (fn == Func::HWB) {
+        // CSS Color Level 4: hwb(H W B [/ A])
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        float h, w_val, b_val, a = 1.0f;
+        skip_ws(it, end);
+        if (!parse_number(it, end, h)) return std::nullopt;
+        skip_ws(it, end);
+        if (skip_string(it, end, "deg")) { /* already degrees */ }
+        else if (skip_string(it, end, "rad")) { h = rad2deg(h); }
+        else if (skip_string(it, end, "grad")) { h = h * 0.9f; }
+        else if (skip_string(it, end, "turn")) { h = h * 360.0f; }
+        skip_ws(it, end);
+        if (!parse_number(it, end, w_val)) return std::nullopt;
+        skip_ws(it, end);
+        if (it < end && *it == '%') { ++it; w_val /= 100.0f; }
+        skip_ws(it, end);
+        if (!parse_number(it, end, b_val)) return std::nullopt;
+        skip_ws(it, end);
+        if (it < end && *it == '%') { ++it; b_val /= 100.0f; }
+        skip_ws(it, end);
+        if (it < end && *it == '/') {
+            ++it;
+            if (!parse_css_alpha(it, end, a)) return std::nullopt;
+        }
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+
+        w_val = std::clamp(w_val, 0.0f, 1.0f);
+        b_val = std::clamp(b_val, 0.0f, 1.0f);
+        // HWB → RGB (CSS Color Level 4 algorithm)
+        if (w_val + b_val >= 1.0f) {
+            float gray = w_val / (w_val + b_val);
+            return Color{gray, gray, gray, a};
+        }
+        Color base = from_hsl(h, 1.0f, 0.5f, 1.0f);
+        float scale = 1.0f - w_val - b_val;
+        return Color{base.r() * scale + w_val,
+                     base.g() * scale + w_val,
+                     base.b() * scale + w_val, a};
+    }
+
     // Named color (case-insensitive)
     it = css.data();
     skip_ws(it, end);
@@ -403,9 +427,14 @@ std::optional<Color> Color::parse(std::string_view css) {
         lower[i] = (it[i] >= 'A' && it[i] <= 'Z') ? static_cast<char>(it[i] + 32) : it[i];
     lower[len] = '\0';
 
-    for (const auto& nc : named_colors) {
-        if (std::strcmp(lower, nc.name) == 0)
-            return Color::from_argb32(nc.argb);
+    constexpr int num_named = sizeof(named_colors) / sizeof(named_colors[0]);
+    int lo = 0, hi = num_named - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) >> 1;
+        int cmp = std::strcmp(lower, named_colors[mid].name);
+        if (cmp < 0) hi = mid - 1;
+        else if (cmp > 0) lo = mid + 1;
+        else return Color::from_argb32(named_colors[mid].argb);
     }
 
     return std::nullopt;

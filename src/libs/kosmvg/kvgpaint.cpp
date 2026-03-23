@@ -15,36 +15,11 @@ namespace kvg {
 // -- lifecycle --
 
 Gradient::Gradient() : m_impl(nullptr) {}
-
-Gradient::~Gradient() {
-    if (m_impl && m_impl->deref()) delete m_impl;
-}
-
-Gradient::Gradient(const Gradient& o) : m_impl(o.m_impl) {
-    if (m_impl) m_impl->ref();
-}
-
-Gradient::Gradient(Gradient&& o) noexcept : m_impl(o.m_impl) {
-    o.m_impl = nullptr;
-}
-
-Gradient& Gradient::operator=(const Gradient& o) {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        if (m_impl) m_impl->ref();
-    }
-    return *this;
-}
-
-Gradient& Gradient::operator=(Gradient&& o) noexcept {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        o.m_impl = nullptr;
-    }
-    return *this;
-}
+Gradient::~Gradient()                          { impl_release(m_impl); }
+Gradient::Gradient(const Gradient& o)          : m_impl(o.m_impl) { impl_retain(m_impl); }
+Gradient::Gradient(Gradient&& o) noexcept      : m_impl(o.m_impl) { o.m_impl = nullptr; }
+Gradient& Gradient::operator=(const Gradient& o)   { impl_assign(m_impl, o.m_impl); return *this; }
+Gradient& Gradient::operator=(Gradient&& o) noexcept { impl_move(m_impl, o.m_impl); return *this; }
 
 Gradient::operator bool() const { return m_impl != nullptr && !m_impl->stops.empty(); }
 
@@ -235,11 +210,20 @@ void Gradient::Impl::build_colortable() const {
     // Apply AA margin at repeat/reflect boundaries to smooth the seam
     // between the last and first gradient stop (ThorVG-style).
     if (spread != GradientSpread::Pad && stops.size() >= 2) {
-        // Adaptive margin: wider when the color difference is large.
-        int margin = std::min(40, kColorTableSize / 20);
-
         uint32_t first = colortable[0];
         uint32_t last  = colortable[kColorTableSize - 1];
+
+        // Compute per-channel max distance to scale margin.
+        // If first == last (seamless loop gradient), no margin needed.
+        int da = std::abs(int(pixel_alpha(first)) - int(pixel_alpha(last)));
+        int dr = std::abs(int(red(first))   - int(red(last)));
+        int dg = std::abs(int(green(first)) - int(green(last)));
+        int db = std::abs(int(blue(first))  - int(blue(last)));
+        int max_diff = std::max({da, dr, dg, db});
+
+        // Scale margin: 0 at distance 0, up to 40 at distance 255.
+        int margin = (max_diff > 0) ? std::min(40, std::max(4, max_diff * 40 / 255)) : 0;
+        margin = std::min(margin, kColorTableSize / 20);
 
         // Blend at the seam: smooth transition across the boundary.
         for (int j = 0; j < margin; ++j) {
@@ -276,36 +260,11 @@ void Gradient::Impl::build_colortable() const {
 // -- lifecycle --
 
 Pattern::Pattern() : m_impl(nullptr) {}
-
-Pattern::~Pattern() {
-    if (m_impl && m_impl->deref()) delete m_impl;
-}
-
-Pattern::Pattern(const Pattern& o) : m_impl(o.m_impl) {
-    if (m_impl) m_impl->ref();
-}
-
-Pattern::Pattern(Pattern&& o) noexcept : m_impl(o.m_impl) {
-    o.m_impl = nullptr;
-}
-
-Pattern& Pattern::operator=(const Pattern& o) {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        if (m_impl) m_impl->ref();
-    }
-    return *this;
-}
-
-Pattern& Pattern::operator=(Pattern&& o) noexcept {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        o.m_impl = nullptr;
-    }
-    return *this;
-}
+Pattern::~Pattern()                          { impl_release(m_impl); }
+Pattern::Pattern(const Pattern& o)           : m_impl(o.m_impl) { impl_retain(m_impl); }
+Pattern::Pattern(Pattern&& o) noexcept       : m_impl(o.m_impl) { o.m_impl = nullptr; }
+Pattern& Pattern::operator=(const Pattern& o)   { impl_assign(m_impl, o.m_impl); return *this; }
+Pattern& Pattern::operator=(Pattern&& o) noexcept { impl_move(m_impl, o.m_impl); return *this; }
 
 Pattern::operator bool() const { return m_impl != nullptr; }
 
@@ -353,36 +312,11 @@ Pattern Pattern::create_from_image(const Image& image, AffineTransform matrix) {
 // -- lifecycle --
 
 Shading::Shading() : m_impl(nullptr) {}
-
-Shading::~Shading() {
-    if (m_impl && m_impl->deref()) delete m_impl;
-}
-
-Shading::Shading(const Shading& o) : m_impl(o.m_impl) {
-    if (m_impl) m_impl->ref();
-}
-
-Shading::Shading(Shading&& o) noexcept : m_impl(o.m_impl) {
-    o.m_impl = nullptr;
-}
-
-Shading& Shading::operator=(const Shading& o) {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        if (m_impl) m_impl->ref();
-    }
-    return *this;
-}
-
-Shading& Shading::operator=(Shading&& o) noexcept {
-    if (this != &o) {
-        if (m_impl && m_impl->deref()) delete m_impl;
-        m_impl = o.m_impl;
-        o.m_impl = nullptr;
-    }
-    return *this;
-}
+Shading::~Shading()                          { impl_release(m_impl); }
+Shading::Shading(const Shading& o)           : m_impl(o.m_impl) { impl_retain(m_impl); }
+Shading::Shading(Shading&& o) noexcept       : m_impl(o.m_impl) { o.m_impl = nullptr; }
+Shading& Shading::operator=(const Shading& o)   { impl_assign(m_impl, o.m_impl); return *this; }
+Shading& Shading::operator=(Shading&& o) noexcept { impl_move(m_impl, o.m_impl); return *this; }
 
 Shading::operator bool() const { return m_impl != nullptr && m_impl->eval != nullptr; }
 
