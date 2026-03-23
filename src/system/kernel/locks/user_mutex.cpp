@@ -475,6 +475,7 @@ struct UserMutexContextFetcher {
 				team->Unlock();
 				if (fInitStatus != B_OK)
 					return;
+				fContext = team->user_mutex_context;
 			}
 
 			fAddress = (addr_t)mutex;
