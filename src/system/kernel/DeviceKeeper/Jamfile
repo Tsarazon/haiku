@@ -1,0 +1,31 @@
+SubDir HAIKU_TOP src system kernel DeviceKeeper ;
+
+UsePrivateHeaders [ FDirName kernel util ] shared ;
+
+KernelMergeObject kernel_devicekeeper.o :
+	# DeviceKeeper core
+	DeviceKeeper.cpp
+	Node.cpp
+	Matcher.cpp
+	Lifecycle.cpp
+	Publisher.cpp
+	Syscall.cpp
+	FirmwareLoader.cpp
+
+	# device filesystem and base classes
+	BaseDevice.cpp
+	devfs.cpp
+	FileDevice.cpp
+
+	# I/O subsystem
+	dma_resources.cpp
+	io_requests.cpp
+	IOCache.cpp
+	IOCallback.cpp
+	IORequest.cpp
+	IOScheduler.cpp
+	IOSchedulerRoster.cpp
+	IOSchedulerSimple.cpp
+	:
+	$(TARGET_KERNEL_PIC_CCFLAGS)
+;
