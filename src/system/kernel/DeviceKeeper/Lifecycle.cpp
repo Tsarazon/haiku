@@ -4,6 +4,7 @@
  */
 
 #include "Lifecycle.h"
+#include "DeviceKeeper.h"
 #include "Matcher.h"
 #include "Node.h"
 #include "Publisher.h"
@@ -63,7 +64,26 @@ DkLifecycle::ProbeAndAttach(DkNode* node)
 	// attach() is called WITHOUT any DeviceKeeper locks held.
 	// The driver may freely call register_node, publish_device, etc.
 	void* cookie = NULL;
+
+	dprintf("DeviceKeeper: ProbeAndAttach(%s): best driver %s "
+		"(info=%p attach=%p probe=%p match=%p)\n",
+		node->ModuleName(), driver->info.name,
+		driver, driver->attach, driver->probe, driver->match);
+
+	if (driver->attach == NULL) {
+		dprintf("DeviceKeeper: ProbeAndAttach(%s): BUG — driver %s "
+			"has NULL attach, skipping\n",
+			node->ModuleName(), driver->info.name);
+		MutexLocker nodeLocker(node->NodeLock());
+		node->SetAttaching(false);
+		return B_BAD_VALUE;
+	}
+
+	dprintf("DeviceKeeper: ProbeAndAttach: calling attach %p for %s on %s\n",
+		driver->attach, driver->info.name, node->ModuleName());
 	status = driver->attach(reinterpret_cast<dk_node*>(node), &cookie);
+	dprintf("DeviceKeeper: ProbeAndAttach: attach returned %s for %s\n",
+		strerror(status), node->ModuleName());
 
 	// Clear attaching and set driver (on success) in one locked step.
 	{
@@ -86,9 +106,150 @@ DkLifecycle::ProbeAndAttach(DkNode* node)
 		return status;
 	}
 
+	// Probe children that were registered during attach() but
+	// deferred because this node's cookie wasn't set yet.
+	DkKeeper* keeper = DkKeeper::Instance();
+	if (keeper != NULL)
+		keeper->ProbePendingChildren(node);
+
 	// a successful attach may unblock deferred nodes
 	RetryDeferred();
 
+	return B_OK;
+}
+
+
+status_t
+DkLifecycle::ProbeAndAttachAll(DkNode* node)
+{
+	// For KOSM_FIND_MULTIPLE_CHILDREN nodes (like root):
+	// find ALL matching drivers. For each, create a child node
+	// under this node — child auto-attaches via ProbeAndAttach.
+	// This gives each driver its own node with bus_ops, cookie,
+	// and proper parent/child lifecycle.
+	static const int32 kMaxDrivers = 64;
+	DkMatchResult results[kMaxDrivers];
+	int32 count = 0;
+
+	status_t status = fMatcher.FindAllDrivers(node, results,
+		kMaxDrivers, &count);
+	if (status != B_OK || count == 0) {
+		dprintf("DeviceKeeper: ProbeAndAttachAll(%s): no drivers found\n",
+			node->ModuleName());
+		return status;
+	}
+
+	dprintf("DeviceKeeper: ProbeAndAttachAll(%s): %d drivers matched\n",
+		node->ModuleName(), (int)count);
+
+	DkKeeper* keeper = DkKeeper::Instance();
+
+	for (int32 i = 0; i < count; i++) {
+		dk_driver_info* driver = results[i].driver;
+		if (driver == NULL || driver->attach == NULL)
+			continue;
+
+		const char* driverName = driver->info.name;
+
+		// Skip if a child with this module name already exists
+		// (prevents duplicates on repeated DemandProbe calls)
+		bool exists = false;
+		{
+			ReadLocker treeLocker(DkKeeper::Instance()->TreeLock());
+			int32 childCount = 0;
+			DkNodeList::Iterator it = node->Children().GetIterator();
+			while (it.HasNext()) {
+				DkNode* existing = it.Next();
+				childCount++;
+				dprintf("DeviceKeeper: dedup check: child[%d]=%s vs %s\n",
+					(int)childCount, existing->ModuleName(), driverName);
+				if (strcmp(existing->ModuleName(), driverName) == 0) {
+					exists = true;
+					break;
+				}
+			}
+			if (childCount == 0)
+				dprintf("DeviceKeeper: dedup check: %s has 0 children\n",
+					node->ModuleName());
+		}
+		if (exists) {
+			dprintf("DeviceKeeper: ProbeAndAttachAll: %s already exists "
+				"under %s, skipping\n", driverName, node->ModuleName());
+			continue;
+		}
+
+		dprintf("DeviceKeeper: ProbeAndAttachAll: creating child %s "
+			"under %s\n", driverName, node->ModuleName());
+
+		// Create child node with KOSM_FIND_CHILD_ON_DEMAND so
+		// RegisterNode does NOT auto-probe (we attach directly).
+		dk_property props[] = {
+			{ KOSM_DEVICE_FLAGS, B_UINT32_TYPE,
+				{ .ui32 = KOSM_FIND_CHILD_ON_DEMAND } },
+			{}
+		};
+
+		DkNode* child = NULL;
+		status_t s = keeper->RegisterNode(node, driverName,
+			props, NULL, &child);
+		if (s != B_OK) {
+			dprintf("DeviceKeeper: ProbeAndAttachAll: RegisterNode(%s) "
+				"failed: %s\n", driverName, strerror(s));
+			continue;
+		}
+
+		// Set driver on child BEFORE attach so that IsAttached()
+		// returns true for get_bus_ops() lookups from grandchildren.
+		// Also set attaching flag so that RegisterNode called from
+		// within attach() defers fixed-child/auto-probe until the
+		// cookie is set (otherwise get_bus_ops returns NULL cookie).
+		{
+			MutexLocker nodeLocker(child->NodeLock());
+			child->SetDriver(driver, NULL);
+			child->SetAttaching(true);
+		}
+
+		void* cookie = NULL;
+		s = driver->attach(reinterpret_cast<dk_node*>(child), &cookie);
+
+		// Set cookie (on success) or rollback driver (on failure)
+		// in one locked step, then clear attaching.
+		{
+			MutexLocker nodeLocker(child->NodeLock());
+			if (s == B_OK) {
+				child->SetDriverCookie(cookie);
+			} else {
+				// Rollback: clear driver so IsAttached() returns false.
+				// Without this, a failed attach leaves a zombie state
+				// where IsAttached() is true but driver is not functional.
+				child->ClearDriver();
+			}
+			child->SetAttaching(false);
+		}
+
+		if (s == B_OK) {
+			dprintf("DeviceKeeper: ProbeAndAttachAll: %s attached\n",
+				driverName);
+			// Now that the cookie is set, probe children that were
+			// registered during attach() but deferred (fixed-child,
+			// auto-probe). This is the core fix for the PCI bus
+			// manager initialization ordering.
+			keeper->ProbePendingChildren(child);
+		} else if (s == KOSM_DEFER_PROBE) {
+			_AddDeferred(child);
+			dprintf("DeviceKeeper: ProbeAndAttachAll: %s deferred\n",
+				driverName);
+		} else {
+			dprintf("DeviceKeeper: ProbeAndAttachAll: %s attach failed: "
+				"%s\n", driverName, strerror(s));
+		}
+
+		// Take keep-loaded ref if needed
+		if (child->HasKeepLoaded() && child->IsAttached())
+			child->Acquire();
+	}
+
+	RetryDeferred();
 	return B_OK;
 }
 
@@ -182,7 +343,10 @@ DkLifecycle::RetryDeferred()
 				continue;
 			}
 
-			// success
+			// success — take keep-loaded ref if needed
+			if (node->HasKeepLoaded())
+				node->Acquire();
+
 			local.Remove(entry);
 			node->Release();
 			delete entry;

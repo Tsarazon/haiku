@@ -32,6 +32,11 @@ public:
 	// Handles KOSM_DEFER_PROBE: queues the node for later retry.
 	status_t			ProbeAndAttach(DkNode* node);
 
+	// probe ALL matching drivers for a node with
+	// KOSM_FIND_MULTIPLE_CHILDREN. Each matching driver gets
+	// attach() called — it registers its own child node(s).
+	status_t			ProbeAndAttachAll(DkNode* node);
+
 	// retry all deferred nodes (called after each successful attach)
 	void				RetryDeferred();
 

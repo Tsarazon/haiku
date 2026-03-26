@@ -106,6 +106,9 @@ public:
 							const DkPropertyStore& store);
 
 private:
+	// Lock-free internal registration (caller must hold write lock)
+	status_t			_RegisterDriverLocked(const char* moduleName);
+
 	static int32		_CountMatchRules(const dk_match_rule* rules);
 
 	typedef DoublyLinkedList<DkDriverRecord> DriverList;

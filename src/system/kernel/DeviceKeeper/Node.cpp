@@ -214,6 +214,13 @@ DkNode::SetDriver(dk_driver_info* driver, void* cookie)
 
 
 void
+DkNode::SetDriverCookie(void* cookie)
+{
+	fDriverCookie = cookie;
+}
+
+
+void
 DkNode::ClearDriver()
 {
 	fDriver = NULL;
@@ -752,7 +759,16 @@ DkPropertyStore::SetAfterCommit(const dk_property& property)
 
 	DkPropertyEntry* existing = fTable.Lookup(property.name);
 	if (existing != NULL) {
-		// validate new type
+		// Type change is not allowed: concurrent readers check
+		// entry->type before reading the value union. If one thread
+		// changes type (e.g. uint32 → string) while another reads
+		// the old type, the reader gets a torn value. To update the
+		// type, remove and re-add the property before Commit, or
+		// add a new property with a different name.
+		if (existing->type != property.type)
+			return B_BAD_TYPE;
+
+		// validate type
 		switch (property.type) {
 			case B_UINT8_TYPE:
 			case B_UINT16_TYPE:

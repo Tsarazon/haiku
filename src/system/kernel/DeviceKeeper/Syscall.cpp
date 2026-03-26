@@ -335,3 +335,71 @@ _user_kosm_dk_find_node(const kosm_dk_match_rule* userRules,
 
 	return user_memcpy(userIterator, &newHandle, sizeof(newHandle));
 }
+
+
+status_t
+_user_kosm_dk_get_node_info(kosm_handle_t handle,
+	kosm_dk_node_info* userInfo)
+{
+	if (!IS_USER_ADDRESS(userInfo))
+		return B_BAD_ADDRESS;
+
+	DkNode* node = lookup_node(handle);
+	if (node == NULL)
+		return B_BAD_VALUE;
+
+	DkKeeper* keeper = DkKeeper::Instance();
+	if (keeper == NULL) {
+		node->ReleaseReference();
+		return B_NO_INIT;
+	}
+
+	kosm_dk_node_info info;
+	memset(&info, 0, sizeof(info));
+
+	// module name (immutable after creation, no lock needed)
+	strlcpy(info.module_name, node->ModuleName(),
+		sizeof(info.module_name));
+
+	// flags (immutable after SetRegistered)
+	info.flags = node->Flags();
+
+	// driver state
+	info.has_driver = node->IsAttached();
+
+	// child count under tree read lock
+	{
+		ReadLocker treeLocker(keeper->TreeLock());
+		uint32 count = 0;
+		DkNodeList::Iterator it =
+			node->Children().GetIterator();
+		while (it.HasNext()) {
+			DkNode* child = it.Next();
+			if (child->IsRegistered())
+				count++;
+		}
+		info.child_count = count;
+	}
+
+	// properties under node lock (string values may be mutable)
+	{
+		MutexLocker nodeLocker(node->NodeLock());
+
+		info.property_count = node->Properties().CountProperties();
+
+		node->Properties().GetStringCopy(KOSM_DEVICE_PRETTY_NAME,
+			info.pretty_name, sizeof(info.pretty_name));
+
+		node->Properties().GetStringCopy(KOSM_DEVICE_BUS,
+			info.bus, sizeof(info.bus));
+
+		// first published device path
+		const char* path = node->FirstPublishedPath();
+		if (path != NULL)
+			strlcpy(info.device_path, path, sizeof(info.device_path));
+	}
+
+	node->ReleaseReference();
+
+	return user_memcpy(userInfo, &info, sizeof(info));
+}

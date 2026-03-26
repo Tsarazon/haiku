@@ -41,6 +41,12 @@ status_t		_user_kosm_dk_find_node(
 				const kosm_dk_match_rule* userRules,
 				kosm_handle_t* iterator);
 
+// Node metadata: module name, pretty name, bus, published path,
+// flags, child count. One syscall replaces multiple get_property
+// calls for the most common fields.
+status_t		_user_kosm_dk_get_node_info(kosm_handle_t node,
+				kosm_dk_node_info* userInfo);
+
 
 #ifdef __cplusplus
 }

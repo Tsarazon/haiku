@@ -125,6 +125,11 @@ public:
 	status_t				UnwatchNode(DkNode* node,
 								dk_node_callback callback, void* cookie);
 
+	// Probe children that were registered during a parent's attach()
+	// but deferred because the parent's cookie wasn't set yet.
+	// Called by DkLifecycle after setting the driver cookie.
+	void					ProbePendingChildren(DkNode* node);
+
 	// FDT blob (set by platform init, NULL on ACPI-only platforms)
 	void					SetFdtBlob(const void* blob) { fFdtBlob = blob; }
 	const void*				FdtBlob() const { return fFdtBlob; }
@@ -136,6 +141,8 @@ private:
 
 	void					_ProbeChildren(DkNode* node,
 									const char* devicePath);
+	void					_ProbeNode(DkNode* node);
+	void					_PostRegisterProbe(DkNode* node);
 	void					_RollbackResources(DkNode* node);
 	void					_DeviceRemovedCleanup(DkNode* node);
 

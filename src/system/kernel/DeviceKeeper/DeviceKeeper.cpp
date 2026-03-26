@@ -385,9 +385,139 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 	if (_node != NULL)
 		*_node = node;
 
-	// auto-attach unless on-demand (called WITHOUT locks)
+	// Defer fixed-child attachment and auto-probe if the parent is
+	// still inside driver->attach(). The parent's driver cookie is
+	// not yet set, so get_bus_ops() would return a NULL cookie and
+	// any fixed-child that needs bus ops would fail. The caller
+	// (ProbeAndAttach/ProbeAndAttachAll) will call
+	// ProbePendingChildren() after setting the cookie.
+	if (parent != NULL && parent->IsAttaching())
+		return B_OK;
+
+	_PostRegisterProbe(node);
+
+	return B_OK;
+}
+
+
+void
+DkKeeper::_PostRegisterProbe(DkNode* node)
+{
+	// Fixed child: if the node declares KOSM_DEVICE_FIXED_CHILD,
+	// load that module by name and attach it directly — no probe needed.
+	// This handles bus manager layering (PCI root, SCSI for SIM, etc.)
+	const char* fixedChild = NULL;
+	node->Properties().GetString(KOSM_DEVICE_FIXED_CHILD, &fixedChild);
+	if (fixedChild != NULL) {
+		// Only treat as dk_driver_info if module name ends with
+		// DK_DRIVER_MODULE_SUFFIX. Other modules (bus manager
+		// internal interfaces) are loaded via module_dependencies.
+		size_t nameLen = strlen(fixedChild);
+		size_t suffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
+		bool isDkDriver = (nameLen > suffixLen + 1
+			&& fixedChild[nameLen - suffixLen - 1] == '/'
+			&& strcmp(fixedChild + nameLen - suffixLen,
+				DK_DRIVER_MODULE_SUFFIX) == 0);
+
+		dk_driver_info* fixedDriver = NULL;
+		status_t status = isDkDriver
+			? get_module(fixedChild, (module_info**)&fixedDriver)
+			: B_BAD_TYPE;
+		if (status == B_OK && fixedDriver->attach != NULL) {
+			// Mark attaching so that any children registered during
+			// fixedDriver->attach() are deferred — their drivers
+			// need get_bus_ops() which requires this node's driver
+			// and cookie to be set first.
+			{
+				MutexLocker nodeLocker(node->NodeLock());
+				node->SetDriver(fixedDriver, NULL);
+				node->SetAttaching(true);
+			}
+
+			void* cookie = NULL;
+			status = fixedDriver->attach(
+				reinterpret_cast<dk_node*>(node), &cookie);
+
+			{
+				MutexLocker nodeLocker(node->NodeLock());
+				if (status == B_OK) {
+					node->SetDriverCookie(cookie);
+				} else {
+					node->ClearDriver();
+				}
+				node->SetAttaching(false);
+			}
+
+			if (status == B_OK) {
+				dprintf("DeviceKeeper: fixed-child attached %s on %s\n",
+					fixedChild, node->ModuleName());
+				ProbePendingChildren(node);
+			} else {
+				dprintf("DeviceKeeper: fixed-child attach %s failed: %s\n",
+					fixedChild, strerror(status));
+				put_module(fixedChild);
+			}
+		} else if (status != B_OK) {
+			dprintf("DeviceKeeper: fixed-child get_module(%s) failed: %s\n",
+				fixedChild, strerror(status));
+		}
+	}
+
+	// Auto-attach by module name: if the node's own module exports
+	// dk_driver_info (suffix dk_driver_v1), load it and attach directly.
+	// This is the standard path — parent calls register_node(MODULE_NAME)
+	// and the module becomes the node's driver automatically.
+	if (!node->IsAttached()) {
+		const char* modName = node->ModuleName();
+		size_t nameLen = strlen(modName);
+		size_t suffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
+		bool isDkDriver = (nameLen > suffixLen + 1
+			&& modName[nameLen - suffixLen - 1] == '/'
+			&& strcmp(modName + nameLen - suffixLen,
+				DK_DRIVER_MODULE_SUFFIX) == 0);
+
+		if (isDkDriver) {
+			dk_driver_info* ownDriver = NULL;
+			status_t s = get_module(modName, (module_info**)&ownDriver);
+			if (s == B_OK && ownDriver->attach != NULL) {
+				{
+					MutexLocker nodeLocker(node->NodeLock());
+					node->SetDriver(ownDriver, NULL);
+					node->SetAttaching(true);
+				}
+
+				void* cookie = NULL;
+				s = ownDriver->attach(
+					reinterpret_cast<dk_node*>(node), &cookie);
+
+				{
+					MutexLocker nodeLocker(node->NodeLock());
+					if (s == B_OK) {
+						node->SetDriverCookie(cookie);
+					} else {
+						node->ClearDriver();
+					}
+					node->SetAttaching(false);
+				}
+
+				if (s == B_OK) {
+					dprintf("DeviceKeeper: auto-attached %s\n", modName);
+					ProbePendingChildren(node);
+				} else {
+					dprintf("DeviceKeeper: auto-attach %s failed: %s\n",
+						modName, strerror(s));
+					put_module(modName);
+				}
+			} else if (s == B_OK) {
+				// Module loaded but no attach — just a module, not a driver
+				put_module(modName);
+			}
+		}
+	}
+
+	// Fallback: probe-based attach for nodes not yet attached
 	uint32 flags = node->Flags();
-	if ((flags & KOSM_FIND_CHILD_ON_DEMAND) == 0)
+	if (!node->IsAttached() && (flags & KOSM_FIND_CHILD_ON_DEMAND) == 0)
 		fLifecycle.ProbeAndAttach(node);
 
 	// keep driver loaded: take extra reference so the node (and thus
@@ -395,8 +525,60 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 	// hold references
 	if (node->HasKeepLoaded() && node->IsAttached())
 		node->Acquire();
+}
 
-	return B_OK;
+
+void
+DkKeeper::ProbePendingChildren(DkNode* node)
+{
+	// Called after a parent's attach() completes and its cookie is set.
+	// Probe children that were registered during attach() but deferred
+	// because the parent's cookie wasn't available yet.
+	static const int32 kStackMax = 16;
+	DkNode* stackBuf[kStackMax];
+	DkNode** children = stackBuf;
+	int32 count = 0;
+
+	{
+		ReadLocker treeLocker(&fTreeLock);
+
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			DkNode* child = it.Next();
+			if (child->IsRegistered() && !child->IsAttached()
+				&& !child->IsAttaching())
+				count++;
+		}
+
+		if (count == 0)
+			return;
+
+		if (count > kStackMax) {
+			children = (DkNode**)malloc(count * sizeof(DkNode*));
+			if (children == NULL)
+				return;
+		}
+
+		int32 i = 0;
+		it = node->Children().GetIterator();
+		while (it.HasNext() && i < count) {
+			DkNode* child = it.Next();
+			if (child->IsRegistered() && !child->IsAttached()
+				&& !child->IsAttaching()) {
+				child->Acquire();
+				children[i++] = child;
+			}
+		}
+		count = i;
+	}
+
+	for (int32 i = 0; i < count; i++) {
+		_PostRegisterProbe(children[i]);
+		children[i]->Release();
+	}
+
+	if (children != stackBuf)
+		free(children);
 }
 
 
@@ -485,21 +667,61 @@ void
 DkKeeper::_DeviceRemovedCleanup(DkNode* node)
 {
 	// bottom-up: cleanup children, then detach them from this node.
-	// Tree write lock held during child removal.
-	WriteLocker treeLocker(&fTreeLock);
+	// Snapshot children under tree read lock (a concurrent
+	// register_node could modify the list between unlock/relock).
+	static const int32 kStackMax = 16;
+	DkNode* stackBuf[kStackMax];
+	DkNode** snapshot = stackBuf;
+	int32 count = 0;
 
-	while (!node->Children().IsEmpty()) {
-		DkNode* child = node->Children().Head();
+	{
+		ReadLocker treeLocker(&fTreeLock);
 
-		treeLocker.Unlock();
-		_DeviceRemovedCleanup(child);
-		treeLocker.Lock();
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			it.Next();
+			count++;
+		}
 
-		node->RemoveChild(child);
-		child->Release();			// drop creation ref (may delete child)
+		if (count > 0) {
+			if (count > kStackMax) {
+				snapshot = (DkNode**)malloc(count * sizeof(DkNode*));
+				if (snapshot == NULL)
+					snapshot = stackBuf;
+			}
+
+			int32 i = 0;
+			int32 max = (snapshot == stackBuf) ? kStackMax : count;
+			it = node->Children().GetIterator();
+			while (it.HasNext() && i < max) {
+				DkNode* child = it.Next();
+				child->Acquire();
+				snapshot[i++] = child;
+			}
+			count = i;
+		}
 	}
 
-	treeLocker.Unlock();
+	// recurse into each child without locks
+	for (int32 i = 0; i < count; i++)
+		_DeviceRemovedCleanup(snapshot[i]);
+
+	// detach all children under tree write lock
+	{
+		WriteLocker treeLocker(&fTreeLock);
+		for (int32 i = 0; i < count; i++) {
+			if (snapshot[i]->Parent() == node)
+				node->RemoveChild(snapshot[i]);
+		}
+	}
+
+	// release snapshot refs (RemoveChild already dropped the parent
+	// ref; this drops the snapshot ref, may delete the child)
+	for (int32 i = 0; i < count; i++)
+		snapshot[i]->Release();
+
+	if (snapshot != stackBuf)
+		free(snapshot);
 
 	// release globally reserved I/O resources
 	_RollbackResources(node);
@@ -539,6 +761,10 @@ DkKeeper::DemandProbe(const char* devicePath)
 			DiscoverDrivers(driverPath);
 	}
 
+	// Probe root node — let all matching drivers (PCI, ACPI, etc.)
+	// attach and register their child nodes.
+	_ProbeNode(fRootNode);
+
 	_ProbeChildren(fRootNode, devicePath);
 	return B_OK;
 }
@@ -558,6 +784,20 @@ DkKeeper::UnwatchNode(DkNode* node, dk_node_callback callback, void* cookie)
 {
 	MutexLocker locker(node->NodeLock());
 	return node->RemoveWatcher(callback, cookie);
+}
+
+
+void
+DkKeeper::_ProbeNode(DkNode* node)
+{
+	// For nodes with KOSM_FIND_MULTIPLE_CHILDREN, we need to let
+	// ALL matching drivers attach (each registers its own child).
+	// For normal nodes, just attach the best matching driver.
+	if ((node->Flags() & KOSM_FIND_MULTIPLE_CHILDREN) != 0) {
+		fLifecycle.ProbeAndAttachAll(node);
+	} else if (!node->IsAttached()) {
+		fLifecycle.ProbeAndAttach(node);
+	}
 }
 
 
@@ -607,14 +847,14 @@ DkKeeper::_ProbeChildren(DkNode* node, const char* devicePath)
 	}
 
 	// probe without any locks held
+	dprintf("DeviceKeeper: _ProbeChildren(%s): %d children to probe\n",
+		node->ModuleName(), (int)count);
 	for (int32 i = 0; i < count; i++) {
 		DkNode* child = children[i];
 
-		if (!child->IsAttached()
-			&& (child->Flags() & KOSM_FIND_CHILD_ON_DEMAND) != 0) {
-			fLifecycle.ProbeAndAttach(child);
-		}
-
+		dprintf("DeviceKeeper: _ProbeChildren: [%d] child %s (attached=%d flags=0x%x)\n",
+			(int)i, child->ModuleName(), child->IsAttached(), child->Flags());
+		_ProbeNode(child);
 		_ProbeChildren(child, devicePath);
 		child->Release();
 	}
@@ -775,10 +1015,8 @@ static void
 dk_put_node(dk_node* _node)
 {
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
-	if (node != NULL) {
-		ReadLocker locker(DkKeeper::Instance()->TreeLock());
+	if (node != NULL)
 		node->Release();
-	}
 }
 
 
@@ -1051,10 +1289,26 @@ dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
 {
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
 	DkNode* parent = node->Parent();
+
+	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) parent=%s attached=%d\n",
+		node->ModuleName(), busType,
+		parent ? parent->ModuleName() : "NULL",
+		parent ? parent->IsAttached() : -1);
+
 	if (parent == NULL || !parent->IsAttached())
 		return B_NO_INIT;
 
 	dk_driver_info* parentDriver = parent->DriverInfo();
+	if (parentDriver == NULL) {
+		dprintf("DeviceKeeper: get_bus_ops: parent %s has NULL DriverInfo\n",
+			parent->ModuleName());
+		return B_NO_INIT;
+	}
+
+	dprintf("DeviceKeeper: get_bus_ops: parent driver=%s bus_ops=%p type=%u cookie=%p\n",
+		parentDriver->info.name, parentDriver->bus_ops,
+		parentDriver->bus_ops_type, parent->DriverCookie());
+
 	if (parentDriver->bus_ops == NULL)
 		return B_UNSUPPORTED;
 	if (parentDriver->bus_ops_type != busType)
@@ -1362,6 +1616,9 @@ dump_dk_node(int argc, char** argv)
 status_t
 dk_keeper_init(kernel_args* args)
 {
+	if (DkKeeper::sInstance != NULL)
+		return B_OK;
+
 	DkKeeper* keeper = new(std::nothrow) DkKeeper();
 	if (keeper == NULL)
 		return B_NO_MEMORY;
@@ -1434,9 +1691,16 @@ dk_keeper_init_post_modules(kernel_args* args)
 		return B_NO_INIT;
 
 	// discover drivers in standard paths (modules now available from boot FS)
-	keeper->DiscoverDrivers("drivers/dev");
-	keeper->DiscoverDrivers("busses");
-	keeper->DiscoverDrivers("bus_managers");
+	status_t s;
+	s = keeper->DiscoverDrivers("drivers/dev");
+	dprintf("DeviceKeeper: DiscoverDrivers(\"drivers/dev\"): %s\n",
+		s == B_OK ? "found" : "none");
+	s = keeper->DiscoverDrivers("busses");
+	dprintf("DeviceKeeper: DiscoverDrivers(\"busses\"): %s\n",
+		s == B_OK ? "found" : "none");
+	s = keeper->DiscoverDrivers("bus_managers");
+	dprintf("DeviceKeeper: DiscoverDrivers(\"bus_managers\"): %s\n",
+		s == B_OK ? "found" : "none");
 
 	// reprobe all on-demand nodes that weren't probed during early boot
 	keeper->DemandProbe("");

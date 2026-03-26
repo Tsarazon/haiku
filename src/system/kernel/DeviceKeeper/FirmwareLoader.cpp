@@ -25,7 +25,7 @@ static const char* const kFirmwarePaths[] = {
 static status_t
 _try_load(const char* fullPath, const void** _data, size_t* _size)
 {
-	int fd = open(fullPath, O_RDONLY | O_NOTRAVERSE);
+	int fd = open(fullPath, O_RDONLY | O_NOTRAVERSE | O_CLOEXEC);
 	if (fd < 0)
 		return errno;
 

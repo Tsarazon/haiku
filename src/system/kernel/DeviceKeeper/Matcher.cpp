@@ -108,6 +108,14 @@ status_t
 DkMatcher::RegisterDriver(const char* moduleName)
 {
 	WriteLocker locker(&fLock);
+	return _RegisterDriverLocked(moduleName);
+}
+
+
+status_t
+DkMatcher::_RegisterDriverLocked(const char* moduleName)
+{
+	// caller must hold fLock for write
 
 	// check for duplicates
 	DriverList::Iterator it = fDrivers.GetIterator();
@@ -121,12 +129,6 @@ DkMatcher::RegisterDriver(const char* moduleName)
 	status_t status = get_module(moduleName, (module_info**)&info);
 	if (status != B_OK)
 		return status;
-
-	// verify it has a match dict
-	if (info->match == NULL) {
-		put_module(moduleName);
-		return B_BAD_VALUE;
-	}
 
 	DkDriverRecord* record = new(std::nothrow) DkDriverRecord();
 	if (record == NULL) {
@@ -169,25 +171,36 @@ DkMatcher::UnregisterDriver(const char* moduleName)
 status_t
 DkMatcher::DiscoverDrivers(const char* path)
 {
+	dprintf("DeviceKeeper: DiscoverDrivers(\"%s\", suffix=\"%s\")\n",
+		path, DK_DRIVER_MODULE_SUFFIX);
+
 	void* list = open_module_list_etc(path, DK_DRIVER_MODULE_SUFFIX);
-	if (list == NULL)
+	if (list == NULL) {
+		dprintf("DeviceKeeper: open_module_list_etc returned NULL\n");
 		return B_ENTRY_NOT_FOUND;
+	}
 
 	char name[B_FILE_NAME_LENGTH];
 	size_t nameLength;
 	int32 found = 0;
+	int32 scanned = 0;
 
 	// NOTE: write lock is held for the entire scan, including
-	// get_module() calls inside RegisterDriver() which may perform
-	// disk I/O. This blocks all concurrent FindBestDriver() calls.
-	// Acceptable during boot (sequential), but DemandProbe paths
-	// should be aware of the latency.
+	// get_module() calls inside _RegisterDriverLocked() which may
+	// perform disk I/O. This blocks all concurrent FindBestDriver()
+	// calls. Acceptable during boot (sequential), but DemandProbe
+	// paths should be aware of the latency.
+	// TODO: two-phase scan — collect names under lock, load modules
+	// without lock, insert under write lock — to reduce contention.
 	WriteLocker locker(&fLock);
 
 	while (true) {
 		nameLength = sizeof(name);
 		if (read_next_module_name(list, name, &nameLength) != B_OK)
 			break;
+
+		scanned++;
+		dprintf("DeviceKeeper:   candidate: \"%s\"\n", name);
 
 		// skip already registered
 		bool exists = false;
@@ -199,14 +212,24 @@ DkMatcher::DiscoverDrivers(const char* path)
 				break;
 			}
 		}
-		if (exists)
+		if (exists) {
+			dprintf("DeviceKeeper:   -> already registered\n");
 			continue;
+		}
 
-		if (RegisterDriver(name) == B_OK)
+		status_t status = _RegisterDriverLocked(name);
+		if (status == B_OK) {
 			found++;
+			dprintf("DeviceKeeper:   -> registered\n");
+		} else {
+			dprintf("DeviceKeeper:   -> RegisterDriver failed: %s\n",
+				strerror(status));
+		}
 	}
 
 	close_module_list(list);
+	dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): scanned %d, registered %d\n",
+		path, (int)scanned, (int)found);
 	return found > 0 ? B_OK : B_ENTRY_NOT_FOUND;
 }
 
@@ -236,23 +259,36 @@ DkMatcher::FindBestDriver(DkNode* node, dk_driver_info** _driver)
 		{
 			dk_driver_info* info = record->info;
 
-			if (info->match == NULL)
+			// Driver without attach() cannot be used — skip early
+			// to avoid selecting a match-only stub as best driver.
+			if (info->attach == NULL) {
+				dprintf("DeviceKeeper: FindBest: skipping %s "
+					"(attach=NULL)\n", info->info.name);
 				return;
+			}
 
-			const dk_match_rule* rules = info->match->rules;
-			if (!node->Properties().Matches(rules))
-				return;
+			// If match dict present, check declarative rules first
+			if (info->match != NULL) {
+				const dk_match_rule* rules = info->match->rules;
+				if (!node->Properties().Matches(rules))
+					return;
+			}
 
-			int32 specificity = DkMatcher::_ComputeSpecificity(rules,
-				node->Properties());
-			int32 priority = info->match->priority;
+			int32 specificity = (info->match != NULL)
+				? DkMatcher::_ComputeSpecificity(info->match->rules,
+					node->Properties())
+				: 0;
+			int32 priority = (info->match != NULL)
+				? info->match->priority : 0;
 			float probeScore = 0.0f;
 
 			if (info->probe != NULL) {
 				probeScore = info->probe(
 					reinterpret_cast<dk_node*>(node));
-				if (probeScore < 0.0f)
+				if (probeScore <= 0.0f)
 					return;
+			} else if (info->match == NULL) {
+				return;
 			}
 
 			bool better = false;
@@ -287,6 +323,11 @@ DkMatcher::FindBestDriver(DkNode* node, dk_driver_info** _driver)
 	if (bestDriver == NULL)
 		return B_ENTRY_NOT_FOUND;
 
+	dprintf("DeviceKeeper: FindBestDriver(%s): selected %s "
+		"(attach=%p spec=%" B_PRId32 " prio=%" B_PRId32 " probe=%.2f)\n",
+		node->ModuleName(), bestDriver->info.name,
+		bestDriver->attach, bestSpecificity, bestPriority, bestProbe);
+
 	*_driver = bestDriver;
 	return B_OK;
 }
@@ -312,26 +353,46 @@ DkMatcher::FindAllDrivers(DkNode* node, DkMatchResult* results,
 				return;
 
 			dk_driver_info* info = record->info;
-			if (info->match == NULL)
+			if (info == NULL || info->attach == NULL)
 				return;
 
-			const dk_match_rule* rules = info->match->rules;
-			if (!node->Properties().Matches(rules))
-				return;
+			dprintf("DeviceKeeper: FindAll: trying %s (match=%p probe=%p)\n",
+				info->info.name, info->match, info->probe);
 
+			// If match dict present, check declarative rules first
+			if (info->match != NULL) {
+				const dk_match_rule* rules = info->match->rules;
+				if (rules != NULL && !node->Properties().Matches(rules)) {
+					dprintf("DeviceKeeper: FindAll:   %s -> match rejected\n",
+						info->info.name);
+					return;
+				}
+			}
+
+			// probe() is the imperative matching fallback
 			float probeScore = 0.0f;
 			if (info->probe != NULL) {
 				probeScore = info->probe(
 					reinterpret_cast<dk_node*>(node));
-				if (probeScore < 0.0f)
+				if (probeScore <= 0.0f) {
+					dprintf("DeviceKeeper: FindAll:   %s -> probe rejected (%.2f)\n",
+						info->info.name, probeScore);
 					return;
+				}
+				dprintf("DeviceKeeper: FindAll:   %s -> probe score %.2f\n",
+					info->info.name, probeScore);
+			} else if (info->match == NULL) {
+				// No match dict and no probe — can't match anything
+				return;
 			}
 
 			results[*count].driver = info;
-			results[*count].specificity
-				= DkMatcher::_ComputeSpecificity(rules,
-					node->Properties());
-			results[*count].priority = info->match->priority;
+			results[*count].specificity = (info->match != NULL)
+				? DkMatcher::_ComputeSpecificity(info->match->rules,
+					node->Properties())
+				: 0;
+			results[*count].priority = (info->match != NULL)
+				? info->match->priority : 0;
 			results[*count].probe_score = probeScore;
 			(*count)++;
 		}

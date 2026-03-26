@@ -266,6 +266,7 @@ protected:
 
 	// driver mutation (caller must hold node lock)
 	void				SetDriver(dk_driver_info* driver, void* cookie);
+	void				SetDriverCookie(void* cookie);
 	void				ClearDriver();
 	void				SetAttaching(bool attaching);
 
