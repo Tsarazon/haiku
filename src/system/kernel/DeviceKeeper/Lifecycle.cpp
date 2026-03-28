@@ -198,6 +198,16 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 			continue;
 		}
 
+		// RegisterNode may have auto-attached via _PostRegisterProbe
+		// (auto-attach by module name). If so, skip direct attach.
+		if (child->IsAttached()) {
+			dprintf("DeviceKeeper: ProbeAndAttachAll: %s already "
+				"auto-attached by RegisterNode\n", driverName);
+			if (child->HasKeepLoaded())
+				child->Acquire();
+			continue;
+		}
+
 		// Set driver on child BEFORE attach so that IsAttached()
 		// returns true for get_bus_ops() lookups from grandchildren.
 		// Also set attaching flag so that RegisterNode called from

@@ -50,6 +50,9 @@ public:
 	virtual	void		NotifyRemoved();
 
 private:
+	status_t			_DoIO(void* cookie, off_t pos, void* buffer,
+							size_t* _length, bool isWrite);
+
 	DkNode*				fNode;
 	dk_device_ops*		fOps;
 };

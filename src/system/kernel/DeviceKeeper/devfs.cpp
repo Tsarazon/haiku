@@ -1391,9 +1391,14 @@ devfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	}
 
 	if (!childNode) {
+		dprintf("devfs_read_dir: dir '%s' -> no more entries (state=%d)\n",
+			vnode->name, (int)cookie->state);
 		*_num = 0;
 		return B_OK;
 	}
+
+	dprintf("devfs_read_dir: dir '%s' -> entry '%s' (type=0x%x)\n",
+		vnode->name, name, (unsigned)childNode->stream.type);
 
 	dirent->d_dev = fs->id;
 	dirent->d_ino = childNode->id;

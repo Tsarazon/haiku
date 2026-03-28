@@ -403,67 +403,10 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 void
 DkKeeper::_PostRegisterProbe(DkNode* node)
 {
-	// Fixed child: if the node declares KOSM_DEVICE_FIXED_CHILD,
-	// load that module by name and attach it directly — no probe needed.
-	// This handles bus manager layering (PCI root, SCSI for SIM, etc.)
-	const char* fixedChild = NULL;
-	node->Properties().GetString(KOSM_DEVICE_FIXED_CHILD, &fixedChild);
-	if (fixedChild != NULL) {
-		// Only treat as dk_driver_info if module name ends with
-		// DK_DRIVER_MODULE_SUFFIX. Other modules (bus manager
-		// internal interfaces) are loaded via module_dependencies.
-		size_t nameLen = strlen(fixedChild);
-		size_t suffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
-		bool isDkDriver = (nameLen > suffixLen + 1
-			&& fixedChild[nameLen - suffixLen - 1] == '/'
-			&& strcmp(fixedChild + nameLen - suffixLen,
-				DK_DRIVER_MODULE_SUFFIX) == 0);
+	dprintf("DeviceKeeper: _PostRegisterProbe(%s) attached=%d\n",
+		node->ModuleName(), node->IsAttached());
 
-		dk_driver_info* fixedDriver = NULL;
-		status_t status = isDkDriver
-			? get_module(fixedChild, (module_info**)&fixedDriver)
-			: B_BAD_TYPE;
-		if (status == B_OK && fixedDriver->attach != NULL) {
-			// Mark attaching so that any children registered during
-			// fixedDriver->attach() are deferred — their drivers
-			// need get_bus_ops() which requires this node's driver
-			// and cookie to be set first.
-			{
-				MutexLocker nodeLocker(node->NodeLock());
-				node->SetDriver(fixedDriver, NULL);
-				node->SetAttaching(true);
-			}
-
-			void* cookie = NULL;
-			status = fixedDriver->attach(
-				reinterpret_cast<dk_node*>(node), &cookie);
-
-			{
-				MutexLocker nodeLocker(node->NodeLock());
-				if (status == B_OK) {
-					node->SetDriverCookie(cookie);
-				} else {
-					node->ClearDriver();
-				}
-				node->SetAttaching(false);
-			}
-
-			if (status == B_OK) {
-				dprintf("DeviceKeeper: fixed-child attached %s on %s\n",
-					fixedChild, node->ModuleName());
-				ProbePendingChildren(node);
-			} else {
-				dprintf("DeviceKeeper: fixed-child attach %s failed: %s\n",
-					fixedChild, strerror(status));
-				put_module(fixedChild);
-			}
-		} else if (status != B_OK) {
-			dprintf("DeviceKeeper: fixed-child get_module(%s) failed: %s\n",
-				fixedChild, strerror(status));
-		}
-	}
-
-	// Auto-attach by module name: if the node's own module exports
+	// Auto-attach by module name FIRST: if the node's own module exports
 	// dk_driver_info (suffix dk_driver_v1), load it and attach directly.
 	// This is the standard path — parent calls register_node(MODULE_NAME)
 	// and the module becomes the node's driver automatically.
@@ -512,6 +455,38 @@ DkKeeper::_PostRegisterProbe(DkNode* node)
 				// Module loaded but no attach — just a module, not a driver
 				put_module(modName);
 			}
+		}
+	}
+
+	// Fixed child: if the node declares KOSM_DEVICE_FIXED_CHILD,
+	// always create a child node with that module name. Auto-attach
+	// by module name will load and attach the module on the child.
+	// Runs AFTER auto-attach so the node's own driver + bus_ops are
+	// available for the fixed-child's attach via get_bus_ops walk-up.
+	const char* fixedChild = NULL;
+	node->Properties().GetString(KOSM_DEVICE_FIXED_CHILD, &fixedChild);
+	if (fixedChild != NULL) {
+		size_t fcNameLen = strlen(fixedChild);
+		size_t fcSuffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
+		bool fcIsDk = (fcNameLen > fcSuffixLen + 1
+			&& fixedChild[fcNameLen - fcSuffixLen - 1] == '/'
+			&& strcmp(fixedChild + fcNameLen - fcSuffixLen,
+				DK_DRIVER_MODULE_SUFFIX) == 0);
+
+		if (fcIsDk) {
+			DkNode* childNode = NULL;
+			status_t s = RegisterNode(node, fixedChild,
+				NULL, NULL, &childNode);
+			if (s == B_OK) {
+				dprintf("DeviceKeeper: fixed-child created %s under %s\n",
+					fixedChild, node->ModuleName());
+			} else {
+				dprintf("DeviceKeeper: fixed-child RegisterNode(%s) "
+					"failed: %s\n", fixedChild, strerror(s));
+			}
+		} else {
+			dprintf("DeviceKeeper: fixed-child skipping non-dk "
+				"module %s\n", fixedChild);
 		}
 	}
 
@@ -855,6 +830,19 @@ DkKeeper::_ProbeChildren(DkNode* node, const char* devicePath)
 		dprintf("DeviceKeeper: _ProbeChildren: [%d] child %s (attached=%d flags=0x%x)\n",
 			(int)i, child->ModuleName(), child->IsAttached(), child->Flags());
 		_ProbeNode(child);
+
+		// If driver implements rescan_children, call it to discover
+		// child devices (e.g. SCSI bus scan). This runs after
+		// attach completed and interrupts are available.
+		if (child->IsAttached()) {
+			dk_driver_info* drv = child->DriverInfo();
+			if (drv != NULL && drv->rescan_children != NULL) {
+				dprintf("DeviceKeeper: calling rescan_children for %s\n",
+					child->ModuleName());
+				drv->rescan_children(child->DriverCookie());
+			}
+		}
+
 		_ProbeChildren(child, devicePath);
 		child->Release();
 	}
@@ -1287,39 +1275,51 @@ static status_t
 dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
 	void** _cookie)
 {
+	// Walk up the tree until we find an ancestor with matching
+	// bus_ops_type. This decouples drivers from specific tree depth.
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
-	DkNode* parent = node->Parent();
 
-	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) parent=%s attached=%d\n",
-		node->ModuleName(), busType,
-		parent ? parent->ModuleName() : "NULL",
-		parent ? parent->IsAttached() : -1);
+	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) walking up...\n",
+		node->ModuleName(), busType);
 
-	if (parent == NULL || !parent->IsAttached())
-		return B_NO_INIT;
+	for (DkNode* ancestor = node->Parent(); ancestor != NULL;
+		ancestor = ancestor->Parent()) {
 
-	dk_driver_info* parentDriver = parent->DriverInfo();
-	if (parentDriver == NULL) {
-		dprintf("DeviceKeeper: get_bus_ops: parent %s has NULL DriverInfo\n",
-			parent->ModuleName());
-		return B_NO_INIT;
+		dprintf("DeviceKeeper: get_bus_ops:   checking %s attached=%d "
+			"driver=%s bus_ops=%p type=%u\n",
+			ancestor->ModuleName(), ancestor->IsAttached(),
+			(ancestor->IsAttached() && ancestor->DriverInfo())
+				? ancestor->DriverInfo()->info.name : "none",
+			(ancestor->IsAttached() && ancestor->DriverInfo())
+				? ancestor->DriverInfo()->bus_ops : NULL,
+			(ancestor->IsAttached() && ancestor->DriverInfo())
+				? ancestor->DriverInfo()->bus_ops_type : 0);
+
+		if (!ancestor->IsAttached())
+			continue;
+
+		dk_driver_info* driver = ancestor->DriverInfo();
+		if (driver == NULL || driver->bus_ops == NULL)
+			continue;
+
+		if (driver->bus_ops_type == busType) {
+			dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) -> FOUND %s "
+				"bus_ops=%p cookie=%p\n",
+				node->ModuleName(), busType,
+				ancestor->ModuleName(), driver->bus_ops,
+				ancestor->DriverCookie());
+
+			if (_ops != NULL)
+				*_ops = driver->bus_ops;
+			if (_cookie != NULL)
+				*_cookie = ancestor->DriverCookie();
+			return B_OK;
+		}
 	}
 
-	dprintf("DeviceKeeper: get_bus_ops: parent driver=%s bus_ops=%p type=%u cookie=%p\n",
-		parentDriver->info.name, parentDriver->bus_ops,
-		parentDriver->bus_ops_type, parent->DriverCookie());
-
-	if (parentDriver->bus_ops == NULL)
-		return B_UNSUPPORTED;
-	if (parentDriver->bus_ops_type != busType)
-		return B_BAD_VALUE;
-
-	if (_ops != NULL)
-		*_ops = parentDriver->bus_ops;
-	if (_cookie != NULL)
-		*_cookie = parent->DriverCookie();
-
-	return B_OK;
+	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) -> not found\n",
+		node->ModuleName(), busType);
+	return B_NOT_SUPPORTED;
 }
 
 
@@ -1691,16 +1691,18 @@ dk_keeper_init_post_modules(kernel_args* args)
 		return B_NO_INIT;
 
 	// discover drivers in standard paths (modules now available from boot FS)
-	status_t s;
-	s = keeper->DiscoverDrivers("drivers/dev");
-	dprintf("DeviceKeeper: DiscoverDrivers(\"drivers/dev\"): %s\n",
-		s == B_OK ? "found" : "none");
-	s = keeper->DiscoverDrivers("busses");
-	dprintf("DeviceKeeper: DiscoverDrivers(\"busses\"): %s\n",
-		s == B_OK ? "found" : "none");
-	s = keeper->DiscoverDrivers("bus_managers");
-	dprintf("DeviceKeeper: DiscoverDrivers(\"bus_managers\"): %s\n",
-		s == B_OK ? "found" : "none");
+	static const char* sPaths[] = {
+		"drivers",
+		"busses",
+		"bus_managers",
+		NULL
+	};
+
+	for (const char** path = sPaths; *path != NULL; path++) {
+		status_t s = keeper->DiscoverDrivers(*path);
+		dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): %s\n",
+			*path, s == B_OK ? "found" : "none");
+	}
 
 	// reprobe all on-demand nodes that weren't probed during early boot
 	keeper->DemandProbe("");

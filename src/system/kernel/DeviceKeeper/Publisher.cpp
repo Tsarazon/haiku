@@ -14,6 +14,7 @@
 #include <util/AutoLock.h>
 
 #include "devfs_private.h"
+#include "IORequest.h"
 
 
 // DkPublishedDevice
@@ -40,9 +41,34 @@ DkPublishedDevice::InitCheck() const
 
 bool DkPublishedDevice::HasSelect() const { return fOps->select != NULL; }
 bool DkPublishedDevice::HasDeselect() const { return fOps->deselect != NULL; }
-bool DkPublishedDevice::HasRead() const { return fOps->read != NULL; }
-bool DkPublishedDevice::HasWrite() const { return fOps->write != NULL; }
+bool DkPublishedDevice::HasRead() const { return fOps->read != NULL || fOps->io != NULL; }
+bool DkPublishedDevice::HasWrite() const { return fOps->write != NULL || fOps->io != NULL; }
 bool DkPublishedDevice::HasIO() const { return fOps->io != NULL; }
+
+
+/*!	Emulate synchronous read/write via the asynchronous io() hook.
+	Creates a temporary IORequest, submits it through io(), and waits
+	for completion. This is the same fallback that Haiku's
+	AbstractModuleDevice::_DoIO() provides for drivers that only
+	implement the io() hook (e.g. SCSI disk, SCSI CD).
+*/
+status_t
+DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
+	size_t* _length, bool isWrite)
+{
+	IORequest request;
+	status_t status = request.Init(pos, (addr_t)buffer, *_length, isWrite, 0);
+	if (status != B_OK)
+		return status;
+
+	status = fOps->io(cookie, &request);
+	if (status != B_OK)
+		return status;
+
+	status = request.Wait(0, 0);
+	*_length = request.TransferredBytes();
+	return status;
+}
 
 
 status_t
@@ -58,9 +84,14 @@ status_t
 DkPublishedDevice::Read(void* cookie, off_t pos, void* buffer,
 	size_t* _length)
 {
-	if (fOps->read == NULL)
-		return B_UNSUPPORTED;
-	return fOps->read(cookie, pos, buffer, _length);
+	if (fOps->read != NULL)
+		return fOps->read(cookie, pos, buffer, _length);
+
+	// fallback: route through io() if available
+	if (fOps->io != NULL)
+		return _DoIO(cookie, pos, buffer, _length, false);
+
+	return B_UNSUPPORTED;
 }
 
 
@@ -68,9 +99,14 @@ status_t
 DkPublishedDevice::Write(void* cookie, off_t pos, const void* buffer,
 	size_t* _length)
 {
-	if (fOps->write == NULL)
-		return B_UNSUPPORTED;
-	return fOps->write(cookie, pos, buffer, _length);
+	if (fOps->write != NULL)
+		return fOps->write(cookie, pos, buffer, _length);
+
+	// fallback: route through io() if available
+	if (fOps->io != NULL)
+		return _DoIO(cookie, pos, const_cast<void*>(buffer), _length, true);
+
+	return B_UNSUPPORTED;
 }
 
 
