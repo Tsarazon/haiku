@@ -4,6 +4,7 @@
  */
 
 #include "Publisher.h"
+#include "DeviceKeeper.h"
 #include "Node.h"
 
 #include <new>
@@ -22,7 +23,8 @@
 DkPublishedDevice::DkPublishedDevice(DkNode* node, dk_device_ops* ops)
 	:
 	fNode(node),
-	fOps(ops)
+	fOps(ops),
+	fMaxIOSize(0)
 {
 }
 
@@ -46,28 +48,160 @@ bool DkPublishedDevice::HasWrite() const { return fOps->write != NULL || fOps->i
 bool DkPublishedDevice::HasIO() const { return fOps->io != NULL; }
 
 
+/*!	Read DMA transfer limits from the node's property chain.
+
+	Block device drivers (AHCI, virtio-blk, NVMe) declare their DMA
+	constraints as node properties. The bus manager typically sets
+	KOSM_DMA_MAX_TRANSFER_BLOCKS on the bus node, and recursive
+	property lookup finds it from the device node.
+
+	We read max_transfer_size here so that _DoIO() and IO() can
+	pre-split requests to a size the driver can handle in a single
+	DMA transfer. Without this, the driver receives a multi-MB
+	request and may only transfer a fraction, causing short reads
+	that crash packagefs and other consumers.
+*/
+void
+DkPublishedDevice::_ReadDMALimits()
+{
+	fMaxIOSize = 0;
+
+	if (fNode == NULL || fOps->io == NULL)
+		return;
+
+	DkKeeper* keeper = DkKeeper::Instance();
+	if (keeper == NULL)
+		return;
+
+	// DMA properties are typically on the bus node (PCI, USB),
+	// not the device node itself. Recursive lookup walks the
+	// parent chain to find them.
+	ReadLocker treeLocker(keeper->TreeLock());
+
+	// Block size for interpreting *_BLOCKS properties.
+	// Read from KOSM_DMA_BLOCK_SIZE if the driver set it;
+	// fall back to 512 (conservative — safe for 4K-native too,
+	// just chunks smaller than necessary).
+	generic_size_t blockSize = 512;
+	const DkPropertyEntry* bsEntry = fNode->LookupRecursive(
+		KOSM_DMA_BLOCK_SIZE);
+	if (bsEntry != NULL && bsEntry->type == B_UINT32_TYPE
+		&& bsEntry->value.ui32 > 0) {
+		blockSize = bsEntry->value.ui32;
+	}
+
+	const DkPropertyEntry* entry = fNode->LookupRecursive(
+		KOSM_DMA_MAX_TRANSFER_BLOCKS);
+	if (entry != NULL && entry->type == B_UINT32_TYPE
+		&& entry->value.ui32 > 0) {
+		fMaxIOSize = (generic_size_t)entry->value.ui32 * blockSize;
+	}
+
+	// If no DMA limit found, also check max_segment properties
+	// as a fallback indicator of device constraints.
+	if (fMaxIOSize == 0) {
+		entry = fNode->LookupRecursive(KOSM_DMA_MAX_SEGMENT_BLOCKS);
+		if (entry != NULL && entry->type == B_UINT32_TYPE
+			&& entry->value.ui32 > 0) {
+			uint32 maxSegments = 16;
+			const DkPropertyEntry* segEntry = fNode->LookupRecursive(
+				KOSM_DMA_MAX_SEGMENT_COUNT);
+			if (segEntry != NULL && segEntry->type == B_UINT32_TYPE
+				&& segEntry->value.ui32 > 0)
+				maxSegments = segEntry->value.ui32;
+
+			fMaxIOSize = (generic_size_t)entry->value.ui32
+				* blockSize * maxSegments;
+		}
+	}
+
+	if (fMaxIOSize > 0) {
+		dprintf("DeviceKeeper: %s DMA max I/O size: %" B_PRIuGENADDR
+			" bytes (block size %" B_PRIuGENADDR ")\n",
+			fNode->ModuleName(), fMaxIOSize, blockSize);
+	}
+}
+
+
 /*!	Emulate synchronous read/write via the asynchronous io() hook.
-	Creates a temporary IORequest, submits it through io(), and waits
-	for completion. This is the same fallback that Haiku's
-	AbstractModuleDevice::_DoIO() provides for drivers that only
-	implement the io() hook (e.g. SCSI disk, SCSI CD).
+
+	DMA-aware chunking: if the node declares DMA transfer limits
+	(KOSM_DMA_MAX_TRANSFER_BLOCKS), we pre-split the request into
+	chunks the driver's DMA engine can handle. Each chunk is a
+	separate IORequest submitted, waited, and accumulated.
+
+	Safety-net loop: even within a single chunk, the driver may
+	return a partial transfer (e.g. end-of-device, segment limits).
+	We loop on partial completion to ensure the full request is
+	satisfied. This is the same semantics as POSIX read/pread.
+
+	devfs_read_pages() calls device->Read() per iovec. A single
+	iovec can span many contiguous pages (64KB, 256KB, etc.), so
+	this function is the critical path for large file cache reads
+	such as packagefs loading .hpkg archives.
 */
 status_t
 DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 	size_t* _length, bool isWrite)
 {
-	IORequest request;
-	status_t status = request.Init(pos, (addr_t)buffer, *_length, isWrite, 0);
-	if (status != B_OK)
-		return status;
+	const size_t totalLength = *_length;
+	size_t totalTransferred = 0;
 
-	status = fOps->io(cookie, &request);
-	if (status != B_OK)
-		return status;
+	// Pre-split by DMA limit when known, otherwise full size
+	// (driver reports partial, loop handles it).
+	const size_t maxChunk = fMaxIOSize > 0
+		? (size_t)fMaxIOSize : totalLength;
 
-	status = request.Wait(0, 0);
-	*_length = request.TransferredBytes();
-	return status;
+	while (totalTransferred < totalLength) {
+		const size_t remaining = totalLength - totalTransferred;
+		const size_t chunkSize = remaining < maxChunk
+			? remaining : maxChunk;
+
+		IORequest request;
+		status_t status = request.Init(
+			pos + (off_t)totalTransferred,
+			(addr_t)buffer + totalTransferred,
+			chunkSize, isWrite, 0);
+		if (status != B_OK) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+
+		status = fOps->io(cookie, &request);
+		if (status != B_OK) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+
+		status = request.Wait(0, 0);
+		generic_size_t chunk = request.TransferredBytes();
+
+		// Drivers that bypass IOScheduler (SCSI disk → AHCI DMA path)
+		// transfer data directly via DMA into the buffer but never
+		// call IORequest::Advance(). TransferredBytes() stays 0 even
+		// though the data is already in the buffer. If Wait() returned
+		// B_OK, the driver completed successfully — trust it and
+		// account for the full chunk.
+		if (status == B_OK && chunk == 0)
+			chunk = chunkSize;
+
+		if (chunk == 0) {
+			// No progress and error — end of device or hard error.
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+
+		totalTransferred += chunk;
+
+		if (status != B_OK) {
+			// Error after partial progress — return what we have.
+			*_length = totalTransferred;
+			return B_OK;
+		}
+	}
+
+	*_length = totalTransferred;
+	return B_OK;
 }
 
 
@@ -84,14 +218,43 @@ status_t
 DkPublishedDevice::Read(void* cookie, off_t pos, void* buffer,
 	size_t* _length)
 {
-	if (fOps->read != NULL)
-		return fOps->read(cookie, pos, buffer, _length);
+	// io()-only drivers: use _DoIO which has its own DMA-aware loop.
+	if (fOps->read == NULL) {
+		if (fOps->io != NULL)
+			return _DoIO(cookie, pos, buffer, _length, false);
+		return B_UNSUPPORTED;
+	}
 
-	// fallback: route through io() if available
-	if (fOps->io != NULL)
-		return _DoIO(cookie, pos, buffer, _length, false);
+	// Direct read hook: the driver (scsi_disk, etc.) may return a
+	// partial transfer if the underlying transport limits the request
+	// size (e.g. SCSI maxBlocks = 255 sectors via AHCI). Loop until
+	// the full request is satisfied. Without this loop, devfs_read_pages
+	// sees a short read, breaks its iovec iteration, and the file cache
+	// returns pages filled with freed-memory patterns (0xDEAD) —
+	// causing "Data read partially" in packagefs.
+	const size_t totalLength = *_length;
+	size_t totalTransferred = 0;
 
-	return B_UNSUPPORTED;
+	while (totalTransferred < totalLength) {
+		size_t remaining = totalLength - totalTransferred;
+		status_t status = fOps->read(cookie, pos + (off_t)totalTransferred,
+			(uint8*)buffer + totalTransferred, &remaining);
+
+		if (remaining == 0) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+
+		totalTransferred += remaining;
+
+		if (status != B_OK) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+	}
+
+	*_length = totalTransferred;
+	return B_OK;
 }
 
 
@@ -99,14 +262,36 @@ status_t
 DkPublishedDevice::Write(void* cookie, off_t pos, const void* buffer,
 	size_t* _length)
 {
-	if (fOps->write != NULL)
-		return fOps->write(cookie, pos, buffer, _length);
+	if (fOps->write == NULL) {
+		if (fOps->io != NULL)
+			return _DoIO(cookie, pos, const_cast<void*>(buffer), _length, true);
+		return B_UNSUPPORTED;
+	}
 
-	// fallback: route through io() if available
-	if (fOps->io != NULL)
-		return _DoIO(cookie, pos, const_cast<void*>(buffer), _length, true);
+	const size_t totalLength = *_length;
+	size_t totalTransferred = 0;
 
-	return B_UNSUPPORTED;
+	while (totalTransferred < totalLength) {
+		size_t remaining = totalLength - totalTransferred;
+		status_t status = fOps->write(cookie,
+			pos + (off_t)totalTransferred,
+			(const uint8*)buffer + totalTransferred, &remaining);
+
+		if (remaining == 0) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+
+		totalTransferred += remaining;
+
+		if (status != B_OK) {
+			*_length = totalTransferred;
+			return totalTransferred > 0 ? B_OK : status;
+		}
+	}
+
+	*_length = totalTransferred;
+	return B_OK;
 }
 
 
@@ -115,7 +300,78 @@ DkPublishedDevice::IO(void* cookie, io_request* request)
 {
 	if (fOps->io == NULL)
 		return B_UNSUPPORTED;
-	return fOps->io(cookie, request);
+
+	// Pass through directly when no DMA limits or request fits.
+	if (fMaxIOSize == 0 || request->Length() <= fMaxIOSize)
+		return fOps->io(cookie, request);
+
+	// Request exceeds DMA transfer limit — split into sub-requests.
+	return _SplitIO(cookie, request);
+}
+
+
+/*!	Split a large io_request into DMA-sized sub-requests.
+
+	Used by IO() when the request exceeds fMaxIOSize. Each sub-request
+	covers at most fMaxIOSize bytes. CreateSubRequest() links children
+	to the parent request; when all children complete (success or fail),
+	the parent is automatically notified via SubRequestFinished().
+
+	This handles both the sync path (devfs_read_pages creates an
+	IORequest, calls IO(), then waits) and the async path (devfs_io
+	passes the VFS IORequest directly).
+*/
+status_t
+DkPublishedDevice::_SplitIO(void* cookie, io_request* request)
+{
+	const off_t baseOffset = request->Offset();
+	const generic_size_t totalLength = request->Length();
+	off_t currentOffset = baseOffset;
+	generic_size_t remaining = totalLength;
+	status_t lastError = B_OK;
+	bool anySubmitted = false;
+
+	while (remaining > 0) {
+		generic_size_t chunkSize = remaining < fMaxIOSize
+			? remaining : fMaxIOSize;
+
+		IORequest* sub;
+		status_t status = request->CreateSubRequest(
+			currentOffset,	// parentOffset (absolute device offset)
+			currentOffset,	// sub-request device offset
+			chunkSize,
+			sub);
+		if (status != B_OK) {
+			lastError = status;
+			break;
+		}
+
+		status = fOps->io(cookie, sub);
+		if (status != B_OK) {
+			// Mark this sub-request as failed so SubRequestFinished
+			// propagates the error to the parent. Don't stop —
+			// already-submitted subs are in flight and the parent
+			// won't complete until all pending children finish.
+			sub->SetStatusAndNotify(status);
+			lastError = status;
+			break;
+		}
+
+		anySubmitted = true;
+		currentOffset += chunkSize;
+		remaining -= chunkSize;
+	}
+
+	if (!anySubmitted && lastError != B_OK) {
+		// Failed before submitting anything — notify parent directly
+		// since there are no pending children to trigger completion.
+		request->SetStatusAndNotify(lastError);
+	}
+
+	// Return B_OK: completion is asynchronous via sub-requests.
+	// Any errors are reported through the request's notification
+	// mechanism, not the return value.
+	return B_OK;
 }
 
 
@@ -168,8 +424,10 @@ DkPublishedDevice::Free(void* cookie)
 status_t
 DkPublishedDevice::InitDevice()
 {
-	if (fNode != NULL)
+	if (fNode != NULL) {
 		fNode->Acquire();
+		_ReadDMALimits();
+	}
 	return B_OK;
 }
 

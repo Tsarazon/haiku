@@ -50,11 +50,22 @@ public:
 	virtual	void		NotifyRemoved();
 
 private:
+	void				_ReadDMALimits();
 	status_t			_DoIO(void* cookie, off_t pos, void* buffer,
 							size_t* _length, bool isWrite);
+	status_t			_SplitIO(void* cookie, io_request* request);
 
 	DkNode*				fNode;
 	dk_device_ops*		fOps;
+
+	// DMA-aware I/O splitting: max bytes per io() call.
+	// Read from node DMA properties on InitDevice(). When > 0,
+	// _DoIO pre-chunks requests to this size to avoid giving the
+	// driver a transfer larger than its DMA engine can handle.
+	// IO() uses sub-requests for the same purpose on the async path.
+	// When 0, requests are passed through at full size with a
+	// safety-net retry loop for unexpected partial completions.
+	generic_size_t		fMaxIOSize;
 };
 
 

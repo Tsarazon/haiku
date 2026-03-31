@@ -1391,14 +1391,9 @@ devfs_read_dir(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	}
 
 	if (!childNode) {
-		dprintf("devfs_read_dir: dir '%s' -> no more entries (state=%d)\n",
-			vnode->name, (int)cookie->state);
 		*_num = 0;
 		return B_OK;
 	}
-
-	dprintf("devfs_read_dir: dir '%s' -> entry '%s' (type=0x%x)\n",
-		vnode->name, name, (unsigned)childNode->stream.type);
 
 	dirent->d_dev = fs->id;
 	dirent->d_ino = childNode->id;
@@ -1707,21 +1702,27 @@ devfs_read_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	size_t remainingBytes = *_numBytes;
 	for (size_t i = 0; i < count && remainingBytes > 0; i++) {
 		size_t toRead = min_c(vecs[i].iov_len, remainingBytes);
-		size_t length = toRead;
+		size_t vecOffset = 0;
 
-		error = vnode->stream.u.dev.device->Read(cookie->device_cookie, pos,
-			vecs[i].iov_base, &length);
-		if (error != B_OK)
-			break;
+		while (vecOffset < toRead) {
+			size_t length = toRead - vecOffset;
 
-		pos += length;
-		bytesTransferred += length;
-		remainingBytes -= length;
+			error = vnode->stream.u.dev.device->Read(cookie->device_cookie,
+				pos, (uint8*)vecs[i].iov_base + vecOffset, &length);
+			if (error != B_OK)
+				goto out;
 
-		if (length < toRead)
-			break;
+			if (length == 0)
+				goto out;
+
+			pos += length;
+			vecOffset += length;
+			bytesTransferred += length;
+			remainingBytes -= length;
+		}
 	}
 
+out:
 	*_numBytes = bytesTransferred;
 
 	return bytesTransferred > 0 ? B_OK : error;
@@ -1766,21 +1767,27 @@ devfs_write_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	size_t remainingBytes = *_numBytes;
 	for (size_t i = 0; i < count && remainingBytes > 0; i++) {
 		size_t toWrite = min_c(vecs[i].iov_len, remainingBytes);
-		size_t length = toWrite;
+		size_t vecOffset = 0;
 
-		error = vnode->stream.u.dev.device->Write(cookie->device_cookie, pos,
-			vecs[i].iov_base, &length);
-		if (error != B_OK)
-			break;
+		while (vecOffset < toWrite) {
+			size_t length = toWrite - vecOffset;
 
-		pos += length;
-		bytesTransferred += length;
-		remainingBytes -= length;
+			error = vnode->stream.u.dev.device->Write(cookie->device_cookie,
+				pos, (const uint8*)vecs[i].iov_base + vecOffset, &length);
+			if (error != B_OK)
+				goto out;
 
-		if (length < toWrite)
-			break;
+			if (length == 0)
+				goto out;
+
+			pos += length;
+			vecOffset += length;
+			bytesTransferred += length;
+			remainingBytes -= length;
+		}
 	}
 
+out:
 	*_numBytes = bytesTransferred;
 
 	return bytesTransferred > 0 ? B_OK : error;

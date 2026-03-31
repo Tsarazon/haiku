@@ -57,6 +57,7 @@
 #define KOSM_DMA_MAX_TRANSFER_BLOCKS "dma/max_transfer_blocks"
 #define KOSM_DMA_MAX_SEGMENT_BLOCKS	"dma/max_segment_blocks"
 #define KOSM_DMA_MAX_SEGMENT_COUNT	"dma/max_segment_count"
+#define KOSM_DMA_BLOCK_SIZE			"dma/block_size"
 
 // ACPI-specific property names
 #define KOSM_ACPI_DEVICE_PATH		"acpi/path"
@@ -65,6 +66,8 @@
 #define KOSM_ACPI_DEVICE_UID		"acpi/uid"
 #define KOSM_ACPI_DEVICE_ADR		"acpi/adr"
 #define KOSM_ACPI_DEVICE_STATUS		"acpi/status"
+#define KOSM_ACPI_DEVICE_TYPE		"acpi/type"
+#define KOSM_ACPI_DEVICE_HANDLE		"acpi/handle"
 
 // USB-specific property names
 #define KOSM_USB_VENDOR_ID			"usb/vendor"
