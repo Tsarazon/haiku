@@ -10,6 +10,7 @@
 #include "Publisher.h"
 
 #include <new>
+#include <stdlib.h>
 
 #include <KernelExport.h>
 #include <util/AutoLock.h>
@@ -76,6 +77,7 @@ DkLifecycle::ProbeAndAttach(DkNode* node)
 			node->ModuleName(), driver->info.name);
 		MutexLocker nodeLocker(node->NodeLock());
 		node->SetAttaching(false);
+		put_module(driver->info.name);
 		return B_BAD_VALUE;
 	}
 
@@ -94,6 +96,7 @@ DkLifecycle::ProbeAndAttach(DkNode* node)
 	}
 
 	if (status == KOSM_DEFER_PROBE) {
+		put_module(driver->info.name);
 		_AddDeferred(node);
 		dprintf("DeviceKeeper: deferred probe for %s\n",
 			node->ModuleName());
@@ -101,6 +104,7 @@ DkLifecycle::ProbeAndAttach(DkNode* node)
 	}
 
 	if (status != B_OK) {
+		put_module(driver->info.name);
 		dprintf("DeviceKeeper: attach failed for %s: %s\n",
 			node->ModuleName(), strerror(status));
 		return status;
@@ -146,8 +150,13 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 
 	for (int32 i = 0; i < count; i++) {
 		dk_driver_info* driver = results[i].driver;
-		if (driver == NULL || driver->attach == NULL)
+		if (driver == NULL || driver->attach == NULL) {
+			// Shouldn't happen (FindAllDrivers filters these), but
+			// release the module ref defensively.
+			if (driver != NULL)
+				put_module(driver->info.name);
 			continue;
+		}
 
 		const char* driverName = driver->info.name;
 
@@ -175,6 +184,7 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 		if (exists) {
 			dprintf("DeviceKeeper: ProbeAndAttachAll: %s already exists "
 				"under %s, skipping\n", driverName, node->ModuleName());
+			put_module(driverName);
 			continue;
 		}
 
@@ -193,6 +203,7 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 		status_t s = keeper->RegisterNode(node, driverName,
 			props, NULL, &child);
 		if (s != B_OK) {
+			put_module(driverName);
 			dprintf("DeviceKeeper: ProbeAndAttachAll: RegisterNode(%s) "
 				"failed: %s\n", driverName, strerror(s));
 			continue;
@@ -200,9 +211,13 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 
 		// RegisterNode may have auto-attached via _PostRegisterProbe
 		// (auto-attach by module name). If so, skip direct attach.
+		// _PostRegisterProbe's auto-attach acquired its own module
+		// ref via get_module(), so release the extra ref from
+		// FindAllDrivers.
 		if (child->IsAttached()) {
 			dprintf("DeviceKeeper: ProbeAndAttachAll: %s already "
 				"auto-attached by RegisterNode\n", driverName);
+			put_module(driverName);
 			if (child->HasKeepLoaded())
 				child->Acquire();
 			continue;
@@ -219,15 +234,15 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 			child->SetAttaching(true);
 		}
 
-		void* cookie = NULL;
-		s = driver->attach(reinterpret_cast<dk_node*>(child), &cookie);
+		void* driverCookie = NULL;
+		s = driver->attach(reinterpret_cast<dk_node*>(child), &driverCookie);
 
 		// Set cookie (on success) or rollback driver (on failure)
 		// in one locked step, then clear attaching.
 		{
 			MutexLocker nodeLocker(child->NodeLock());
 			if (s == B_OK) {
-				child->SetDriverCookie(cookie);
+				child->SetDriverCookie(driverCookie);
 			} else {
 				// Rollback: clear driver so IsAttached() returns false.
 				// Without this, a failed attach leaves a zombie state
@@ -246,10 +261,17 @@ DkLifecycle::ProbeAndAttachAll(DkNode* node)
 			// manager initialization ordering.
 			keeper->ProbePendingChildren(child);
 		} else if (s == KOSM_DEFER_PROBE) {
+			// Module ref from FindAllDrivers is no longer needed:
+			// ClearDriver already removed the driver from the node,
+			// and RetryDeferred will acquire a fresh ref via
+			// FindBestDriver when it retries.
+			put_module(driverName);
 			_AddDeferred(child);
 			dprintf("DeviceKeeper: ProbeAndAttachAll: %s deferred\n",
 				driverName);
 		} else {
+			// Attach failed: release FindAllDrivers module ref.
+			put_module(driverName);
 			dprintf("DeviceKeeper: ProbeAndAttachAll: %s attach failed: "
 				"%s\n", driverName, strerror(s));
 		}
@@ -271,7 +293,7 @@ DkLifecycle::RetryDeferred()
 	// node. Loop until no more progress is made (fixed-point).
 	//
 	// attach() is called WITHOUT fDeferredLock held because drivers
-	// may recursively call register_node → ProbeAndAttach → _AddDeferred.
+	// may recursively call register_node -> ProbeAndAttach -> _AddDeferred.
 	// Strategy: move all entries to a local list under lock, process
 	// without lock, put remaining entries back under lock.
 	bool progress = true;
@@ -326,6 +348,8 @@ DkLifecycle::RetryDeferred()
 				MutexLocker nodeLocker(node->NodeLock());
 				if (status == B_OK)
 					node->SetDriver(driver, cookie);
+				else
+					put_module(driver->info.name);
 				node->SetAttaching(false);
 			}
 
@@ -393,12 +417,62 @@ DkLifecycle::Detach(DkNode* node)
 void
 DkLifecycle::_DetachRecursive(DkNode* node)
 {
-	// bottom-up: detach children first
-	DkNodeList::Iterator it = node->Children().GetIterator();
-	while (it.HasNext()) {
-		DkNode* child = it.Next();
-		_DetachRecursive(child);
+	// Snapshot children under tree read lock, then recurse without
+	// locks held. This prevents iterator invalidation if a concurrent
+	// RegisterNode modifies the children list between iterations.
+	// Each child is Acquired to prevent deletion during processing.
+	static const int32 kStackMax = 64;
+	DkNode* stackBuf[kStackMax];
+	DkNode** children = stackBuf;
+	int32 count = 0;
+
+	{
+		DkKeeper* keeper = DkKeeper::Instance();
+		ReadLocker treeLocker(keeper->TreeLock());
+
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			it.Next();
+			count++;
+		}
+
+		if (count > 0) {
+			if (count > kStackMax) {
+				children = (DkNode**)malloc(count * sizeof(DkNode*));
+				if (children == NULL) {
+					children = stackBuf;
+					dprintf("DeviceKeeper: _DetachRecursive(%s): "
+						"OOM for %" B_PRId32 " children, processing "
+						"first %d only\n",
+						node->ModuleName(), count, kStackMax);
+				}
+			}
+
+			int32 max = (children == stackBuf) ? kStackMax : count;
+			int32 i = 0;
+			it = node->Children().GetIterator();
+			while (it.HasNext() && i < max) {
+				DkNode* child = it.Next();
+				child->Acquire();
+				children[i++] = child;
+			}
+			count = i;
+		}
 	}
+
+	// bottom-up: detach children first (without locks held)
+	for (int32 i = 0; i < count; i++) {
+		// Wait for any in-progress attach on this child before
+		// checking IsAttached(). Without this, a concurrent
+		// ProbeAndAttach could complete after our check, leaving
+		// the child with an attached driver but detached parent.
+		children[i]->WaitAttachDone();
+		_DetachRecursive(children[i]);
+		children[i]->Release();
+	}
+
+	if (children != stackBuf)
+		free(children);
 
 	if (!node->IsAttached())
 		return;
@@ -419,6 +493,12 @@ DkLifecycle::_DetachRecursive(DkNode* node)
 	// The driver may freely call unregister_node, unpublish_device, etc.
 	if (driver->detach != NULL)
 		driver->detach(cookie);
+
+	// Release the module reference acquired by FindBestDriver/
+	// FindAllDrivers or _PostRegisterProbe's get_module().
+	// This balances the get_module() that was taken when the
+	// driver was first matched and attached to this node.
+	put_module(driver->info.name);
 }
 
 
@@ -439,14 +519,66 @@ DkLifecycle::Rescan(DkNode* node)
 status_t
 DkLifecycle::Suspend(DkNode* node, int32 state)
 {
-	// bottom-up: suspend children first
-	DkNodeList::Iterator it = node->Children().GetIterator();
-	while (it.HasNext()) {
-		DkNode* child = it.Next();
-		status_t status = Suspend(child, state);
-		if (status != B_OK)
-			return status;
+	// Snapshot children under tree read lock to avoid iterator
+	// invalidation from concurrent RegisterNode.
+	static const int32 kStackMax = 64;
+	DkNode* stackBuf[kStackMax];
+	DkNode** children = stackBuf;
+	int32 count = 0;
+
+	{
+		DkKeeper* keeper = DkKeeper::Instance();
+		ReadLocker treeLocker(keeper->TreeLock());
+
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			it.Next();
+			count++;
+		}
+
+		if (count > 0) {
+			if (count > kStackMax) {
+				children = (DkNode**)malloc(count * sizeof(DkNode*));
+				if (children == NULL) {
+					// Partial suspend is dangerous: unsuspended
+					// children may keep operating on hardware that
+					// higher layers expect to be powered down. Fail
+					// the entire suspend rather than leave an
+					// inconsistent state.
+					dprintf("DeviceKeeper: Suspend(%s): OOM for "
+						"%" B_PRId32 " children, aborting\n",
+						node->ModuleName(), count);
+					return B_NO_MEMORY;
+				}
+			}
+
+			int32 i = 0;
+			it = node->Children().GetIterator();
+			while (it.HasNext() && i < count) {
+				DkNode* child = it.Next();
+				child->Acquire();
+				children[i++] = child;
+			}
+			count = i;
+		}
 	}
+
+	// bottom-up: suspend children first
+	for (int32 i = 0; i < count; i++) {
+		status_t status = Suspend(children[i], state);
+		if (status != B_OK) {
+			// Release remaining snapshot refs
+			for (int32 j = i; j < count; j++)
+				children[j]->Release();
+			if (children != stackBuf)
+				free(children);
+			return status;
+		}
+		children[i]->Release();
+	}
+
+	if (children != stackBuf)
+		free(children);
 
 	if (!node->IsAttached())
 		return B_OK;
@@ -489,13 +621,61 @@ DkLifecycle::Resume(DkNode* node)
 		node->SetPowerState(DkNode::kPowerActive);
 	}
 
-	DkNodeList::Iterator it = node->Children().GetIterator();
-	while (it.HasNext()) {
-		DkNode* child = it.Next();
-		status_t status = Resume(child);
-		if (status != B_OK)
-			return status;
+	// Snapshot children under tree read lock
+	static const int32 kStackMax = 64;
+	DkNode* stackBuf[kStackMax];
+	DkNode** children = stackBuf;
+	int32 count = 0;
+
+	{
+		DkKeeper* keeper = DkKeeper::Instance();
+		ReadLocker treeLocker(keeper->TreeLock());
+
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			it.Next();
+			count++;
+		}
+
+		if (count > 0) {
+			if (count > kStackMax) {
+				children = (DkNode**)malloc(count * sizeof(DkNode*));
+				if (children == NULL) {
+					// Skipping children would leave them suspended
+					// while the parent is active. Fail so the caller
+					// can retry when memory is available.
+					dprintf("DeviceKeeper: Resume(%s): OOM for "
+						"%" B_PRId32 " children, aborting\n",
+						node->ModuleName(), count);
+					return B_NO_MEMORY;
+				}
+			}
+
+			int32 i = 0;
+			it = node->Children().GetIterator();
+			while (it.HasNext() && i < count) {
+				DkNode* child = it.Next();
+				child->Acquire();
+				children[i++] = child;
+			}
+			count = i;
+		}
 	}
+
+	for (int32 i = 0; i < count; i++) {
+		status_t status = Resume(children[i]);
+		if (status != B_OK) {
+			for (int32 j = i; j < count; j++)
+				children[j]->Release();
+			if (children != stackBuf)
+				free(children);
+			return status;
+		}
+		children[i]->Release();
+	}
+
+	if (children != stackBuf)
+		free(children);
 
 	return B_OK;
 }
@@ -511,10 +691,56 @@ DkLifecycle::NotifyRemoved(DkNode* node)
 void
 DkLifecycle::_NotifyRemovedRecursive(DkNode* node)
 {
+	// Snapshot children under tree read lock, then recurse without
+	// locks held. Same pattern as _DetachRecursive — prevents
+	// iterator invalidation from concurrent RegisterNode.
+	static const int32 kStackMax = 64;
+	DkNode* stackBuf[kStackMax];
+	DkNode** children = stackBuf;
+	int32 count = 0;
+
+	{
+		DkKeeper* keeper = DkKeeper::Instance();
+		ReadLocker treeLocker(keeper->TreeLock());
+
+		DkNodeList::Iterator it = node->Children().GetIterator();
+		while (it.HasNext()) {
+			it.Next();
+			count++;
+		}
+
+		if (count > 0) {
+			if (count > kStackMax) {
+				children = (DkNode**)malloc(count * sizeof(DkNode*));
+				if (children == NULL) {
+					children = stackBuf;
+					dprintf("DeviceKeeper: _NotifyRemovedRecursive(%s): "
+						"OOM for %" B_PRId32 " children, processing "
+						"first %d only\n",
+						node->ModuleName(), count, kStackMax);
+				}
+			}
+
+			int32 max = (children == stackBuf) ? kStackMax : count;
+			int32 i = 0;
+			it = node->Children().GetIterator();
+			while (it.HasNext() && i < max) {
+				DkNode* child = it.Next();
+				child->Acquire();
+				children[i++] = child;
+			}
+			count = i;
+		}
+	}
+
 	// bottom-up: children first
-	DkNodeList::Iterator it = node->Children().GetIterator();
-	while (it.HasNext())
-		_NotifyRemovedRecursive(it.Next());
+	for (int32 i = 0; i < count; i++) {
+		_NotifyRemovedRecursive(children[i]);
+		children[i]->Release();
+	}
+
+	if (children != stackBuf)
+		free(children);
 
 	if (fPublisher != NULL)
 		fPublisher->NotifyDeviceRemoved(node);

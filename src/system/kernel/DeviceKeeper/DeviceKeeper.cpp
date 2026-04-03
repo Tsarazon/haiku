@@ -463,9 +463,22 @@ DkKeeper::_PostRegisterProbe(DkNode* node)
 	// by module name will load and attach the module on the child.
 	// Runs AFTER auto-attach so the node's own driver + bus_ops are
 	// available for the fixed-child's attach via get_bus_ops walk-up.
-	const char* fixedChild = NULL;
-	node->Properties().GetString(KOSM_DEVICE_FIXED_CHILD, &fixedChild);
-	if (fixedChild != NULL) {
+	//
+	// Use GetStringCopy: the raw pointer from GetString could be
+	// invalidated by a concurrent SetAfterCommit on a different
+	// thread (the property store frees the old string under node
+	// lock, but we don't hold that lock here).
+	char fixedChildBuf[B_PATH_NAME_LENGTH];
+	{
+		MutexLocker nodeLocker(node->NodeLock());
+		status_t s = node->Properties().GetStringCopy(
+			KOSM_DEVICE_FIXED_CHILD, fixedChildBuf, sizeof(fixedChildBuf));
+		if (s != B_OK)
+			fixedChildBuf[0] = '\0';
+	}
+
+	if (fixedChildBuf[0] != '\0') {
+		const char* fixedChild = fixedChildBuf;
 		size_t fcNameLen = strlen(fixedChild);
 		size_t fcSuffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
 		bool fcIsDk = (fcNameLen > fcSuffixLen + 1
@@ -644,60 +657,88 @@ DkKeeper::_DeviceRemovedCleanup(DkNode* node)
 	// bottom-up: cleanup children, then detach them from this node.
 	// Snapshot children under tree read lock (a concurrent
 	// register_node could modify the list between unlock/relock).
+	//
+	// On malloc failure, process in batches of kStackMax. This
+	// ensures all children are cleaned up even under OOM, at the
+	// cost of re-acquiring the tree lock for each batch.
 	static const int32 kStackMax = 16;
 	DkNode* stackBuf[kStackMax];
-	DkNode** snapshot = stackBuf;
-	int32 count = 0;
+	int32 totalCount = 0;
+	int32 processed = 0;
 
+	// first pass: count total children
 	{
 		ReadLocker treeLocker(&fTreeLock);
-
 		DkNodeList::Iterator it = node->Children().GetIterator();
 		while (it.HasNext()) {
 			it.Next();
-			count++;
-		}
-
-		if (count > 0) {
-			if (count > kStackMax) {
-				snapshot = (DkNode**)malloc(count * sizeof(DkNode*));
-				if (snapshot == NULL)
-					snapshot = stackBuf;
-			}
-
-			int32 i = 0;
-			int32 max = (snapshot == stackBuf) ? kStackMax : count;
-			it = node->Children().GetIterator();
-			while (it.HasNext() && i < max) {
-				DkNode* child = it.Next();
-				child->Acquire();
-				snapshot[i++] = child;
-			}
-			count = i;
+			totalCount++;
 		}
 	}
 
-	// recurse into each child without locks
-	for (int32 i = 0; i < count; i++)
-		_DeviceRemovedCleanup(snapshot[i]);
+	if (totalCount == 0)
+		goto cleanup_self;
 
-	// detach all children under tree write lock
+	// Try heap allocation; fall back to stack-sized batches.
 	{
-		WriteLocker treeLocker(&fTreeLock);
-		for (int32 i = 0; i < count; i++) {
-			if (snapshot[i]->Parent() == node)
-				node->RemoveChild(snapshot[i]);
+		DkNode** snapshot = stackBuf;
+		int32 snapshotCapacity = kStackMax;
+
+		if (totalCount > kStackMax) {
+			snapshot = (DkNode**)malloc(totalCount * sizeof(DkNode*));
+			if (snapshot != NULL) {
+				snapshotCapacity = totalCount;
+			} else {
+				// OOM: use stack buffer, process in batches
+				snapshot = stackBuf;
+				snapshotCapacity = kStackMax;
+			}
 		}
+
+		while (processed < totalCount) {
+			int32 batchCount = 0;
+
+			{
+				ReadLocker treeLocker(&fTreeLock);
+
+				// Skip already-processed children (they've been
+				// removed from the list in previous batch iterations)
+				DkNodeList::Iterator it = node->Children().GetIterator();
+				while (it.HasNext() && batchCount < snapshotCapacity) {
+					DkNode* child = it.Next();
+					child->Acquire();
+					snapshot[batchCount++] = child;
+				}
+			}
+
+			if (batchCount == 0)
+				break;
+
+			// recurse into each child without locks
+			for (int32 i = 0; i < batchCount; i++)
+				_DeviceRemovedCleanup(snapshot[i]);
+
+			// detach all children under tree write lock
+			{
+				WriteLocker treeLocker(&fTreeLock);
+				for (int32 i = 0; i < batchCount; i++) {
+					if (snapshot[i]->Parent() == node)
+						node->RemoveChild(snapshot[i]);
+				}
+			}
+
+			// release snapshot refs
+			for (int32 i = 0; i < batchCount; i++)
+				snapshot[i]->Release();
+
+			processed += batchCount;
+		}
+
+		if (snapshot != stackBuf)
+			free(snapshot);
 	}
 
-	// release snapshot refs (RemoveChild already dropped the parent
-	// ref; this drops the snapshot ref, may delete the child)
-	for (int32 i = 0; i < count; i++)
-		snapshot[i]->Release();
-
-	if (snapshot != stackBuf)
-		free(snapshot);
-
+cleanup_self:
 	// release globally reserved I/O resources
 	_RollbackResources(node);
 
@@ -1277,6 +1318,20 @@ dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
 {
 	// Walk up the tree until we find an ancestor with matching
 	// bus_ops_type. This decouples drivers from specific tree depth.
+	//
+	// Tree read lock protects parent chain traversal (Parent() pointers
+	// are only modified under tree write lock).
+	//
+	// Per-ancestor node lock protects driver state: ClearDriver() in
+	// _DetachRecursive runs under node lock (not tree lock), so
+	// without the node lock we could see IsAttached()==true but then
+	// read NULL from DriverInfo() after concurrent ClearDriver().
+	DkKeeper* keeper = DkKeeper::Instance();
+	if (keeper == NULL)
+		return B_NO_INIT;
+
+	ReadLocker treeLocker(keeper->TreeLock());
+
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
 
 	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) walking up...\n",
@@ -1285,34 +1340,32 @@ dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
 	for (DkNode* ancestor = node->Parent(); ancestor != NULL;
 		ancestor = ancestor->Parent()) {
 
-		dprintf("DeviceKeeper: get_bus_ops:   checking %s attached=%d "
-			"driver=%s bus_ops=%p type=%u\n",
-			ancestor->ModuleName(), ancestor->IsAttached(),
-			(ancestor->IsAttached() && ancestor->DriverInfo())
-				? ancestor->DriverInfo()->info.name : "none",
-			(ancestor->IsAttached() && ancestor->DriverInfo())
-				? ancestor->DriverInfo()->bus_ops : NULL,
-			(ancestor->IsAttached() && ancestor->DriverInfo())
-				? ancestor->DriverInfo()->bus_ops_type : 0);
-
-		if (!ancestor->IsAttached())
-			continue;
+		MutexLocker nodeLocker(ancestor->NodeLock());
 
 		dk_driver_info* driver = ancestor->DriverInfo();
-		if (driver == NULL || driver->bus_ops == NULL)
+		void* cookie = ancestor->DriverCookie();
+		bool attached = ancestor->IsAttached();
+
+		dprintf("DeviceKeeper: get_bus_ops:   checking %s attached=%d "
+			"driver=%s bus_ops=%p type=%u\n",
+			ancestor->ModuleName(), attached,
+			(attached && driver) ? driver->info.name : "none",
+			(attached && driver) ? driver->bus_ops : NULL,
+			(attached && driver) ? driver->bus_ops_type : 0);
+
+		if (!attached || driver == NULL || driver->bus_ops == NULL)
 			continue;
 
 		if (driver->bus_ops_type == busType) {
 			dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) -> FOUND %s "
 				"bus_ops=%p cookie=%p\n",
 				node->ModuleName(), busType,
-				ancestor->ModuleName(), driver->bus_ops,
-				ancestor->DriverCookie());
+				ancestor->ModuleName(), driver->bus_ops, cookie);
 
 			if (_ops != NULL)
 				*_ops = driver->bus_ops;
 			if (_cookie != NULL)
-				*_cookie = ancestor->DriverCookie();
+				*_cookie = cookie;
 			return B_OK;
 		}
 	}

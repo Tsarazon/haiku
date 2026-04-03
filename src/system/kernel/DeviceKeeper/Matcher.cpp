@@ -180,57 +180,157 @@ DkMatcher::DiscoverDrivers(const char* path)
 		return B_ENTRY_NOT_FOUND;
 	}
 
-	char name[B_FILE_NAME_LENGTH];
-	size_t nameLength;
-	int32 found = 0;
-	int32 scanned = 0;
+	// Phase 1: collect candidate names without holding fLock.
+	// open_module_list_etc/read_next_module_name only scan the
+	// module directory metadata, which is fast. The expensive
+	// get_module() calls happen in Phase 2.
+	static const int32 kMaxCandidates = 128;
+	char names[kMaxCandidates][B_FILE_NAME_LENGTH];
+	int32 candidateCount = 0;
 
-	// NOTE: write lock is held for the entire scan, including
-	// get_module() calls inside _RegisterDriverLocked() which may
-	// perform disk I/O. This blocks all concurrent FindBestDriver()
-	// calls. Acceptable during boot (sequential), but DemandProbe
-	// paths should be aware of the latency.
-	// TODO: two-phase scan — collect names under lock, load modules
-	// without lock, insert under write lock — to reduce contention.
-	WriteLocker locker(&fLock);
-
-	while (true) {
-		nameLength = sizeof(name);
-		if (read_next_module_name(list, name, &nameLength) != B_OK)
+	while (candidateCount < kMaxCandidates) {
+		size_t nameLength = B_FILE_NAME_LENGTH;
+		if (read_next_module_name(list, names[candidateCount],
+				&nameLength) != B_OK) {
 			break;
-
-		scanned++;
-		dprintf("DeviceKeeper:   candidate: \"%s\"\n", name);
-
-		// skip already registered
-		bool exists = false;
-		DriverList::Iterator it = fDrivers.GetIterator();
-		while (it.HasNext()) {
-			DkDriverRecord* record = it.Next();
-			if (strcmp(record->module_name, name) == 0) {
-				exists = true;
-				break;
-			}
 		}
-		if (exists) {
-			dprintf("DeviceKeeper:   -> already registered\n");
-			continue;
-		}
-
-		status_t status = _RegisterDriverLocked(name);
-		if (status == B_OK) {
-			found++;
-			dprintf("DeviceKeeper:   -> registered\n");
-		} else {
-			dprintf("DeviceKeeper:   -> RegisterDriver failed: %s\n",
-				strerror(status));
-		}
+		candidateCount++;
 	}
 
 	close_module_list(list);
-	dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): scanned %d, registered %d\n",
-		path, (int)scanned, (int)found);
-	return found > 0 ? B_OK : B_ENTRY_NOT_FOUND;
+
+	if (candidateCount == 0) {
+		dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): no candidates\n",
+			path);
+		return B_ENTRY_NOT_FOUND;
+	}
+
+	dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): %d candidates\n",
+		path, (int)candidateCount);
+
+	// Phase 2: filter already-registered under read lock (fast).
+	// Collect indices of genuinely new candidates.
+	int32 newIndices[kMaxCandidates];
+	int32 newCount = 0;
+
+	{
+		ReadLocker locker(&fLock);
+
+		for (int32 c = 0; c < candidateCount; c++) {
+			bool exists = false;
+			DriverList::Iterator it = fDrivers.GetIterator();
+			while (it.HasNext()) {
+				DkDriverRecord* record = it.Next();
+				if (strcmp(record->module_name, names[c]) == 0) {
+					exists = true;
+					break;
+				}
+			}
+			if (!exists) {
+				newIndices[newCount++] = c;
+			} else {
+				dprintf("DeviceKeeper:   %s -> already registered\n",
+					names[c]);
+			}
+		}
+	}
+
+	if (newCount == 0) {
+		dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): all already "
+			"registered\n", path);
+		return B_ENTRY_NOT_FOUND;
+	}
+
+	// Phase 3: load modules WITHOUT lock. get_module() may do disk
+	// I/O, and we don't want to block FindBestDriver callers.
+	struct LoadedModule {
+		dk_driver_info*	info;
+		bool			valid;
+	};
+
+	LoadedModule* loaded = (LoadedModule*)malloc(
+		newCount * sizeof(LoadedModule));
+	if (loaded == NULL) {
+		// Fallback: use the old single-phase path under write lock.
+		// Less concurrent but still correct.
+		WriteLocker locker(&fLock);
+		int32 found = 0;
+		for (int32 i = 0; i < newCount; i++) {
+			status_t status = _RegisterDriverLocked(names[newIndices[i]]);
+			if (status == B_OK)
+				found++;
+		}
+		return found > 0 ? B_OK : B_ENTRY_NOT_FOUND;
+	}
+
+	for (int32 i = 0; i < newCount; i++) {
+		loaded[i].valid = false;
+		dk_driver_info* info;
+		status_t s = get_module(names[newIndices[i]],
+			(module_info**)&info);
+		if (s == B_OK) {
+			loaded[i].info = info;
+			loaded[i].valid = true;
+			dprintf("DeviceKeeper:   loaded %s\n", names[newIndices[i]]);
+		} else {
+			dprintf("DeviceKeeper:   load failed %s: %s\n",
+				names[newIndices[i]], strerror(s));
+		}
+	}
+
+	// Phase 4: insert under write lock (fast — no I/O).
+	int32 registered = 0;
+
+	{
+		WriteLocker locker(&fLock);
+
+		for (int32 i = 0; i < newCount; i++) {
+			if (!loaded[i].valid)
+				continue;
+
+			// Re-check for duplicates: another thread may have
+			// registered the same module between Phase 2 and now.
+			bool exists = false;
+			DriverList::Iterator it = fDrivers.GetIterator();
+			while (it.HasNext()) {
+				DkDriverRecord* record = it.Next();
+				if (strcmp(record->module_name,
+						names[newIndices[i]]) == 0) {
+					exists = true;
+					break;
+				}
+			}
+
+			if (exists) {
+				put_module(names[newIndices[i]]);
+				continue;
+			}
+
+			DkDriverRecord* record = new(std::nothrow) DkDriverRecord();
+			if (record == NULL) {
+				put_module(names[newIndices[i]]);
+				continue;
+			}
+
+			record->module_name = loaded[i].info->info.name;
+			record->info = loaded[i].info;
+			record->loaded = true;
+			record->index_next = NULL;
+			record->index_bucket = 0;
+
+			fDrivers.Add(record);
+			fIndex.Insert(record);
+			registered++;
+			dprintf("DeviceKeeper:   registered %s\n",
+				names[newIndices[i]]);
+		}
+	}
+
+	free(loaded);
+
+	dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): registered %d of "
+		"%d new candidates\n", path, (int)registered, (int)newCount);
+	return registered > 0 ? B_OK : B_ENTRY_NOT_FOUND;
 }
 
 
@@ -323,6 +423,20 @@ DkMatcher::FindBestDriver(DkNode* node, dk_driver_info** _driver)
 	if (bestDriver == NULL)
 		return B_ENTRY_NOT_FOUND;
 
+	// Take an extra module reference before releasing the read lock.
+	// This ensures the module stays loaded even if a concurrent
+	// UnregisterDriver removes the DkDriverRecord and calls
+	// put_module() between our unlock and the caller's attach().
+	// The caller must call put_module() if attach() fails.
+	status_t refStatus = get_module(bestDriver->info.name,
+		(module_info**)&bestDriver);
+	if (refStatus != B_OK) {
+		dprintf("DeviceKeeper: FindBestDriver(%s): get_module ref "
+			"failed for %s: %s\n",
+			node->ModuleName(), bestDriver->info.name, strerror(refStatus));
+		return refStatus;
+	}
+
 	dprintf("DeviceKeeper: FindBestDriver(%s): selected %s "
 		"(attach=%p spec=%" B_PRId32 " prio=%" B_PRId32 " probe=%.2f)\n",
 		node->ModuleName(), bestDriver->info.name,
@@ -403,6 +517,26 @@ DkMatcher::FindAllDrivers(DkNode* node, DkMatchResult* results,
 	const char* busName = NULL;
 	node->Properties().GetString(KOSM_DEVICE_BUS, &busName);
 	fIndex.ForEachCandidate(busName, visitor);
+
+	// Take an extra module reference on each matched driver before
+	// releasing the read lock. This protects against concurrent
+	// UnregisterDriver unloading the module between our unlock and
+	// the caller's attach() calls.
+	// Callers must put_module() for drivers they don't successfully
+	// attach.
+	for (int32 i = 0; i < count; i++) {
+		module_info* ref;
+		status_t s = get_module(results[i].driver->info.name, &ref);
+		if (s != B_OK) {
+			// Module vanished — remove this entry by shifting
+			dprintf("DeviceKeeper: FindAll: get_module ref failed "
+				"for %s\n", results[i].driver->info.name);
+			for (int32 j = i; j < count - 1; j++)
+				results[j] = results[j + 1];
+			count--;
+			i--;	// re-check this index
+		}
+	}
 
 	*_count = count;
 	return count > 0 ? B_OK : B_ENTRY_NOT_FOUND;

@@ -305,8 +305,69 @@ IOSchedulerSimple::ScheduleRequest(IORequest* request)
 void
 IOSchedulerSimple::AbortRequest(IORequest* request, status_t status)
 {
-	// TODO:...
-//B_CANCELED
+	MutexLocker locker(fLock);
+
+	RequestOwner* owner = (RequestOwner*)request->Owner();
+
+	// If the request hasn't been picked up by the scheduler yet,
+	// remove it from the owner's request list and fail it directly.
+	if (owner != NULL) {
+		// Check in pending requests
+		for (IORequestList::Iterator it = owner->requests.GetIterator();
+				IORequest* pending = it.Next();) {
+			if (pending == request) {
+				it.Remove();
+				request->SetOwner(NULL);
+
+				// Clean up owner if no longer active
+				if (!owner->IsActive()) {
+					fActiveRequestOwners.Remove(owner);
+					if (owner->thread != -1) {
+						fRequestOwners->Remove(owner);
+						object_cache_free(sRequestOwnerCache, owner, 0);
+					}
+				}
+
+				locker.Unlock();
+				request->SetStatusAndNotify(status);
+				return;
+			}
+		}
+
+		// Check in completed_requests (waiting for finisher)
+		for (IORequestList::Iterator it
+					= owner->completed_requests.GetIterator();
+				IORequest* completed = it.Next();) {
+			if (completed == request) {
+				it.Remove();
+				request->SetOwner(NULL);
+
+				if (!owner->IsActive()) {
+					fActiveRequestOwners.Remove(owner);
+					if (owner->thread != -1) {
+						fRequestOwners->Remove(owner);
+						object_cache_free(sRequestOwnerCache, owner, 0);
+					}
+				}
+
+				locker.Unlock();
+				request->SetStatusAndNotify(status);
+				return;
+			}
+		}
+	}
+
+	// The request is already being processed (has in-flight operations).
+	// We can't safely cancel mid-DMA, but we can mark the request so
+	// that when operations complete, the request is failed rather than
+	// continuing with more operations.
+	// Setting status directly will cause OperationFinished to detect
+	// the error and stop scheduling further operations.
+	if (request->Status() > 0) {
+		// Status > 0 means "in progress". Set the error status.
+		// The finisher will pick this up when operations complete.
+		request->SetStatusAndNotify(status);
+	}
 }
 
 

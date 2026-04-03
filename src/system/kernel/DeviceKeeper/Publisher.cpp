@@ -176,14 +176,19 @@ DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 		status = request.Wait(0, 0);
 		generic_size_t chunk = request.TransferredBytes();
 
-		// Drivers that bypass IOScheduler (SCSI disk → AHCI DMA path)
+		// Drivers that bypass IOScheduler (SCSI disk -> AHCI DMA path)
 		// transfer data directly via DMA into the buffer but never
 		// call IORequest::Advance(). TransferredBytes() stays 0 even
 		// though the data is already in the buffer. If Wait() returned
 		// B_OK, the driver completed successfully — trust it and
 		// account for the full chunk.
-		if (status == B_OK && chunk == 0)
+		if (status == B_OK && chunk == 0) {
+			dprintf("DeviceKeeper: _DoIO: driver returned B_OK with "
+				"0 TransferredBytes for %zu byte chunk at offset "
+				"%" B_PRIdOFF " — assuming full transfer\n",
+				chunkSize, pos + (off_t)totalTransferred);
 			chunk = chunkSize;
+		}
 
 		if (chunk == 0) {
 			// No progress and error — end of device or hard error.
@@ -312,14 +317,23 @@ DkPublishedDevice::IO(void* cookie, io_request* request)
 
 /*!	Split a large io_request into DMA-sized sub-requests.
 
-	Used by IO() when the request exceeds fMaxIOSize. Each sub-request
-	covers at most fMaxIOSize bytes. CreateSubRequest() links children
-	to the parent request; when all children complete (success or fail),
-	the parent is automatically notified via SubRequestFinished().
+	Used by IO() when the request exceeds fMaxIOSize.
 
-	This handles both the sync path (devfs_read_pages creates an
-	IORequest, calls IO(), then waits) and the async path (devfs_io
-	passes the VFS IORequest directly).
+	Two-phase approach to prevent premature parent notification:
+
+	Phase 1: Create ALL sub-requests up front. Each CreateSubRequest()
+	increments the parent's fPendingChildren under its lock. After
+	Phase 1, fPendingChildren equals the total sub-request count.
+
+	Phase 2: Submit sub-requests to the driver. Even if the first sub
+	completes synchronously (driver returns, IRQ fires before next
+	io() call), SubRequestFinished only decrements fPendingChildren
+	from N to N-1. The parent's NotifyFinished cannot fire until ALL
+	subs complete.
+
+	This avoids the race inherent in interleaved create-submit loops
+	where a fast completion could drop fPendingChildren to 0 between
+	the first io() return and the second CreateSubRequest().
 */
 status_t
 DkPublishedDevice::_SplitIO(void* cookie, io_request* request)
@@ -328,10 +342,27 @@ DkPublishedDevice::_SplitIO(void* cookie, io_request* request)
 	const generic_size_t totalLength = request->Length();
 	off_t currentOffset = baseOffset;
 	generic_size_t remaining = totalLength;
-	status_t lastError = B_OK;
-	bool anySubmitted = false;
 
-	while (remaining > 0) {
+	// Phase 1: create all sub-requests.
+	// Use stack array for typical cases, heap for pathological ones.
+	static const int32 kStackMax = 32;
+	IORequest* stackSubs[kStackMax];
+	IORequest** subs = stackSubs;
+	int32 subCount = 0;
+
+	int32 estimatedCount = (int32)((remaining + fMaxIOSize - 1)
+		/ fMaxIOSize);
+	if (estimatedCount > kStackMax) {
+		subs = (IORequest**)malloc(estimatedCount * sizeof(IORequest*));
+		if (subs == NULL) {
+			request->SetStatusAndNotify(B_NO_MEMORY);
+			return B_OK;
+		}
+	}
+
+	int32 subCapacity = (subs == stackSubs) ? kStackMax : estimatedCount;
+
+	while (remaining > 0 && subCount < subCapacity) {
 		generic_size_t chunkSize = remaining < fMaxIOSize
 			? remaining : fMaxIOSize;
 
@@ -341,32 +372,40 @@ DkPublishedDevice::_SplitIO(void* cookie, io_request* request)
 			currentOffset,	// sub-request device offset
 			chunkSize,
 			sub);
-		if (status != B_OK) {
-			lastError = status;
+		if (status != B_OK)
 			break;
-		}
 
-		status = fOps->io(cookie, sub);
-		if (status != B_OK) {
-			// Mark this sub-request as failed so SubRequestFinished
-			// propagates the error to the parent. Don't stop —
-			// already-submitted subs are in flight and the parent
-			// won't complete until all pending children finish.
-			sub->SetStatusAndNotify(status);
-			lastError = status;
-			break;
-		}
-
-		anySubmitted = true;
+		subs[subCount++] = sub;
 		currentOffset += chunkSize;
 		remaining -= chunkSize;
 	}
 
-	if (!anySubmitted && lastError != B_OK) {
-		// Failed before submitting anything — notify parent directly
-		// since there are no pending children to trigger completion.
-		request->SetStatusAndNotify(lastError);
+	if (subCount == 0) {
+		// Could not create any sub-requests.
+		if (subs != stackSubs)
+			free(subs);
+		request->SetStatusAndNotify(B_NO_MEMORY);
+		return B_OK;
 	}
+
+	// Phase 2: submit all sub-requests. fPendingChildren is already
+	// at the final count, so no single completion can trigger
+	// premature parent notification.
+	for (int32 i = 0; i < subCount; i++) {
+		status_t status = fOps->io(cookie, subs[i]);
+		if (status != B_OK) {
+			// Fail this sub and all remaining unsubmitted subs so
+			// their SubRequestFinished() calls still decrement
+			// fPendingChildren, allowing the parent to eventually
+			// reach completion (with error status from the failing sub).
+			for (int32 j = i; j < subCount; j++)
+				subs[j]->SetStatusAndNotify(status);
+			break;
+		}
+	}
+
+	if (subs != stackSubs)
+		free(subs);
 
 	// Return B_OK: completion is asynchronous via sub-requests.
 	// Any errors are reported through the request's notification
