@@ -23,12 +23,10 @@
 #define DK_DRIVER_MODULE_SUFFIX			"dk_driver_v1"
 
 // Standard node property names
-#define KOSM_DEVICE_PRETTY_NAME		"device/pretty name"
+#define KOSM_LABEL					"device/label"
 #define KOSM_DEVICE_BUS				"device/bus"
 #define KOSM_DEVICE_FLAGS			"device/flags"
 #define KOSM_DEVICE_COMPATIBLE		"device/compatible"
-#define KOSM_DEVICE_FIXED_CHILD	"device/fixed child"
-
 #define KOSM_DEVICE_VENDOR_ID		"device/vendor"
 #define KOSM_DEVICE_ID				"device/id"
 #define KOSM_DEVICE_TYPE			"device/type"
@@ -112,23 +110,6 @@ enum {
 };
 
 
-// Bus protocol types (for bus_ops_type in dk_driver_info)
-enum {
-	KOSM_BUS_TYPE_NONE			= 0,
-	KOSM_BUS_TYPE_PCI			= 1,
-	KOSM_BUS_TYPE_USB			= 2,
-	KOSM_BUS_TYPE_I2C			= 3,
-	KOSM_BUS_TYPE_SPI			= 4,
-	KOSM_BUS_TYPE_SDIO			= 5,
-	KOSM_BUS_TYPE_PLATFORM		= 6,
-	KOSM_BUS_TYPE_ACPI			= 7,
-	KOSM_BUS_TYPE_VIRTIO		= 8,
-	KOSM_BUS_TYPE_WMI			= 9,
-	KOSM_BUS_TYPE_SCSI			= 10,
-	KOSM_BUS_TYPE_ATA			= 11,
-	KOSM_BUS_TYPE_MMC			= 12,
-	KOSM_BUS_TYPE_HYPERV		= 13,
-};
 
 
 // Node watcher event flags (combinable bitmask for watch_node)
@@ -136,6 +117,24 @@ enum {
 #define KOSM_EVENT_CHILD_UNREGISTERED	0x02
 #define KOSM_EVENT_DEVICE_PUBLISHED		0x04
 #define KOSM_EVENT_DEVICE_UNPUBLISHED	0x08
+
+
+// get_interface flags (bitmask, mandatory parameter).
+//
+// KOSM_INTERFACE_ANCESTORS: walk up the parent chain (skips self).
+//   Use when you want to find a parent bus manager's interface.
+//
+// KOSM_INTERFACE_SELF: check the node itself only.
+//   Use to read back an interface published on the same node.
+//
+// The two flags may be combined to check self first, then ancestors.
+//
+// There is no implicit default — every call site must explicitly
+// state its intent. This makes the search direction visible in code
+// review and prevents subtle bugs from a driver accidentally finding
+// (or not finding) its own published ops.
+#define KOSM_INTERFACE_ANCESTORS		0x01
+#define KOSM_INTERFACE_SELF				0x02
 
 
 typedef struct dk_node dk_node;
@@ -229,11 +228,59 @@ typedef struct dk_device_ops {
 } dk_device_ops;
 
 
-// Unified driver interface
+// Unified driver interface.
+//
+// Every DeviceKeeper driver exports one dk_driver_info as a module.
+// Not all fields are used by every driver — zero-initialize with
+// C99 designated initializers, fill only what applies.
+//
+// === Leaf driver (e.g. NIC, audio, block device) ===
+//
+//   static dk_driver_info sDriver = {
+//       .info       = { MY_MODULE_NAME, 0, std_ops },
+//       .match      = &sMatchDict,
+//       .attach     = my_attach,
+//       .detach     = my_detach,
+//       .ops        = &sDeviceOps,
+//   };
+//
+// === Bus manager (e.g. PCI, USB, VirtIO transport) ===
+//
+//   static dk_driver_info sDriver = {
+//       .info       = { MY_MODULE_NAME, 0, std_ops },
+//       .match      = &sMatchDict,
+//       .attach     = my_attach,
+//       .detach     = my_detach,
+//       .node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
+//   };
+//
+// Bus managers publish their typed interface in attach():
+//
+//   status_t my_attach(dk_node* node, void** _cookie) {
+//       ...
+//       keeper->publish_interface(node, PCI_DEVICE_INTERFACE_NAME,
+//                                 &sPCIOps);
+//       ...
+//   }
+//
+// Child drivers retrieve it in their own attach():
+//
+//   const pci_device_ops* pci;
+//   void* cookie;
+//   keeper->get_interface(node, PCI_DEVICE_INTERFACE_NAME,
+//                         (const void**)&pci, &cookie);
+//
+// Each bus defines PCI_DEVICE_INTERFACE_NAME (or equivalent) and a
+// typed inline wrapper in its header. See DK_MATCH_* / DK_PROP_*
+// macros below for match rule and property helpers.
+//
 typedef struct dk_driver_info {
 	module_info				info;
 
 	const dk_match_dict*	match;
+		// Declarative matching rules. If non-NULL, the framework checks
+		// these before calling probe(). Use DK_MATCH_* macros to build.
+		// NULL for drivers that match only by module name (auto-attach).
 
 	float					(*probe)(dk_node* node);
 		// Optional lightweight check called under the matcher read lock.
@@ -243,8 +290,8 @@ typedef struct dk_driver_info {
 
 	status_t				(*attach)(dk_node* node, void** _cookie);
 		// Called WITHOUT the DeviceKeeper lock. The driver may freely
-		// call register_node, publish_device, etc. Return
-		// KOSM_DEFER_PROBE if a dependency is not yet available.
+		// call register_node, publish_device, publish_interface, etc.
+		// Return KOSM_DEFER_PROBE if a dependency is not yet available.
 
 	void					(*detach)(void* cookie);
 		// Called WITHOUT the DeviceKeeper lock. The driver may freely
@@ -265,15 +312,17 @@ typedef struct dk_driver_info {
 	status_t				(*runtime_suspend)(void* cookie);
 	status_t				(*runtime_resume)(void* cookie);
 
-	// bus-specific protocol ops for child drivers.
-	// Bus managers set this to their typed ops struct (e.g.
-	// pci_device_ops, usb_device_ops). Child drivers retrieve
-	// it via dk_keeper_info::get_bus_ops(). NULL if not a bus.
-	const void*				bus_ops;
-	uint32					bus_ops_type;
-		// KOSM_BUS_TYPE_PCI, _USB, _I2C, etc.
-
 	dk_device_ops*			ops;
+		// Device I/O operations exposed to userland via devfs.
+		// Set by leaf drivers that call publish_device().
+		// NULL for bus managers that don't publish devices.
+
+	uint32					node_flags;
+		// Flags propagated to every node this driver attaches to.
+		// The framework ORs these into the node's flags after attach().
+		// Bus managers typically set KOSM_FIND_MULTIPLE_CHILDREN here
+		// so that child probe happens automatically.
+		// 0 for leaf drivers.
 } dk_driver_info;
 
 
@@ -309,19 +358,29 @@ typedef struct dk_keeper_info {
 		// Iterative: pass last found node in *_node, NULL to start.
 	void		(*put_node)(dk_node* node);
 
-	// global tree query (searches entire tree from root)
-	status_t	(*find_node)(const dk_match_rule* rules,
+	// global tree query (searches entire tree from root).
+	// Disambiguates from find_child_node (which searches a subtree).
+	status_t	(*find_node_global)(const dk_match_rule* rules,
 					dk_node** _node);
 		// Iterative: pass *_node = NULL to start, previous to continue.
 		// Caller must put_node() the returned node when done.
 		// Use for cross-device references (FDT phandle, PCI companion,
 		// ACPI link) without knowing tree structure.
 
-	// property accessors (recursive: walk parent chain if not found)
+	// property accessors (recursive: walk parent chain if not found).
 	// Copy semantics: string and raw accessors copy data into a
 	// caller-provided buffer. Returns B_BUFFER_OVERFLOW if the
 	// buffer is too small (string is truncated, raw is clipped).
 	// Integer accessors return the value directly.
+	//
+	// get_property_string: _actualLength (if non-NULL) is set to
+	// the source string length EXCLUDING the NUL terminator. On
+	// B_BUFFER_OVERFLOW, callers can use this to allocate a buffer
+	// of size (actualLength + 1) and retry.
+	//
+	// get_property_raw: _copiedSize is the number of bytes actually
+	// written. On B_BUFFER_OVERFLOW, the caller can read entry size
+	// from the property and re-allocate.
 	status_t	(*get_property_uint8)(const dk_node* node,
 					const char* name, uint8* _value,
 					bool recursive);
@@ -336,22 +395,33 @@ typedef struct dk_keeper_info {
 					bool recursive);
 	status_t	(*get_property_string)(const dk_node* node,
 					const char* name, char* buffer,
-					size_t bufferSize, bool recursive);
+					size_t bufferSize, size_t* _actualLength,
+					bool recursive);
 	status_t	(*get_property_raw)(const dk_node* node,
 					const char* name, void* buffer,
 					size_t bufferSize, size_t* _copiedSize,
 					bool recursive);
 
-	// property iteration (single node, no parent walk)
+	// property iteration (single node, no parent walk).
+	//
+	// Pass *_property = NULL to get first. Returns B_ENTRY_NOT_FOUND
+	// when no more properties. Caller must not free the property.
+	//
+	// _iterVersion is INPUT/OUTPUT: pass an uninitialized uint64*
+	// on the first call (the function will snapshot the property
+	// store's version into it). On subsequent calls, the function
+	// compares the snapshot to the current version and returns
+	// B_INTERRUPTED if the store has been mutated mid-iteration —
+	// caller should restart from *_property = NULL.
+	//
+	// Usage:
+	//   dk_property* prop = NULL;
+	//   uint64 version = 0;
+	//   while (gDeviceKeeper->get_next_property(node, &prop, &version) == B_OK) {
+	//       // process prop
+	//   }
 	status_t	(*get_next_property)(dk_node* node,
-					dk_property** _property);
-		// Pass *_property = NULL to get first. Returns B_ENTRY_NOT_FOUND
-		// when no more properties. Caller must not free the property.
-		// Not synchronized with set_property(): concurrent set_property
-		// may add entries that are missed by an ongoing iteration.
-		// If a consistent view is required, caller must serialize
-		// externally (e.g. only iterate during attach, before the node
-		// is published).
+					dk_property** _property, uint64* _iterVersion);
 
 	// device publishing
 	status_t	(*publish_device)(dk_node* node, const char* path,
@@ -362,16 +432,60 @@ typedef struct dk_keeper_info {
 	int32		(*create_id)(const char* generator);
 	status_t	(*free_id)(const char* generator, uint32 id);
 
-	// driver access
-	status_t	(*get_driver)(dk_node* node,
+	// driver access: returns the dk_driver_info attached to a node
+	// and its driver cookie. Distinct from get_interface (which
+	// returns bus operation tables) — get_node_driver gives you the
+	// raw driver record, useful only for introspection (rescan,
+	// power management, debugging).
+	status_t	(*get_node_driver)(dk_node* node,
 					dk_driver_info** _driver, void** _cookie);
 
-	// bus protocol: retrieve parent's bus-specific ops.
-	// Child driver calls this on its own node to get the parent
-	// bus manager's typed interface. Returns B_BAD_VALUE if parent
-	// does not provide ops of the requested type.
-	status_t	(*get_bus_ops)(dk_node* node, uint32 busType,
-					const void** _ops, void** _cookie);
+	// bus interface: bus managers publish a typed ops struct on their
+	// node; child drivers retrieve it by name from any ancestor.
+	//
+	// publish_interface: called by bus managers in attach() to export
+	// their typed ops struct. The name is a string constant defined
+	// in the bus header (e.g. PCI_DEVICE_INTERFACE_NAME). A node may
+	// publish multiple interfaces (dual-personality drivers — e.g.
+	// SDHCI as both PCI consumer and MMC producer). Re-publishing
+	// the same name replaces the existing ops in place. The ops
+	// pointer must remain valid until detach().
+	//
+	// get_interface: called by child drivers in attach() to retrieve
+	// a bus manager's ops. The flags argument is mandatory and
+	// controls the search direction:
+	//
+	//   KOSM_INTERFACE_ANCESTORS — walk up the parent chain
+	//     (skips self). Use this when you want to find a parent's
+	//     bus interface (the common case).
+	//
+	//   KOSM_INTERFACE_SELF — check the node itself only.
+	//     Use this when you want to read back your own published
+	//     interface or when you know the bus manager is attached
+	//     to the same node (e.g. SDHCI publishing MMC interface
+	//     on its own node).
+	//
+	//   KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS — check self
+	//     first, then walk up parents.
+	//
+	// Returns the ops pointer and the ancestor's driver cookie.
+	// Returns B_NOT_SUPPORTED if no matching interface is found.
+	//
+	// Usage in bus manager attach():
+	//   keeper->publish_interface(node, PCI_DEVICE_INTERFACE_NAME,
+	//                             &sPCIOps);
+	//
+	// Usage in child driver attach():
+	//   const pci_device_ops* pci;
+	//   void* cookie;
+	//   keeper->get_interface(node, PCI_DEVICE_INTERFACE_NAME,
+	//                         KOSM_INTERFACE_ANCESTORS,
+	//                         (const void**)&pci, &cookie);
+	//
+	status_t	(*publish_interface)(dk_node* node, const char* name,
+					const void* ops);
+	status_t	(*get_interface)(dk_node* node, const char* name,
+					uint32 flags, const void** _ops, void** _cookie);
 
 	// I/O resource management (prefer passing resources to register_node)
 	status_t	(*acquire_io_resource)(uint32 type, generic_addr_t base,
@@ -406,6 +520,81 @@ typedef struct dk_keeper_info {
 					const void** _data, size_t* _size);
 	void		(*release_firmware)(const void* data);
 } dk_keeper_info;
+
+
+// Logging macros.
+// DK_INFO: always on (init, attach, register, errors).
+// DK_TRACE: verbose, on only with DEVICE_KEEPER_VERBOSE.
+// DK_ERROR: always on, prefixed with "ERROR:".
+#define DK_INFO(fmt, ...)  dprintf("DK: " fmt, ##__VA_ARGS__)
+#define DK_ERROR(fmt, ...) dprintf("DK: ERROR: " fmt, ##__VA_ARGS__)
+
+#ifdef DEVICE_KEEPER_VERBOSE
+#define DK_TRACE(fmt, ...) dprintf("DK: " fmt, ##__VA_ARGS__)
+#else
+#define DK_TRACE(fmt, ...) do {} while (0)
+#endif
+
+
+// Convenience macros for dk_match_rule arrays.
+// Usage:
+//   static const dk_match_rule sMatch[] = {
+//       DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+//       DK_MATCH_UINT16(KOSM_DEVICE_VENDOR_ID, 0x8086),
+//       DK_MATCH_UINT16(KOSM_DEVICE_ID, 0x100e),
+//       DK_MATCH_END
+//   };
+
+#define DK_MATCH_UINT8(_name, _val)		\
+	{ (_name), B_UINT8_TYPE, { .ui8 = (_val) } }
+#define DK_MATCH_UINT16(_name, _val)	\
+	{ (_name), B_UINT16_TYPE, { .ui16 = (_val) } }
+#define DK_MATCH_UINT32(_name, _val)	\
+	{ (_name), B_UINT32_TYPE, { .ui32 = (_val) } }
+#define DK_MATCH_UINT64(_name, _val)	\
+	{ (_name), B_UINT64_TYPE, { .ui64 = (_val) } }
+#define DK_MATCH_STRING(_name, _val)	\
+	{ (_name), B_STRING_TYPE, { .string = (_val) } }
+#define DK_MATCH_END					\
+	{ NULL, 0, { .ui64 = 0 } }
+
+
+// Convenience macros for dk_property arrays.
+// Usage:
+//   dk_property props[] = {
+//       DK_PROP_STRING(KOSM_DEVICE_BUS, "pci"),
+//       DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+//       DK_PROP_END
+//   };
+
+#define DK_PROP_UINT8(_name, _val)		\
+	{ (_name), B_UINT8_TYPE, { .ui8 = (_val) } }
+#define DK_PROP_UINT16(_name, _val)		\
+	{ (_name), B_UINT16_TYPE, { .ui16 = (_val) } }
+#define DK_PROP_UINT32(_name, _val)		\
+	{ (_name), B_UINT32_TYPE, { .ui32 = (_val) } }
+#define DK_PROP_UINT64(_name, _val)		\
+	{ (_name), B_UINT64_TYPE, { .ui64 = (_val) } }
+#define DK_PROP_STRING(_name, _val)		\
+	{ (_name), B_STRING_TYPE, { .string = (_val) } }
+#define DK_PROP_END						\
+	{ NULL, 0, { .ui64 = 0 } }
+
+
+// Convenience macros for dk_io_resource arrays.
+// The framework iterates resources until it sees an entry with
+// type == 0; DK_RESOURCE_END produces such a sentinel. Always
+// terminate dk_io_resource arrays with DK_RESOURCE_END.
+//
+// Usage:
+//   dk_io_resource resources[] = {
+//       { KOSM_RESOURCE_IO_MEMORY, 0xfed00000, 0x1000 },
+//       { KOSM_RESOURCE_IO_PORT,   0x60,       0x4    },
+//       DK_RESOURCE_END
+//   };
+
+#define DK_RESOURCE_END					\
+	{ 0, 0, 0 }
 
 
 #endif // _KERNEL_DEVICE_KEEPER_H

@@ -176,6 +176,11 @@ static status_t publish_device(struct devfs* fs, const char* path,
 // The one and only allowed devfs instance
 static struct devfs* sDeviceFileSystem = NULL;
 
+// Monotonic counter for dk_keeper_probe. Atomic because concurrent
+// scan_for_drivers_if_needed calls from different directories may
+// increment it simultaneously.
+static int32 sUpdateCycle = 1;
+
 
 //	#pragma mark - devfs private
 
@@ -217,10 +222,17 @@ scan_for_drivers_if_needed(devfs_vnode* dir)
 {
 	ASSERT(S_ISDIR(dir->stream.type));
 
-	MutexLocker _(dir->stream.u.dir.scan_lock);
-
-	if (dir->stream.u.dir.scanned >= scan_mode())
-		return B_OK;
+	// Quick check under scan_lock: if already scanned at current
+	// mode, nothing to do. Release the lock BEFORE calling
+	// dk_keeper_probe — probe may do disk I/O, module loading,
+	// and driver attach, which can take hundreds of ms. Holding
+	// scan_lock for that duration blocks all concurrent open()
+	// and opendir() on this directory.
+	{
+		MutexLocker _(dir->stream.u.dir.scan_lock);
+		if (dir->stream.u.dir.scanned >= scan_mode())
+			return B_OK;
+	}
 
 	KPath path;
 	if (path.InitCheck() != B_OK)
@@ -232,11 +244,21 @@ scan_for_drivers_if_needed(devfs_vnode* dir)
 	TRACE(("scan_for_drivers_if_needed: mode %" B_PRId32 ": %s\n",
 		scan_mode(), path.Path()));
 
-	// scan for drivers at this path
-	static int32 updateCycle = 1;
-	dk_keeper_probe(path.Path(), updateCycle++);
+	// Probe without scan_lock held. A concurrent thread may also
+	// pass the check above and probe the same path — this is
+	// harmless because DiscoverDrivers deduplicates and ProbeAndAttach
+	// skips already-attached nodes.
+	dk_keeper_probe(path.Path(), atomic_add(&sUpdateCycle, 1));
 
-	dir->stream.u.dir.scanned = scan_mode();
+	// Mark scanned under lock. Both racing threads will set this,
+	// preventing future redundant scans.
+	{
+		MutexLocker _(dir->stream.u.dir.scan_lock);
+		int32 mode = scan_mode();
+		if (dir->stream.u.dir.scanned < mode)
+			dir->stream.u.dir.scanned = mode;
+	}
+
 	return B_OK;
 }
 
@@ -245,7 +267,7 @@ static void
 init_directory_vnode(struct devfs_vnode* vnode, int permissions)
 {
 	vnode->stream.type = S_IFDIR | permissions;
-		mutex_init(&vnode->stream.u.dir.scan_lock, "devfs scan");
+	mutex_init(&vnode->stream.u.dir.scan_lock, "devfs scan");
 	vnode->stream.u.dir.dir_head = NULL;
 	list_init(&vnode->stream.u.dir.cookies);
 }
@@ -743,16 +765,6 @@ publish_device(struct devfs* fs, const char* path, BaseDevice* device)
 
 	if (device == NULL || path == NULL || path[0] == '\0' || path[0] == '/')
 		return B_BAD_VALUE;
-
-// TODO: this has to be done in the BaseDevice sub classes!
-#if 0
-	// are the provided device hooks okay?
-	if (info->device_open == NULL || info->device_close == NULL
-		|| info->device_free == NULL
-		|| ((info->device_read == NULL || info->device_write == NULL)
-			&& info->device_io == NULL))
-		return B_BAD_VALUE;
-#endif
 
 	struct devfs_vnode* node;
 	struct devfs_vnode* dirNode;
@@ -1281,6 +1293,8 @@ devfs_create_dir(fs_volume* _volume, fs_vnode* _dir, const char* name,
 	struct devfs* fs = (struct devfs*)_volume->private_volume;
 	struct devfs_vnode* dir = (struct devfs_vnode*)_dir->private_node;
 
+	RecursiveLocker locker(&fs->lock);
+
 	struct devfs_vnode* vnode = devfs_find_in_dir(dir, name);
 	if (vnode != NULL) {
 		return EEXIST;
@@ -1554,9 +1568,9 @@ devfs_ioctl(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, uint32 op,
 			case B_GET_PATH_FOR_DEVICE:
 			{
 				char path[256];
-				// TODO: we might want to actually find the mountpoint
-				// of that instance of devfs...
-				// but for now we assume it's mounted on /dev
+				// devfs is always mounted at /dev in KosmOS. Querying
+				// the actual mountpoint via VFS would add complexity
+				// for no real benefit since only one instance exists.
 				strcpy(path, "/dev/");
 				get_device_name(vnode, path + 5, sizeof(path) - 5);
 				if (length && (length <= strlen(path)))
@@ -1646,20 +1660,10 @@ devfs_deselect(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 static bool
 devfs_can_page(fs_volume* _volume, fs_vnode* _vnode, void* cookie)
 {
-#if 0
-	struct devfs_vnode* vnode = (devfs_vnode*)_vnode->private_node;
-
-	//TRACE(("devfs_canpage: vnode %p\n", vnode));
-
-	if (!S_ISCHR(vnode->stream.type)
-		|| vnode->stream.u.dev.device->Node() == NULL
-		|| cookie == NULL)
-		return false;
-
-	return vnode->stream.u.dev.device->HasRead()
-		|| vnode->stream.u.dev.device->HasIO();
-#endif
-	// TODO: Obsolete hook!
+	// devfs does not support direct paging (mmap on device nodes).
+	// Block device I/O goes through the file cache of the filesystem
+	// above (e.g. BFS), which calls devfs_read_pages/write_pages
+	// via its own vnode, not through VM page faults on devfs vnodes.
 	return false;
 }
 
@@ -1691,7 +1695,48 @@ devfs_read_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	}
 
 	if (vnode->stream.u.dev.device->HasIO()) {
-		// TODO: use io_requests for this!
+		// Submit a single IORequest covering all iovecs. This lets the
+		// device (DkPublishedDevice::IO) handle DMA-aware splitting
+		// and async completion in one shot, instead of creating a
+		// separate sync IORequest per iovec in the Read() fallback.
+		static const size_t kStackVecs = 16;
+		generic_io_vec stackVecs[kStackVecs];
+		generic_io_vec* ioVecs = stackVecs;
+
+		if (count > kStackVecs) {
+			ioVecs = (generic_io_vec*)malloc(count * sizeof(generic_io_vec));
+			if (ioVecs == NULL)
+				ioVecs = stackVecs;
+		}
+
+		size_t vecCount = min_c(count,
+			ioVecs == stackVecs ? kStackVecs : count);
+		for (size_t i = 0; i < vecCount; i++) {
+			ioVecs[i].base = (generic_addr_t)(addr_t)vecs[i].iov_base;
+			ioVecs[i].length = vecs[i].iov_len;
+		}
+
+		IORequest request;
+		status_t status = request.Init(pos, ioVecs, vecCount,
+			*_numBytes, false, 0);
+
+		if (ioVecs != stackVecs)
+			free(ioVecs);
+
+		if (status == B_OK) {
+			status = vnode->stream.u.dev.device->IO(
+				cookie->device_cookie, &request);
+			if (status == B_OK)
+				status = request.Wait(0, 0);
+
+			generic_size_t transferred = request.TransferredBytes();
+			if (status == B_OK && transferred == 0)
+				transferred = *_numBytes;
+
+			*_numBytes = transferred;
+			return transferred > 0 ? B_OK : status;
+		}
+		// Init failed — fall through to Read() emulation
 	}
 
 	// emulate read_pages() using read()
@@ -1756,7 +1801,46 @@ devfs_write_pages(fs_volume* _volume, fs_vnode* _vnode, void* _cookie,
 	}
 
 	if (vnode->stream.u.dev.device->HasIO()) {
-		// TODO: use io_requests for this!
+		// Single IORequest for all iovecs — same approach as
+		// devfs_read_pages. See comment there for rationale.
+		static const size_t kStackVecs = 16;
+		generic_io_vec stackVecs[kStackVecs];
+		generic_io_vec* ioVecs = stackVecs;
+
+		if (count > kStackVecs) {
+			ioVecs = (generic_io_vec*)malloc(count * sizeof(generic_io_vec));
+			if (ioVecs == NULL)
+				ioVecs = stackVecs;
+		}
+
+		size_t vecCount = min_c(count,
+			ioVecs == stackVecs ? kStackVecs : count);
+		for (size_t i = 0; i < vecCount; i++) {
+			ioVecs[i].base = (generic_addr_t)(addr_t)vecs[i].iov_base;
+			ioVecs[i].length = vecs[i].iov_len;
+		}
+
+		IORequest request;
+		status_t status = request.Init(pos, ioVecs, vecCount,
+			*_numBytes, true, 0);
+
+		if (ioVecs != stackVecs)
+			free(ioVecs);
+
+		if (status == B_OK) {
+			status = vnode->stream.u.dev.device->IO(
+				cookie->device_cookie, &request);
+			if (status == B_OK)
+				status = request.Wait(0, 0);
+
+			generic_size_t transferred = request.TransferredBytes();
+			if (status == B_OK && transferred == 0)
+				transferred = *_numBytes;
+
+			*_numBytes = transferred;
+			return transferred > 0 ? B_OK : status;
+		}
+		// Init failed — fall through to Write() emulation
 	}
 
 	// emulate write_pages() using write()
@@ -1848,20 +1932,14 @@ devfs_read_stat(fs_volume* _volume, fs_vnode* _vnode, struct stat* stat)
 	stat->st_mtim = stat->st_ctim = vnode->modification_time;
 	stat->st_crtim = vnode->creation_time;
 
-	// TODO: this only works for partitions right now - if we should decide
-	//	to keep this feature, we should have a better solution
+	// Report device size for partitions. For raw devices (no partition),
+	// st_size stays 0 because stat has no cookie to query B_GET_GEOMETRY.
+	// Applications that need the raw device size must open() the device
+	// and use ioctl(B_GET_GEOMETRY) instead.
 	if (S_ISCHR(vnode->stream.type)) {
-		//device_geometry geometry;
-
 		// if it's a real block device, then let's report a useful size
 		if (vnode->stream.u.dev.partition != NULL) {
 			stat->st_size = vnode->stream.u.dev.partition->info.size;
-#if 0
-		} else if (vnode->stream.u.dev.info->control(cookie->device_cookie,
-					B_GET_GEOMETRY, &geometry, sizeof(struct device_geometry)) >= B_OK) {
-			stat->st_size = 1LL * geometry.head_count * geometry.cylinder_count
-				* geometry.sectors_per_track * geometry.bytes_per_sector;
-#endif
 		}
 
 		// is this a real block device? then let's have it reported like that
@@ -2134,16 +2212,22 @@ devfs_rename_partition(const char* devicePath, const char* oldName,
 
 	RecursiveLocker locker(sDeviceFileSystem->lock);
 	devfs_vnode* node = devfs_find_in_dir(device->parent, oldName);
-	if (node == NULL)
+	if (node == NULL) {
+		put_vnode(sDeviceFileSystem->volume, device->id);
 		return B_ENTRY_NOT_FOUND;
+	}
 
 	// check if the new path already exists
-	if (devfs_find_in_dir(device->parent, newName))
+	if (devfs_find_in_dir(device->parent, newName)) {
+		put_vnode(sDeviceFileSystem->volume, device->id);
 		return B_BAD_VALUE;
+	}
 
 	char* name = strdup(newName);
-	if (name == NULL)
+	if (name == NULL) {
+		put_vnode(sDeviceFileSystem->volume, device->id);
 		return B_NO_MEMORY;
+	}
 
 	devfs_remove_from_dir(device->parent, node, false);
 
@@ -2157,6 +2241,7 @@ devfs_rename_partition(const char* devicePath, const char* oldName,
 	notify_stat_changed(sDeviceFileSystem->id, get_parent_id(device->parent),
 		device->parent->id, B_STAT_MODIFICATION_TIME);
 
+	put_vnode(sDeviceFileSystem->volume, device->id);
 	return B_OK;
 }
 

@@ -64,7 +64,15 @@ struct DkPropertyHashDefinition {
 };
 
 
-// DkPropertyStore: two-phase hash table (mutable until Commit, immutable after)
+// DkPropertyStore: two-phase hash table (mutable until Commit, with
+// limited mutability after via SetAfterCommit).
+//
+// Iteration consistency: every Put/SetAfterCommit bumps fVersion.
+// GetNext() takes a version snapshot on first call and verifies it
+// on every subsequent call — if the store has been mutated mid-
+// iteration, it returns B_INTERRUPTED and the caller must restart.
+// This turns the previously-undefined "miss concurrent inserts"
+// behavior into a defined, detectable error.
 
 class DkPropertyStore {
 public:
@@ -108,9 +116,15 @@ public:
 						size_t* _length) const;
 
 	// copy-out accessors (safe under concurrent SetAfterCommit
-	// when caller holds node lock)
+	// when caller holds node lock).
+	//
+	// GetStringCopy: writes the string into buffer, NUL-terminated
+	// if space permits. _actualLength (if non-NULL) is set to the
+	// length of the source string EXCLUDING the NUL terminator —
+	// callers can re-allocate `actualLength + 1` bytes and retry.
+	// On B_BUFFER_OVERFLOW, the buffer is filled and truncated.
 	status_t			GetStringCopy(const char* name, char* buffer,
-						size_t bufferSize) const;
+						size_t bufferSize, size_t* _actualLength) const;
 	status_t			GetRawCopy(const char* name, void* buffer,
 						size_t bufferSize,
 						size_t* _copiedSize) const;
@@ -129,8 +143,25 @@ public:
 
 	uint32				CountProperties() const;
 
-	// iteration: pass NULL to start, returns B_ENTRY_NOT_FOUND at end
-	status_t			GetNext(DkPropertyEntry** _entry) const;
+	// Version counter: bumped on every Put/SetAfterCommit. Readers
+	// can snapshot this value and detect concurrent mutation during
+	// iteration or multi-field reads. Monotonic (wraparound would
+	// take 2^64 mutations — effectively impossible).
+	uint64				Version() const { return fVersion; }
+
+	// iteration: pass NULL to start, returns B_ENTRY_NOT_FOUND at end.
+	// _iterVersion is INPUT/OUTPUT: pass uninitialized on first call
+	// (the function will snapshot fVersion into it). On subsequent
+	// calls, the function compares the snapshot to fVersion and
+	// returns B_INTERRUPTED if the store has been mutated. Caller
+	// should restart iteration from NULL on B_INTERRUPTED.
+	//
+	// Concurrency: DkPropertyEntry::insert_next is append-only, so
+	// in-flight entries remain reachable even if SetAfterCommit
+	// touches them. Version check exists to surface "you missed
+	// some entries" rather than to prevent crashes.
+	status_t			GetNext(DkPropertyEntry** _entry,
+							uint64* _iterVersion) const;
 
 private:
 	void				_InsertListAppend(DkPropertyEntry* entry);
@@ -140,6 +171,7 @@ private:
 
 	Table				fTable;
 	bool				fCommitted;
+	uint64				fVersion;	// incremented on every mutation
 	DkPropertyEntry*	fInsertHead;
 	DkPropertyEntry*	fInsertTail;
 };
@@ -166,6 +198,22 @@ struct DkPublishedPathEntry : DoublyLinkedListLinkImpl<DkPublishedPathEntry> {
 };
 
 typedef DoublyLinkedList<DkPublishedPathEntry> DkPublishedPathList;
+
+
+// DkInterfaceEntry: one published bus interface on a node.
+//
+// A node can publish multiple interfaces (e.g. an SDHCI controller
+// publishes both pci_device_ops as a consumer and mmc_bus_interface
+// as a producer). Entries are stored in a singly-linked list keyed
+// by interface name. Lookups are O(N) which is acceptable because
+// N is typically 1-2 per node.
+//
+// Caller must hold the owning DkNode's lock when adding/iterating.
+struct DkInterfaceEntry {
+	char*				name;
+	const void*			ops;
+	DkInterfaceEntry*	next;
+};
 
 
 // DkWatchEntry: node event subscriber
@@ -214,6 +262,7 @@ public:
 	// identity
 	const char*			ModuleName() const { return fModuleName; }
 	uint32				Flags() const { return fFlags; }
+	void				SetFlags(uint32 flags) { fFlags = flags; }
 	bool				IsRegistered() const { return fRegistered; }
 	void				SetRegistered(bool registered);
 
@@ -240,6 +289,13 @@ public:
 	void*				DriverCookie() const { return fDriverCookie; }
 	bool				IsAttached() const { return fDriver != NULL; }
 
+	// Module reference accounting: set to true when a get_module()
+	// ref was acquired for this node's driver and must be balanced
+	// by a put_module() call in Detach(). Used by ~DkNode to ASSERT
+	// that nothing leaks. Set via SetDriver() and cleared by
+	// ReleaseDriverRef() (called from Detach() after put_module).
+	bool				HasDriverRef() const { return fDriverRefHeld; }
+
 	// attach-in-progress state: set by DkLifecycle around driver->attach()
 	// so that concurrent Detach() can wait for attach to complete.
 	bool				IsAttaching() const { return fAttaching; }
@@ -261,13 +317,32 @@ public:
 	const DkPublishedPathList& PublishedPaths() const
 							{ return fPublishedPaths; }
 
+	// bus interface published on this node (caller must hold node lock).
+	// PublishInterface adds an entry to the per-node interface list,
+	// or replaces the existing entry's ops if name already exists.
+	// A single node may publish multiple interfaces — useful for
+	// dual-personality drivers (e.g. SDHCI = PCI consumer + MMC producer).
+	status_t			PublishInterface(const char* name, const void* ops);
+
+	// Iteration accessor: returns the head of the interface list.
+	// Caller must hold the node lock for the duration of the iteration.
+	// Used by dk_get_interface and KDL dump.
+	DkInterfaceEntry*	Interfaces() const { return fInterfaces; }
+
 protected:
 	virtual	void		LastReferenceReleased();
 
 	// driver mutation (caller must hold node lock)
+	// SetDriver implies the caller holds a module reference that
+	// will be balanced by ClearDriver+ReleaseDriverRef (Detach path)
+	// or by direct put_module on failure/rollback.
 	void				SetDriver(dk_driver_info* driver, void* cookie);
 	void				SetDriverCookie(void* cookie);
 	void				ClearDriver();
+	// Explicitly drop the "module ref held" flag without clearing
+	// the driver pointer. Used by rollback paths that already called
+	// put_module() before zeroing fDriver.
+	void				ReleaseDriverRef() { fDriverRefHeld = false; }
 	void				SetAttaching(bool attaching);
 
 	void				SetKeepLoaded(bool keep) { fKeepLoaded = keep; }
@@ -313,9 +388,14 @@ private:
 
 	dk_driver_info*		fDriver;
 	void*				fDriverCookie;
+	bool				fDriverRefHeld;	// get_module ref balance
 	bool				fAttaching;
 	ConditionVariable	fAttachCondition;
 	power_state			fPowerState;
+
+	// bus interfaces: linked list of (name, ops) published on this node.
+	// Set via PublishInterface(), iterated by dk_get_interface.
+	DkInterfaceEntry*	fInterfaces;
 
 	DkOwnedResourceList	fResources;
 	DkPublishedPathList	fPublishedPaths;

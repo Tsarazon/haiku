@@ -5,6 +5,7 @@
 
 #include "DeviceKeeper.h"
 #include "FirmwareLoader.h"
+#include "LockDebug.h"
 
 #include <new>
 #include <stdio.h>
@@ -387,7 +388,7 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 
 	// Defer fixed-child attachment and auto-probe if the parent is
 	// still inside driver->attach(). The parent's driver cookie is
-	// not yet set, so get_bus_ops() would return a NULL cookie and
+	// not yet set, so get_interface() would return a NULL cookie and
 	// any fixed-child that needs bus ops would fail. The caller
 	// (ProbeAndAttach/ProbeAndAttachAll) will call
 	// ProbePendingChildren() after setting the cookie.
@@ -403,13 +404,14 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 void
 DkKeeper::_PostRegisterProbe(DkNode* node)
 {
-	dprintf("DeviceKeeper: _PostRegisterProbe(%s) attached=%d\n",
+	DK_TRACE("_PostRegisterProbe(%s) attached=%d\n",
 		node->ModuleName(), node->IsAttached());
 
 	// Auto-attach by module name FIRST: if the node's own module exports
-	// dk_driver_info (suffix dk_driver_v1), load it and attach directly.
-	// This is the standard path — parent calls register_node(MODULE_NAME)
-	// and the module becomes the node's driver automatically.
+	// dk_driver_info (suffix dk_driver_v1), load it and attach via the
+	// unified attach helper. This is the standard path — parent calls
+	// register_node(MODULE_NAME) and the module becomes the node's
+	// driver automatically.
 	if (!node->IsAttached()) {
 		const char* modName = node->ModuleName();
 		size_t nameLen = strlen(modName);
@@ -423,83 +425,36 @@ DkKeeper::_PostRegisterProbe(DkNode* node)
 			dk_driver_info* ownDriver = NULL;
 			status_t s = get_module(modName, (module_info**)&ownDriver);
 			if (s == B_OK && ownDriver->attach != NULL) {
-				{
-					MutexLocker nodeLocker(node->NodeLock());
-					node->SetDriver(ownDriver, NULL);
-					node->SetAttaching(true);
-				}
-
-				void* cookie = NULL;
-				s = ownDriver->attach(
-					reinterpret_cast<dk_node*>(node), &cookie);
-
-				{
-					MutexLocker nodeLocker(node->NodeLock());
-					if (s == B_OK) {
-						node->SetDriverCookie(cookie);
-					} else {
-						node->ClearDriver();
-					}
-					node->SetAttaching(false);
-				}
-
-				if (s == B_OK) {
-					dprintf("DeviceKeeper: auto-attached %s\n", modName);
-					ProbePendingChildren(node);
-				} else {
-					dprintf("DeviceKeeper: auto-attach %s failed: %s\n",
+				DkModuleRef ref(ownDriver);
+				// AutoAttachByName sets fAttaching, invokes
+				// _AttachDriverToNode, and on success transfers
+				// ref ownership to the node. On failure, ref dtor
+				// releases the module automatically.
+				s = fLifecycle.AutoAttachByName(node, ref);
+				if (s == B_OK)
+					DK_INFO("attached %s\n", modName);
+				else if (s != KOSM_DEFER_PROBE)
+					DK_ERROR("auto-attach %s failed: %s\n",
 						modName, strerror(s));
-					put_module(modName);
-				}
 			} else if (s == B_OK) {
-				// Module loaded but no attach — just a module, not a driver
+				// Module loaded but no attach — just a plain kernel
+				// module, not a driver. Release the ref immediately.
 				put_module(modName);
 			}
 		}
 	}
 
-	// Fixed child: if the node declares KOSM_DEVICE_FIXED_CHILD,
-	// always create a child node with that module name. Auto-attach
-	// by module name will load and attach the module on the child.
-	// Runs AFTER auto-attach so the node's own driver + bus_ops are
-	// available for the fixed-child's attach via get_bus_ops walk-up.
-	//
-	// Use GetStringCopy: the raw pointer from GetString could be
-	// invalidated by a concurrent SetAfterCommit on a different
-	// thread (the property store frees the old string under node
-	// lock, but we don't hold that lock here).
-	char fixedChildBuf[B_PATH_NAME_LENGTH];
-	{
-		MutexLocker nodeLocker(node->NodeLock());
-		status_t s = node->Properties().GetStringCopy(
-			KOSM_DEVICE_FIXED_CHILD, fixedChildBuf, sizeof(fixedChildBuf));
-		if (s != B_OK)
-			fixedChildBuf[0] = '\0';
-	}
-
-	if (fixedChildBuf[0] != '\0') {
-		const char* fixedChild = fixedChildBuf;
-		size_t fcNameLen = strlen(fixedChild);
-		size_t fcSuffixLen = strlen(DK_DRIVER_MODULE_SUFFIX);
-		bool fcIsDk = (fcNameLen > fcSuffixLen + 1
-			&& fixedChild[fcNameLen - fcSuffixLen - 1] == '/'
-			&& strcmp(fixedChild + fcNameLen - fcSuffixLen,
-				DK_DRIVER_MODULE_SUFFIX) == 0);
-
-		if (fcIsDk) {
-			DkNode* childNode = NULL;
-			status_t s = RegisterNode(node, fixedChild,
-				NULL, NULL, &childNode);
-			if (s == B_OK) {
-				dprintf("DeviceKeeper: fixed-child created %s under %s\n",
-					fixedChild, node->ModuleName());
-			} else {
-				dprintf("DeviceKeeper: fixed-child RegisterNode(%s) "
-					"failed: %s\n", fixedChild, strerror(s));
-			}
-		} else {
-			dprintf("DeviceKeeper: fixed-child skipping non-dk "
-				"module %s\n", fixedChild);
+	// Propagate node_flags from dk_driver_info to the node.
+	// Bus managers declare KOSM_FIND_MULTIPLE_CHILDREN in their
+	// dk_driver_info::node_flags once — the framework applies it
+	// to every node the driver attaches to. No manual property
+	// boilerplate needed.
+	if (node->IsAttached()) {
+		dk_driver_info* drv = node->DriverInfo();
+		if (drv != NULL && drv->node_flags != 0) {
+			uint32 merged = node->Flags() | drv->node_flags;
+			if (merged != node->Flags())
+				node->SetFlags(merged);
 		}
 	}
 
@@ -769,19 +724,29 @@ status_t
 DkKeeper::DemandProbe(const char* devicePath)
 {
 	// discover drivers relevant to this device class
+	const char* busFilter[8];
+	int32 busFilterCount = 0;
+
 	if (devicePath != NULL && devicePath[0] != '\0') {
 		char driverPath[B_PATH_NAME_LENGTH];
 		int written = snprintf(driverPath, sizeof(driverPath),
 			"drivers/dev/%s", devicePath);
 		if (written >= 0 && (size_t)written < sizeof(driverPath))
 			DiscoverDrivers(driverPath);
+
+		// Collect bus names from newly discovered drivers' match rules.
+		// This tells us which bus types are relevant for this device
+		// class — e.g. "graphics" drivers match "pci" bus, so we only
+		// need to probe PCI device nodes, not ACPI/USB/etc.
+		busFilterCount = fMatcher.CollectBusNames(driverPath,
+			busFilter, 8);
 	}
 
 	// Probe root node — let all matching drivers (PCI, ACPI, etc.)
 	// attach and register their child nodes.
 	_ProbeNode(fRootNode);
 
-	_ProbeChildren(fRootNode, devicePath);
+	_ProbeChildren(fRootNode, devicePath, busFilter, busFilterCount);
 	return B_OK;
 }
 
@@ -817,8 +782,34 @@ DkKeeper::_ProbeNode(DkNode* node)
 }
 
 
+/*static*/ bool
+DkKeeper::_NodeMatchesBusFilter(DkNode* node, const char** busFilter,
+	int32 busFilterCount)
+{
+	if (busFilterCount == 0)
+		return true;	// no filter — probe everything
+
+	// Node's bus name from KOSM_DEVICE_BUS property.
+	// If the node has no bus property (intermediate nodes like root,
+	// bus managers without own bus) — let it through so we recurse
+	// into its children.
+	const char* nodeBus = NULL;
+	node->Properties().GetString(KOSM_DEVICE_BUS, &nodeBus);
+	if (nodeBus == NULL)
+		return true;
+
+	for (int32 i = 0; i < busFilterCount; i++) {
+		if (strcmp(nodeBus, busFilter[i]) == 0)
+			return true;
+	}
+
+	return false;
+}
+
+
 void
-DkKeeper::_ProbeChildren(DkNode* node, const char* devicePath)
+DkKeeper::_ProbeChildren(DkNode* node, const char* devicePath,
+	const char** busFilter, int32 busFilterCount)
 {
 	// Snapshot children under tree read lock. We Acquire each child
 	// so that a concurrent UnregisterNode on a sibling cannot delete
@@ -863,28 +854,28 @@ DkKeeper::_ProbeChildren(DkNode* node, const char* devicePath)
 	}
 
 	// probe without any locks held
-	dprintf("DeviceKeeper: _ProbeChildren(%s): %d children to probe\n",
-		node->ModuleName(), (int)count);
 	for (int32 i = 0; i < count; i++) {
 		DkNode* child = children[i];
 
-		dprintf("DeviceKeeper: _ProbeChildren: [%d] child %s (attached=%d flags=0x%x)\n",
-			(int)i, child->ModuleName(), child->IsAttached(), child->Flags());
-		_ProbeNode(child);
+		// Bus filter: only probe nodes whose bus matches the
+		// discovered drivers' bus types. Nodes without a bus
+		// property (intermediate bus managers) always pass.
+		if (_NodeMatchesBusFilter(child, busFilter, busFilterCount)) {
+			_ProbeNode(child);
 
-		// If driver implements rescan_children, call it to discover
-		// child devices (e.g. SCSI bus scan). This runs after
-		// attach completed and interrupts are available.
-		if (child->IsAttached()) {
-			dk_driver_info* drv = child->DriverInfo();
-			if (drv != NULL && drv->rescan_children != NULL) {
-				dprintf("DeviceKeeper: calling rescan_children for %s\n",
-					child->ModuleName());
-				drv->rescan_children(child->DriverCookie());
+			// If driver implements rescan_children, call it to discover
+			// child devices (e.g. SCSI bus scan).
+			if (child->IsAttached()) {
+				dk_driver_info* drv = child->DriverInfo();
+				if (drv != NULL && drv->rescan_children != NULL) {
+					drv->rescan_children(child->DriverCookie());
+				}
 			}
 		}
 
-		_ProbeChildren(child, devicePath);
+		// Always recurse — intermediate nodes may have matching
+		// children deeper in the tree.
+		_ProbeChildren(child, devicePath, busFilter, busFilterCount);
 		child->Release();
 	}
 
@@ -1076,7 +1067,7 @@ dk_find_child_node(dk_node* _parent, const dk_match_rule* attrs,
 
 
 static status_t
-dk_find_node(const dk_match_rule* rules, dk_node** _node)
+dk_find_node_global(const dk_match_rule* rules, dk_node** _node)
 {
 	DkKeeper* keeper = DkKeeper::Instance();
 	if (keeper == NULL || keeper->RootNode() == NULL)
@@ -1139,26 +1130,83 @@ dk_free_id(const char* generator, uint32 id)
 
 
 // property accessor forwarding with recursive parent chain walk.
-// Recursive lookups walk fParent, so they need tree read lock.
-// Non-recursive lookups access only the committed property store
-// (immutable for initial properties, node-locked for SetAfterCommit).
+//
+// Consistency rule (post-hardening): EVERY accessor that touches a
+// property store also takes the node lock on that store. This is
+// needed because SetAfterCommit can mutate entries in place, and
+// concurrent readers must not see torn state. The cost is small —
+// node locks are uncontended in the common read path.
+//
+// Recursive accessors walk fParent under the tree read lock, then
+// briefly take each ancestor's node lock to look up the property.
+
+static status_t
+_get_integer_property_locked(const DkNode* node, const char* name,
+	type_code expectedType, void* out, size_t size)
+{
+	const DkPropertyEntry* entry = node->Properties().Lookup(name);
+	if (entry == NULL)
+		return B_NAME_NOT_FOUND;
+	if (entry->type != expectedType)
+		return B_BAD_TYPE;
+	switch (expectedType) {
+		case B_UINT8_TYPE:
+			*(uint8*)out = entry->value.ui8;
+			break;
+		case B_UINT16_TYPE:
+			*(uint16*)out = entry->value.ui16;
+			break;
+		case B_UINT32_TYPE:
+			*(uint32*)out = entry->value.ui32;
+			break;
+		case B_UINT64_TYPE:
+			*(uint64*)out = entry->value.ui64;
+			break;
+		default:
+			return B_BAD_VALUE;
+	}
+	(void)size;
+	return B_OK;
+}
+
+
+template<typename T>
+static status_t
+_dk_get_property_integer(const dk_node* _node, const char* name,
+	T* _value, bool recursive, type_code expectedType)
+{
+	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
+
+	if (!recursive) {
+		MutexLocker locker(const_cast<DkNode*>(node)->NodeLock());
+		return _get_integer_property_locked(node, name, expectedType,
+			_value, sizeof(T));
+	}
+
+	DkKeeper* keeper = DkKeeper::Instance();
+	ReadLocker treeLocker(keeper->TreeLock());
+
+	const DkNode* current = node;
+	while (current != NULL) {
+		MutexLocker nodeLocker(const_cast<DkNode*>(current)->NodeLock());
+		status_t status = _get_integer_property_locked(current, name,
+			expectedType, _value, sizeof(T));
+		if (status != B_NAME_NOT_FOUND)
+			return status;
+		nodeLocker.Unlock();
+		current = current->Parent();
+	}
+
+	return B_NAME_NOT_FOUND;
+}
+
 
 static status_t
 dk_get_property_uint8(const dk_node* _node, const char* name,
 	uint8* _value, bool recursive)
 {
-	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
-	if (!recursive)
-		return node->Properties().GetUInt8(name, _value);
-
-	ReadLocker locker(DkKeeper::Instance()->TreeLock());
-	const DkPropertyEntry* entry = node->LookupRecursive(name);
-	if (entry == NULL)
-		return B_NAME_NOT_FOUND;
-	if (entry->type != B_UINT8_TYPE)
-		return B_BAD_TYPE;
-	*_value = entry->value.ui8;
-	return B_OK;
+	return _dk_get_property_integer<uint8>(_node, name, _value,
+		recursive, B_UINT8_TYPE);
 }
 
 
@@ -1166,18 +1214,8 @@ static status_t
 dk_get_property_uint16(const dk_node* _node, const char* name,
 	uint16* _value, bool recursive)
 {
-	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
-	if (!recursive)
-		return node->Properties().GetUInt16(name, _value);
-
-	ReadLocker locker(DkKeeper::Instance()->TreeLock());
-	const DkPropertyEntry* entry = node->LookupRecursive(name);
-	if (entry == NULL)
-		return B_NAME_NOT_FOUND;
-	if (entry->type != B_UINT16_TYPE)
-		return B_BAD_TYPE;
-	*_value = entry->value.ui16;
-	return B_OK;
+	return _dk_get_property_integer<uint16>(_node, name, _value,
+		recursive, B_UINT16_TYPE);
 }
 
 
@@ -1185,18 +1223,8 @@ static status_t
 dk_get_property_uint32(const dk_node* _node, const char* name,
 	uint32* _value, bool recursive)
 {
-	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
-	if (!recursive)
-		return node->Properties().GetUInt32(name, _value);
-
-	ReadLocker locker(DkKeeper::Instance()->TreeLock());
-	const DkPropertyEntry* entry = node->LookupRecursive(name);
-	if (entry == NULL)
-		return B_NAME_NOT_FOUND;
-	if (entry->type != B_UINT32_TYPE)
-		return B_BAD_TYPE;
-	*_value = entry->value.ui32;
-	return B_OK;
+	return _dk_get_property_integer<uint32>(_node, name, _value,
+		recursive, B_UINT32_TYPE);
 }
 
 
@@ -1204,30 +1232,21 @@ static status_t
 dk_get_property_uint64(const dk_node* _node, const char* name,
 	uint64* _value, bool recursive)
 {
-	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
-	if (!recursive)
-		return node->Properties().GetUInt64(name, _value);
-
-	ReadLocker locker(DkKeeper::Instance()->TreeLock());
-	const DkPropertyEntry* entry = node->LookupRecursive(name);
-	if (entry == NULL)
-		return B_NAME_NOT_FOUND;
-	if (entry->type != B_UINT64_TYPE)
-		return B_BAD_TYPE;
-	*_value = entry->value.ui64;
-	return B_OK;
+	return _dk_get_property_integer<uint64>(_node, name, _value,
+		recursive, B_UINT64_TYPE);
 }
 
 
 static status_t
 dk_get_property_string(const dk_node* _node, const char* name,
-	char* buffer, size_t bufferSize, bool recursive)
+	char* buffer, size_t bufferSize, size_t* _actualLength, bool recursive)
 {
 	const DkNode* node = reinterpret_cast<const DkNode*>(_node);
 
 	if (!recursive) {
 		MutexLocker locker(const_cast<DkNode*>(node)->NodeLock());
-		return node->Properties().GetStringCopy(name, buffer, bufferSize);
+		return node->Properties().GetStringCopy(name, buffer, bufferSize,
+			_actualLength);
 	}
 
 	DkKeeper* keeper = DkKeeper::Instance();
@@ -1237,7 +1256,7 @@ dk_get_property_string(const dk_node* _node, const char* name,
 	while (current != NULL) {
 		MutexLocker nodeLocker(const_cast<DkNode*>(current)->NodeLock());
 		status_t status = current->Properties().GetStringCopy(name,
-			buffer, bufferSize);
+			buffer, bufferSize, _actualLength);
 		if (status != B_NAME_NOT_FOUND)
 			return status;
 		nodeLocker.Unlock();
@@ -1279,25 +1298,25 @@ dk_get_property_raw(const dk_node* _node, const char* name,
 
 
 static status_t
-dk_get_next_property(dk_node* _node, dk_property** _property)
+dk_get_next_property(dk_node* _node, dk_property** _property,
+	uint64* _iterVersion)
 {
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
 
 	// Safe: DkPropertyEntry is layout-compatible with dk_property at
 	// offset 0 (name, type, value). Requires -fno-strict-aliasing.
 	//
-	// Not synchronized with set_property(): iteration sees a
-	// consistent snapshot of existing entries (insert_next chain
-	// is append-only), but entries added via set_property during
-	// iteration may be missed. Callers requiring a consistent view
-	// must hold the node lock externally.
+	// Version-tracked iteration: caller passes uninitialized uint64*,
+	// the store snapshots its mutation counter on first call and
+	// returns B_INTERRUPTED on later calls if the store has changed.
+	// Callers should restart iteration on B_INTERRUPTED.
 	DkPropertyEntry** entry = reinterpret_cast<DkPropertyEntry**>(_property);
-	return node->Properties().GetNext(entry);
+	return node->Properties().GetNext(entry, _iterVersion);
 }
 
 
 static status_t
-dk_get_driver(dk_node* _node, dk_driver_info** _driver, void** _cookie)
+dk_get_node_driver(dk_node* _node, dk_driver_info** _driver, void** _cookie)
 {
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
 	if (!node->IsAttached())
@@ -1313,19 +1332,38 @@ dk_get_driver(dk_node* _node, dk_driver_info** _driver, void** _cookie)
 
 
 static status_t
-dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
-	void** _cookie)
+dk_publish_interface(dk_node* _node, const char* name, const void* ops)
 {
-	// Walk up the tree until we find an ancestor with matching
-	// bus_ops_type. This decouples drivers from specific tree depth.
+	if (name == NULL || ops == NULL)
+		return B_BAD_VALUE;
+
+	DkNode* node = reinterpret_cast<DkNode*>(_node);
+	MutexLocker locker(node->NodeLock());
+
+	return node->PublishInterface(name, ops);
+}
+
+
+static status_t
+dk_get_interface(dk_node* _node, const char* name, uint32 flags,
+	const void** _ops, void** _cookie)
+{
+	// Flag-controlled interface search:
+	//   KOSM_INTERFACE_SELF      — check the node itself
+	//   KOSM_INTERFACE_ANCESTORS — walk up parents (skips self)
+	// Combine to check self first, then ancestors.
 	//
-	// Tree read lock protects parent chain traversal (Parent() pointers
-	// are only modified under tree write lock).
+	// Each visited node iterates its full DkInterfaceEntry list
+	// (a single node may publish multiple interfaces, e.g. SDHCI
+	// publishing both PCI consumer and MMC producer ops).
 	//
-	// Per-ancestor node lock protects driver state: ClearDriver() in
-	// _DetachRecursive runs under node lock (not tree lock), so
-	// without the node lock we could see IsAttached()==true but then
-	// read NULL from DriverInfo() after concurrent ClearDriver().
+	// Tree read lock protects parent chain traversal.
+	// Per-ancestor node lock protects the interface list.
+	if (name == NULL)
+		return B_BAD_VALUE;
+	if ((flags & (KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS)) == 0)
+		return B_BAD_VALUE;
+
 	DkKeeper* keeper = DkKeeper::Instance();
 	if (keeper == NULL)
 		return B_NO_INIT;
@@ -1334,44 +1372,49 @@ dk_get_bus_ops(dk_node* _node, uint32 busType, const void** _ops,
 
 	DkNode* node = reinterpret_cast<DkNode*>(_node);
 
-	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) walking up...\n",
-		node->ModuleName(), busType);
+	DK_TRACE("get_interface(%s, \"%s\", flags=%#x) searching...\n",
+		node->ModuleName(), name, (unsigned)flags);
 
-	for (DkNode* ancestor = node->Parent(); ancestor != NULL;
-		ancestor = ancestor->Parent()) {
+	// Start with self if requested, then walk parents.
+	DkNode* start = (flags & KOSM_INTERFACE_SELF) != 0
+		? node
+		: node->Parent();
+	bool walkUp = (flags & KOSM_INTERFACE_ANCESTORS) != 0;
 
-		MutexLocker nodeLocker(ancestor->NodeLock());
+	for (DkNode* cur = start; cur != NULL;
+		cur = walkUp ? cur->Parent() : NULL) {
 
-		dk_driver_info* driver = ancestor->DriverInfo();
-		void* cookie = ancestor->DriverCookie();
-		bool attached = ancestor->IsAttached();
+		MutexLocker nodeLocker(cur->NodeLock());
 
-		dprintf("DeviceKeeper: get_bus_ops:   checking %s attached=%d "
-			"driver=%s bus_ops=%p type=%u\n",
-			ancestor->ModuleName(), attached,
-			(attached && driver) ? driver->info.name : "none",
-			(attached && driver) ? driver->bus_ops : NULL,
-			(attached && driver) ? driver->bus_ops_type : 0);
+		// Iterate this node's published interface list.
+		for (DkInterfaceEntry* e = cur->Interfaces(); e != NULL;
+				e = e->next) {
 
-		if (!attached || driver == NULL || driver->bus_ops == NULL)
-			continue;
+			DK_TRACE("get_interface:   %s has %s\n",
+				cur->ModuleName(), e->name);
 
-		if (driver->bus_ops_type == busType) {
-			dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) -> FOUND %s "
-				"bus_ops=%p cookie=%p\n",
-				node->ModuleName(), busType,
-				ancestor->ModuleName(), driver->bus_ops, cookie);
+			if (strcmp(e->name, name) == 0) {
+				DK_TRACE("get_interface(%s, \"%s\") -> FOUND on %s "
+					"ops=%p cookie=%p\n",
+					node->ModuleName(), name,
+					cur->ModuleName(), e->ops,
+					cur->DriverCookie());
 
-			if (_ops != NULL)
-				*_ops = driver->bus_ops;
-			if (_cookie != NULL)
-				*_cookie = cookie;
-			return B_OK;
+				if (_ops != NULL)
+					*_ops = e->ops;
+				if (_cookie != NULL)
+					*_cookie = cur->DriverCookie();
+				return B_OK;
+			}
 		}
+
+		// If only self was requested, stop after one iteration.
+		if (!walkUp)
+			break;
 	}
 
-	dprintf("DeviceKeeper: get_bus_ops(%s, type=%u) -> not found\n",
-		node->ModuleName(), busType);
+	DK_TRACE("get_interface(%s, \"%s\") -> not found\n",
+		node->ModuleName(), name);
 	return B_NOT_SUPPORTED;
 }
 
@@ -1524,7 +1567,7 @@ dk_keeper_info gDeviceKeeperModule = {
 	dk_put_node,
 
 	// global tree query
-	dk_find_node,
+	dk_find_node_global,
 
 	// property accessors (recursive)
 	dk_get_property_uint8,
@@ -1546,10 +1589,11 @@ dk_keeper_info gDeviceKeeperModule = {
 	dk_free_id,
 
 	// driver access
-	dk_get_driver,
+	dk_get_node_driver,
 
-	// bus protocol
-	dk_get_bus_ops,
+	// bus interface
+	dk_publish_interface,
+	dk_get_interface,
 
 	// I/O resource management
 	dk_acquire_io_resource,
@@ -1586,6 +1630,13 @@ _dump_node_recursive(DkNode* node, int32 level)
 		node->IsRegistered() ? "reg" : "unreg",
 		node->IsAttached() ? " attached" : "",
 		node->HasKeepLoaded() ? " keep" : "");
+
+	// print published interfaces
+	for (DkInterfaceEntry* e = node->Interfaces(); e != NULL; e = e->next) {
+		for (int32 i = 0; i < level + 1; i++)
+			kprintf("   ");
+		kprintf("iface: %s\n", e->name);
+	}
 
 	// print published paths
 	const DkPublishedPathList& paths = node->PublishedPaths();
@@ -1647,6 +1698,10 @@ dump_dk_node(int argc, char** argv)
 		kprintf("  cookie:     %p\n", node->DriverCookie());
 	}
 
+	kprintf("  interfaces:\n");
+	for (DkInterfaceEntry* e = node->Interfaces(); e != NULL; e = e->next)
+		kprintf("    %s -> ops=%p\n", e->name, e->ops);
+
 	kprintf("  published:\n");
 	const DkPublishedPathList& paths = node->PublishedPaths();
 	DkPublishedPathList::ConstIterator pit = paths.GetIterator();
@@ -1660,6 +1715,20 @@ dump_dk_node(int argc, char** argv)
 		kprintf("    %p %s\n", child, child->ModuleName());
 	}
 
+	return 0;
+}
+
+
+static int
+dump_dk_drivers(int argc, char** argv)
+{
+	DkKeeper* keeper = DkKeeper::Instance();
+	if (keeper == NULL) {
+		kprintf("DeviceKeeper not initialized\n");
+		return 0;
+	}
+
+	keeper->GetMatcher().DumpRegistry();
 	return 0;
 }
 
@@ -1694,7 +1763,7 @@ dk_keeper_init(kernel_args* args)
 		return status;
 	}
 
-	root->Properties().PutString(KOSM_DEVICE_PRETTY_NAME, "Devices Root");
+	root->Properties().PutString(KOSM_LABEL, "Devices Root");
 	root->Properties().PutString(KOSM_DEVICE_BUS, "root");
 	root->Properties().PutUInt32(KOSM_DEVICE_FLAGS,
 		KOSM_FIND_MULTIPLE_CHILDREN | KOSM_KEEP_DRIVER_LOADED);
@@ -1708,7 +1777,7 @@ dk_keeper_init(kernel_args* args)
 	DkNode* generic = new(std::nothrow) DkNode(
 		"system/device_keeper/generic");
 	if (generic != NULL && generic->Properties().Init() == B_OK) {
-		generic->Properties().PutString(KOSM_DEVICE_PRETTY_NAME, "Generic");
+		generic->Properties().PutString(KOSM_LABEL, "Generic");
 		generic->Properties().PutString(KOSM_DEVICE_BUS, "generic");
 		generic->Properties().PutUInt32(KOSM_DEVICE_FLAGS,
 			KOSM_FIND_MULTIPLE_CHILDREN | KOSM_KEEP_DRIVER_LOADED
@@ -1718,7 +1787,7 @@ dk_keeper_init(kernel_args* args)
 		root->AddChild(generic);
 	} else {
 		delete generic;
-		dprintf("DeviceKeeper: failed to create generic bus node\n");
+		DK_ERROR("failed to create generic bus node\n");
 	}
 
 	DkKeeper::sInstance = keeper;
@@ -1730,8 +1799,10 @@ dk_keeper_init(kernel_args* args)
 		"print info on a device keeper node",
 		"<address>\n"
 		"Prints information on a DkNode at <address>.\n", 0);
+	add_debugger_command("dk_drivers", &dump_dk_drivers,
+		"dump device keeper driver registry");
 
-	dprintf("DeviceKeeper: initialized\n");
+	DK_INFO("initialized\n");
 	return B_OK;
 }
 
@@ -1753,14 +1824,14 @@ dk_keeper_init_post_modules(kernel_args* args)
 
 	for (const char** path = sPaths; *path != NULL; path++) {
 		status_t s = keeper->DiscoverDrivers(*path);
-		dprintf("DeviceKeeper: DiscoverDrivers(\"%s\"): %s\n",
+		DK_INFO("DiscoverDrivers(\"%s\"): %s\n",
 			*path, s == B_OK ? "found" : "none");
 	}
 
 	// reprobe all on-demand nodes that weren't probed during early boot
 	keeper->DemandProbe("");
 
-	dprintf("DeviceKeeper: post-module reprobe complete\n");
+	DK_INFO("post-module reprobe complete\n");
 	return B_OK;
 }
 
@@ -1784,6 +1855,7 @@ dk_keeper_uninit()
 	if (keeper != NULL) {
 		remove_debugger_command("dk_tree", &dump_dk_tree);
 		remove_debugger_command("dk_node", &dump_dk_node);
+		remove_debugger_command("dk_drivers", &dump_dk_drivers);
 
 		delete keeper;
 		DkKeeper::sInstance = NULL;

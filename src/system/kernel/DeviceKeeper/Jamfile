@@ -8,6 +8,7 @@ KernelMergeObject kernel_devicekeeper.o :
 	Node.cpp
 	Matcher.cpp
 	Lifecycle.cpp
+	LockDebug.cpp
 	Publisher.cpp
 	Syscall.cpp
 	FirmwareLoader.cpp

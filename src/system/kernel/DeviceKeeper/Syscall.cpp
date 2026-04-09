@@ -387,11 +387,11 @@ _user_kosm_dk_get_node_info(kosm_handle_t handle,
 
 		info.property_count = node->Properties().CountProperties();
 
-		node->Properties().GetStringCopy(KOSM_DEVICE_PRETTY_NAME,
-			info.pretty_name, sizeof(info.pretty_name));
+		node->Properties().GetStringCopy(KOSM_LABEL,
+			info.pretty_name, sizeof(info.pretty_name), NULL);
 
 		node->Properties().GetStringCopy(KOSM_DEVICE_BUS,
-			info.bus, sizeof(info.bus));
+			info.bus, sizeof(info.bus), NULL);
 
 		// first published device path
 		const char* path = node->FirstPublishedPath();

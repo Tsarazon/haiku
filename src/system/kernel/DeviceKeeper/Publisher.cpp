@@ -116,7 +116,7 @@ DkPublishedDevice::_ReadDMALimits()
 	}
 
 	if (fMaxIOSize > 0) {
-		dprintf("DeviceKeeper: %s DMA max I/O size: %" B_PRIuGENADDR
+		DK_TRACE("%s DMA max I/O size: %" B_PRIuGENADDR
 			" bytes (block size %" B_PRIuGENADDR ")\n",
 			fNode->ModuleName(), fMaxIOSize, blockSize);
 	}
@@ -183,7 +183,7 @@ DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 		// B_OK, the driver completed successfully — trust it and
 		// account for the full chunk.
 		if (status == B_OK && chunk == 0) {
-			dprintf("DeviceKeeper: _DoIO: driver returned B_OK with "
+			DK_TRACE("_DoIO: driver returned B_OK with "
 				"0 TransferredBytes for %zu byte chunk at offset "
 				"%" B_PRIdOFF " — assuming full transfer\n",
 				chunkSize, pos + (off_t)totalTransferred);

@@ -83,13 +83,13 @@ dk_load_firmware(const char* name, const void** _data, size_t* _size)
 
 		status_t status = _try_load(path, _data, _size);
 		if (status == B_OK) {
-			dprintf("DeviceKeeper: loaded firmware %s (%zu bytes)\n",
+			DK_INFO("loaded firmware %s (%zu bytes)\n",
 				path, *_size);
 			return B_OK;
 		}
 	}
 
-	dprintf("DeviceKeeper: firmware not found: %s\n", name);
+	DK_ERROR("firmware not found: %s\n", name);
 	return B_ENTRY_NOT_FOUND;
 }
 

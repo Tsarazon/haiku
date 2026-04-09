@@ -23,8 +23,10 @@ DkNode::DkNode(const char* moduleName)
 	fKeepLoaded(false),
 	fDriver(NULL),
 	fDriverCookie(NULL),
+	fDriverRefHeld(false),
 	fAttaching(false),
 	fPowerState(kPowerActive),
+	fInterfaces(NULL),
 	fPublishedPathCount(0)
 {
 	mutex_init(&fLock, "dk node");
@@ -37,6 +39,12 @@ DkNode::DkNode(const char* moduleName)
 DkNode::~DkNode()
 {
 	ASSERT(fParent == NULL);
+	// Unbalanced module ref is a leak: if fDriverRefHeld is still
+	// true at destruction, some detach path forgot to put_module().
+	// In debug builds, panic loudly — this is exactly the class of
+	// bug that silently accumulates over load/unload cycles.
+	ASSERT(!fDriverRefHeld);
+	ASSERT(fDriver == NULL);
 
 	// children should have been detached and unregistered before
 	// reaching here, but clean up defensively
@@ -48,6 +56,15 @@ DkNode::~DkNode()
 	ReleaseAllResources();
 	ClearPublishedPaths();
 	ClearWatchers();
+
+	// Free interface list
+	while (fInterfaces != NULL) {
+		DkInterfaceEntry* next = fInterfaces->next;
+		free(fInterfaces->name);
+		delete fInterfaces;
+		fInterfaces = next;
+	}
+
 	free(fModuleName);
 	mutex_destroy(&fLock);
 }
@@ -208,8 +225,13 @@ DkNode::LastReferenceReleased()
 void
 DkNode::SetDriver(dk_driver_info* driver, void* cookie)
 {
+	// Refuse to clobber a previously-set driver: that would leak
+	// the existing module reference. Callers must ClearDriver first.
+	ASSERT(fDriver == NULL || fDriver == driver);
 	fDriver = driver;
 	fDriverCookie = cookie;
+	if (driver != NULL)
+		fDriverRefHeld = true;
 }
 
 
@@ -225,6 +247,11 @@ DkNode::ClearDriver()
 {
 	fDriver = NULL;
 	fDriverCookie = NULL;
+	// NOTE: fDriverRefHeld is NOT cleared here — the caller that owns
+	// the module ref must call ReleaseDriverRef() once put_module()
+	// has actually been invoked. This split lets the detach path
+	// "take out" the ref under the node lock while the actual
+	// put_module() happens outside of any locks.
 }
 
 
@@ -251,6 +278,42 @@ void
 DkNode::SetPowerState(power_state state)
 {
 	fPowerState = state;
+}
+
+
+status_t
+DkNode::PublishInterface(const char* name, const void* ops)
+{
+	// caller must hold node lock
+	if (name == NULL || ops == NULL)
+		return B_BAD_VALUE;
+
+	// If an entry with this name already exists, replace its ops
+	// in place. This preserves single-publish semantics for callers
+	// that re-publish on a node they own.
+	for (DkInterfaceEntry* e = fInterfaces; e != NULL; e = e->next) {
+		if (strcmp(e->name, name) == 0) {
+			e->ops = ops;
+			return B_OK;
+		}
+	}
+
+	// Insert a new entry at the head (lookup is O(N), order does
+	// not affect correctness, head insert avoids tail traversal).
+	DkInterfaceEntry* entry = new(std::nothrow) DkInterfaceEntry;
+	if (entry == NULL)
+		return B_NO_MEMORY;
+
+	entry->name = strdup(name);
+	if (entry->name == NULL) {
+		delete entry;
+		return B_NO_MEMORY;
+	}
+	entry->ops = ops;
+	entry->next = fInterfaces;
+	fInterfaces = entry;
+
+	return B_OK;
 }
 
 
@@ -586,6 +649,7 @@ DkPropertyHashDefinition::GetLink(DkPropertyEntry* entry) const
 DkPropertyStore::DkPropertyStore()
 	:
 	fCommitted(false),
+	fVersion(0),
 	fInsertHead(NULL),
 	fInsertTail(NULL)
 {
@@ -643,6 +707,7 @@ DkPropertyStore::Put(const dk_property& property)
 	}
 
 	_InsertListAppend(entry);
+	fVersion++;
 	return B_OK;
 }
 
@@ -883,6 +948,7 @@ DkPropertyStore::SetAfterCommit(const dk_property& property)
 				break;
 		}
 
+		fVersion++;
 		return B_OK;
 	}
 
@@ -904,6 +970,7 @@ DkPropertyStore::SetAfterCommit(const dk_property& property)
 	}
 
 	_InsertListAppend(entry);
+	fVersion++;
 	return B_OK;
 }
 
@@ -1000,7 +1067,7 @@ DkPropertyStore::GetRaw(const char* name, const void** _data,
 
 status_t
 DkPropertyStore::GetStringCopy(const char* name, char* buffer,
-	size_t bufferSize) const
+	size_t bufferSize, size_t* _actualLength) const
 {
 	const DkPropertyEntry* entry = Lookup(name);
 	if (entry == NULL)
@@ -1013,6 +1080,9 @@ DkPropertyStore::GetStringCopy(const char* name, char* buffer,
 		str = "";
 
 	size_t len = strlen(str);
+	if (_actualLength != NULL)
+		*_actualLength = len;
+
 	if (len >= bufferSize) {
 		if (bufferSize > 0) {
 			memcpy(buffer, str, bufferSize - 1);
@@ -1127,16 +1197,29 @@ DkPropertyStore::CountProperties() const
 
 
 status_t
-DkPropertyStore::GetNext(DkPropertyEntry** _entry) const
+DkPropertyStore::GetNext(DkPropertyEntry** _entry, uint64* _iterVersion) const
 {
 	ASSERT(fCommitted);
+	if (_iterVersion == NULL)
+		return B_BAD_VALUE;
 
-	DkPropertyEntry* next;
-	if (*_entry == NULL)
-		next = fInsertHead;
-	else
-		next = (*_entry)->insert_next;
+	// First call: snapshot current version.
+	if (*_entry == NULL) {
+		*_iterVersion = fVersion;
+		if (fInsertHead != NULL) {
+			*_entry = fInsertHead;
+			return B_OK;
+		}
+		return B_ENTRY_NOT_FOUND;
+	}
 
+	// Subsequent call: verify version is unchanged.
+	if (*_iterVersion != fVersion) {
+		*_entry = NULL;
+		return B_INTERRUPTED;
+	}
+
+	DkPropertyEntry* next = (*_entry)->insert_next;
 	if (next != NULL) {
 		*_entry = next;
 		return B_OK;

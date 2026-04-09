@@ -6,11 +6,13 @@
 #define DEVICE_KEEPER_LIFECYCLE_H
 
 #include <SupportDefs.h>
+#include <KernelExport.h>
 #include <lock.h>
 #include <util/DoublyLinkedList.h>
 
 
 class DkMatcher;
+class DkModuleRef;
 class DkNode;
 class DkPublisher;
 
@@ -18,6 +20,7 @@ class DkPublisher;
 struct DkDeferredEntry : DoublyLinkedListLinkImpl<DkDeferredEntry> {
 	DkNode*		node;
 	int32		retries;
+	bigtime_t	enqueue_time;	// watchdog: warn if stuck for too long
 };
 
 
@@ -58,8 +61,34 @@ public:
 	// (called before detach to unblock pending I/O on surprise removal)
 	void				NotifyRemoved(DkNode* node);
 
+	// Unified attach path: takes ownership of module ref in _ref,
+	// calls driver->attach() without any DK locks held, updates node
+	// state atomically, and handles KOSM_DEFER_PROBE.
+	//
+	// On B_OK:   node owns the module ref (driver set, cookie set).
+	// On error:  module ref released via DkModuleRef dtor.
+	// On KOSM_DEFER_PROBE: node queued in deferred list, ref released
+	//            (a fresh ref will be taken on retry).
+	//
+	// The caller is responsible for setting fAttaching=true before
+	// calling this helper, and the helper clears it.
+	status_t			_AttachDriverToNode(DkNode* node,
+							DkModuleRef& _ref);
+
+public:
+	// Called from DkKeeper::_PostRegisterProbe to perform auto-attach-
+	// by-name (when a node's module itself is a dk_driver_info).
+	// Takes ownership of _ref on success. Exposed so that the keeper
+	// can share the same attach state machine as ProbeAndAttach.
+	status_t			AutoAttachByName(DkNode* node,
+							DkModuleRef& _ref);
+
 private:
 	static const int32	kMaxDeferRetries = 10;
+	// Warn if a deferred entry sits in the queue longer than this
+	// (in microseconds). 60 seconds — long enough to avoid noise on
+	// slow boot, short enough to catch real stuck probes.
+	static const bigtime_t kDeferWatchdogTimeout = 60 * 1000000LL;
 
 	void				_DetachRecursive(DkNode* node);
 	void				_NotifyRemovedRecursive(DkNode* node);

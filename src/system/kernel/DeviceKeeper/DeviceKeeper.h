@@ -140,11 +140,17 @@ private:
 	friend void				dk_keeper_uninit();
 
 	void					_ProbeChildren(DkNode* node,
-									const char* devicePath);
+									const char* devicePath,
+									const char** busFilter = NULL,
+									int32 busFilterCount = 0);
 	void					_ProbeNode(DkNode* node);
 	void					_PostRegisterProbe(DkNode* node);
 	void					_RollbackResources(DkNode* node);
 	void					_DeviceRemovedCleanup(DkNode* node);
+
+	static bool				_NodeMatchesBusFilter(DkNode* node,
+									const char** busFilter,
+									int32 busFilterCount);
 
 	// Locking strategy:
 	//   fTreeLock (rw_lock): protects tree structure only
