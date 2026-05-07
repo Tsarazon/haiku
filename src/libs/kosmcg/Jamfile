@@ -1,0 +1,65 @@
+SubDir HAIKU_TOP src libs kosmcg ;
+
+# KosmCG - 2D Core Graphics library for KosmOS
+# C++20 API with embedded FreeType rasterizer and STB libraries
+
+AddSubDirSupportedPlatforms libbe_test ;
+
+UseLibraryHeaders kosmcg ;
+
+SubDirC++Flags -std=c++20 -w -fpermissive -DKOSMCG_BUILD
+	-I$(SUBDIR)/polyclip
+	-I$(SUBDIR)/stb
+	-I$(SUBDIR)/FT ;
+SubDirCcFlags -w -DKOSMCG_BUILD ;
+
+local architectureObject ;
+for architectureObject in [ MultiArchSubDirSetup ] {
+	on $(architectureObject) {
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) FT ] ;
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) polyclip ] ;
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) stb ] ;
+		SharedLibrary [ MultiArchDefaultGristFiles libkosmcg.so ] :
+			# Core
+			kcgcontext.cpp
+			kcgbitmap.cpp
+			kcgblend.cpp
+			kcgblur.cpp
+			kcgcolor.cpp
+			kcgpaint.cpp
+			kcgpath.cpp
+			kcgtransform.cpp
+			kcgrasterize.cpp
+			kcgpixelconv.cpp
+			kcgerror.cpp
+
+			# Image I/O
+			kcgimage.cpp
+
+			# Font
+			kcgfont.cpp
+
+			# OpenType
+			kcgotf.cpp
+
+			# Path boolean operations
+			polyclip.cpp
+
+			# Embedded FreeType components
+			kosmcg-ft-math.cpp
+			kosmcg-ft-mono.cpp
+			kosmcg-ft-raster.cpp
+			kosmcg-ft-stroker.cpp
+
+			# STB image
+			stbi_core.cpp
+			stbi_jpeg.cpp
+			stbi_png.cpp
+			stbi_other.cpp
+			stb_image_write.cpp
+
+			:
+			[ TargetLibstdc++ ]
+			;
+	}
+}

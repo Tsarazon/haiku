@@ -1,0 +1,23 @@
+SubDir HAIKU_TOP src apps 2drenderdemo ;
+
+UseLibraryHeaders kosmcg ;
+UsePrivateHeaders shared ;
+
+SubDirC++Flags -std=c++20 ;
+
+Application 2DRenderDemo :
+	2DRenderDemo.cpp
+	:
+	be
+	libkosmcg.so
+	localestub
+	[ TargetLibstdc++ ]
+	:
+	2DRenderDemo.rdef
+;
+
+DoCatalogs 2DRenderDemo :
+	x-vnd.Haiku-2DRenderDemo
+	:
+	2DRenderDemo.cpp
+;
