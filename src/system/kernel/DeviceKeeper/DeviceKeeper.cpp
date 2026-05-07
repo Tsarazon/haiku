@@ -370,17 +370,47 @@ DkKeeper::RegisterNode(DkNode* parent, const char* moduleName,
 		}
 	}
 
-	// insert into tree under tree write lock
+	// insert into tree under tree write lock, but first check for a
+	// duplicate child under the same parent. If one already exists
+	// with the same moduleName AND the same values for every property
+	// passed in `properties`, return B_NAME_IN_USE without creating a
+	// new node. This preserves the legacy device_manager semantic
+	// that bus managers (e.g. scsi_scan_lun) rely on to make bus
+	// rescan idempotent.
+	bool isDuplicate = false;
 	{
 		WriteLocker treeLocker(&fTreeLock);
 
 		if (parent != NULL) {
-			parent->AddChild(node);
-			parent->NotifyWatchers(KOSM_EVENT_CHILD_REGISTERED,
-				reinterpret_cast<dk_node*>(node), NULL);
+			DkNodeList::Iterator it = parent->Children().GetIterator();
+			while (it.HasNext()) {
+				DkNode* existing = it.Next();
+				if (!existing->IsRegistered())
+					continue;
+				if (strcmp(existing->ModuleName(), moduleName) != 0)
+					continue;
+				if (existing->Properties().MatchesProperties(properties)) {
+					isDuplicate = true;
+					break;
+				}
+			}
 		}
 
-		node->SetRegistered(true);
+		if (!isDuplicate) {
+			if (parent != NULL) {
+				parent->AddChild(node);
+				parent->NotifyWatchers(KOSM_EVENT_CHILD_REGISTERED,
+					reinterpret_cast<dk_node*>(node), NULL);
+			}
+
+			node->SetRegistered(true);
+		}
+	}
+
+	if (isDuplicate) {
+		_RollbackResources(node);
+		delete node;
+		return B_NAME_IN_USE;
 	}
 
 	if (_node != NULL)

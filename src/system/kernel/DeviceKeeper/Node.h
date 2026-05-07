@@ -135,6 +135,14 @@ public:
 	// matching: check if all rules match this store (NULL-name terminated)
 	bool				Matches(const dk_match_rule* rules) const;
 
+	// Full-property equality check: every dk_property in the NULL-name
+	// terminated array must be present on this store with the same type
+	// and the same value (byte-equal for raw, strcmp-equal for string,
+	// element-wise strcmp for stringlist). Used by register_node for
+	// idempotent re-registration on bus rescan.
+	bool				MatchesProperties(
+							const dk_property* properties) const;
+
 	// mutable update after Commit (caller must hold node lock).
 	// Replaces an existing entry in-place or inserts a new one.
 	// Integer types are updated directly; strings are replaced

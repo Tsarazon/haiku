@@ -2,6 +2,9 @@ SubDir HAIKU_TOP src system kernel DeviceKeeper ;
 
 UsePrivateHeaders [ FDirName kernel util ] shared ;
 
+SubDirCcFlags -DDEVICE_KEEPER_VERBOSE ;
+SubDirC++Flags -DDEVICE_KEEPER_VERBOSE ;
+
 KernelMergeObject kernel_devicekeeper.o :
 	# DeviceKeeper core
 	DeviceKeeper.cpp

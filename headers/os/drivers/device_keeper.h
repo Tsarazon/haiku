@@ -331,6 +331,18 @@ typedef struct dk_keeper_info {
 	module_info info;
 
 	// node management
+	//
+	// register_node: create a new node under `parent` with the given
+	// module name, properties, and I/O resources.
+	//
+	// Duplicate detection: if a child already exists under `parent`
+	// with the same moduleName AND every property listed in
+	// `properties` has the same type and value on that existing
+	// child, register_node returns B_NAME_IN_USE without creating a
+	// new node (and without modifying resources). Bus managers rely
+	// on this to make rescan_children idempotent — callers may loop
+	// their enumeration at any time and only genuinely new children
+	// will be registered.
 	status_t	(*register_node)(dk_node* parent, const char* moduleName,
 					const dk_property* properties,
 					const dk_io_resource* resources,

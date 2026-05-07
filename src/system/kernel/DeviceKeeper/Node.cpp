@@ -1143,10 +1143,14 @@ DkPropertyStore::Matches(const dk_match_rule* rules) const
 
 	for (; rules->name != NULL; rules++) {
 		const DkPropertyEntry* entry = Lookup(rules->name);
-		if (entry == NULL)
+		if (entry == NULL) {
+			DK_TRACE("Matches: property '%s' not found\n", rules->name);
 			return false;
+		}
 
 		if (entry->type != rules->type) {
+			DK_TRACE("Matches: property '%s' type mismatch: have 0x%x want 0x%x\n",
+				rules->name, (unsigned)entry->type, (unsigned)rules->type);
 			// string rule matches against stringlist
 			if (entry->type == KOSM_STRINGLIST_TYPE
 				&& rules->type == B_STRING_TYPE) {
@@ -1159,20 +1163,31 @@ DkPropertyStore::Matches(const dk_match_rule* rules) const
 
 		switch (rules->type) {
 			case B_UINT8_TYPE:
-				if (entry->value.ui8 != rules->value.ui8)
+				if (entry->value.ui8 != rules->value.ui8) {
+					DK_TRACE("Matches: '%s' uint8 mismatch: have %u want %u\n",
+						rules->name, entry->value.ui8, rules->value.ui8);
 					return false;
+				}
 				break;
 			case B_UINT16_TYPE:
-				if (entry->value.ui16 != rules->value.ui16)
+				if (entry->value.ui16 != rules->value.ui16) {
+					DK_TRACE("Matches: '%s' uint16 mismatch: have %u want %u\n",
+						rules->name, entry->value.ui16, rules->value.ui16);
 					return false;
+				}
 				break;
 			case B_UINT32_TYPE:
-				if (entry->value.ui32 != rules->value.ui32)
+				if (entry->value.ui32 != rules->value.ui32) {
+					DK_TRACE("Matches: '%s' uint32 mismatch: have %u want %u\n",
+						rules->name, (unsigned)entry->value.ui32, (unsigned)rules->value.ui32);
 					return false;
+				}
 				break;
 			case B_UINT64_TYPE:
-				if (entry->value.ui64 != rules->value.ui64)
+				if (entry->value.ui64 != rules->value.ui64) {
+					DK_TRACE("Matches: '%s' uint64 mismatch\n", rules->name);
 					return false;
+				}
 				break;
 			case B_STRING_TYPE:
 				if (entry->value.string == NULL || rules->value.string == NULL)
@@ -1181,6 +1196,87 @@ DkPropertyStore::Matches(const dk_match_rule* rules) const
 					return false;
 				break;
 			default:
+				return false;
+		}
+	}
+
+	return true;
+}
+
+
+bool
+DkPropertyStore::MatchesProperties(const dk_property* properties) const
+{
+	if (properties == NULL)
+		return true;
+
+	for (; properties->name != NULL; properties++) {
+		const DkPropertyEntry* entry = Lookup(properties->name);
+		if (entry == NULL)
+			return false;
+		if (entry->type != properties->type)
+			return false;
+
+		switch (properties->type) {
+			case B_UINT8_TYPE:
+				if (entry->value.ui8 != properties->value.ui8)
+					return false;
+				break;
+			case B_UINT16_TYPE:
+				if (entry->value.ui16 != properties->value.ui16)
+					return false;
+				break;
+			case B_UINT32_TYPE:
+				if (entry->value.ui32 != properties->value.ui32)
+					return false;
+				break;
+			case B_UINT64_TYPE:
+				if (entry->value.ui64 != properties->value.ui64)
+					return false;
+				break;
+			case B_STRING_TYPE:
+				if (entry->value.string == NULL
+					|| properties->value.string == NULL) {
+					if (entry->value.string != properties->value.string)
+						return false;
+				} else if (strcmp(entry->value.string,
+						properties->value.string) != 0) {
+					return false;
+				}
+				break;
+			case B_RAW_TYPE:
+				if (entry->value.raw.length != properties->value.raw.length)
+					return false;
+				if (properties->value.raw.length > 0) {
+					if (entry->value.raw.data == NULL
+						|| properties->value.raw.data == NULL)
+						return false;
+					if (memcmp(entry->value.raw.data,
+							properties->value.raw.data,
+							properties->value.raw.length) != 0) {
+						return false;
+					}
+				}
+				break;
+			case KOSM_STRINGLIST_TYPE:
+				if (entry->value.stringlist.count
+						!= properties->value.stringlist.count) {
+					return false;
+				}
+				for (uint32 i = 0;
+						i < properties->value.stringlist.count; i++) {
+					const char* a = entry->value.stringlist.items[i];
+					const char* b = properties->value.stringlist.items[i];
+					if (a == NULL || b == NULL) {
+						if (a != b)
+							return false;
+					} else if (strcmp(a, b) != 0) {
+						return false;
+					}
+				}
+				break;
+			default:
+				// Unknown type — can't safely compare, treat as mismatch.
 				return false;
 		}
 	}
