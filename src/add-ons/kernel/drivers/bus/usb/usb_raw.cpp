@@ -11,7 +11,7 @@
 
 #include <util/AutoLock.h>
 #include <AutoDeleter.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <algorithm>
@@ -35,13 +35,12 @@
 #define DEVICE_NAME		"bus/usb"
 
 
-#define USB_RAW_DRIVER_MODULE_NAME "drivers/bus/usb_raw/driver_v1"
-#define USB_RAW_DEVICE_MODULE_NAME "drivers/bus/usb_raw/device_v1"
+#define USB_RAW_DRIVER_MODULE_NAME "drivers/bus/usb_raw/dk_driver_v1"
 #define USB_RAW_DEVICE_ID_GENERATOR "usb_raw/device_id"
 
 
 typedef struct {
-	device_node*		node;
+	dk_node*			node;
 	usb_device			device;
 	mutex				lock;
 	uint32				reference_count;
@@ -52,7 +51,7 @@ typedef struct {
 } raw_device;
 
 static usb_module_info *gUSBModule = NULL;
-static device_manager_info *gDeviceManager = NULL;
+static dk_keeper_info *sDeviceKeeper = NULL;
 
 
 //
@@ -697,12 +696,13 @@ usb_raw_write(void *cookie, off_t position, const void *buffer,
 
 
 static float
-usb_raw_supports_device(device_node *parent)
+usb_raw_supports_device(dk_node *parent)
 {
 	TRACE((DRIVER_NAME": supports_device()\n"));
-	const char *bus;
+	char bus[64];
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 
 	if (strcmp(bus, "usb"))
@@ -713,26 +713,26 @@ usb_raw_supports_device(device_node *parent)
 }
 
 
+static void usb_raw_device_removed(void*);
+
+static dk_device_ops sDeviceOps = {
+	usb_raw_open,
+	usb_raw_close,
+	usb_raw_free,
+	usb_raw_read,
+	usb_raw_write,
+	NULL,	// io
+	usb_raw_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	usb_raw_device_removed,
+};
+
+
 static status_t
-usb_raw_register_device(device_node *node)
+usb_raw_attach(dk_node *node, void **cookie)
 {
-	TRACE((DRIVER_NAME": register_device()\n"));
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "USB Raw Access"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, USB_RAW_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_raw_init_driver(device_node *node, void **cookie)
-{
-	TRACE((DRIVER_NAME": init_driver()\n"));
+	TRACE((DRIVER_NAME": attach()\n"));
 
 	raw_device *device = (raw_device *)malloc(sizeof(raw_device));
 	if (device == NULL)
@@ -741,7 +741,7 @@ usb_raw_init_driver(device_node *node, void **cookie)
 	memset(device, 0, sizeof(raw_device));
 	device->node = node;
 
-	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+	if (sDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
 			&device->device, true) != B_OK) {
 		free(device);
 		return B_ERROR;
@@ -767,16 +767,31 @@ usb_raw_init_driver(device_node *node, void **cookie)
 			DEVICE_NAME, device->device);
 	}
 
+	// publish device in devfs
+	status_t result = sDeviceKeeper->publish_device(device->node,
+		device->name, &sDeviceOps);
+	if (result != B_OK) {
+		delete_sem(device->notify);
+		mutex_destroy(&device->lock);
+		free(device);
+		return result;
+	}
+
 	*cookie = device;
 	return B_OK;
 }
 
 
 static void
-usb_raw_uninit_driver(void *_cookie)
+usb_raw_detach(void *_cookie)
 {
-	TRACE((DRIVER_NAME": uninit_driver()\n"));
+	TRACE((DRIVER_NAME": detach()\n"));
 	raw_device *device = (raw_device *)_cookie;
+	if (device == NULL)
+		return;
+
+	if (device->name[0] != '\0')
+		sDeviceKeeper->unpublish_device(device->node, device->name);
 
 	mutex_lock(&device->lock);
 	mutex_destroy(&device->lock);
@@ -785,42 +800,12 @@ usb_raw_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-usb_raw_register_child_devices(void *_cookie)
-{
-	TRACE((DRIVER_NAME": register_child_devices()\n"));
-	raw_device *device = (raw_device *)_cookie;
-
-	return gDeviceManager->publish_device(device->node, device->name,
-		USB_RAW_DEVICE_MODULE_NAME);
-}
-
-
 static void
-usb_raw_driver_device_removed(void *_cookie)
+usb_raw_device_removed(void *_cookie)
 {
-	TRACE((DRIVER_NAME": driver_device_removed()\n"));
+	TRACE((DRIVER_NAME": device_removed()\n"));
 	raw_device *device = (raw_device *)_cookie;
 	device->device = 0;
-}
-
-
-//
-//#pragma mark - device init/uninit
-//
-
-
-static status_t
-usb_raw_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-usb_raw_uninit_device(void *_cookie)
-{
 }
 
 
@@ -830,52 +815,36 @@ usb_raw_uninit_device(void *_cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info **)&gUSBModule },
 	{ NULL }
 };
 
-struct device_module_info sUsbRawDevice = {
-	{
-		USB_RAW_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	usb_raw_init_device,
-	usb_raw_uninit_device,
-	NULL,	// device_removed
-
-	usb_raw_open,
-	usb_raw_close,
-	usb_raw_free,
-	usb_raw_read,
-	usb_raw_write,
-	NULL,	// io
-	usb_raw_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
+static const dk_match_rule sUsbRawMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
 };
 
-struct driver_module_info sUsbRawDriver = {
-	{
+static const dk_match_dict sUsbRawMatchDict = {
+	sUsbRawMatchRules,
+	0
+};
+
+
+static dk_driver_info sUsbRawDriver = {
+	.info = {
 		USB_RAW_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_raw_supports_device,
-	usb_raw_register_device,
-	usb_raw_init_driver,
-	usb_raw_uninit_driver,
-	usb_raw_register_child_devices,
-	NULL,	// rescan
-	usb_raw_driver_device_removed,
+	.match   = &sUsbRawMatchDict,
+	.probe   = usb_raw_supports_device,
+	.attach  = usb_raw_attach,
+	.detach  = usb_raw_detach,
+	.ops     = &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sUsbRawDriver,
-	(module_info *)&sUsbRawDevice,
 	NULL
 };
