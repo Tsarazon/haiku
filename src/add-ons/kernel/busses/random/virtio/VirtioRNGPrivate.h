@@ -23,14 +23,14 @@
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 extern random_for_controller_interface *gRandom;
 extern dpc_module_info *gDPC;
 
 
 class VirtioRNGDevice {
 public:
-								VirtioRNGDevice(device_node* node);
+								VirtioRNGDevice(dk_node* node);
 								~VirtioRNGDevice();
 
 			status_t			InitCheck();
@@ -46,7 +46,7 @@ private:
 			status_t			_Enqueue();
 
 			virtio_device_interface* fVirtio;
-			virtio_device*		fVirtioDevice;
+			virtio_device		fVirtioDevice;
 
 			status_t			fStatus;
 			uint64				fFeatures;

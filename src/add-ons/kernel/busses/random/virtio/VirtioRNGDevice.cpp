@@ -22,7 +22,7 @@ get_feature_name(uint64 feature)
 }
 
 
-VirtioRNGDevice::VirtioRNGDevice(device_node *node)
+VirtioRNGDevice::VirtioRNGDevice(dk_node *node)
 	:
 	fVirtio(NULL),
 	fVirtioDevice(NULL),
@@ -35,12 +35,20 @@ VirtioRNGDevice::VirtioRNGDevice(device_node *node)
 	B_INITIALIZE_SPINLOCK(&fInterruptLock);
 	fInterruptCondition.Init(this, "virtio rng transfer");
 
-	// get the Virtio device from our parent's parent
-	device_node *virtioParent = gDeviceManager->get_parent_node(node);
-
-	gDeviceManager->get_driver(virtioParent, (driver_module_info **)&fVirtio,
-		(void **)&fVirtioDevice);
-	gDeviceManager->put_node(virtioParent);
+	// Walk up to the virtio bus manager ancestor for the peripheral-facing
+	// interface and our virtio_device cookie.
+	fStatus = gDeviceKeeper->get_interface(node,
+		VIRTIO_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fVirtio, &fVirtioDevice);
+	if (fStatus != B_OK) {
+		ERROR("get_interface(virtio device) failed: %s\n", strerror(fStatus));
+		return;
+	}
+	if (fVirtio == NULL || fVirtioDevice == NULL) {
+		ERROR("virtio bus manager returned NULL ops/cookie\n");
+		fStatus = B_ERROR;
+		return;
+	}
 
 	fVirtio->negotiate_features(fVirtioDevice,
 		0, &fFeatures, &get_feature_name);

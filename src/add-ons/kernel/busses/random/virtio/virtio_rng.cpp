@@ -13,11 +13,11 @@
 
 #define VIRTIO_RNG_CONTROLLER_PRETTY_NAME "Virtio RNG Device"
 
-#define VIRTIO_RNG_DRIVER_MODULE_NAME "busses/random/virtio_rng/driver_v1"
+#define VIRTIO_RNG_DRIVER_MODULE_NAME "busses/random/virtio_rng/dk_driver_v1"
 #define VIRTIO_RNG_DEVICE_MODULE_NAME "busses/random/virtio_rng/device_v1"
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 random_for_controller_interface *gRandom;
 dpc_module_info *gDPC;
 
@@ -25,21 +25,24 @@ dpc_module_info *gDPC;
 //	#pragma mark -	Driver module interface
 
 
+static const dk_match_rule kVirtioRNGMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "virtio"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict kVirtioRNGMatch = {
+	kVirtioRNGMatchRules,
+	0
+};
+
+
 static float
-virtio_rng_supports_device(device_node *parent)
+virtio_rng_supports_device(dk_node *parent)
 {
-	const char *bus;
 	uint16 deviceType;
 
-	// make sure parent is really the Virtio bus manager
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "virtio"))
-		return 0.0;
-
-	// check whether it's really a Virtio Entropy Device
-	if (gDeviceManager->get_attr_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
+	// bus already filtered by match rules
+	if (gDeviceKeeper->get_property_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != VIRTIO_DEVICE_ID_ENTROPY)
 		return 0.0;
 
@@ -49,22 +52,9 @@ virtio_rng_supports_device(device_node *parent)
 }
 
 
-static status_t
-virtio_rng_register_device(device_node *parent)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, VIRTIO_RNG_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
 
 static status_t
-virtio_rng_init_driver(device_node *node, void **_cookie)
+virtio_rng_init_driver(dk_node *node, void **_cookie)
 {
 	CALLED();
 	VirtioRNGDevice *device =  new(std::nothrow) VirtioRNGDevice(node);
@@ -89,24 +79,21 @@ virtio_rng_uninit_driver(void *cookie)
 }
 
 
-static driver_module_info sVirtioRNGDriver = {
-	{
+static dk_driver_info sVirtioRNGDriver = {
+	.info = {
 		VIRTIO_RNG_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-	virtio_rng_supports_device,
-	virtio_rng_register_device,
-	virtio_rng_init_driver,
-	virtio_rng_uninit_driver,
-	NULL,
-	NULL,	// rescan
-	NULL,	// device_removed
+	.match   = &kVirtioRNGMatch,
+	.probe   = virtio_rng_supports_device,
+	.attach  = virtio_rng_init_driver,
+	.detach  = virtio_rng_uninit_driver,
 };
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ RANDOM_FOR_CONTROLLER_MODULE_NAME, (module_info **)&gRandom },
 	{ B_DPC_MODULE_NAME, (module_info **)&gDPC },
 	{}
