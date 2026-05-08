@@ -18,7 +18,7 @@ class HIDDevice {
 public:
 								HIDDevice(usb_device device,
 									const usb_configuration_info *config,
-									size_t interfaceIndex, int32 quirkyIndex);
+									size_t interfaceIndex);
 								~HIDDevice();
 
 			void				SetParentCookie(int32 cookie);

@@ -10,9 +10,7 @@
 #include "Driver.h"
 #include "HIDDevice.h"
 #include "HIDReport.h"
-#include "HIDWriter.h"
 #include "ProtocolHandler.h"
-#include "QuirkyDevices.h"
 
 #include <usb/USB_hid.h>
 
@@ -24,7 +22,7 @@
 
 
 HIDDevice::HIDDevice(usb_device device, const usb_configuration_info *config,
-	size_t interfaceIndex, int32 quirkyIndex)
+	size_t interfaceIndex)
 	:	fStatus(B_NO_INIT),
 		fDevice(device),
 		fInterfaceIndex(interfaceIndex),
@@ -44,22 +42,7 @@ HIDDevice::HIDDevice(usb_device device, const usb_configuration_info *config,
 	const usb_device_descriptor *deviceDescriptor
 		= gUSBModule->get_device_descriptor(device);
 
-	HIDWriter descriptorWriter;
-	bool hasFixedDescriptor = false;
-	if (quirkyIndex >= 0) {
-		quirky_build_descriptor quirkyBuildDescriptor
-			= gQuirkyDevices[quirkyIndex].build_descriptor;
-
-		if (quirkyBuildDescriptor != NULL
-			&& quirkyBuildDescriptor(descriptorWriter) == B_OK) {
-
-			reportDescriptor = (uint8 *)descriptorWriter.Buffer();
-			descriptorLength = descriptorWriter.BufferLength();
-			hasFixedDescriptor = true;
-		}
-	}
-
-	if (!hasFixedDescriptor) {
+	{
 		// Conforming device, find the HID descriptor and get the report
 		// descriptor from the device.
 		usb_hid_descriptor *hidDescriptor = NULL;
@@ -130,8 +113,6 @@ HIDDevice::HIDDevice(usb_device device, const usb_configuration_info *config,
 			free(reportDescriptor);
 			return;
 		}
-	} else {
-		TRACE_ALWAYS("found quirky device, using patched descriptor\n");
 	}
 
 #if 1
@@ -149,8 +130,7 @@ HIDDevice::HIDDevice(usb_device device, const usb_configuration_info *config,
 
 	status_t result = fParser.ParseReportDescriptor(reportDescriptor,
 		descriptorLength);
-	if (!hasFixedDescriptor)
-		free(reportDescriptor);
+	free(reportDescriptor);
 
 	if (result != B_OK) {
 		TRACE_ALWAYS("parsing the report descriptor failed\n");
@@ -196,17 +176,6 @@ HIDDevice::HIDDevice(usb_device device, const usb_configuration_info *config,
 		TRACE_ALWAYS("failed to allocate transfer buffer\n");
 		fStatus = B_NO_MEMORY;
 		return;
-	}
-
-	if (quirkyIndex >= 0) {
-		quirky_init_function quirkyInit
-			= gQuirkyDevices[quirkyIndex].init_function;
-
-		if (quirkyInit != NULL) {
-			fStatus = quirkyInit(device, config, interfaceIndex);
-			if (fStatus != B_OK)
-				return;
-		}
 	}
 
 	ProtocolHandler::AddHandlers(*this, fProtocolHandlerList,

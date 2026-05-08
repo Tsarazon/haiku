@@ -6,7 +6,7 @@
 #ifndef _USB_HID_DRIVER_H_
 #define _USB_HID_DRIVER_H_
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
@@ -26,7 +26,7 @@
 #define USB_DEFAULT_CONFIGURATION		0
 
 extern usb_module_info *gUSBModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern DeviceList *gDeviceList;
 
 #define	TRACE(x...)			/*dprintf(DRIVER_NAME ": " x)*/
