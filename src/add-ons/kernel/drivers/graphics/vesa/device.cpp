@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <graphic_driver.h>
 #include <image.h>
@@ -35,7 +36,7 @@
 
 
 static status_t
-device_open(const char* name, uint32 flags, void** _cookie)
+device_open(void* driverCookie, const char* name, int flags, void** _cookie)
 {
 	int id;
 
@@ -247,15 +248,15 @@ device_write(void* /*cookie*/, off_t /*pos*/, const void* /*buffer*/,
 }
 
 
-device_hooks gDeviceHooks = {
+dk_device_ops gDeviceOps = {
 	device_open,
 	device_close,
 	device_free,
-	device_ioctl,
 	device_read,
 	device_write,
-	NULL,
-	NULL,
-	NULL,
-	NULL
+	NULL,	// io
+	device_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
 };

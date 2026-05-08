@@ -18,7 +18,7 @@
 extern char* gDeviceNames[];
 extern vesa_info* gDeviceInfo[];
 extern isa_module_info* gISA;
-extern pci_device_module_info* gPCI;
+extern pci_device_ops* gPCI;
 extern pci_device* gPCIDev;
 extern mutex gLock;
 

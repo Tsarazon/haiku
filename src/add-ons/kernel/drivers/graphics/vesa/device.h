@@ -5,9 +5,9 @@
 #ifndef DEVICE_H
 #define DEVICE_H
 
-#include <Drivers.h>
+#include <device_keeper.h>
 
-// The device hooks for the published device
-extern device_hooks gDeviceHooks;
+// The device ops for the published device
+extern dk_device_ops gDeviceOps;
 
 #endif	/* DEVICE_H */
