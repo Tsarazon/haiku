@@ -1,5 +1,6 @@
 /*
  * Copyright 2020, Jérôme Duval, jerome.duval@gmail.com.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 
@@ -64,7 +65,7 @@ struct {
 	{0x7a4f, PCH_NONE},
 	{0x7a7c, PCH_NONE},
 	{0x7a7d, PCH_NONE},
-	
+
 	{0x98c5, PCH_NONE},
 	{0x98c6, PCH_NONE},
 	{0x98e8, PCH_NONE},
@@ -110,7 +111,7 @@ struct {
 	/* Kaby Lake */
 	{0xa160, PCH_SKYLAKE},
 	{0xa161, PCH_SKYLAKE},
-	{0xa162, PCH_SKYLAKE}, // ?
+	{0xa162, PCH_SKYLAKE},
 
 	/* Apolo Lake */
 	{0x5aac, PCH_APL},
@@ -220,7 +221,7 @@ struct {
 
 typedef struct {
 	pch_i2c_sim_info info;
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
 	pch_i2c_irq_type irq_type;
 
@@ -232,25 +233,28 @@ typedef struct {
 
 
 static status_t
-pci_scan_bus(i2c_bus_cookie cookie)
+pci_scan_bus(pch_i2c_sim_info* simInfo, dk_node* busNode)
 {
 	CALLED();
-	pch_i2c_pci_sim_info* bus = (pch_i2c_pci_sim_info*)cookie;
-	device_node *acpiNode = NULL;
+	pch_i2c_pci_sim_info* bus = (pch_i2c_pci_sim_info*)simInfo;
+	dk_node *acpiNode = NULL;
+
+	// Store busNode for pch_i2c_scan_bus_callback
+	bus->info.busNode = busNode;
 
 	pci_info *pciInfo = &bus->pciinfo;
 
 	// search ACPI I2C nodes for this device
 	{
-		device_node* deviceRoot = gDeviceManager->get_root_node();
+		dk_node* deviceRoot = gDeviceKeeper->get_root_node();
 		uint32 addr = (pciInfo->device << 16) | pciInfo->function;
-		device_attr acpiAttrs[] = {
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
-			{ ACPI_DEVICE_ADDR_ITEM, B_UINT32_TYPE, {.ui32 = addr}},
-			{ NULL }
+		dk_match_rule acpiAttrs[] = {
+			{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
+			{ KOSM_ACPI_DEVICE_ADR, B_UINT32_TYPE, {.ui32 = addr}},
+			{}
 		};
-		if (addr != 0 && gDeviceManager->find_child_node(deviceRoot, acpiAttrs,
-				&acpiNode) != B_OK) {
+		if (addr != 0 && gDeviceKeeper->find_child_node(deviceRoot,
+				acpiAttrs, &acpiNode) != B_OK) {
 			ERROR("init_bus() acpi device not found\n");
 			return B_DEV_CONFIGURATION_ERROR;
 		}
@@ -258,49 +262,24 @@ pci_scan_bus(i2c_bus_cookie cookie)
 
 	TRACE("init_bus() find_child_node() found %x %x %p\n",
 		pciInfo->device, pciInfo->function, acpiNode);
-	// TODO eventually check timings on acpi
-	acpi_device_module_info *acpi;
+
+	acpi_device_module_info* acpi;
 	acpi_device	acpiDevice;
-	if (gDeviceManager->get_driver(acpiNode, (driver_module_info **)&acpi,
-		(void **)&acpiDevice) == B_OK) {
-		// find out I2C device nodes
+	if (gDeviceKeeper->get_interface(acpiNode,
+			ACPI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS,
+			(const void**)&acpi, (void**)&acpiDevice) == B_OK) {
 		acpi->walk_namespace(acpiDevice, ACPI_TYPE_DEVICE, 1,
-			pch_i2c_scan_bus_callback, NULL, bus, NULL);
+			pch_i2c_scan_bus_callback, NULL, &bus->info, NULL);
 	}
 
+	gDeviceKeeper->put_node(acpiNode);
 	return B_OK;
 }
 
 
 static status_t
-register_child_devices(void* cookie)
-{
-	CALLED();
-
-	pch_i2c_pci_sim_info* bus = (pch_i2c_pci_sim_info*)cookie;
-	device_node* node = bus->info.driver_node;
-
-	char prettyName[25];
-	sprintf(prettyName, "PCH I2C Controller %" B_PRIu16, 0);
-
-	device_attr attrs[] = {
-		// properties of this controller for i2c bus manager
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = prettyName }},
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{ .string = I2C_FOR_CONTROLLER_MODULE_NAME }},
-
-		// private data to identify the device
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, PCH_I2C_SIM_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-init_device(device_node* node, void** device_cookie)
+init_device(dk_node* node, void** device_cookie)
 {
 	CALLED();
 	status_t status = B_OK;
@@ -310,13 +289,16 @@ init_device(device_node* node, void** device_cookie)
 	if (bus == NULL)
 		return B_NO_MEMORY;
 
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
-	{
-		device_node* pciParent = gDeviceManager->get_parent_node(node);
-		gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-			(void**)&device);
-		gDeviceManager->put_node(pciParent);
+	status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pci, (void**)&device);
+	if (status != B_OK) {
+		ERROR("init_device: get_interface(pci) failed: %s\n",
+			strerror(status));
+		free(bus);
+		return status;
 	}
 
 	bus->pci = pci;
@@ -370,7 +352,6 @@ init_device(device_node* node, void** device_cookie)
 			ERROR("couldn't use MSI-X SHARED\n");
 		}
 	} else if (pci->get_msi_count(device) >= 1) {
-		// try MSI
 		uint32 vector;
 		if (pci->configure_msi(device, 1, &vector) == B_OK
 			&& pci->enable_msi(device) == B_OK) {
@@ -386,7 +367,8 @@ init_device(device_node* node, void** device_cookie)
 		if (bus->info.irq == 0xff)
 			bus->info.irq = 0;
 
-		TRACE_ALWAYS("using legacy interrupt %" B_PRIu32 "\n", bus->info.irq);
+		TRACE_ALWAYS("using legacy interrupt %" B_PRIu32 "\n",
+			bus->info.irq);
 	}
 	if (bus->info.irq == 0) {
 		ERROR("PCI IRQ not assigned\n");
@@ -394,10 +376,38 @@ init_device(device_node* node, void** device_cookie)
 		goto err;
 	}
 
+	// Register the controller child. Auto-attach by module name — the
+	// sPchI2cControllerDriver (PCH_I2C_SIM_MODULE_NAME) probes this
+	// node, walks up to find us as the parent driver, and maps the
+	// MMIO BARs described in bus->info. The bus manager
+	// (I2C_BUS_MODULE_NAME) is then auto-attached as a child of that
+	// controller node.
+	{
+		dk_property childAttrs[] = {
+			DK_PROP_STRING(KOSM_LABEL, "PCH I2C Controller"),
+			DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+			DK_PROP_END
+		};
+		status = gDeviceKeeper->register_node(node, PCH_I2C_SIM_MODULE_NAME,
+			childAttrs, NULL, NULL);
+		if (status != B_OK) {
+			ERROR("init_device: register_node(sim) failed: %s\n",
+				strerror(status));
+			goto err;
+		}
+	}
+
 	*device_cookie = bus;
 	return B_OK;
 
 err:
+	if (bus->irq_type != PCH_I2C_IRQ_LEGACY) {
+		if (bus->irq_type == PCH_I2C_IRQ_MSI
+				|| bus->irq_type == PCH_I2C_IRQ_MSI_X_SHARED) {
+			bus->pci->disable_msi(bus->device);
+			bus->pci->unconfigure_msi(bus->device);
+		}
+	}
 	free(bus);
 	return status;
 }
@@ -415,65 +425,29 @@ uninit_device(void* device_cookie)
 }
 
 
-static status_t
-register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "PCH I2C PCI"}},
-		{}
-	};
-
-	return gDeviceManager->register_node(parent,
-		PCH_I2C_PCI_DEVICE_MODULE_NAME, attrs, NULL, NULL);
-}
-
 
 static float
-supports_device(device_node* parent)
+supports_device(dk_node* parent)
 {
 	CALLED();
-	const char* bus;
 	uint16 vendorID, deviceID;
 
-	// make sure parent is a PCH I2C PCI device node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-		< B_OK || gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
-				&vendorID, false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID, &deviceID,
-				false) < B_OK) {
+	// Vendor/device presence is the only extra check beyond the
+	// declarative match dict below, which already filters on
+	// KOSM_DEVICE_BUS = "pci" and KOSM_DEVICE_VENDOR_ID = 0x8086.
+	if (gDeviceKeeper->get_property_uint16(parent,
+			KOSM_DEVICE_VENDOR_ID, &vendorID, false) < B_OK
+		|| gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID,
+			&deviceID, false) < B_OK) {
 		return -1;
 	}
 
-	if (strcmp(bus, "pci") != 0)
-		return 0.0f;
-
-	if (vendorID == 0x8086) {
-		size_t dev = 0;
-		bool found = false;
-
-		while (pch_pci_devices[dev].id != 0) {
-			if (pch_pci_devices[dev].id == deviceID) {
-				found = true;
-				break;
-			}
-			dev++;
+	for (size_t dev = 0; pch_pci_devices[dev].id != 0; dev++) {
+		if (pch_pci_devices[dev].id == deviceID) {
+			TRACE("PCH I2C device found! vendor 0x%04x, device 0x%04x\n",
+				vendorID, deviceID);
+			return 0.8f;
 		}
-
-		if (!found)
-			return 0.0f;
-
-		pci_device_module_info* pci;
-		pci_device* device;
-		gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-			(void**)&device);
-#ifdef TRACE_PCH_I2C
-		uint8 pciSubDeviceId = pci->read_pci_config(device, PCI_revision,
-			1);
-
-		TRACE("PCH I2C device found! vendor 0x%04x, device 0x%04x, subdevice 0x%02x\n", vendorID,
-			deviceID, pciSubDeviceId);
-#endif
-		return 0.8f;
 	}
 
 	return 0.0f;
@@ -483,19 +457,27 @@ supports_device(device_node* parent)
 //	#pragma mark -
 
 
-driver_module_info gPchI2cPciDevice = {
-	{
+static const dk_match_rule sPchI2cPciMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_UINT16(KOSM_DEVICE_VENDOR_ID, 0x8086),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sPchI2cPciMatchDict = {
+	sPchI2cPciMatchRules,
+	0
+};
+
+
+dk_driver_info gPchI2cPciDevice = {
+	.info = {
 		PCH_I2C_PCI_DEVICE_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	supports_device,
-	register_device,
-	init_device,
-	uninit_device,
-	register_child_devices,
-	NULL,	// rescan
-	NULL,	// device removed
+	.match	= &sPchI2cPciMatchDict,
+	.probe	= supports_device,
+	.attach	= init_device,
+	.detach	= uninit_device,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
-

@@ -1,6 +1,6 @@
 /*
  * Copyright 2020, Jérôme Duval, jerome.duval@gmail.com.
- *
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 #ifndef _PCH_I2C_H
@@ -28,9 +28,9 @@ extern "C" {
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define PCH_I2C_ACPI_DEVICE_MODULE_NAME "busses/i2c/pch_i2c/acpi/driver_v1"
-#define PCH_I2C_PCI_DEVICE_MODULE_NAME "busses/i2c/pch_i2c/pci/driver_v1"
-#define PCH_I2C_SIM_MODULE_NAME "busses/i2c/pch_i2c/device/v1"
+#define PCH_I2C_ACPI_DEVICE_MODULE_NAME "busses/i2c/pch_i2c/acpi/dk_driver_v1"
+#define PCH_I2C_PCI_DEVICE_MODULE_NAME "busses/i2c/pch_i2c/pci/dk_driver_v1"
+#define PCH_I2C_SIM_MODULE_NAME "busses/i2c/pch_i2c/controller/dk_driver_v1"
 
 
 #define write32(address, data) \
@@ -39,12 +39,10 @@ extern "C" {
 	(*((volatile uint32*)(address)))
 
 
-
-extern device_manager_info* gDeviceManager;
-extern i2c_for_controller_interface* gI2c;
+extern dk_keeper_info* gDeviceKeeper;
 extern acpi_module_info* gACPI;
-extern driver_module_info gPchI2cAcpiDevice;
-extern driver_module_info gPchI2cPciDevice;
+extern dk_driver_info gPchI2cAcpiDevice;
+extern dk_driver_info gPchI2cPciDevice;
 
 
 acpi_status pch_i2c_scan_bus_callback(acpi_handle object, uint32 nestingLevel,
@@ -67,7 +65,7 @@ enum pch_version {
 struct pch_i2c_crs {
 	uint16	i2c_addr;
 	uint32	irq;
-    uint8	irq_triggering;
+	uint8	irq_triggering;
 	uint8	irq_polarity;
 	uint8	irq_shareable;
 
@@ -83,14 +81,18 @@ typedef enum {
 } pch_i2c_irq_type;
 
 
-typedef struct {
+typedef struct pch_i2c_sim_info {
 	phys_addr_t base_addr;
 	uint64 map_size;
 	uint32 irq;
-	i2c_bus sim;
 
-	device_node* node;
-	device_node* driver_node;
+	dk_node* node;
+	dk_node* driver_node;
+
+	// Set temporarily by scan_bus() before calling the per-backend
+	// scan callback, so pch_i2c_scan_bus_callback can register
+	// child device nodes on the bus manager's node.
+	dk_node* busNode;
 
 	pch_version version;
 
@@ -122,7 +124,7 @@ typedef struct {
 	int32	error;
 
 	mutex	lock;
-	status_t (*scan_bus)(i2c_bus_cookie cookie);
+	status_t (*scan_bus)(struct pch_i2c_sim_info* bus, dk_node* busNode);
 } pch_i2c_sim_info;
 
 

@@ -1,5 +1,6 @@
 /*
  * Copyright 2020, Jérôme Duval, jerome.duval@gmail.com.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 
@@ -17,8 +18,7 @@
 #include "pch_i2c.h"
 
 
-device_manager_info* gDeviceManager;
-i2c_for_controller_interface* gI2c;
+dk_keeper_info* gDeviceKeeper;
 acpi_module_info* gACPI;
 
 
@@ -73,8 +73,7 @@ pch_i2c_interrupt_handler(pch_i2c_sim_info* bus)
 
 	if ((status & ~PCH_IC_INTR_STAT_ACTIVITY) == 0)
 		return handled;
-	/*if ((status & PCH_IC_INTR_STAT_TX_ABRT) != 0)
-		tx error */
+
 	if ((status & PCH_IC_INTR_STAT_RX_FULL) != 0)
 		ConditionVariable::NotifyAll(&bus->readwait, B_OK);
 	if ((status & PCH_IC_INTR_STAT_TX_EMPTY) != 0)
@@ -88,16 +87,7 @@ pch_i2c_interrupt_handler(pch_i2c_sim_info* bus)
 }
 
 
-//	#pragma mark -
-
-
-static void
-set_sim(i2c_bus_cookie cookie, i2c_bus sim)
-{
-	CALLED();
-	pch_i2c_sim_info* bus = (pch_i2c_sim_info*)cookie;
-	bus->sim = sim;
-}
+//	#pragma mark - i2c_sim_interface implementation
 
 
 static status_t
@@ -140,9 +130,6 @@ exec_command(i2c_bus_cookie cookie, i2c_op op, i2c_addr slaveAddress,
 
 	read32(bus->registers + PCH_IC_CLR_INTR);
 	write32(bus->registers + PCH_IC_INTR_MASK, PCH_IC_INTR_STAT_TX_EMPTY);
-
-	// wait for write
-	// wait_lock
 
 	if (cmdLength > 0) {
 		TRACE("exec_command: write command buffer\n");
@@ -189,24 +176,22 @@ exec_command(i2c_bus_cookie cookie, i2c_op op, i2c_addr slaveAddress,
 		txLimit--;
 		i++;
 
-		// here read the data if needed
 		while (IS_READ_OP(op) && (txLimit == 0 || i == dataLength)) {
 			write32(bus->registers + PCH_IC_INTR_MASK,
 				PCH_IC_INTR_STAT_RX_FULL);
 
-			// sleep until wake up by intr handler
 			struct ConditionVariable condition;
 			condition.Publish(&bus->readwait, "pch_i2c");
 			ConditionVariableEntry variableEntry;
-			status_t status = variableEntry.Wait(&bus->readwait,
+			status_t sts = variableEntry.Wait(&bus->readwait,
 				B_RELATIVE_TIMEOUT, 500000L);
 			condition.Unpublish();
-			if (status != B_OK)
+			if (sts != B_OK)
 				ERROR("exec_command timed out waiting for read\n");
 			uint32 rxBytes = read32(bus->registers + PCH_IC_RXFLR);
 			if (rxBytes == 0) {
-				ERROR("exec_command timed out reading %" B_PRIuSIZE " bytes\n",
-					dataLength - readPos);
+				ERROR("exec_command timed out reading %" B_PRIuSIZE
+					" bytes\n", dataLength - readPos);
 				bus->busy = 0;
 				return B_ERROR;
 			}
@@ -221,7 +206,7 @@ exec_command(i2c_bus_cookie cookie, i2c_op op, i2c_addr slaveAddress,
 			if (readPos >= dataLength)
 				break;
 
-			TRACE("exec_command %" B_PRIuSIZE" bytes to be read\n",
+			TRACE("exec_command %" B_PRIuSIZE " bytes to be read\n",
 				dataLength - readPos);
 			txLimit = bus->tx_fifo_depth
 				- read32(bus->registers + PCH_IC_TXFLR);
@@ -235,7 +220,6 @@ exec_command(i2c_bus_cookie cookie, i2c_op op, i2c_addr slaveAddress,
 			write32(bus->registers + PCH_IC_INTR_MASK,
 				PCH_IC_INTR_STAT_STOP_DET);
 
-			// sleep until wake up by intr handler
 			struct ConditionVariable condition;
 			condition.Publish(&bus->busy, "pch_i2c");
 			ConditionVariableEntry variableEntry;
@@ -289,8 +273,6 @@ acpi_GetInteger(acpi_handle acpiCookie,
 	buf.pointer = &object;
 	buf.length = sizeof(acpi_object_type);
 
-	// Assume that what we've been pointed at is an Integer object, or
-	// a method that will return an Integer.
 	status_t status = gACPI->evaluate_method(acpiCookie, path, NULL, &buf);
 	if (status == B_OK) {
 		if (object.object_type == ACPI_TYPE_INTEGER)
@@ -317,6 +299,7 @@ pch_i2c_scan_bus_callback(acpi_handle object, uint32 nestingLevel,
 
 	// Attach devices for I2C resources
 	struct pch_i2c_crs crs;
+	memset(&crs, 0, sizeof(crs));
 	status = gACPI->walk_resources(object, (ACPI_STRING)"_CRS",
 		pch_i2c_scan_parse_callback, &crs);
 	if (status != B_OK) {
@@ -336,34 +319,77 @@ pch_i2c_scan_bus_callback(acpi_handle object, uint32 nestingLevel,
 	}
 
 	char* hid = NULL;
-	char* cidList[8] = { NULL };
+	char* cidList[8] = {};
 	status = gACPI->get_device_info((const char*)buffer.pointer, &hid,
-		(char**)&cidList, 8, NULL, NULL);
+		cidList, 8, NULL, NULL);
 	if (status != B_OK) {
 		ERROR("pch_i2c_scan_bus_callback get_device_info failed\n");
+		free(buffer.pointer);
 		return status;
 	}
 
-	status = gI2c->register_device(bus->sim, crs.i2c_addr, hid, cidList,
-		object);
+	// Count CID entries for stringlist
+	uint32 cidCount = 0;
+	for (int i = 0; cidList[i] != NULL && i < 8; i++)
+		cidCount++;
+
+	// Build properties and register device node on the bus manager's
+	// node directly (replaces old gI2c->register_device path).
+	dk_property attrs[8] = {
+		{ KOSM_LABEL, B_STRING_TYPE,
+			{ .string = "I2C Device" } },
+		{ KOSM_I2C_ADDRESS, B_UINT16_TYPE,
+			{ .ui16 = crs.i2c_addr } },
+		{ KOSM_DEVICE_BUS, B_STRING_TYPE,
+			{ .string = "i2c" } },
+		{ KOSM_DEVICE_FLAGS, B_UINT32_TYPE,
+			{ .ui32 = KOSM_FIND_MULTIPLE_CHILDREN } },
+		{}
+	};
+	uint32 attrCount = 4;
+
+	if (hid != NULL) {
+		attrs[attrCount].name = KOSM_ACPI_DEVICE_HID;
+		attrs[attrCount].type = B_STRING_TYPE;
+		attrs[attrCount].value.string = hid;
+		attrCount++;
+	}
+
+	if (cidCount > 0) {
+		attrs[attrCount].name = KOSM_DEVICE_COMPATIBLE;
+		attrs[attrCount].type = KOSM_STRINGLIST_TYPE;
+		attrs[attrCount].value.stringlist.items
+			= (const char* const*)cidList;
+		attrs[attrCount].value.stringlist.count = cidCount;
+		attrCount++;
+	}
+
+	// NULL-terminate
+	attrs[attrCount].name = NULL;
+
+	status = gDeviceKeeper->register_node(bus->busNode,
+		I2C_DEVICE_MODULE_NAME, attrs, NULL, NULL);
+
 	free(hid);
 	for (int i = 0; cidList[i] != NULL; i++)
 		free(cidList[i]);
 	free(buffer.pointer);
 
-	TRACE("pch_i2c_scan_bus_callback registered device: %s\n", strerror(status));
+	TRACE("pch_i2c_scan_bus_callback registered device: %s\n",
+		strerror(status));
 
 	return status;
 }
 
 
 static status_t
-scan_bus(i2c_bus_cookie cookie)
+scan_bus(i2c_bus_cookie cookie, dk_node* busNode)
 {
 	CALLED();
 	pch_i2c_sim_info* bus = (pch_i2c_sim_info*)cookie;
+	bus->busNode = busNode;
 	if (bus->scan_bus != NULL)
-		return bus->scan_bus(bus);
+		return bus->scan_bus(bus, busNode);
 	return B_OK;
 }
 
@@ -386,20 +412,27 @@ release_bus(i2c_bus_cookie cookie)
 }
 
 
-//	#pragma mark -
+//	#pragma mark - dk_driver_info for controller
 
 
 static status_t
-init_bus(device_node* node, void** bus_cookie)
+init_bus(dk_node* node, void** bus_cookie)
 {
 	CALLED();
 	status_t status = B_OK;
 
-	driver_module_info* driver;
+	// The parent node is a pch_i2c_{pci,acpi} root driver that stashed a
+	// fully-initialised pch_i2c_sim_info* as its driver cookie.
+	dk_driver_info* driver;
 	pch_i2c_sim_info* bus;
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, &driver, (void**)&bus);
-	gDeviceManager->put_node(parent);
+	dk_node* parent = gDeviceKeeper->get_parent_node(node);
+	if (parent == NULL)
+		return B_NO_INIT;
+	status = gDeviceKeeper->get_node_driver(parent, &driver,
+		(void**)&bus);
+	gDeviceKeeper->put_node(parent);
+	if (status != B_OK)
+		return status;
 
 	TRACE_ALWAYS("init_bus() addr 0x%" B_PRIxPHYSADDR " size 0x%" B_PRIx64
 		" irq 0x%" B_PRIx32 "\n", bus->base_addr, bus->map_size, bus->irq);
@@ -409,24 +442,25 @@ init_bus(device_node* node, void** bus_cookie)
 		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
 		(void **)&bus->registers);
 
-	// init bus
 	uint32 version = read32(bus->registers + PCH_IC_COMP_VERSION);
 	TRACE_ALWAYS("version 0x%" B_PRIx32 "\n", version);
 
 	if (bus->version >= PCH_SKYLAKE) {
 		bus->capabilities = read32(bus->registers + PCH_SUP_CAPABLITIES);
 		TRACE_ALWAYS("init_bus() 0x%" B_PRIx32 " (0x%" B_PRIx32 ")\n",
-			(bus->capabilities >> PCH_SUP_CAPABLITIES_TYPE_SHIFT) & PCH_SUP_CAPABLITIES_TYPE_MASK,
+			(bus->capabilities >> PCH_SUP_CAPABLITIES_TYPE_SHIFT)
+				& PCH_SUP_CAPABLITIES_TYPE_MASK,
 			bus->capabilities);
-		if (((bus->capabilities >> PCH_SUP_CAPABLITIES_TYPE_SHIFT) & PCH_SUP_CAPABLITIES_TYPE_MASK)
-			!= 0) {
+		if (((bus->capabilities >> PCH_SUP_CAPABLITIES_TYPE_SHIFT)
+				& PCH_SUP_CAPABLITIES_TYPE_MASK) != 0) {
 			status = B_ERROR;
 			ERROR("init_bus() device type not supported\n");
 			goto err;
 		}
 
 		write32(bus->registers + PCH_SUP_RESETS, 0);
-		write32(bus->registers + PCH_SUP_RESETS, PCH_SUP_RESETS_FUNC | PCH_SUP_RESETS_IDMA);
+		write32(bus->registers + PCH_SUP_RESETS,
+			PCH_SUP_RESETS_FUNC | PCH_SUP_RESETS_IDMA);
 	}
 
 	if (bus->ss_hcnt == 0)
@@ -439,9 +473,10 @@ init_bus(device_node* node, void** bus_cookie)
 		bus->fs_lcnt = read32(bus->registers + PCH_IC_FS_SCL_LCNT);
 	if (bus->sda_hold_time == 0)
 		bus->sda_hold_time = read32(bus->registers + PCH_IC_SDA_HOLD);
-	TRACE_ALWAYS("init_bus() 0x%04" B_PRIx16 " 0x%04" B_PRIx16 " 0x%04" B_PRIx16
-		" 0x%04" B_PRIx16 " 0x%08" B_PRIx32 "\n", bus->ss_hcnt, bus->ss_lcnt,
-		bus->fs_hcnt, bus->fs_lcnt, bus->sda_hold_time);
+	TRACE_ALWAYS("init_bus() 0x%04" B_PRIx16 " 0x%04" B_PRIx16
+		" 0x%04" B_PRIx16 " 0x%04" B_PRIx16 " 0x%08" B_PRIx32 "\n",
+		bus->ss_hcnt, bus->ss_lcnt, bus->fs_hcnt, bus->fs_lcnt,
+		bus->sda_hold_time);
 
 	enable_device(bus, false);
 
@@ -488,12 +523,30 @@ init_bus(device_node* node, void** bus_cookie)
 	}
 
 	mutex_init(&bus->lock, "pch_i2c");
+
+	// Publish the I2C SIM interface on the controller node. The I2C bus
+	// manager is already attached here (auto-attach by module name from
+	// the root pch_i2c_{pci,acpi} driver's register_node), and retrieves
+	// this interface via get_interface(I2C_SIM_INTERFACE_NAME, ANCESTORS).
+	extern i2c_sim_interface gPchI2cSimInterface;
+	status = gDeviceKeeper->publish_interface(node,
+		I2C_SIM_INTERFACE_NAME, &gPchI2cSimInterface);
+	if (status != B_OK) {
+		ERROR("publish_interface(i2c sim) failed: %s\n", strerror(status));
+		mutex_destroy(&bus->lock);
+		remove_io_interrupt_handler(bus->irq,
+			(interrupt_handler)pch_i2c_interrupt_handler, bus);
+		goto err;
+	}
+
 	*bus_cookie = bus;
-	return status;
+	return B_OK;
 
 err:
-	if (bus->registersArea >= 0)
+	if (bus->registersArea >= 0) {
 		delete_area(bus->registersArea);
+		bus->registersArea = -1;
+	}
 	return status;
 }
 
@@ -503,12 +556,13 @@ uninit_bus(void* bus_cookie)
 {
 	pch_i2c_sim_info* bus = (pch_i2c_sim_info*)bus_cookie;
 
-	mutex_destroy(&bus->lock);
 	remove_io_interrupt_handler(bus->irq,
 		(interrupt_handler)pch_i2c_interrupt_handler, bus);
-	if (bus->registersArea >= 0)
+	mutex_destroy(&bus->lock);
+	if (bus->registersArea >= 0) {
 		delete_area(bus->registersArea);
-
+		bus->registersArea = -1;
+	}
 }
 
 
@@ -516,41 +570,41 @@ uninit_bus(void* bus_cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_ACPI_MODULE_NAME, (module_info**)&gACPI },
-	{ I2C_FOR_CONTROLLER_MODULE_NAME, (module_info**)&gI2c },
 	{}
 };
 
 
-static i2c_sim_interface sPchI2cDeviceModule = {
-	{
-		{
-			PCH_I2C_SIM_MODULE_NAME,
-			0,
-			NULL
-		},
+// Published on the controller dk_node in init_bus; the i2c_bus_cookie
+// passed to every callback is the pch_i2c_sim_info* set by init_bus.
+i2c_sim_interface gPchI2cSimInterface = {
+	.set_i2c_bus				= NULL,
+	.exec_command				= exec_command,
+	.scan_bus					= scan_bus,
+	.acquire_bus				= acquire_bus,
+	.release_bus				= release_bus,
+	.install_interrupt_handler	= NULL,
+	.uninstall_interrupt_handler = NULL,
+};
 
-		NULL,	// supports device
-		NULL,	// register device
-		init_bus,
-		uninit_bus,
-		NULL,	// register child devices
-		NULL,	// rescan
-		NULL, 	// device removed
+static dk_driver_info sPchI2cControllerDriver = {
+	.info = {
+		PCH_I2C_SIM_MODULE_NAME,
+		0,
+		NULL
 	},
-
-	set_sim,
-	exec_command,
-	scan_bus,
-	acquire_bus,
-	release_bus,
+	// No .match: auto-attached by module name when pch_i2c_{pci,acpi}
+	// root driver registers a child node with PCH_I2C_SIM_MODULE_NAME.
+	.attach	= init_bus,
+	.detach	= uninit_bus,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 
 module_info* modules[] = {
-	(module_info* )&gPchI2cAcpiDevice,
-	(module_info* )&gPchI2cPciDevice,
-	(module_info* )&sPchI2cDeviceModule,
+	(module_info*)&gPchI2cAcpiDevice,
+	(module_info*)&gPchI2cPciDevice,
+	(module_info*)&sPchI2cControllerDriver,
 	NULL
 };

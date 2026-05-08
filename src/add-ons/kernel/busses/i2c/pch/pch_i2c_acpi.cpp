@@ -1,5 +1,6 @@
 /*
  * Copyright 2020, Jérôme Duval, jerome.duval@gmail.com.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 
@@ -86,47 +87,25 @@ pch_i2c_scan_parse_callback(ACPI_RESOURCE *res, void *context)
 
 
 static status_t
-acpi_scan_bus(i2c_bus_cookie cookie)
+acpi_scan_bus(pch_i2c_sim_info* simInfo, dk_node* busNode)
 {
 	CALLED();
-	pch_i2c_acpi_sim_info* bus = (pch_i2c_acpi_sim_info*)cookie;
+	pch_i2c_acpi_sim_info* bus = (pch_i2c_acpi_sim_info*)simInfo;
+
+	// Store busNode so pch_i2c_scan_bus_callback can register
+	// child device nodes on it.
+	bus->info.busNode = busNode;
 
 	bus->acpi->walk_namespace(bus->device, ACPI_TYPE_DEVICE, 1,
-		pch_i2c_scan_bus_callback, NULL, bus, NULL);
+		pch_i2c_scan_bus_callback, NULL, &bus->info, NULL);
 
 	return B_OK;
 }
 
 
-static status_t
-register_child_devices(void* cookie)
-{
-	CALLED();
-
-	pch_i2c_acpi_sim_info* bus = (pch_i2c_acpi_sim_info*)cookie;
-	device_node* node = bus->info.driver_node;
-
-	char prettyName[25];
-	sprintf(prettyName, "PCH I2C Controller");
-
-	device_attr attrs[] = {
-		// properties of this controller for i2c bus manager
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = prettyName }},
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{ .string = I2C_FOR_CONTROLLER_MODULE_NAME }},
-
-		// private data to identify the device
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, PCH_I2C_SIM_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
 
 static status_t
-init_device(device_node* node, void** device_cookie)
+init_device(dk_node* node, void** device_cookie)
 {
 	CALLED();
 	status_t status = B_OK;
@@ -138,27 +117,28 @@ init_device(device_node* node, void** device_cookie)
 
 	acpi_device_module_info* acpi;
 	acpi_device device;
+	status = gDeviceKeeper->get_interface(node,
+		ACPI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&acpi, (void**)&device);
+	if (status != B_OK) {
+		ERROR("init_device: get_interface(acpi) failed: %s\n",
+			strerror(status));
+		free(bus);
+		return status;
+	}
+
 	{
-		device_node* acpiParent = gDeviceManager->get_parent_node(node);
-		gDeviceManager->get_driver(acpiParent, (driver_module_info**)&acpi,
-			(void**)&device);
-
-		const char* name;
-		if (gDeviceManager->get_attr_string(acpiParent, ACPI_DEVICE_HID_ITEM, &name, false)
-			== B_OK) {
-
-			size_t device = 0;
-
-			while (pch_acpi_devices[device].name) {
-				if (strcmp(name, pch_acpi_devices[device].name) == 0) {
-					bus->info.version = pch_acpi_devices[device].version;
+		char name[64];
+		if (gDeviceKeeper->get_property_string(node,
+				KOSM_ACPI_DEVICE_HID, name, sizeof(name),
+				NULL, true) == B_OK) {
+			for (size_t dev = 0; pch_acpi_devices[dev].name != NULL; dev++) {
+				if (strcmp(name, pch_acpi_devices[dev].name) == 0) {
+					bus->info.version = pch_acpi_devices[dev].version;
 					break;
 				}
-				device++;
 			}
 		}
-
-		gDeviceManager->put_node(acpiParent);
 	}
 
 	bus->acpi = acpi;
@@ -168,6 +148,7 @@ init_device(device_node* node, void** device_cookie)
 
 	// Attach devices for I2C resources
 	struct pch_i2c_crs crs;
+	memset(&crs, 0, sizeof(crs));
 	status = acpi->walk_resources(device, (ACPI_STRING)"_CRS",
 		pch_i2c_scan_parse_callback, &crs);
 	if (status != B_OK) {
@@ -187,6 +168,28 @@ init_device(device_node* node, void** device_cookie)
 
 	pch_i2c_acpi_set_powerstate(bus, 1);
 
+	// Register the controller child. Auto-attach by module name — the
+	// sPchI2cControllerDriver probes, walks up and maps MMIO via
+	// bus->info. The I2C bus manager (I2C_BUS_MODULE_NAME) is then
+	// auto-attached as a child of that controller node.
+	{
+		dk_property attrs[] = {
+			DK_PROP_STRING(KOSM_LABEL, "PCH I2C Controller"),
+			DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+			DK_PROP_END
+		};
+
+		status = gDeviceKeeper->register_node(node, PCH_I2C_SIM_MODULE_NAME,
+			attrs, NULL, NULL);
+		if (status != B_OK) {
+			ERROR("init_device: register_node(sim) failed: %s\n",
+				strerror(status));
+			pch_i2c_acpi_set_powerstate(bus, 0);
+			free(bus);
+			return status;
+		}
+	}
+
 	*device_cookie = bus;
 	return B_OK;
 }
@@ -200,61 +203,33 @@ uninit_device(void* device_cookie)
 }
 
 
-static status_t
-register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "PCH I2C ACPI"}},
-		{}
-	};
-
-	return gDeviceManager->register_node(parent,
-		PCH_I2C_ACPI_DEVICE_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
 static float
-supports_device(device_node* parent)
+supports_device(dk_node* node)
 {
 	CALLED();
-	const char* bus;
 
-	// make sure parent is a PCH I2C ACPI device node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-		< B_OK) {
-		return -1;
-	}
-
-	if (strcmp(bus, "acpi") != 0)
-		return 0.0f;
-
-	TRACE("found an acpi node\n");
-
-	// check whether it's really a device
+	// bus=acpi already filtered by the match dict. Extra check: must
+	// be an ACPI_TYPE_DEVICE (not a processor, power resource, etc.)
+	// with an HID we recognise.
 	uint32 device_type;
-	if (gDeviceManager->get_attr_uint32(parent, ACPI_DEVICE_TYPE_ITEM,
+	if (gDeviceKeeper->get_property_uint32(node, KOSM_ACPI_DEVICE_TYPE,
 			&device_type, false) != B_OK
 		|| device_type != ACPI_TYPE_DEVICE) {
-		return 0.0;
+		return 0.0f;
 	}
-	TRACE("found an acpi device\n");
 
-	// check whether it's a PCH I2C device
-	const char *name;
-	if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &name,
-		false) != B_OK) {
-		return 0.0;
+	char name[64];
+	if (gDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_HID,
+			name, sizeof(name), NULL, false) != B_OK) {
+		return 0.0f;
 	}
-	TRACE("found an acpi device hid %s\n", name);
 
-	size_t device = 0;
-
-	while (pch_acpi_devices[device].name) {
+	for (size_t device = 0; pch_acpi_devices[device].name != NULL;
+			device++) {
 		if (strcmp(name, pch_acpi_devices[device].name) == 0) {
 			TRACE("PCH I2C device found! name %s\n", name);
 			return 0.6f;
 		}
-		device++;
 	}
 
 	return 0.0f;
@@ -264,20 +239,26 @@ supports_device(device_node* parent)
 //	#pragma mark -
 
 
-driver_module_info gPchI2cAcpiDevice = {
-	{
+static const dk_match_rule sPchI2cAcpiMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "acpi"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sPchI2cAcpiMatchDict = {
+	sPchI2cAcpiMatchRules,
+	0
+};
+
+
+dk_driver_info gPchI2cAcpiDevice = {
+	.info = {
 		PCH_I2C_ACPI_DEVICE_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	supports_device,
-	register_device,
-	init_device,
-	uninit_device,
-	register_child_devices,
-	NULL,	// rescan
-	NULL,	// device removed
+	.match	= &sPchI2cAcpiMatchDict,
+	.probe	= supports_device,
+	.attach	= init_device,
+	.detach	= uninit_device,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
-
-
