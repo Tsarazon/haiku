@@ -16,8 +16,9 @@
 #include <lock.h>
 
 struct pci_info;
-struct pci_device_module_info;
+struct pci_device_ops;
 struct pci_device;
+struct dk_node;
 class OHCIRootHub;
 
 typedef struct transfer_data {
@@ -34,8 +35,8 @@ typedef struct transfer_data {
 
 class OHCI : public BusManager {
 public:
-									OHCI(pci_info *info, pci_device_module_info* pci,
-										pci_device* device, Stack *stack, device_node* node);
+									OHCI(pci_info *info, pci_device_ops* pci,
+										pci_device* device, Stack *stack, dk_node* node);
 									~OHCI();
 
 		status_t					Start();
@@ -185,8 +186,8 @@ inline	uint32						_ReadReg(uint32 reg);
 										ohci_isochronous_td *topDescriptor);
 
 		pci_info *					fPCIInfo;
-		pci_device_module_info*		fPci;
-		pci_device*					fDevice;
+		pci_device_ops*		fPci;
+		pci_device*				fDevice;
 		Stack *						fStack;
 
 		uint8 *						fOperationalRegisters;
