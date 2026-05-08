@@ -1,5 +1,6 @@
 /*
  * Copyright 2022, Haiku, Inc.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 
@@ -17,7 +18,7 @@
 
 #define CHECK_RET(err) {status_t _err = (err); if (_err < B_OK) return _err;}
 
-#define OCORES_I2C_DRIVER_MODULE_NAME "busses/i2c/ocores_i2c/driver_v1"
+#define OCORES_I2C_DRIVER_MODULE_NAME "busses/i2c/ocores_i2c/dk_driver_v1"
 
 
 static_assert(B_HOST_IS_LENDIAN);
@@ -83,12 +84,10 @@ struct OcoresI2cRegs {
 
 class OcoresI2c {
 public:
-	static float SupportsDevice(device_node* parent);
-	static status_t RegisterDevice(device_node* parent);
-	static status_t InitDriver(device_node* node, OcoresI2c*& outDriver);
+	static float SupportsDevice(dk_node* parent);
+	static status_t InitDriver(dk_node* node, OcoresI2c*& outDriver);
 	void UninitDriver();
 
-	void SetI2cBus(i2c_bus bus);
 	status_t ExecCommand(i2c_op op,
 		i2c_addr slaveAddress, const uint8 *cmdBuffer, size_t cmdLength,
 		uint8* dataBuffer, size_t dataLength);
@@ -96,9 +95,7 @@ public:
 	void ReleaseBus();
 
 private:
-	inline status_t InitDriverInt(device_node* node);
-	static int32 InterruptReceived(void* arg);
-	inline int32 InterruptReceivedInt();
+	inline status_t InitDriverInt(dk_node* node);
 
 	status_t WaitCompletion();
 	status_t WriteByte(OcoresI2cRegsCommand cmd, uint8 val);
@@ -110,15 +107,11 @@ private:
 
 	AreaDeleter fRegsArea;
 	volatile OcoresI2cRegs* fRegs{};
-	long fIrqVector = -1;
 
-	device_node* fNode{};
-	i2c_bus fBus{};
+	dk_node* fNode{};
 };
 
 
-extern device_manager_info* gDeviceManager;
-extern i2c_for_controller_interface* gI2c;
-extern i2c_sim_interface gOcoresI2cDriver;
+extern dk_keeper_info* gDeviceKeeper;
 
 #endif	// _OCORES_I2C_H_

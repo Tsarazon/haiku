@@ -1,5 +1,6 @@
 /*
  * Copyright 2022, Haiku, Inc.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 
@@ -13,25 +14,19 @@
 #include <new>
 
 
-int32
-OcoresI2c::InterruptReceived(void* arg)
-{
-	return static_cast<OcoresI2c*>(arg)->InterruptReceivedInt();
-}
-
-
-int32
-OcoresI2c::InterruptReceivedInt()
-{
-	// TODO: implement interrupt handling, use polling for now
-	return B_HANDLED_INTERRUPT;
-}
-
-
 status_t
 OcoresI2c::WaitCompletion()
 {
-	while (!fRegs->status.interrupt) {}
+	// Poll the interrupt-status bit with a hard deadline. Without a
+	// timeout, broken or disconnected hardware hangs the thread forever.
+	// 100ms is ample: Opencores I2C at 100 kHz standard mode completes
+	// even a full 32-byte transfer in under 3ms; fast-mode plus is an
+	// order of magnitude faster.
+	const bigtime_t deadline = system_time() + 100000LL;
+	while (!fRegs->status.interrupt) {
+		if (system_time() >= deadline)
+			return B_TIMED_OUT;
+	}
 	return B_OK;
 }
 
@@ -41,7 +36,6 @@ OcoresI2c::WriteByte(OcoresI2cRegsCommand cmd, uint8 val)
 {
 	cmd.intAck = true;
 	cmd.write = true;
-	//dprintf("OcoresI2c::WriteByte(cmd: %#02x, val: %#02x)\n", cmd.val, val);
 	fRegs->data = val;
 	fRegs->command.val = cmd.val;
 	CHECK_RET(WaitCompletion());
@@ -58,7 +52,6 @@ OcoresI2c::ReadByte(OcoresI2cRegsCommand cmd, uint8& val)
 	fRegs->command.val = cmd.val;
 	CHECK_RET(WaitCompletion());
 	val = fRegs->data;
-	//dprintf("OcoresI2c::ReadByte(cmd: %#02x, val: %#02x)\n", cmd.val, val);
 	return B_OK;
 }
 
@@ -67,7 +60,6 @@ status_t
 OcoresI2c::WriteAddress(i2c_addr adr, bool isRead)
 {
 	// TODO: 10 bit address support
-	//dprintf("OcoresI2c::WriteAddress(adr: %#04x, isRead: %d)\n", adr, isRead);
 	uint8 val = OcoresI2cRegsAddress7{.read = isRead, .address = (uint8)adr}.val;
 	CHECK_RET(WriteByte({.start = true}, val));
 	return B_OK;
@@ -77,18 +69,20 @@ OcoresI2c::WriteAddress(i2c_addr adr, bool isRead)
 //#pragma mark - driver
 
 float
-OcoresI2c::SupportsDevice(device_node* parent)
+OcoresI2c::SupportsDevice(dk_node* parent)
 {
-	const char* bus;
-	status_t status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
+	char bus[64];
+	status_t status = gDeviceKeeper->get_property_string(parent,
+		KOSM_DEVICE_BUS, bus, sizeof(bus), NULL, false);
 	if (status < B_OK)
 		return -1.0f;
 
 	if (strcmp(bus, "fdt") != 0)
 		return 0.0f;
 
-	const char* compatible;
-	status = gDeviceManager->get_attr_string(parent, "fdt/compatible", &compatible, false);
+	char compatible[128];
+	status = gDeviceKeeper->get_property_string(parent, "fdt/compatible",
+		compatible, sizeof(compatible), NULL, false);
 	if (status < B_OK)
 		return -1.0f;
 
@@ -103,20 +97,7 @@ OcoresI2c::SupportsDevice(device_node* parent)
 
 
 status_t
-OcoresI2c::RegisterDevice(device_node* parent)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {string: "Opencores I2C Controller"} },
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE, {string: I2C_FOR_CONTROLLER_MODULE_NAME} },
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, OCORES_I2C_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-status_t
-OcoresI2c::InitDriver(device_node* node, OcoresI2c*& outDriver)
+OcoresI2c::InitDriver(dk_node* node, OcoresI2c*& outDriver)
 {
 	ObjectDeleter<OcoresI2c> driver(new(std::nothrow) OcoresI2c());
 	if (!driver.IsSet())
@@ -129,41 +110,51 @@ OcoresI2c::InitDriver(device_node* node, OcoresI2c*& outDriver)
 
 
 status_t
-OcoresI2c::InitDriverInt(device_node* node)
+OcoresI2c::InitDriverInt(dk_node* node)
 {
 	fNode = node;
 	dprintf("+OcoresI2c::InitDriver()\n");
 
-	DeviceNodePutter<&gDeviceManager> parent(gDeviceManager->get_parent_node(node));
-
-	const char* bus;
-	CHECK_RET(gDeviceManager->get_attr_string(parent.Get(), B_DEVICE_BUS, &bus, false));
+	char bus[64];
+	CHECK_RET(gDeviceKeeper->get_property_string(node,
+		KOSM_DEVICE_BUS, bus, sizeof(bus), NULL, true));
 	if (strcmp(bus, "fdt") != 0)
 		return B_ERROR;
 
-	fdt_device_module_info *parentModule;
+	// Retrieve the parent FDT device interface via walk-up. The FDT bus
+	// manager publishes fdt_device_module_info on each FDT device node.
+	fdt_device_module_info* parentModule;
 	fdt_device* parentDev;
-	CHECK_RET(gDeviceManager->get_driver(parent.Get(),
-		(driver_module_info**)&parentModule, (void**)&parentDev));
+	CHECK_RET(gDeviceKeeper->get_interface(node,
+		FDT_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&parentModule, (void**)&parentDev));
 
 	uint64 regs = 0;
 	uint64 regsLen = 0;
 	if (!parentModule->get_reg(parentDev, 0, &regs, &regsLen))
 		return B_ERROR;
 
-	fRegsArea.SetTo(map_physical_memory("Ocores i2c MMIO", regs, regsLen, B_ANY_KERNEL_ADDRESS,
+	fRegsArea.SetTo(map_physical_memory("Ocores i2c MMIO", regs, regsLen,
+		B_ANY_KERNEL_ADDRESS,
 		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, (void**)&fRegs));
 	if (!fRegsArea.IsSet())
 		return fRegsArea.Get();
 
-	uint64 irq;
-	if (!parentModule->get_interrupt(parentDev, 0, NULL, &irq))
-		return B_ERROR;
-	fIrqVector = irq; // TODO: take interrupt controller into account
+	// Publish the i2c_sim_interface on our node so that the I2C bus
+	// manager, which auto-attaches to any child node registered with
+	// I2C_BUS_MODULE_NAME, can walk up and find us.
+	extern i2c_sim_interface gOcoresI2cSimInterface;
+	CHECK_RET(gDeviceKeeper->publish_interface(node,
+		I2C_SIM_INTERFACE_NAME, &gOcoresI2cSimInterface));
 
-	// TODO: enable when implement interrupt handling
-	if (false)
-		install_io_interrupt_handler(fIrqVector, InterruptReceived, this, 0);
+	// Register the I2C bus child so the bus manager is auto-attached.
+	dk_property busAttrs[] = {
+		DK_PROP_STRING(KOSM_LABEL, "Opencores I2C Bus"),
+		DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+		DK_PROP_END
+	};
+	CHECK_RET(gDeviceKeeper->register_node(node,
+		I2C_BUS_MODULE_NAME, busAttrs, NULL, NULL));
 
 	dprintf("-OcoresI2c::InitDriver()\n");
 	return B_OK;
@@ -173,28 +164,17 @@ OcoresI2c::InitDriverInt(device_node* node)
 void
 OcoresI2c::UninitDriver()
 {
-	if (false)
-		remove_io_interrupt_handler(fIrqVector, InterruptReceived, this);
 	delete this;
 }
 
 
 //#pragma mark - i2c controller
 
-void
-OcoresI2c::SetI2cBus(i2c_bus bus)
-{
-	dprintf("OcoresI2c::SetI2cBus()\n");
-	fBus = bus;
-}
-
-
 status_t
 OcoresI2c::ExecCommand(i2c_op op,
 	i2c_addr slaveAddress, const uint8 *cmdBuffer, size_t cmdLength,
 	uint8* dataBuffer, size_t dataLength)
 {
-	//dprintf("OcoresI2c::ExecCommand()\n");
 	(void)op;
 	if (cmdLength > 0) {
 		CHECK_RET(WriteAddress(slaveAddress, false));
@@ -207,7 +187,8 @@ OcoresI2c::ExecCommand(i2c_op op,
 				return B_ERROR;
 			}
 			cmdLength--;
-			CHECK_RET(WriteByte({.stop = cmdLength == 0 && dataLength == 0}, *cmdBuffer++));
+			CHECK_RET(WriteByte({.stop = cmdLength == 0 && dataLength == 0},
+				*cmdBuffer++));
 		} while (cmdLength > 0);
 	}
 	if (dataLength > 0) {
