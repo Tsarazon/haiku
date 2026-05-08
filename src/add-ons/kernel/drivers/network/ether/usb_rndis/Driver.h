@@ -6,7 +6,7 @@
 #ifndef _USB_RNDIS_DRIVER_H_
 #define _USB_RNDIS_DRIVER_H_
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
@@ -18,20 +18,15 @@
 #define DRIVER_NAME	"usb_rndis"
 
 extern usb_module_info *gUSBModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
 class RNDISDevice;
 
-// bus manager device interface for peripheral driver
 typedef struct {
-	driver_module_info info;
-} usb_device_interface;
-
-typedef struct {
-	device_node*			node;
-	::usb_device			usb_device;
-	usb_device_interface*	usb;
-	RNDISDevice*			device;
+	dk_node*		node;
+	int32			id;
+	char			publishedPath[64];
+	RNDISDevice*	device;
 } usb_rndis_driver_info;
 
 #if TRACE_RNDIS

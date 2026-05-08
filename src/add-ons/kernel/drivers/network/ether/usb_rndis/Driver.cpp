@@ -3,6 +3,7 @@
 	Copyright (C) 2022 Adrien Destugues <pulkomandy@pulkomandy.tk>
 	Distributed under the terms of the MIT license.
 */
+#include <new>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,11 +18,10 @@
 #define DEVICE_BASE_NAME "net/usb_rndis/"
 
 usb_module_info *gUSBModule = NULL;
-device_manager_info *gDeviceManager = NULL;
+dk_keeper_info *gDeviceKeeper = NULL;
 
 
-#define USB_RNDIS_DRIVER_MODULE_NAME "drivers/network/usb_rndis/driver_v1"
-#define USB_RNDIS_DEVICE_MODULE_NAME "drivers/network/usb_rndis/device_v1"
+#define USB_RNDIS_DRIVER_MODULE_NAME "drivers/network/usb_rndis/dk_driver_v1"
 #define USB_RNDIS_DEVICE_ID_GENERATOR "usb_rndis/device_id"
 
 
@@ -31,56 +31,7 @@ device_manager_info *gDeviceManager = NULL;
 #define USB_RNDIS_PROTOCOL			0x03
 
 
-//	#pragma mark - device module API
-
-
-static status_t
-usb_rndis_init_device(void* _info, void** _cookie)
-{
-	TRACE("init_device()\n");
-	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_info;
-
-	device_node* parent = gDeviceManager->get_parent_node(info->node);
-	gDeviceManager->get_driver(parent, (driver_module_info**)&info->usb,
-		(void**)&info->usb_device);
-	gDeviceManager->put_node(parent);
-
-	usb_device device;
-	if (gDeviceManager->get_attr_uint32(info->node, USB_DEVICE_ID_ITEM,
-			&device, true) != B_OK)
-		return B_ERROR;
-
-	RNDISDevice *rndisDevice = new RNDISDevice(device);
-	status_t status = rndisDevice->InitCheck();
-	if (status < B_OK) {
-		delete rndisDevice;
-		return status;
-	}
-
-	info->device = rndisDevice;
-	*_cookie = info;
-	return B_OK;
-}
-
-
-static void
-usb_rndis_uninit_device(void* _cookie)
-{
-	TRACE("uninit_device()\n");
-	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_cookie;
-	delete info->device;
-	info->device = NULL;
-}
-
-
-static void
-usb_rndis_device_removed(void* _cookie)
-{
-	TRACE("device_removed()\n");
-	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_cookie;
-	if (info->device != NULL)
-		info->device->Removed();
-}
+//	#pragma mark - dk_device_ops
 
 
 static status_t
@@ -147,35 +98,57 @@ usb_rndis_free(void *cookie)
 }
 
 
-//	#pragma mark - driver module API
+static void
+usb_rndis_device_removed(void* _info)
+{
+	TRACE("device_removed()\n");
+	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_info;
+	if (info->device != NULL)
+		info->device->Removed();
+}
+
+
+static dk_device_ops sDeviceOps = {
+	usb_rndis_open,
+	usb_rndis_close,
+	usb_rndis_free,
+	usb_rndis_read,
+	usb_rndis_write,
+	NULL,	// io
+	usb_rndis_control,
+	NULL,	// select
+	NULL,	// deselect
+	usb_rndis_device_removed,
+};
+
+
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sUsbRndisMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sUsbRndisMatchDict = {
+	sUsbRndisMatchRules,
+	0
+};
 
 
 static float
-usb_rndis_supports_device(device_node *parent)
+usb_rndis_probe(dk_node *node)
 {
-	TRACE("supports_device()\n");
-	const char *bus;
-
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "usb"))
-		return 0.0;
+	TRACE("probe()\n");
 
 	// RNDIS: class 0xE0, subclass 0x01, protocol 0x03
 	uint8 deviceClass = 0, deviceSubclass = 0, deviceProtocol = 0;
-	device_attr *attr = NULL;
-	while (gDeviceManager->get_next_attr(parent, &attr) == B_OK) {
-		if (attr->type != B_UINT8_TYPE)
-			continue;
-
-		if (!strcmp(attr->name, USB_DEVICE_CLASS))
-			deviceClass = attr->value.ui8;
-		if (!strcmp(attr->name, USB_DEVICE_SUBCLASS))
-			deviceSubclass = attr->value.ui8;
-		if (!strcmp(attr->name, USB_DEVICE_PROTOCOL))
-			deviceProtocol = attr->value.ui8;
-	}
+	gDeviceKeeper->get_property_uint8(node, KOSM_USB_DEVICE_CLASS,
+		&deviceClass, false);
+	gDeviceKeeper->get_property_uint8(node, KOSM_USB_DEVICE_SUBCLASS,
+		&deviceSubclass, false);
+	gDeviceKeeper->get_property_uint8(node, KOSM_USB_DEVICE_PROTOCOL,
+		&deviceProtocol, false);
 
 	if (deviceClass == USB_RNDIS_DEVICE_CLASS
 		&& deviceSubclass == USB_RNDIS_SUBCLASS
@@ -189,25 +162,9 @@ usb_rndis_supports_device(device_node *parent)
 
 
 static status_t
-usb_rndis_register_device(device_node *node)
+usb_rndis_attach(dk_node *node, void **cookie)
 {
-	TRACE("register_device()\n");
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "USB RNDIS"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, USB_RNDIS_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_rndis_init_driver(device_node *node, void **cookie)
-{
-	TRACE("init_driver()\n");
+	TRACE("attach()\n");
 
 	usb_rndis_driver_info* info = (usb_rndis_driver_info*)malloc(
 		sizeof(usb_rndis_driver_info));
@@ -216,6 +173,48 @@ usb_rndis_init_driver(device_node *node, void **cookie)
 
 	memset(info, 0, sizeof(*info));
 	info->node = node;
+	info->id = -1;
+
+	usb_device usbDeviceId;
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
+			&usbDeviceId, true) != B_OK) {
+		free(info);
+		return B_ERROR;
+	}
+
+	RNDISDevice *rndisDevice = new(std::nothrow) RNDISDevice(usbDeviceId);
+	if (rndisDevice == NULL) {
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	status_t status = rndisDevice->InitCheck();
+	if (status < B_OK) {
+		delete rndisDevice;
+		free(info);
+		return status;
+	}
+
+	info->device = rndisDevice;
+
+	info->id = gDeviceKeeper->create_id(USB_RNDIS_DEVICE_ID_GENERATOR);
+	if (info->id < 0) {
+		status = info->id;
+		delete rndisDevice;
+		free(info);
+		return status;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		DEVICE_BASE_NAME "%" B_PRId32, info->id);
+	status = gDeviceKeeper->publish_device(node, info->publishedPath,
+		&sDeviceOps);
+	if (status != B_OK) {
+		gDeviceKeeper->free_id(USB_RNDIS_DEVICE_ID_GENERATOR, info->id);
+		delete rndisDevice;
+		free(info);
+		return status;
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -223,29 +222,21 @@ usb_rndis_init_driver(device_node *node, void **cookie)
 
 
 static void
-usb_rndis_uninit_driver(void *_cookie)
+usb_rndis_detach(void *_cookie)
 {
-	TRACE("uninit_driver()\n");
+	TRACE("detach()\n");
 	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_cookie;
+	if (info == NULL)
+		return;
+
+	if (info->publishedPath[0] != '\0')
+		gDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->id >= 0)
+		gDeviceKeeper->free_id(USB_RNDIS_DEVICE_ID_GENERATOR, info->id);
+
+	delete info->device;
+	info->device = NULL;
 	free(info);
-}
-
-
-static status_t
-usb_rndis_register_child_devices(void* _cookie)
-{
-	TRACE("register_child_devices()\n");
-	usb_rndis_driver_info* info = (usb_rndis_driver_info*)_cookie;
-
-	int32 id = gDeviceManager->create_id(USB_RNDIS_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), DEVICE_BASE_NAME "%" B_PRId32, id);
-
-	return gDeviceManager->publish_device(info->node, name,
-		USB_RNDIS_DEVICE_MODULE_NAME);
 }
 
 
@@ -253,52 +244,25 @@ usb_rndis_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info**)&gUSBModule },
 	{ NULL }
 };
 
-struct device_module_info sUsbRndisDevice = {
-	{
-		USB_RNDIS_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	usb_rndis_init_device,
-	usb_rndis_uninit_device,
-	usb_rndis_device_removed,
-
-	usb_rndis_open,
-	usb_rndis_close,
-	usb_rndis_free,
-	usb_rndis_read,
-	usb_rndis_write,
-	NULL,	// io
-	usb_rndis_control,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sUsbRndisDriver = {
-	{
+struct dk_driver_info sUsbRndisDriver = {
+	.info = {
 		USB_RNDIS_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_rndis_supports_device,
-	usb_rndis_register_device,
-	usb_rndis_init_driver,
-	usb_rndis_uninit_driver,
-	usb_rndis_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sUsbRndisMatchDict,
+	.probe   = usb_rndis_probe,
+	.attach  = usb_rndis_attach,
+	.detach  = usb_rndis_detach,
+	.ops     = &sDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sUsbRndisDriver,
-	(module_info*)&sUsbRndisDevice,
 	NULL
 };
