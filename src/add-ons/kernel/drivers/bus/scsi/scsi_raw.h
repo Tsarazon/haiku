@@ -1,5 +1,6 @@
 /*
  * Copyright 2003, Thomas Kurschel. All rights reserved.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  */
 #ifndef _SCSI_RAW_H
@@ -10,8 +11,9 @@
 */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <bus/SCSI.h>
+#include <device/scsi.h>
 
 #define debug_level_flow 0
 #define debug_level_error 3
@@ -23,12 +25,13 @@
 
 
 typedef struct raw_device_info {
-	device_node_handle node;
-	scsi_device scsi_device;
+	dk_node *node;
+	scsi_device scsi_dev;
 	scsi_device_interface *scsi;
+	char publishedPath[64];
 } raw_device_info;
 
 
-#define SCSI_RAW_MODULE_NAME "drivers/bus/scsi/scsi_raw/"SCSI_DEVICE_TYPE_NAME
+#define SCSI_RAW_MODULE_NAME "drivers/bus/scsi/scsi_raw/dk_driver_v1"
 
 #endif	/* _SCSI_RAW_H */
