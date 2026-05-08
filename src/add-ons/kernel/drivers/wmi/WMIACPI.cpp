@@ -16,7 +16,7 @@
 #define ACPI_WMI_REGFLAG_EVENT		(1 << 3)
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 smbios_module_info *gSMBios;
 
 
@@ -28,19 +28,29 @@ acpi_status wmi_acpi_adr_space_handler(uint32 function,
 }
 
 
-WMIACPI::WMIACPI(device_node *node)
+WMIACPI::WMIACPI(dk_node *node)
 	:
 	fNode(node)
 {
 	CALLED();
 
-	device_node *parent;
-	parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, (driver_module_info **)&acpi,
-		(void **)&acpi_cookie);
-	gDeviceManager->get_attr_string(parent, ACPI_DEVICE_UID_ITEM, &fUid,
-		false);
-	gDeviceManager->put_node(parent);
+	fStatus = gDeviceKeeper->get_interface(node,
+		ACPI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&acpi, (void **)&acpi_cookie);
+	if (fStatus != B_OK) {
+		ERROR("failed to get ACPI interface\n");
+		return;
+	}
+	char uidBuf[64];
+	dk_node *parent = gDeviceKeeper->get_parent_node(node);
+	if (parent != NULL
+		&& gDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_UID,
+			uidBuf, sizeof(uidBuf), NULL, false) == B_OK)
+		fUid = strdup(uidBuf);
+	else
+		fUid = NULL;
+	if (parent != NULL)
+		gDeviceKeeper->put_node(parent);
 
 	// install notify handler
 	fStatus = acpi->install_notify_handler(acpi_cookie,
@@ -106,22 +116,22 @@ WMIACPI::Scan()
 		uint8* guid = wmiInfo->guid.guid;
 		char guidString[37] = {};
 		_GuidToGuidString(guid, guidString);
-		device_attr attrs[] = {
+		dk_property attrs[] = {
 			// connection
 			{ WMI_GUID_STRING_ITEM, B_STRING_TYPE, { .string = guidString }},
 
 			{ WMI_BUS_COOKIE, B_UINT32_TYPE, { .ui32 = index }},
 
 			// description of peripheral drivers
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "wmi" }},
+			{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "wmi" }},
 
-			{ B_DEVICE_FLAGS, B_UINT32_TYPE,
-				{ .ui32 = B_FIND_MULTIPLE_CHILDREN }},
+			{ KOSM_DEVICE_FLAGS, B_UINT32_TYPE,
+				{ .ui32 = KOSM_FIND_MULTIPLE_CHILDREN }},
 
 			{ NULL }
 		};
 
-		status = gDeviceManager->register_node(fNode, WMI_DEVICE_MODULE_NAME,
+		status = gDeviceKeeper->register_node(fNode, WMI_DEVICE_MODULE_NAME,
 			attrs, NULL, NULL);
 		if (status != B_OK)
 			return status;
@@ -374,107 +384,91 @@ WMIACPI::_GuidToGuidString(uint8 guid[16], char* guidString)
 
 
 static float
-wmi_acpi_support(device_node *parent)
+wmi_acpi_support(dk_node *parent)
 {
 	CALLED();
 
-	// make sure parent is really the ACPI bus manager
-	const char *bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
+	char bus[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "acpi"))
-		return 0.0;
+	if (strcmp(bus, "acpi") != 0)
+		return -1.0f;
 
-	// check whether it's really a device
 	uint32 device_type;
-	if (gDeviceManager->get_attr_uint32(parent, ACPI_DEVICE_TYPE_ITEM,
+	if (gDeviceKeeper->get_property_uint32(parent, KOSM_DEVICE_TYPE,
 			&device_type, false) != B_OK
 		|| device_type != ACPI_TYPE_DEVICE) {
-		return 0.0;
+		return -1.0f;
 	}
 
-	// check whether it's an acpi wmi device
-	const char *name;
-	if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &name,
-		false) != B_OK || strcmp(name, ACPI_NAME_ACPI_WMI) != 0) {
-		return 0.0;
+	char name[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_HID, name,
+		sizeof(name), NULL, false) != B_OK || strcmp(name, ACPI_NAME_ACPI_WMI) != 0) {
+		return -1.0f;
 	}
 
 	TRACE("found an acpi wmi device\n");
 
-	return 0.6;
+	return 0.6f;
 }
 
 
 static status_t
-wmi_acpi_register_device(device_node *node)
-{
-	CALLED();
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "WMI ACPI" }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, WMI_ACPI_DRIVER_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-wmi_acpi_init_driver(device_node *node, void **driverCookie)
+wmi_acpi_attach(dk_node *node, void **driverCookie)
 {
 	CALLED();
 	WMIACPI* device = new(std::nothrow) WMIACPI(node);
 	if (device == NULL)
 		return B_NO_MEMORY;
 
-	*driverCookie = device;
+	status_t status = device->Scan();
+	if (status != B_OK) {
+		delete device;
+		return status;
+	}
 
+	*driverCookie = device;
 	return B_OK;
 }
 
 
 static void
-wmi_acpi_uninit_driver(void *driverCookie)
+wmi_acpi_detach(void *driverCookie)
 {
 	CALLED();
 	WMIACPI *device = (WMIACPI*)driverCookie;
-
 	delete device;
 }
 
 
-static status_t
-wmi_acpi_register_child_devices(void *cookie)
-{
-	CALLED();
-	WMIACPI *device = (WMIACPI*)cookie;
-	return device->Scan();
-}
-
-
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ SMBIOS_MODULE_NAME, (module_info**)&gSMBios },
 	{}
 };
 
 
-static driver_module_info sWMIACPIDriverModule = {
-	{
-		WMI_ACPI_DRIVER_NAME,
-		0,
-		NULL
-	},
+static const dk_match_rule sWMIACPIMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "acpi"),
+	DK_MATCH_STRING(KOSM_ACPI_DEVICE_HID, ACPI_NAME_ACPI_WMI),
+	DK_MATCH_END
+};
 
-	wmi_acpi_support,
-	wmi_acpi_register_device,
-	wmi_acpi_init_driver,
-	wmi_acpi_uninit_driver,
-	wmi_acpi_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+static const dk_match_dict sWMIACPIMatchDict = {
+	sWMIACPIMatchRules,
+	0
+};
+
+
+static dk_driver_info sWMIACPIDriverModule = {
+	.info       = { WMI_ACPI_DRIVER_NAME, 0, NULL },
+	.match      = &sWMIACPIMatchDict,
+	.probe      = wmi_acpi_support,
+	.attach     = wmi_acpi_attach,
+	.detach     = wmi_acpi_detach,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 

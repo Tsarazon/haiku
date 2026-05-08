@@ -7,7 +7,7 @@
 #include "WMIPrivate.h"
 
 
-WMIDevice::WMIDevice(device_node *node)
+WMIDevice::WMIDevice(dk_node *node)
 	:
 	fNode(node),
 	fBus(NULL),
@@ -17,12 +17,12 @@ WMIDevice::WMIDevice(device_node *node)
 	CALLED();
 
 	{
-		device_node *parent = gDeviceManager->get_parent_node(node);
-		gDeviceManager->get_driver(parent, NULL, (void **)&fBus);
-		gDeviceManager->put_node(parent);
+		dk_node *parent = gDeviceKeeper->get_parent_node(node);
+		gDeviceKeeper->get_node_driver(parent, NULL, (void **)&fBus);
+		gDeviceKeeper->put_node(parent);
 	}
 
-	fInitStatus = gDeviceManager->get_attr_uint32(node, WMI_BUS_COOKIE,
+	fInitStatus = gDeviceKeeper->get_property_uint32(node, WMI_BUS_COOKIE,
 		&fBusCookie, false);
 }
 
@@ -87,36 +87,7 @@ WMIDevice::GetUid()
 }
 
 
-//	#pragma mark - driver module API
-
-
-static status_t
-wmi_init_device(device_node *node, void **_device)
-{
-	CALLED();
-	WMIDevice *device = new(std::nothrow) WMIDevice(node);
-	if (device == NULL)
-		return B_NO_MEMORY;
-
-	status_t result = device->InitCheck();
-	if (result != B_OK) {
-		ERROR("failed to set up wmi device object\n");
-		return result;
-	}
-
-	*_device = device;
-
-	return B_OK;
-}
-
-
-static void
-wmi_uninit_device(void *_device)
-{
-	CALLED();
-	WMIDevice *device = (WMIDevice *)_device;
-	delete device;
-}
+//	#pragma mark - WMI device interface ops
 
 
 static status_t
@@ -161,6 +132,56 @@ wmi_get_uid(wmi_device _device)
 }
 
 
+wmi_device_interface gWMIDeviceOps = {
+	wmi_evaluate_method,
+	wmi_install_event_handler,
+	wmi_remove_event_handler,
+	wmi_get_event_data,
+	wmi_get_uid,
+};
+
+
+//	#pragma mark - driver module API
+
+
+static status_t
+wmi_init_device(dk_node *node, void **_device)
+{
+	CALLED();
+	WMIDevice *device = new(std::nothrow) WMIDevice(node);
+	if (device == NULL)
+		return B_NO_MEMORY;
+
+	status_t result = device->InitCheck();
+	if (result != B_OK) {
+		ERROR("failed to set up wmi device object\n");
+		delete device;
+		return result;
+	}
+
+	result = gDeviceKeeper->publish_interface(node,
+		WMI_DEVICE_INTERFACE_NAME, &gWMIDeviceOps);
+	if (result != B_OK) {
+		ERROR("failed to publish WMI device interface\n");
+		delete device;
+		return result;
+	}
+
+	*_device = device;
+
+	return B_OK;
+}
+
+
+static void
+wmi_uninit_device(void *_device)
+{
+	CALLED();
+	WMIDevice *device = (WMIDevice *)_device;
+	delete device;
+}
+
+
 static status_t
 std_ops(int32 op, ...)
 {
@@ -174,27 +195,8 @@ std_ops(int32 op, ...)
 	}
 }
 
-
-wmi_device_interface gWMIDeviceModule = {
-	{
-		{
-			WMI_DEVICE_MODULE_NAME,
-			0,
-			std_ops
-		},
-
-		NULL,	// supported devices
-		NULL,	// register node
-		wmi_init_device,
-		wmi_uninit_device,
-		NULL,	// register child devices
-		NULL,	// rescan
-		NULL, 	// device_removed
-	},
-
-	wmi_evaluate_method,
-	wmi_install_event_handler,
-	wmi_remove_event_handler,
-	wmi_get_event_data,
-	wmi_get_uid,
+dk_driver_info gWMIDeviceModule = {
+	.info   = { WMI_DEVICE_MODULE_NAME, 0, std_ops },
+	.attach = wmi_init_device,
+	.detach = wmi_uninit_device,
 };

@@ -30,7 +30,7 @@
 
 class WMIAsus {
 public:
-								WMIAsus(device_node *node);
+								WMIAsus(dk_node *node);
 								~WMIAsus();
 
 private:
@@ -44,7 +44,7 @@ private:
 			void				_Notify(acpi_handle handle, uint32 notify);
 			status_t			_EnableAls(uint32 enable);
 private:
-			device_node*		fNode;
+			dk_node*		fNode;
 			wmi_device_interface* wmi;
 			wmi_device			wmi_cookie;
 			uint32				fDstsID;
@@ -55,7 +55,7 @@ private:
 
 
 
-WMIAsus::WMIAsus(device_node *node)
+WMIAsus::WMIAsus(dk_node *node)
 	:
 	fNode(node),
 	fDstsID(ASUS_WMI_METHODID_DSTS),
@@ -65,12 +65,13 @@ WMIAsus::WMIAsus(device_node *node)
 {
 	CALLED();
 
-	device_node *parent;
-	parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, (driver_module_info **)&wmi,
-		(void **)&wmi_cookie);
-
-	gDeviceManager->put_node(parent);
+	status_t status = gDeviceKeeper->get_interface(node,
+		WMI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&wmi, (void **)&wmi_cookie);
+	if (status != B_OK) {
+		ERROR("failed to get WMI device interface\n");
+		return;
+	}
 
 	const char* uid = wmi->get_uid(wmi_cookie);
 	if (uid != NULL && strcmp(uid, ACPI_ASUS_UID_ASUSWMI) == 0)
@@ -233,45 +234,30 @@ WMIAsus::_Notify(acpi_handle handle, uint32 notify)
 
 
 static float
-wmi_asus_support(device_node *parent)
+wmi_asus_support(dk_node *parent)
 {
-	// make sure parent is really a wmi device
-	const char *bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
+	char bus[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "wmi"))
-		return 0.0;
+	if (strcmp(bus, "wmi") != 0)
+		return -1.0f;
 
-	// check whether it's an asus wmi device
-	const char *guid;
-	if (gDeviceManager->get_attr_string(parent, WMI_GUID_STRING_ITEM, &guid,
-		false) != B_OK || strcmp(guid, ACPI_ASUS_WMI_MGMT_GUID) != 0) {
-		return 0.0;
+	char guid[64];
+	if (gDeviceKeeper->get_property_string(parent, WMI_GUID_STRING_ITEM, guid,
+		sizeof(guid), NULL, false) != B_OK || strcmp(guid, ACPI_ASUS_WMI_MGMT_GUID) != 0) {
+		return -1.0f;
 	}
 
 	TRACE("found an asus wmi device\n");
 
-	return 0.6;
+	return 0.6f;
 }
 
 
 static status_t
-wmi_asus_register_device(device_node *node)
-{
-	CALLED();
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "WMI ASUS" }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, WMI_ASUS_DRIVER_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-wmi_asus_init_driver(device_node *node, void **driverCookie)
+wmi_asus_attach(dk_node *node, void **driverCookie)
 {
 	CALLED();
 
@@ -285,7 +271,7 @@ wmi_asus_init_driver(device_node *node, void **driverCookie)
 
 
 static void
-wmi_asus_uninit_driver(void *driverCookie)
+wmi_asus_detach(void *driverCookie)
 {
 	CALLED();
 	WMIAsus* device = (WMIAsus*)driverCookie;
@@ -293,27 +279,23 @@ wmi_asus_uninit_driver(void *driverCookie)
 }
 
 
-static status_t
-wmi_asus_register_child_devices(void *cookie)
-{
-	CALLED();
-	return B_OK;
-}
+static const dk_match_rule sWMIAsusMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "wmi"),
+	DK_MATCH_STRING(WMI_GUID_STRING_ITEM, ACPI_ASUS_WMI_MGMT_GUID),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sWMIAsusMatchDict = {
+	sWMIAsusMatchRules,
+	0
+};
 
 
-driver_module_info gWMIAsusDriverModule = {
-	{
-		WMI_ASUS_DRIVER_NAME,
-		0,
-		NULL
-	},
-
-	wmi_asus_support,
-	wmi_asus_register_device,
-	wmi_asus_init_driver,
-	wmi_asus_uninit_driver,
-	wmi_asus_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+dk_driver_info gWMIAsusDriverModule = {
+	.info   = { WMI_ASUS_DRIVER_NAME, 0, NULL },
+	.match  = &sWMIAsusMatchDict,
+	.probe  = wmi_asus_support,
+	.attach = wmi_asus_attach,
+	.detach = wmi_asus_detach,
 };
 

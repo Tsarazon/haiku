@@ -32,10 +32,10 @@
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define WMI_ACPI_DRIVER_NAME "drivers/wmi/acpi/driver_v1"
-#define WMI_DEVICE_MODULE_NAME "drivers/wmi/device/driver_v1"
+#define WMI_ACPI_DRIVER_NAME "drivers/wmi/acpi/dk_driver_v1"
+#define WMI_DEVICE_MODULE_NAME "drivers/wmi/device/dk_driver_v1"
 
-#define WMI_ASUS_DRIVER_NAME "drivers/wmi/asus/driver_v1"
+#define WMI_ASUS_DRIVER_NAME "drivers/wmi/asus/dk_driver_v1"
 
 #define WMI_BUS_COOKIE "wmi/bus/index"
 
@@ -44,15 +44,15 @@ class WMIACPI;
 class WMIDevice;
 
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern smbios_module_info *gSMBios;
-extern wmi_device_interface gWMIDeviceModule;
-extern driver_module_info gWMIAsusDriverModule;
+extern dk_driver_info gWMIDeviceModule;
+extern dk_driver_info gWMIAsusDriverModule;
 
 
 class WMIDevice {
 public:
-								WMIDevice(device_node* node);
+								WMIDevice(dk_node* node);
 								~WMIDevice();
 
 			status_t			InitCheck();
@@ -66,7 +66,7 @@ public:
 private:
 
 private:
-			device_node*		fNode;
+			dk_node*		fNode;
 			WMIACPI* 			fBus;
 			uint32				fBusCookie;
 			status_t			fInitStatus;
@@ -98,7 +98,7 @@ typedef DoublyLinkedList<wmi_info> WMIInfoList;
 
 class WMIACPI {
 public:
-								WMIACPI(device_node *node);
+								WMIACPI(dk_node *node);
 								~WMIACPI();
 
 			status_t			InitCheck();
@@ -131,7 +131,7 @@ private:
 			void				_GuidToGuidString(uint8 guid[16],
 									char* guidString);
 private:
-			device_node*		fNode;
+			dk_node*		fNode;
 			acpi_device_module_info* acpi;
 			acpi_device			acpi_cookie;
 			status_t			fStatus;

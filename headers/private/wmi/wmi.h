@@ -7,7 +7,7 @@
 
 
 #include <ACPI.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 
@@ -24,10 +24,13 @@
 typedef void* wmi_device;
 
 
+// Interface name for get_interface/publish_interface.
+// Published by WMIDevice on each WMI child node; consumed by
+// peripheral drivers (WMIAsus etc.) via KOSM_INTERFACE_ANCESTORS.
+#define WMI_DEVICE_INTERFACE_NAME	"interface/wmi/device/v1"
+
 // bus manager device interface for peripheral driver
 typedef struct {
-	driver_module_info info;
-
 	status_t (*evaluate_method)(wmi_device device, uint8 instance,
 		uint32 methodId, const acpi_data* in, acpi_data* out);
 	status_t (*install_event_handler)(wmi_device device,
