@@ -68,7 +68,18 @@ static const uint8 kDriveIcon[] = {
 
 
 static scsi_periph_interface* sSCSIPeripheral;
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
+
+
+static const dk_match_rule kSCSIDiskMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "scsi" } },
+	{}
+};
+
+static const dk_match_dict kSCSIDiskMatch = {
+	kSCSIDiskMatchRules,
+	0
+};
 
 
 static status_t
@@ -238,31 +249,7 @@ do_io(void* cookie, IOOperation* operation)
 //	#pragma mark - device module API
 
 
-static status_t
-das_init_device(void* _info, void** _cookie)
-{
-	das_driver_info* info = (das_driver_info*)_info;
 
-	// and get (initial) capacity
-	scsi_ccb *request = info->scsi->alloc_ccb(info->scsi_device);
-	if (request == NULL)
-		return B_NO_MEMORY;
-
-	sSCSIPeripheral->check_capacity(info->scsi_periph_device, request);
-	info->scsi->free_ccb(request);
-
-	*_cookie = info;
-	return B_OK;
-}
-
-
-static void
-das_uninit_device(void* _cookie)
-{
-	das_driver_info* info = (das_driver_info*)_cookie;
-
-	delete info->io_scheduler;
-}
 
 
 static status_t
@@ -463,20 +450,14 @@ scsi_periph_callbacks callbacks = {
 
 
 static float
-das_supports_device(device_node *parent)
+das_probe(dk_node* node)
 {
-	const char *bus;
 	uint8 deviceType;
 
-	// make sure parent is really the SCSI bus manager
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "scsi"))
-		return 0.0;
+	// bus type is already filtered by dk_match_dict ("scsi")
 
 	// check whether it's really a Direct Access Device
-	if (sDeviceManager->get_attr_uint8(parent, SCSI_DEVICE_TYPE_ITEM,
+	if (sDeviceKeeper->get_property_uint8(node, SCSI_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != scsi_dev_direct_access)
 		return 0.0;
 
@@ -484,58 +465,41 @@ das_supports_device(device_node *parent)
 }
 
 
-/*!	Called whenever a new device was added to system;
-	if we really support it, we create a new node that gets
-	server by the block_io module
-*/
-static status_t
-das_register_device(device_node *node)
-{
-	const scsi_res_inquiry *deviceInquiry = NULL;
-	size_t inquiryLength;
-	uint32 maxBlocks;
+static dk_device_ops sSCSIDiskDeviceOps = {
+	das_open,
+	das_close,
+	das_free,
+	NULL,	// read
+	NULL,	// write
+	das_io,
+	das_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	NULL	// device_removed
+};
 
-	// get inquiry data
-	if (sDeviceManager->get_attr_raw(node, SCSI_DEVICE_INQUIRY_ITEM,
-			(const void **)&deviceInquiry, &inquiryLength, true) != B_OK
-		|| inquiryLength < sizeof(scsi_res_inquiry))
+
+static status_t
+das_attach(dk_node *node, void **cookie)
+{
+	TRACE("das_attach\n");
+
+	scsi_res_inquiry deviceInquiryData;
+	size_t inquiryCopied;
+	if (sDeviceKeeper->get_property_raw(node, SCSI_DEVICE_INQUIRY_ITEM,
+			&deviceInquiryData, sizeof(deviceInquiryData), &inquiryCopied,
+			true) != B_OK
+		|| inquiryCopied < sizeof(scsi_res_inquiry))
 		return B_ERROR;
 
-	// get block limit of underlying hardware to lower it (if necessary)
-	if (sDeviceManager->get_attr_uint32(node, B_DMA_MAX_TRANSFER_BLOCKS,
+	uint32 maxBlocks;
+	if (sDeviceKeeper->get_property_uint32(node, KOSM_DMA_MAX_TRANSFER_BLOCKS,
 			&maxBlocks, true) != B_OK)
 		maxBlocks = INT_MAX;
 
-	// using 10 byte commands, at most 0xffff blocks can be transmitted at once
-	// (sadly, we cannot update this value later on if only 6 byte commands
-	//  are supported, but the block_io module can live with that)
 	maxBlocks = min_c(maxBlocks, 0xffff);
 
-	// ready to register
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "SCSI Disk" }},
-		// tell block_io whether the device is removable
-		{"removable", B_UINT8_TYPE, {.ui8 = deviceInquiry->removable_medium}},
-		// impose own max block restriction
-		{B_DMA_MAX_TRANSFER_BLOCKS, B_UINT32_TYPE, {.ui32 = maxBlocks}},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, SCSI_DISK_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-das_init_driver(device_node *node, void **cookie)
-{
-	TRACE("das_init_driver");
-
-	uint8 removable;
-	status_t status = sDeviceManager->get_attr_uint8(node, "removable",
-		&removable, false);
-	if (status != B_OK)
-		return status;
+	uint8 removable = deviceInquiryData.removable_medium;
 
 	das_driver_info* info = (das_driver_info*)malloc(sizeof(das_driver_info));
 	if (info == NULL)
@@ -552,10 +516,16 @@ das_init_driver(device_node *node, void **cookie)
 	info->node = node;
 	info->removable = removable;
 
-	device_node* parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&info->scsi,
-		(void **)&info->scsi_device);
-	sDeviceManager->put_node(parent);
+	status_t status = sDeviceKeeper->get_interface(node,
+		SCSI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&info->scsi, (void**)&info->scsi_device);
+	if (status != B_OK) {
+		dprintf("scsi_disk: get_interface(scsi device) failed: %s\n",
+			strerror(status));
+		delete info->dma_resource;
+		free(info);
+		return status;
+	}
 
 	status = sSCSIPeripheral->register_device((periph_device_cookie)info,
 		&callbacks, info->scsi_device, info->scsi, info->node,
@@ -566,38 +536,38 @@ das_init_driver(device_node *node, void **cookie)
 		return status;
 	}
 
+	// Get initial capacity
+	scsi_ccb *request = info->scsi->alloc_ccb(info->scsi_device);
+	if (request != NULL) {
+		sSCSIPeripheral->check_capacity(info->scsi_periph_device, request);
+		info->scsi->free_ccb(request);
+	}
+
 	*cookie = info;
-	return B_OK;
-}
 
-
-static void
-das_uninit_driver(void *_cookie)
-{
-	das_driver_info* info = (das_driver_info*)_cookie;
-
-	sSCSIPeripheral->unregister_device(info->scsi_periph_device);
-	delete info->dma_resource;
-	free(info);
-}
-
-
-static status_t
-das_register_child_devices(void* _cookie)
-{
-	das_driver_info* info = (das_driver_info*)_cookie;
-	status_t status;
-
+	// Publish device from attach
 	char* name = sSCSIPeripheral->compose_device_name(info->node,
 		"disk/scsi");
 	if (name == NULL)
 		return B_ERROR;
 
-	status = sDeviceManager->publish_device(info->node, name,
-		SCSI_DISK_DEVICE_MODULE_NAME);
+	status = sDeviceKeeper->publish_device(info->node, name,
+		&sSCSIDiskDeviceOps);
 
 	free(name);
 	return status;
+}
+
+
+static void
+das_detach(void *_cookie)
+{
+	das_driver_info* info = (das_driver_info*)_cookie;
+
+	delete info->io_scheduler;
+	sSCSIPeripheral->unregister_device(info->scsi_periph_device);
+	delete info->dma_resource;
+	free(info);
 }
 
 
@@ -613,54 +583,27 @@ das_rescan_child_devices(void* _cookie)
 }
 
 
-
 module_dependency module_dependencies[] = {
 	{SCSI_PERIPH_MODULE_NAME, (module_info**)&sSCSIPeripheral},
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
 	{}
 };
 
-struct device_module_info sSCSIDiskDevice = {
-	{
-		SCSI_DISK_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	das_init_device,
-	das_uninit_device,
-	NULL, //das_remove,
-
-	das_open,
-	das_close,
-	das_free,
-	NULL,	// read
-	NULL,	// write
-	das_io,
-	das_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sSCSIDiskDriver = {
-	{
+struct dk_driver_info sSCSIDiskDriver = {
+	.info = {
 		SCSI_DISK_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	das_supports_device,
-	das_register_device,
-	das_init_driver,
-	das_uninit_driver,
-	das_register_child_devices,
-	das_rescan_child_devices,
-	NULL,	// removed
+	.match			= &kSCSIDiskMatch,
+	.probe			= das_probe,
+	.attach			= das_attach,
+	.detach			= das_detach,
+	.rescan_children = das_rescan_child_devices,
+	.ops			= &sSCSIDiskDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sSCSIDiskDriver,
-	(module_info*)&sSCSIDiskDevice,
 	NULL
 };

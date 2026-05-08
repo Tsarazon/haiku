@@ -7,7 +7,7 @@
 #define _SCSI_DISK_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <scsi.h>
 #include <scsi_periph.h>
 
@@ -16,12 +16,11 @@ struct DMAResource;
 struct IOScheduler;
 
 
-#define SCSI_DISK_DRIVER_MODULE_NAME "drivers/disk/scsi/scsi_disk/driver_v1"
-#define SCSI_DISK_DEVICE_MODULE_NAME "drivers/disk/scsi/scsi_disk/device_v1"
+#define SCSI_DISK_DRIVER_MODULE_NAME "drivers/disk/scsi/scsi_disk/dk_driver_v1"
 
 
 struct das_driver_info {
-	device_node*			node;
+	dk_node*				node;
 	::scsi_periph_device	scsi_periph_device;
 	::scsi_device			scsi_device;
 	scsi_device_interface*	scsi;
