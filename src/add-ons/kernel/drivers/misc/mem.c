@@ -4,7 +4,7 @@
  */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 
@@ -16,13 +16,12 @@
 #define DRIVER_NAME "mem"
 #define DEVICE_NAME "misc/mem"
 
-#define MEM_DRIVER_MODULE_NAME "drivers/misc/mem/driver_v1"
-#define MEM_DEVICE_MODULE_NAME "drivers/misc/mem/device_v1"
+#define MEM_DRIVER_MODULE_NAME "drivers/misc/mem/dk_driver_v1"
 
 /* also publish /dev/mem */
 #define PUBLISH_DEV_MEM
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sPublished = false;
 
 static area_id mem_map_target(off_t position, size_t length, uint32 protection,
@@ -136,84 +135,78 @@ mem_map_target(off_t position, size_t length, uint32 protection,
 }
 
 
-/*	#pragma mark - driver module API */
+/*	#pragma mark - dk_device_ops / dk_driver_info */
+
+
+static dk_device_ops sDeviceOps = {
+	mem_open,
+	mem_close,
+	mem_free,
+	mem_read,
+	mem_write,
+	NULL,	/* io */
+	NULL,	/* control */
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
+static const dk_match_rule sMemMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sMemMatchDict = {
+	sMemMatchRules,
+	0
+};
 
 
 static float
-mem_supports_device(device_node* parent)
+mem_probe(dk_node* node)
 {
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-mem_register_device(device_node* node)
+mem_attach(dk_node* node, void** cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Physical Memory"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, MEM_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-mem_init_driver(device_node* node, void** cookie)
-{
+	sPublished = true;
+	sDeviceKeeper->publish_device(node, DEVICE_NAME, &sDeviceOps);
+#ifdef PUBLISH_DEV_MEM
+	sDeviceKeeper->publish_device(node, DRIVER_NAME, &sDeviceOps);
+#endif
 	*cookie = node;
 	return B_OK;
 }
 
-static void mem_uninit_driver(void* c) { sPublished = false; }
 
-static status_t
-mem_register_child_devices(void* _cookie)
+static void
+mem_detach(void* _cookie)
 {
-	device_node* node = (device_node*)_cookie;
-	if (sPublished) return B_OK;
-	sPublished = true;
-	sDeviceManager->publish_device(node, DEVICE_NAME, MEM_DEVICE_MODULE_NAME);
-#ifdef PUBLISH_DEV_MEM
-	sDeviceManager->publish_device(node, DRIVER_NAME, MEM_DEVICE_MODULE_NAME);
-#endif
-	return B_OK;
+	sPublished = false;
 }
-
-static status_t mem_init_device(void* i, void** c)
-{ *c = i; return B_OK; }
-static void mem_uninit_device(void* c) {}
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sMemDevice = {
-	{ MEM_DEVICE_MODULE_NAME, 0, NULL },
-	mem_init_device, mem_uninit_device, NULL,
-	mem_open, mem_close, mem_free,
-	mem_read, mem_write, NULL, NULL,
-	NULL, NULL
-};
-
-struct driver_module_info sMemDriver = {
-	{ MEM_DRIVER_MODULE_NAME, 0, NULL },
-	mem_supports_device, mem_register_device,
-	mem_init_driver, mem_uninit_driver,
-	mem_register_child_devices, NULL, NULL
+struct dk_driver_info sMemDriver = {
+	.info	= { MEM_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sMemMatchDict,
+	.probe	= mem_probe,
+	.attach	= mem_attach,
+	.detach	= mem_detach,
+	.ops	= &sDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sMemDriver,
-	(module_info*)&sMemDevice,
 	NULL
 };
