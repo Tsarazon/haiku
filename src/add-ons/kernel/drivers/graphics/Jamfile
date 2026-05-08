@@ -1,7 +1,6 @@
 SubDir HAIKU_TOP src add-ons kernel drivers graphics ;
 
 
-SubInclude HAIKU_TOP src add-ons kernel drivers graphics ati ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics common ;
 SubInclude HAIKU_TOP src add-ons kernel drivers graphics framebuffer ;
 
