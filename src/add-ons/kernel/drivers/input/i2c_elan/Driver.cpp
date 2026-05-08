@@ -3,16 +3,16 @@
  * Copyright 2008-2011 Michael Lotz <mmlr@mlotz.ch>
  * Copyright 2020, 2022 Vladimir Kondratyev <wulf@FreeBSD.org>
  * Copyright 2023 Vladimir Serbinenko <phcoder@gmail.com>
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT license.
  */
 
 
 //!	Driver for I2C Elan Devices.
-// Partially based on FreeBSD ietp driver
 
 
 #include <ACPI.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <i2c.h>
 
 #include "DeviceList.h"
@@ -27,15 +27,11 @@
 #include <string.h>
 
 
-
 struct elan_driver_cookie {
 	ELANDevice*				elanDevice;
 };
 
-#define I2C_ELAN_DRIVER_NAME "drivers/input/i2c_elan/driver_v1"
-#define I2C_ELAN_DEVICE_NAME "drivers/input/i2c_elan/device_v1"
-
-/* Base Namespace devices are published to */
+#define I2C_ELAN_DRIVER_NAME "drivers/input/i2c_elan/dk_driver_v1"
 #define I2C_ELAN_BASENAME "input/i2c_elan/%d"
 
 static const char* elan_iic_devs[] = {
@@ -94,9 +90,9 @@ static const char* elan_iic_devs[] = {
 	"ELAN1000"
 };
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 
-DeviceList *gDeviceList = NULL;
+DeviceList* gDeviceList = NULL;
 static mutex sDriverLock;
 
 
@@ -104,32 +100,17 @@ static mutex sDriverLock;
 
 
 static status_t
-i2c_elan_init_device(void *driverCookie, void **cookie)
-{
-	*cookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-i2c_elan_uninit_device(void *_cookie)
-{
-
-}
-
-
-static status_t
-i2c_elan_open(void *initCookie, const char *path, int flags, void **_cookie)
+i2c_elan_open(void* initCookie, const char* path, int flags, void** _cookie)
 {
 	TRACE("open(%s, %" B_PRIu32 ", %p)\n", path, flags, _cookie);
 
-	elan_driver_cookie *cookie = new(std::nothrow) elan_driver_cookie();
+	elan_driver_cookie* cookie = new(std::nothrow) elan_driver_cookie();
 	if (cookie == NULL)
 		return B_NO_MEMORY;
 
 	MutexLocker locker(sDriverLock);
 
-	ELANDevice *elan = (ELANDevice *)gDeviceList->FindDevice(path);
+	ELANDevice* elan = (ELANDevice*)gDeviceList->FindDevice(path);
 	TRACE("  path %s: handler %p (elan)\n", path, elan);
 
 	cookie->elanDevice = elan;
@@ -144,13 +125,12 @@ i2c_elan_open(void *initCookie, const char *path, int flags, void **_cookie)
 	}
 
 	*_cookie = cookie;
-
 	return B_OK;
 }
 
 
 static status_t
-i2c_elan_read(void *_cookie, off_t position, void *buffer, size_t *numBytes)
+i2c_elan_read(void* _cookie, off_t position, void* buffer, size_t* numBytes)
 {
 	TRACE_ALWAYS("unhandled read on i2c_elan\n");
 	*numBytes = 0;
@@ -159,8 +139,8 @@ i2c_elan_read(void *_cookie, off_t position, void *buffer, size_t *numBytes)
 
 
 static status_t
-i2c_elan_write(void *_cookie, off_t position, const void *buffer,
-	size_t *numBytes)
+i2c_elan_write(void* _cookie, off_t position, const void* buffer,
+	size_t* numBytes)
 {
 	TRACE_ALWAYS("unhandled write on i2c_elan\n");
 	*numBytes = 0;
@@ -169,39 +149,37 @@ i2c_elan_write(void *_cookie, off_t position, const void *buffer,
 
 
 static status_t
-i2c_elan_control(void *_cookie, uint32 op, void *buffer, size_t length)
+i2c_elan_control(void* _cookie, uint32 op, void* buffer, size_t length)
 {
-	elan_driver_cookie *cookie = (elan_driver_cookie *)_cookie;
-
-	TRACE("control(%p, %" B_PRIu32 ", %p, %" B_PRIuSIZE ")\n", cookie, op, buffer, length);
+	elan_driver_cookie* cookie = (elan_driver_cookie*)_cookie;
+	TRACE("control(%p, %" B_PRIu32 ", %p, %" B_PRIuSIZE ")\n",
+		cookie, op, buffer, length);
 	return cookie->elanDevice->Control(op, buffer, length);
 }
 
 
 static status_t
-i2c_elan_close(void *_cookie)
+i2c_elan_close(void* _cookie)
 {
-	elan_driver_cookie *cookie = (elan_driver_cookie *)_cookie;
-
+	elan_driver_cookie* cookie = (elan_driver_cookie*)_cookie;
 	TRACE("close(%p)\n", cookie);
 	return cookie->elanDevice->Close();
 }
 
 
 static status_t
-i2c_elan_free(void *_cookie)
+i2c_elan_free(void* _cookie)
 {
-	elan_driver_cookie *cookie = (elan_driver_cookie *)_cookie;
+	elan_driver_cookie* cookie = (elan_driver_cookie*)_cookie;
 	TRACE("free(%p)\n", cookie);
 
 	mutex_lock(&sDriverLock);
 
-	ELANDevice *device = cookie->elanDevice;
+	ELANDevice* device = cookie->elanDevice;
 	if (device->IsOpen()) {
-		// another handler of this device is still open so we can't free it
+		// another handler of this device is still open
 	} else if (device->IsRemoved()) {
-		// the parent device is removed already and none of its handlers are
-		// open anymore so we can free it here
+		// parent device removed, no handlers open — free it
 		delete device;
 	}
 
@@ -212,147 +190,155 @@ i2c_elan_free(void *_cookie)
 }
 
 
-//	#pragma mark - driver module API
-
-static bool is_elan_name(const char *name) {
-	if (name == NULL)
-		return false;
-	for (unsigned i = 0; i < B_COUNT_OF(elan_iic_devs); i++)
-		if (strcmp(name, elan_iic_devs[i]) == 0)
-			return true;
-	return false;
+static dk_device_ops sDeviceOps = {
+	i2c_elan_open,
+	i2c_elan_close,
+	i2c_elan_free,
+	i2c_elan_read,
+	i2c_elan_write,
+	NULL,		// io
+	i2c_elan_control,
+	NULL,		// select
+	NULL,		// deselect
+	NULL		// device_removed
 };
 
+
+//	#pragma mark - match & driver
+
+
+static bool
+is_elan_name(const char* name)
+{
+	if (name == NULL)
+		return false;
+	for (unsigned i = 0; i < B_COUNT_OF(elan_iic_devs); i++) {
+		if (strcmp(name, elan_iic_devs[i]) == 0)
+			return true;
+	}
+	return false;
+}
+
+
+// Match dict narrows to I2C bus. Probe checks ACPI HID/CID for ELAN names.
+static const dk_match_rule sI2cElanMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "i2c" } },
+	{}
+};
+
+static const dk_match_dict sI2cElanMatchDict = {
+	sI2cElanMatchRules, 0
+};
+
+
 static float
-i2c_elan_support(device_node *parent)
+i2c_elan_support(dk_node* parent)
 {
 	CALLED();
 
-	// make sure parent is really the I2C bus manager
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "i2c"))
-		return 0.0;
 	TRACE("i2c_elan_support found an i2c device %p\n", parent);
 
-	// check whether it's an ELAN device
-	uint64 handlePointer;
-	if (sDeviceManager->get_attr_uint64(parent, ACPI_DEVICE_HANDLE_ITEM,
-			&handlePointer, false) != B_OK) {
-		TRACE("i2c_elan_support found an i2c device without acpi handle\n");
-		return B_ERROR;
-	}
-
-	const char *name = nullptr;
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &name,
-					    false) == B_OK && is_elan_name(name)) {
+	// Check that device has ACPI backing (HID property exists)
+	char name[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_HID,
+		name, sizeof(name), NULL, false) == B_OK && is_elan_name(name)) {
 		TRACE("i2c_elan_support found an elan i2c device\n");
-		return 0.6;
+		return 0.6f;
 	}
 
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_CID_ITEM, &name,
-		false) == B_OK && is_elan_name(name)) {
+	// Also check compatible IDs (CID)
+	if (sDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_CID,
+		name, sizeof(name), NULL, false) == B_OK && is_elan_name(name)) {
 		TRACE("i2c_elan_support found a compatible elan i2c device\n");
-		return 0.6;
+		return 0.6f;
 	}
 
-	return 0.0;
-}
-
-static status_t
-i2c_elan_register_device(device_node *node)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "I2C ELAN Device" }},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, I2C_ELAN_DRIVER_NAME, attrs,
-		NULL, NULL);
+	return 0.0f;
 }
 
 
 static status_t
-i2c_elan_init_driver(device_node *node, void **driverCookie)
+i2c_elan_attach(dk_node* node, void** _driverCookie)
 {
 	CALLED();
 
-	elan_driver_cookie *device
-		= (elan_driver_cookie *)calloc(1, sizeof(elan_driver_cookie));
+	elan_driver_cookie* device
+		= (elan_driver_cookie*)calloc(1, sizeof(elan_driver_cookie));
 	if (device == NULL)
 		return B_NO_MEMORY;
 
-	*driverCookie = device;
-
-	device_node *parent;
-	i2c_device_interface*	i2c;
-	i2c_device				i2c_cookie;
-
-	parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&i2c,
-		(void **)&i2c_cookie);
-	sDeviceManager->put_node(parent);
+	// Auto walk-up finds the I2CDevice driver attached to the ancestor
+	// i2c device node; its cookie is an I2CDevice* which the callbacks
+	// in I2CDevice.cpp route through to the bus manager.
+	i2c_device_interface* i2c;
+	void* i2c_cookie;
+	status_t status = sDeviceKeeper->get_interface(node,
+		I2C_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&i2c, &i2c_cookie);
+	if (status != B_OK) {
+		ERROR("failed to get i2c device interface: %s\n", strerror(status));
+		free(device);
+		return status;
+	}
 
 	mutex_lock(&sDriverLock);
-	ELANDevice *elanDevice = new(std::nothrow) ELANDevice(node, i2c, i2c_cookie);
+	ELANDevice* elanDevice = new(std::nothrow) ELANDevice(i2c, i2c_cookie);
 
 	if (elanDevice != NULL && elanDevice->InitCheck() == B_OK) {
 		device->elanDevice = elanDevice;
-	} else
+	} else {
 		delete elanDevice;
+	}
 
 	mutex_unlock(&sDriverLock);
 
-	return device->elanDevice != NULL ? B_OK : B_IO_ERROR;
+	if (device->elanDevice == NULL) {
+		free(device);
+		return B_IO_ERROR;
+	}
+
+	// Publish device in devfs
+	{
+		int32 index = 0;
+		char pathBuffer[B_DEV_NAME_LENGTH];
+		while (true) {
+			sprintf(pathBuffer, "input/mouse/" DEVICE_PATH_SUFFIX
+				"/%" B_PRId32, index++);
+			if (gDeviceList->FindDevice(pathBuffer) == NULL) {
+				elanDevice->SetPublishPath(strdup(pathBuffer));
+				break;
+			}
+		}
+
+		gDeviceList->AddDevice(elanDevice->PublishPath(), elanDevice);
+
+		// Publish on own node, not parent — DeviceKeeper tracks
+		// published paths per-node for lifecycle management.
+		sDeviceKeeper->publish_device(node, pathBuffer, &sDeviceOps);
+	}
+
+	*_driverCookie = device;
+	return B_OK;
 }
 
 
 static void
-i2c_elan_uninit_driver(void *driverCookie)
+i2c_elan_detach(void* driverCookie)
 {
 	CALLED();
-	elan_driver_cookie *device = (elan_driver_cookie*)driverCookie;
+	elan_driver_cookie* device = (elan_driver_cookie*)driverCookie;
+
+	mutex_lock(&sDriverLock);
+	if (device->elanDevice != NULL) {
+		const char* publishPath = device->elanDevice->PublishPath();
+		if (publishPath != NULL)
+			gDeviceList->RemoveDevice(publishPath);
+		delete device->elanDevice;
+		device->elanDevice = NULL;
+	}
+	mutex_unlock(&sDriverLock);
 
 	free(device);
-}
-
-
-static status_t
-i2c_elan_register_child_devices(void *cookie)
-{
-	CALLED();
-	elan_driver_cookie *device = (elan_driver_cookie*)cookie;
-	ELANDevice* elanDevice = device->elanDevice;
-	if (elanDevice == NULL)
-		return B_OK;
-
-	// As devices can be un- and replugged at will, we cannot
-	// simply rely on a device count. If there is just one
-	// keyboard, this does not mean that it uses the 0 name.
-	// There might have been two keyboards and the one using 0
-	// might have been unplugged. So we just generate names
-	// until we find one that is not currently in use.
-	int32 index = 0;
-	char pathBuffer[B_DEV_NAME_LENGTH];
-	while (true) {
-		sprintf(pathBuffer, "input/mouse/" DEVICE_PATH_SUFFIX "/%" B_PRId32, index++);
-		if (gDeviceList->FindDevice(pathBuffer) == NULL) {
-			// this name is still free, use it
-			elanDevice->SetPublishPath(strdup(pathBuffer));
-			break;
-		}
-	}
-
-	gDeviceList->AddDevice(elanDevice->PublishPath(), elanDevice);
-
-	sDeviceManager->publish_device(device->elanDevice->Parent(), pathBuffer,
-		I2C_ELAN_DEVICE_NAME);
-
-	return B_OK;
 }
 
 
@@ -361,79 +347,46 @@ std_ops(int32 op, ...)
 {
 	switch (op) {
 		case B_MODULE_INIT:
+		{
+			status_t s = get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info**)&sDeviceKeeper);
+			if (s != B_OK)
+				return s;
+
 			gDeviceList = new(std::nothrow) DeviceList();
 			if (gDeviceList == NULL) {
+				put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
 				return B_NO_MEMORY;
 			}
 			mutex_init(&sDriverLock, "i2c elan driver lock");
-
 			return B_OK;
+		}
 		case B_MODULE_UNINIT:
 			delete gDeviceList;
 			gDeviceList = NULL;
 			mutex_destroy(&sDriverLock);
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
 			return B_OK;
-
 		default:
-			break;
+			return B_ERROR;
 	}
-
-	return B_ERROR;
 }
 
 
 //	#pragma mark -
 
 
-driver_module_info i2c_elan_driver_module = {
-	{
-		I2C_ELAN_DRIVER_NAME,
-		0,
-		&std_ops
-	},
-
-	i2c_elan_support,
-	i2c_elan_register_device,
-	i2c_elan_init_driver,
-	i2c_elan_uninit_driver,
-	i2c_elan_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+static dk_driver_info i2c_elan_driver_module = {
+	.info	= { I2C_ELAN_DRIVER_NAME, 0, &std_ops },
+	.match	= &sI2cElanMatchDict,
+	.probe	= i2c_elan_support,
+	.attach	= i2c_elan_attach,
+	.detach	= i2c_elan_detach,
+	.ops	= &sDeviceOps,
 };
 
 
-struct device_module_info i2c_elan_device_module = {
-	{
-		I2C_ELAN_DEVICE_NAME,
-		0,
-		NULL
-	},
-
-	i2c_elan_init_device,
-	i2c_elan_uninit_device,
-	NULL,
-
-	i2c_elan_open,
-	i2c_elan_close,
-	i2c_elan_free,
-	i2c_elan_read,
-	i2c_elan_write,
-	NULL,
-	i2c_elan_control,
-
-	NULL,
-	NULL
-};
-
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
-	{}
-};
-
-
-module_info *modules[] = {
-	(module_info *)&i2c_elan_driver_module,
-	(module_info *)&i2c_elan_device_module,
+module_info* modules[] = {
+	(module_info*)&i2c_elan_driver_module,
 	NULL
 };

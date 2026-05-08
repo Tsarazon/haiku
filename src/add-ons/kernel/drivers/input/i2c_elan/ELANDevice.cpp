@@ -3,12 +3,12 @@
  * Copyright 2008-2011, Michael Lotz <mmlr@mlotz.ch>
  * Copyright 2020, 2022 Vladimir Kondratyev <wulf@FreeBSD.org>
  * Copyright 2023 Vladimir Serbinenko <phcoder@gmail.com>
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT license.
  */
 
 
 //!	Driver for I2C Elan Devices.
-// Partially based on FreeBSD ietp driver
 
 
 #include "Driver.h"
@@ -34,8 +34,7 @@
 #define	IETP_CTRL_ABSOLUTE	0x0001
 #define	IETP_CTRL_STANDARD	0x0000
 
-ELANDevice::ELANDevice(device_node* parent, i2c_device_interface* i2c,
-	i2c_device i2cCookie)
+ELANDevice::ELANDevice(i2c_device_interface* i2c, void* i2cCookie)
 	:	fStatus(B_NO_INIT),
 		fTransferLastschedule(0),
 		fTransferScheduled(0),
@@ -44,11 +43,10 @@ ELANDevice::ELANDevice(device_node* parent, i2c_device_interface* i2c,
 		fPublishPath(nullptr),
 		fReportID(0x5d),
 		fHighPrecision(false),
-		fParent(parent),
 		fI2C(i2c),
 		fI2CCookie(i2cCookie),
 		fLastButtons(0),
- 		fClickCount(0),
+		fClickCount(0),
 		fLastClickTime(0),
 		fClickSpeed(250000),
 		fReportStatus(B_NO_INIT),
@@ -58,7 +56,6 @@ ELANDevice::ELANDevice(device_node* parent, i2c_device_interface* i2c,
 	fConditionVariable.Init(this, "elan report");
 
 	uint16 descriptorAddress = 1;
-	// fetch HID descriptor
 	CALLED();
 	fStatus = _FetchBuffer((uint8*)&descriptorAddress,
 		sizeof(descriptorAddress), &fDescriptor, sizeof(fDescriptor));
@@ -95,7 +92,8 @@ ELANDevice::ELANDevice(device_node* parent, i2c_device_interface* i2c,
 	fHardwareSpecs.realMaxPressure = 50;
 	fHardwareSpecs.maxPressure = 255;
 
-	TRACE("Dimensions %dx%d\n", fHardwareSpecs.areaEndX, fHardwareSpecs.areaEndY);
+	TRACE("Dimensions %dx%d\n", fHardwareSpecs.areaEndX,
+		fHardwareSpecs.areaEndY);
 
 	fStatus = B_OK;
 }
@@ -111,7 +109,6 @@ ELANDevice::Open(uint32 flags)
 {
 	atomic_add(&fOpenCount, 1);
 	_Reset();
-
 	return B_OK;
 }
 
@@ -121,7 +118,6 @@ ELANDevice::Close()
 {
 	atomic_add(&fOpenCount, -1);
 	_SetPower(I2C_HID_POWER_OFF);
-
 	return B_OK;
 }
 
@@ -139,40 +135,37 @@ ELANDevice::_MaybeScheduleTransfer(int type, int id, int reportSize)
 	if (fRemoved)
 		return ENODEV;
 
-	if (atomic_get_and_set(&fTransferScheduled, 1) != 0) {
-		// someone else already caused a transfer to be scheduled
+	if (atomic_get_and_set(&fTransferScheduled, 1) != 0)
 		return B_OK;
-	}
 
 	snooze_until(fTransferLastschedule, B_SYSTEM_TIMEBASE);
 	fTransferLastschedule = system_time() + 10000;
 
-	TRACE("scheduling interrupt transfer of %u bytes\n",
-		reportSize);
+	TRACE("scheduling interrupt transfer of %u bytes\n", reportSize);
 	return _FetchReport(type, id, reportSize);
 }
 
+
 void
-ELANDevice::SetPublishPath(char *publishPath)
+ELANDevice::SetPublishPath(char* publishPath)
 {
 	free(fPublishPath);
 	fPublishPath = publishPath;
 }
 
+
 status_t
-ELANDevice::Control(uint32 op, void *buffer,
-	size_t length)
+ELANDevice::Control(uint32 op, void* buffer, size_t length)
 {
 	switch (op) {
-
 		case B_GET_DEVICE_NAME:
 		{
 			if (!IS_USER_ADDRESS(buffer))
 				return B_BAD_ADDRESS;
-
-			if (user_strlcpy((char *)buffer, "Elantech I2C touchpad", length) > 0)
+			if (user_strlcpy((char*)buffer, "Elantech I2C touchpad",
+				length) > 0) {
 				return B_OK;
-
+			}
 			return B_ERROR;
 		}
 
@@ -180,7 +173,8 @@ ELANDevice::Control(uint32 op, void *buffer,
 			TRACE("ELANTECH: MS_IS_TOUCHPAD\n");
 			if (buffer == NULL)
 				return B_OK;
-			return user_memcpy(buffer, &fHardwareSpecs, sizeof(fHardwareSpecs));
+			return user_memcpy(buffer, &fHardwareSpecs,
+				sizeof(fHardwareSpecs));
 
 		case MS_READ_TOUCHPAD:
 		{
@@ -189,9 +183,11 @@ ELANDevice::Control(uint32 op, void *buffer,
 			if (length < sizeof(touchpad_read))
 				return B_BUFFER_OVERFLOW;
 
-			if (user_memcpy(&read.timeout, &(((touchpad_read*)buffer)->timeout),
-					sizeof(bigtime_t)) != B_OK)
+			if (user_memcpy(&read.timeout,
+				&(((touchpad_read*)buffer)->timeout),
+				sizeof(bigtime_t)) != B_OK) {
 				return B_BAD_ADDRESS;
+			}
 
 			read.event = MS_READ_TOUCHPAD;
 
@@ -211,7 +207,6 @@ ELANDevice::Control(uint32 op, void *buffer,
 				}
 
 				TRACE("Returning MS_READ_TOUCHPAD: %x\n", result);
-
 				return result;
 			}
 		}
@@ -224,7 +219,8 @@ ELANDevice::Control(uint32 op, void *buffer,
 status_t
 ELANDevice::_SetAbsoluteMode(bool enable)
 {
-	return _WriteRegister(IETP_CONTROL, enable ? IETP_CTRL_ABSOLUTE : IETP_CTRL_STANDARD);
+	return _WriteRegister(IETP_CONTROL,
+		enable ? IETP_CTRL_ABSOLUTE : IETP_CTRL_STANDARD);
 }
 
 
@@ -260,7 +256,8 @@ ELANDevice::_WaitForReport(bigtime_t timeout)
 
 
 status_t
-ELANDevice::_ReadAndParseReport(touchpad_movement *info, bigtime_t timeout, int &zero_report_count)
+ELANDevice::_ReadAndParseReport(touchpad_movement* info, bigtime_t timeout,
+	int& zero_report_count)
 {
 	CALLED();
 	status_t result = _WaitForReport(timeout);
@@ -269,19 +266,13 @@ ELANDevice::_ReadAndParseReport(touchpad_movement *info, bigtime_t timeout, int 
 			TRACE("device has been removed\n");
 			return B_DEV_NOT_READY;
 		}
-
 		if (result == B_INTERRUPTED)
 			return result;
-
-		if (result != B_BUSY) {
-			// "busy" happens when other reports come in on the same input as ours
-			TRACE_ALWAYS("error waiting for report: %s\n", strerror(result));
-		}
-
+		if (result != B_BUSY)
+			TRACE_ALWAYS("error waiting for report: %s\n",
+				strerror(result));
 		if (result == B_TIMED_OUT)
 			return result;
-
-		// signal that we simply want to try again
 		return B_BUSY;
 	}
 
@@ -292,7 +283,8 @@ ELANDevice::_ReadAndParseReport(touchpad_movement *info, bigtime_t timeout, int 
 
 	uint8 report_copy[TRANSFER_BUFFER_SIZE];
 	memset(report_copy, 0, TRANSFER_BUFFER_SIZE);
-	memcpy(report_copy, fCurrentReport, MIN(TRANSFER_BUFFER_SIZE, fCurrentReportLength));
+	memcpy(report_copy, fCurrentReport,
+		MIN(TRANSFER_BUFFER_SIZE, fCurrentReportLength));
 	atomic_add(&fBusyCount, -1);
 
 	memset(info, 0, sizeof(*info));
@@ -304,37 +296,38 @@ ELANDevice::_ReadAndParseReport(touchpad_movement *info, bigtime_t timeout, int 
 	uint8 fingers = (report_copy[0] >> 3) & 0x1f;
 	info->fingers = fingers;
 	TRACE("buttons=%x, fingers=%x\n", info->buttons, fingers);
-	const uint8 *fingerData = fCurrentReport + 1;
+
+	const uint8* fingerData = fCurrentReport + 1;
 	int fingerCount = 0;
 	int sumx = 0, sumy = 0, sumz = 0, sumw = 0;
-	for (int finger = 0; finger < 5; finger++, fingerData += 5)
-		if (fingers & (1 << finger)) {
-			TRACE("finger %d:\n", finger);
-			uint8 wh;
-			int x, y, w;
-			if (fHighPrecision) {
-				x = fingerData[0] << 8 | fingerData[1];
-				y = fingerData[2] << 8 | fingerData[3];
-				wh = report_copy[30 + finger];
-			} else {
-				x = (fingerData[0] & 0xf0) << 4 | fingerData[1];
-				y = (fingerData[0] & 0x0f) << 8 | fingerData[2];
-				wh = fingerData[3];
-			}
-
-			int z = fingerData[4];
-
-			w = MAX((wh >> 4) & 0xf, wh & 0xf);
-
-			sumw += w;
-			sumx += x;
-			sumy += y;
-			sumz += z;
-
-			TRACE("x=%d, y=%d, z=%d, w=%d, wh=0x%x\n", x, y, z, w, wh);
-
-			fingerCount++;
+	for (int finger = 0; finger < 5; finger++, fingerData += 5) {
+		if (!(fingers & (1 << finger)))
+			continue;
+		TRACE("finger %d:\n", finger);
+		uint8 wh;
+		int x, y, w;
+		if (fHighPrecision) {
+			x = fingerData[0] << 8 | fingerData[1];
+			y = fingerData[2] << 8 | fingerData[3];
+			wh = report_copy[30 + finger];
+		} else {
+			x = (fingerData[0] & 0xf0) << 4 | fingerData[1];
+			y = (fingerData[0] & 0x0f) << 8 | fingerData[2];
+			wh = fingerData[3];
 		}
+
+		int z = fingerData[4];
+		w = MAX((wh >> 4) & 0xf, wh & 0xf);
+
+		sumw += w;
+		sumx += x;
+		sumy += y;
+		sumz += z;
+
+		TRACE("x=%d, y=%d, z=%d, w=%d, wh=0x%x\n", x, y, z, w, wh);
+		fingerCount++;
+	}
+
 	if (fingerCount > 0) {
 		info->xPosition = sumx / fingerCount;
 		info->yPosition = sumy / fingerCount;
@@ -351,25 +344,21 @@ ELANDevice::_ReadAndParseReport(touchpad_movement *info, bigtime_t timeout, int 
 
 
 void
-ELANDevice::_UnstallCallback(void *cookie, status_t status, void *data,
+ELANDevice::_UnstallCallback(void* cookie, status_t status, void* data,
 	size_t actualLength)
 {
-	ELANDevice *device = (ELANDevice *)cookie;
-	if (status != B_OK) {
+	ELANDevice* device = (ELANDevice*)cookie;
+	if (status != B_OK)
 		TRACE_ALWAYS("Unable to unstall device: %s\n", strerror(status));
-	}
-
-	// Now report the original failure, since we're ready to retry
 	_TransferCallback(cookie, B_ERROR, device->fTransferBuffer, 0);
 }
 
 
 void
-ELANDevice::_TransferCallback(void *cookie, status_t status, void *data,
+ELANDevice::_TransferCallback(void* cookie, status_t status, void* data,
 	size_t actualLength)
 {
-	ELANDevice *device = (ELANDevice *)cookie;
-
+	ELANDevice* device = (ELANDevice*)cookie;
 	atomic_set(&device->fTransferScheduled, 0);
 	device->_SetReport(status, device->fTransferBuffer, actualLength);
 }
@@ -419,10 +408,11 @@ ELANDevice::_SetPower(uint8 power)
 
 
 status_t
-ELANDevice::_ReadRegister(uint16_t reg, size_t length, void *value)
+ELANDevice::_ReadRegister(uint16_t reg, size_t length, void* value)
 {
 	uint8_t cmd[2] = {
-		(uint8_t) (reg & 0xff), (uint8_t) ((reg >> 8) & 0xff) };
+		(uint8_t)(reg & 0xff), (uint8_t)((reg >> 8) & 0xff)
+	};
 	status_t status = _FetchBuffer(cmd, sizeof(cmd), fTransferBuffer,
 		length);
 	TRACE("Read register 0x%04x with value 0x%02x 0x%02x status=%d\n",
@@ -437,10 +427,12 @@ ELANDevice::_ReadRegister(uint16_t reg, size_t length, void *value)
 status_t
 ELANDevice::_WriteRegister(uint16_t reg, uint16_t value)
 {
-	uint8_t cmd[4] = { (uint8_t) (reg & 0xff),
-		(uint8_t) ((reg >> 8) & 0xff),
-		(uint8_t) (value & 0xff),
-		(uint8_t) ((value >> 8) & 0xff) };
+	uint8_t cmd[4] = {
+		(uint8_t)(reg & 0xff),
+		(uint8_t)((reg >> 8) & 0xff),
+		(uint8_t)(value & 0xff),
+		(uint8_t)((value >> 8) & 0xff)
+	};
 	TRACE("Write register 0x%04x with value 0x%04x\n", reg, value);
 	status_t status = _FetchBuffer(cmd, sizeof(cmd), fTransferBuffer, 0);
 	TRACE("status=%d\n", status);
@@ -497,7 +489,7 @@ ELANDevice::_FetchReport(uint8 type, uint8 id, size_t reportSize)
 
 
 void
-ELANDevice::_SetReport(status_t status, uint8 *report, size_t length)
+ELANDevice::_SetReport(status_t status, uint8* report, size_t length)
 {
 	if (status != B_OK) {
 		report = NULL;
@@ -522,7 +514,8 @@ ELANDevice::_SetReport(status_t status, uint8 *report, size_t length)
 	fCurrentReportLength = length;
 	memset(fCurrentReport, 0, sizeof(fCurrentReport));
 	if (report && status == B_OK)
-		memcpy(fCurrentReport, report, MIN(sizeof(fCurrentReport), length));
+		memcpy(fCurrentReport, report,
+			MIN(sizeof(fCurrentReport), length));
 	fConditionVariable.NotifyAll();
 }
 
@@ -537,14 +530,14 @@ ELANDevice::_FetchBuffer(uint8* cmd, size_t cmdLength, void* buffer,
 
 
 status_t
-ELANDevice::_ExecCommand(i2c_op op, uint8* cmd, size_t cmdLength, void* buffer,
-	size_t bufferLength)
+ELANDevice::_ExecCommand(i2c_op op, uint8* cmd, size_t cmdLength,
+	void* buffer, size_t bufferLength)
 {
 	status_t status = fI2C->acquire_bus(fI2CCookie);
 	if (status != B_OK)
 		return status;
-	status = fI2C->exec_command(fI2CCookie, I2C_OP_READ_STOP, cmd, cmdLength,
-		buffer, bufferLength);
+	status = fI2C->exec_command(fI2CCookie, I2C_OP_READ_STOP, cmd,
+		cmdLength, buffer, bufferLength);
 	fI2C->release_bus(fI2CCookie);
 	return status;
 }

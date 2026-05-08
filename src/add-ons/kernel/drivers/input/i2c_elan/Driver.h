@@ -1,6 +1,7 @@
 /*
 	Driver for I2C Human Interface Devices.
 	Copyright (C) 2008 Michael Lotz <mmlr@mlotz.ch>
+	Copyright 2025, KosmOS Project.
 	Distributed under the terms of the MIT license.
 */
 #ifndef _I2C_ELAN_DRIVER_H_
