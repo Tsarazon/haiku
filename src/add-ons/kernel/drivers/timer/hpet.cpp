@@ -9,11 +9,10 @@
 #include "int.h"
 #include "msi.h"
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <ACPI.h>
-#include <bus/PCI.h>
 
 #include <malloc.h>
 #include <stdio.h>
@@ -32,20 +31,19 @@
 #define HPET64 0
 
 
-#define HPET_DRIVER_MODULE_NAME "drivers/timer/hpet/driver_v1"
-#define HPET_DEVICE_MODULE_NAME "drivers/timer/hpet/device_v1"
+#define HPET_DRIVER_MODULE_NAME "drivers/timer/hpet/dk_driver_v1"
 #define HPET_DEVICE_ID_GENERATOR "hpet/device_id"
 
 // HPET ACPI hardware ID
 #define HPET_ACPI_HID "PNP0103"
 
 
-static struct hpet_regs *sHPETRegs;
-static uint64 sHPETPeriod;
+static struct hpet_regs *sHPETRegs = NULL;
+static uint64 sHPETPeriod = 0;
 
-static area_id sHPETArea;
+static area_id sHPETArea = -1;
 static acpi_module_info* sAcpi;
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static int32 sOpenCount;
 
 
@@ -57,7 +55,7 @@ struct hpet_timer_cookie {
 };
 
 typedef struct {
-	device_node*	node;
+	dk_node*	node;
 } hpet_driver_info;
 
 
@@ -449,24 +447,41 @@ hpet_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - dk_device_ops / dk_driver_info
+
+
+static dk_device_ops sHpetDeviceOps = {
+	hpet_open,
+	hpet_close,
+	hpet_free,
+	hpet_read,
+	hpet_write,
+	NULL,	// io
+	hpet_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+static const dk_match_rule sHpetMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" } },
+	{}
+};
+
+static const dk_match_dict sHpetMatchDict = {
+	sHpetMatchRules,
+	0
+};
 
 
 static float
-hpet_supports_device(device_node *parent)
+hpet_probe(dk_node *node)
 {
-	const char *bus;
-
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "acpi"))
-		return 0.0;
-
 	// match HPET ACPI device (PNP0103)
-	const char *hid;
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &hid,
-			false) != B_OK || strcmp(hid, HPET_ACPI_HID)) {
+	char hid[32];
+	if (sDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_HID, hid,
+			sizeof(hid), NULL, false) != B_OK || strcmp(hid, HPET_ACPI_HID)) {
 		return 0.0;
 	}
 
@@ -476,38 +491,15 @@ hpet_supports_device(device_node *parent)
 
 
 static status_t
-hpet_register_device(device_node *node)
+hpet_attach(dk_node *node, void **cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "HPET Timer"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, HPET_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-hpet_init_driver(device_node *node, void **cookie)
-{
-	TRACE(("hpet_init_driver()\n"));
-
-	sOpenCount = 0;
-
-	// get ACPI module for table lookup
-	status_t status = get_module(B_ACPI_MODULE_NAME, (module_info**)&sAcpi);
-	if (status < B_OK)
-		return status;
+	TRACE(("hpet_attach()\n"));
 
 	acpi_hpet *hpetTable;
-	status = sAcpi->get_table(ACPI_HPET_SIGNATURE, 0,
+	status_t status = sAcpi->get_table(ACPI_HPET_SIGNATURE, 0,
 		(void**)&hpetTable);
-
-	if (status != B_OK) {
-		put_module(B_ACPI_MODULE_NAME);
+	if (status != B_OK)
 		return status;
-	}
 
 	sHPETArea = map_physical_memory("HPET registries",
 		hpetTable->hpet_address.address,
@@ -516,15 +508,18 @@ hpet_init_driver(device_node *node, void **cookie)
 		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
 		(void**)&sHPETRegs);
 
-	if (sHPETArea < 0) {
-		put_module(B_ACPI_MODULE_NAME);
+	if (sHPETArea < 0)
 		return sHPETArea;
-	}
 
 	status = hpet_init();
 	if (status != B_OK) {
+		// hpet_init may have enabled the counter before failing
+		// (e.g. hpet_test after hpet_set_enabled(true)).
+		hpet_set_enabled(false);
 		delete_area(sHPETArea);
-		put_module(B_ACPI_MODULE_NAME);
+		sHPETArea = -1;
+		sHPETRegs = NULL;
+		sHPETPeriod = 0;
 		return status;
 	}
 
@@ -533,108 +528,77 @@ hpet_init_driver(device_node *node, void **cookie)
 	if (info == NULL) {
 		hpet_set_enabled(false);
 		delete_area(sHPETArea);
-		put_module(B_ACPI_MODULE_NAME);
+		sHPETArea = -1;
+		sHPETRegs = NULL;
+		sHPETPeriod = 0;
 		return B_NO_MEMORY;
 	}
 
 	info->node = node;
+
+	// Publish device (must be last: must not leave devfs entry pointing
+	// at a partially-initialised driver on error).
+	status = sDeviceKeeper->publish_device(node, "misc/hpet",
+		&sHpetDeviceOps);
+	if (status != B_OK) {
+		free(info);
+		hpet_set_enabled(false);
+		delete_area(sHPETArea);
+		sHPETArea = -1;
+		sHPETRegs = NULL;
+		sHPETPeriod = 0;
+		return status;
+	}
+
 	*cookie = info;
 	return B_OK;
 }
 
 
 static void
-hpet_uninit_driver(void *_cookie)
+hpet_detach(void *_cookie)
 {
-	TRACE(("hpet_uninit_driver()\n"));
+	TRACE(("hpet_detach()\n"));
 	hpet_driver_info *info = (hpet_driver_info *)_cookie;
+
+	// Unpublish the devfs entry first so that no new opens can find
+	// sHpetDeviceOps after we tear down sHPETRegs below. Existing opens
+	// must already be closed by the devfs layer before detach is called.
+	sDeviceKeeper->unpublish_device(info->node, "misc/hpet");
 
 	hpet_set_enabled(false);
 
-	if (sHPETArea > 0)
+	if (sHPETArea >= B_OK) {
 		delete_area(sHPETArea);
+		sHPETArea = -1;
+	}
+	sHPETRegs = NULL;
+	sHPETPeriod = 0;
 
-	put_module(B_ACPI_MODULE_NAME);
 	free(info);
 }
 
 
-static status_t
-hpet_register_child_devices(void *_cookie)
-{
-	hpet_driver_info *info = (hpet_driver_info *)_cookie;
-
-	return sDeviceManager->publish_device(info->node, "misc/hpet",
-		HPET_DEVICE_MODULE_NAME);
-}
-
-
-//	#pragma mark - device init/uninit
-
-
-static status_t
-hpet_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-hpet_uninit_device(void *_cookie)
-{
-}
-
-
-//	#pragma mark -
-
-
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
+	{ B_ACPI_MODULE_NAME, (module_info **)&sAcpi },
 	{ NULL }
 };
 
-struct device_module_info sHpetDevice = {
-	{
-		HPET_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	hpet_init_device,
-	hpet_uninit_device,
-	NULL,	// device_removed
-
-	hpet_open,
-	hpet_close,
-	hpet_free,
-	hpet_read,
-	hpet_write,
-	NULL,	// io
-	hpet_control,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sHpetDriver = {
-	{
+struct dk_driver_info sHpetDriver = {
+	.info = {
 		HPET_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	hpet_supports_device,
-	hpet_register_device,
-	hpet_init_driver,
-	hpet_uninit_driver,
-	hpet_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match	= &sHpetMatchDict,
+	.probe	= hpet_probe,
+	.attach	= hpet_attach,
+	.detach	= hpet_detach,
+	.ops	= &sHpetDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sHpetDriver,
-	(module_info *)&sHpetDevice,
 	NULL
 };
