@@ -18,77 +18,6 @@
 #include <string.h>
 
 
-/**	new scsi controller added
- *	in return, we register a new scsi bus node and let its fixed
- *	consumer (the SCSI device layer) automatically scan it for devices
- */
-
-static status_t
-scsi_controller_added(device_node *parent)
-{
-	const char *controller_name;
-	int32 pathID;
-
-	SHOW_FLOW0(4, "");
-
-	if (pnp->get_attr_string(parent, SCSI_DESCRIPTION_CONTROLLER_NAME,
-			&controller_name, false) != B_OK) {
-		dprintf("scsi: ignored controller - controller name missing\n");
-		return B_ERROR;
-	}
-
-	pathID = pnp->create_id(SCSI_PATHID_GENERATOR);
-	if (pathID < 0) {
-		dprintf("scsi: Cannot register SCSI controller %s - out of path IDs\n",
-			controller_name);
-		return B_ERROR;
-	}
-
-	if (pathID > MAX_PATH_ID) {
-		dprintf("scsi: Cannot register SCSI controller %s - path ID %"
-			B_PRId32 " exceeds maximum %d\n", controller_name, pathID,
-			MAX_PATH_ID);
-		pnp->free_id(SCSI_PATHID_GENERATOR, pathID);
-		return B_ERROR;
-	}
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = "SCSI Controller" }},
-
-		{ SCSI_BUS_PATH_ID_ITEM, B_UINT8_TYPE, { .ui8 = (uint8)pathID }},
-		{}
-	};
-
-	return pnp->register_node(parent, SCSI_BUS_MODULE_NAME, attrs, NULL,
-		NULL);
-}
-
-
-static status_t
-scsi_controller_init(device_node *node, void **_cookie)
-{
-	*_cookie = node;
-	return B_OK;
-}
-
-
-static status_t
-scsi_controller_register_raw_device(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-	uint8 pathID;
-
-	if (pnp->get_attr_uint8(node, SCSI_BUS_PATH_ID_ITEM, &pathID, false) != B_OK)
-		return B_ERROR;
-
-	char name[64];
-	snprintf(name, sizeof(name), "bus/scsi/%d/bus_raw", pathID);
-
-	return pnp->publish_device(node, name, SCSI_BUS_RAW_MODULE_NAME);
-}
-
-
 static status_t
 std_ops(int32 op, ...)
 {
@@ -103,22 +32,15 @@ std_ops(int32 op, ...)
 }
 
 
-scsi_for_sim_interface scsi_for_sim_module =
-{
+// Plain kernel module retrieved by SCSI SIM drivers (ahci_sim,
+// virtio_scsi_sim, usb_scsi) via get_module(SCSI_FOR_SIM_MODULE_NAME).
+// Provides callbacks: requeue/resubmit/finished + dpc + bus/device
+// blocking primitives used by the SIM side of the SCSI bus.
+scsi_for_sim_interface scsi_for_sim_module = {
 	{
-		{
-			SCSI_FOR_SIM_MODULE_NAME,
-			0,
-			std_ops
-		},
-
-		NULL,	// supported devices
-		scsi_controller_added,
-		scsi_controller_init,
-		NULL,	// uninit
-		scsi_controller_register_raw_device,
-		NULL,	// rescan
-		NULL,	// removed
+		SCSI_FOR_SIM_MODULE_NAME,
+		0,
+		std_ops
 	},
 
 	scsi_requeue_request,

@@ -97,7 +97,7 @@
 
 #ifdef _KERNEL_MODE
 #include <condition_variable.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #endif
 
 
@@ -291,10 +291,13 @@ typedef struct {
 // directory containing links to peripheral drivers
 #define SCSI_PERIPHERAL_DRIVERS_DIR "scsi"
 
+// Bus interface name for publish_interface/get_interface. Published by
+// the SCSI bus manager on each scsi device node; peripheral drivers
+// retrieve it via gDeviceKeeper->get_interface(node, NAME, ...).
+#define SCSI_DEVICE_INTERFACE_NAME	"interface/scsi/device/v1"
+
 // bus manager device interface for peripheral driver
 typedef struct scsi_device_interface {
-	driver_module_info info;
-
 	scsi_ccb *(*alloc_ccb)(scsi_device device);
 	void (*free_ccb)(scsi_ccb *ccb);
 
@@ -316,7 +319,7 @@ typedef struct scsi_device_interface {
 	status_t (*ioctl)(scsi_device device, uint32 op, void *buffer, size_t length);
 } scsi_device_interface;
 
-#define SCSI_DEVICE_MODULE_NAME "bus_managers/scsi/device/driver_v1"
+#define SCSI_DEVICE_MODULE_NAME "bus_managers/scsi/device/dk_driver_v1"
 
 
 // Bus node
@@ -328,12 +331,13 @@ typedef struct scsi_device_interface {
 // node type
 #define SCSI_BUS_TYPE_NAME "scsi/bus"
 
+// Bus interface name for publish_interface/get_interface.
+#define SCSI_BUS_INTERFACE_NAME	"interface/scsi/bus/v1"
+
 // SCSI bus node driver.
 // This interface can be used by peripheral drivers to access the
 // bus directly.
 typedef struct scsi_bus_interface {
-	driver_module_info info;
-
 	// get information about host controller
 	uchar (*path_inquiry)(scsi_bus bus, scsi_path_inquiry *inquiry_data);
 	// reset SCSI bus
@@ -341,7 +345,7 @@ typedef struct scsi_bus_interface {
 } scsi_bus_interface;
 
 // name of SCSI bus node driver
-#define SCSI_BUS_MODULE_NAME "bus_managers/scsi/bus/driver_v1"
+#define SCSI_BUS_MODULE_NAME "bus_managers/scsi/bus/dk_driver_v1"
 
 
 // Interface for SIM
@@ -350,10 +354,10 @@ typedef struct scsi_bus_interface {
 typedef struct scsi_dpc_info *scsi_dpc_cookie;
 
 // Bus manager interface used by SCSI controller drivers.
-// SCSI controller drivers get this interface passed via their init_device
-// method. Further, they must specify this driver as their fixed consumer.
+// Plain kernel module retrieved via get_module() on
+// SCSI_FOR_SIM_MODULE_NAME. The module_info prefix makes it loadable.
 typedef struct scsi_for_sim_interface {
-	driver_module_info info;
+	module_info	info;
 
 	// put request into wait queue because of overflow
 	// bus_overflow: true - too many bus requests
@@ -400,7 +404,7 @@ typedef struct scsi_for_sim_interface {
 } scsi_for_sim_interface;
 
 
-#define SCSI_FOR_SIM_MODULE_NAME "bus_managers/scsi/sim/driver_v1"
+#define SCSI_FOR_SIM_MODULE_NAME "bus_managers/scsi/sim/v1"
 
 
 // SIM Node
@@ -414,11 +418,14 @@ typedef struct scsi_for_sim_interface {
 
 typedef void *scsi_sim_cookie;
 
+// Bus interface name for publish_interface/get_interface. SCSI controller
+// drivers (ahci_sim, virtio_scsi_sim, usb_scsi) publish this on their node;
+// the SCSI bus manager retrieves it via get_interface(node, NAME, ...).
+#define SCSI_SIM_INTERFACE_NAME	"interface/scsi/sim/v1"
+
 // SIM interface
 // SCSI controller drivers must provide this interface
 typedef struct scsi_sim_interface {
-	driver_module_info info;
-
 	void (*set_scsi_bus)(scsi_sim_cookie cookie, scsi_bus bus);
 
 	// execute request

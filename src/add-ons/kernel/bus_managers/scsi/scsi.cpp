@@ -5,17 +5,16 @@
 
 #include "scsi_internal.h"
 
-device_manager_info *pnp;
+dk_keeper_info *pnp;
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&pnp },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&pnp },
 	{}
 };
 
 module_info *modules[] = {
 	(module_info *)&scsi_for_sim_module,
-	(module_info *)&scsi_bus_module,
-	(module_info *)&scsi_device_module,
-	(module_info *)&gSCSIBusRawModule,
+	(module_info *)&gSCSIBusDriver,
+	(module_info *)&gSCSIDeviceDriver,
 	NULL
 };

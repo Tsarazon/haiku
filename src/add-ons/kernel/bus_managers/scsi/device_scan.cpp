@@ -229,9 +229,8 @@ scsi_scan_lun(scsi_bus_info *bus, uchar target_id, uchar target_lun)
 		if (scsi_force_get_device(bus, target_id, target_lun, &device) != B_OK)
 			return B_OK;
 		// the device was already registered, let's tell our child to rescan it
-		device_node *childNode = NULL;
-		const device_attr attrs[] = { { NULL } };
-		if (pnp->get_next_child_node(bus->node, attrs, &childNode) == B_OK) {
+		dk_node *childNode = NULL;
+		if (pnp->get_next_child_node(bus->node, NULL, &childNode) == B_OK) {
 			pnp->rescan_node(childNode);
 			pnp->put_node(childNode);
 		}

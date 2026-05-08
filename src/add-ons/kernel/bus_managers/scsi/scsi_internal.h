@@ -11,7 +11,7 @@
 
 #include <bus/SCSI.h>
 #include <scsi_cmds.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <lock.h>
 
 #define debug_level_error 4
@@ -59,7 +59,7 @@
 #define SCSI_DEVICE_MANUAL_AUTOSENSE_ITEM "scsi/manual_autosense"
 
 // name of internal scsi_bus_raw device driver
-#define SCSI_BUS_RAW_MODULE_NAME "bus_managers/scsi/bus/raw/device_v1"
+#define SCSI_BUS_RAW_MODULE_NAME "bus_managers/scsi/bus/raw/dk_driver_v1"
 
 // info about DPC
 typedef struct scsi_dpc_info {
@@ -109,7 +109,7 @@ typedef struct scsi_bus_info {
 
 	struct scsi_device_info *waiting_devices;	// devices ready to receive requests
 
-	device_node *node;		// pnp node of bus
+	dk_node *node;		// pnp node of bus
 
 	struct dma_params dma_params;	// dma restrictions of controller
 
@@ -173,7 +173,7 @@ typedef struct scsi_device_info {
 								// and thus must be emulated
 
 	scsi_res_inquiry inquiry_data;
-	device_node *node;	// device node
+	dk_node *node;	// device node
 
 	struct mutex dma_buffer_lock;	// lock between DMA buffer user and clean-up daemon
 	sem_id dma_buffer_owner;	// to be acquired before using DMA buffer
@@ -229,12 +229,15 @@ scsi_device_set_valid(scsi_device_info *device, bool valid)
 }
 
 
-extern device_manager_info *pnp;
+extern dk_keeper_info *pnp;
 
 extern scsi_for_sim_interface scsi_for_sim_module;
-extern scsi_bus_interface scsi_bus_module;
-extern scsi_device_interface scsi_device_module;
-extern struct device_module_info gSCSIBusRawModule;
+extern scsi_bus_interface scsi_bus_ops;
+extern scsi_device_interface scsi_device_ops;
+extern dk_device_ops gSCSIBusRawOps;
+
+extern struct dk_driver_info gSCSIBusDriver;
+extern struct dk_driver_info gSCSIDeviceDriver;
 
 
 __BEGIN_DECLS

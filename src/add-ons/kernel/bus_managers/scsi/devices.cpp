@@ -105,8 +105,8 @@ scsi_register_device(scsi_bus_info *bus, uchar target_id,
 	// find maximum transfer blocks
 	// set default value to max (need something like ULONG_MAX here)
 	orig_max_blocks = ~0;
-	pnp->get_attr_uint32(bus->node, B_DMA_MAX_TRANSFER_BLOCKS, &orig_max_blocks,
-		true);
+	pnp->get_property_uint32(bus->node, KOSM_DMA_MAX_TRANSFER_BLOCKS,
+		&orig_max_blocks, true);
 
 	max_blocks = std::min(max_blocks, orig_max_blocks);
 
@@ -114,37 +114,38 @@ scsi_register_device(scsi_bus_info *bus, uchar target_id,
 		char vendor_ident[sizeof( inquiry_data->vendor_ident ) + 1];
 		char product_ident[sizeof( inquiry_data->product_ident ) + 1];
 		char product_rev[sizeof( inquiry_data->product_rev ) + 1];
-		device_attr attrs[] = {
-			// connection
-			{ SCSI_DEVICE_TARGET_ID_ITEM, B_UINT8_TYPE, { .ui8 = target_id }},
-			{ SCSI_DEVICE_TARGET_LUN_ITEM, B_UINT8_TYPE, { .ui8 = target_lun }},
-
-			// inquiry data (used for both identification and information)
-			{ SCSI_DEVICE_INQUIRY_ITEM, B_RAW_TYPE,
-				{ .raw = { inquiry_data, sizeof( *inquiry_data ) }}},
-
-			// some more info for driver loading
-			{ SCSI_DEVICE_TYPE_ITEM, B_UINT8_TYPE, { .ui8 = inquiry_data->device_type }},
-			{ SCSI_DEVICE_VENDOR_ITEM, B_STRING_TYPE, { .string = vendor_ident }},
-			{ SCSI_DEVICE_PRODUCT_ITEM, B_STRING_TYPE, { .string = product_ident }},
-			{ SCSI_DEVICE_REVISION_ITEM, B_STRING_TYPE, { .string = product_rev }},
-
-			// description of peripheral drivers
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "scsi" }},
-
-			// extra restriction of maximum number of blocks per transfer
-			{ B_DMA_MAX_TRANSFER_BLOCKS, B_UINT32_TYPE, { .ui32 = max_blocks }},
-
-			// atapi emulation
-			{ SCSI_DEVICE_IS_ATAPI_ITEM, B_UINT8_TYPE, { .ui8 = is_atapi }},
-			// manual autosense
-			{ SCSI_DEVICE_MANUAL_AUTOSENSE_ITEM, B_UINT8_TYPE, { .ui8 = manual_autosense }},
-			{ NULL }
-		};
 
 		beautify_string(vendor_ident, inquiry_data->vendor_ident, sizeof(vendor_ident));
 		beautify_string(product_ident, inquiry_data->product_ident, sizeof(product_ident));
 		beautify_string(product_rev, inquiry_data->product_rev, sizeof(product_rev));
+
+		dk_property attrs[] = {
+			// connection
+			DK_PROP_UINT8(SCSI_DEVICE_TARGET_ID_ITEM, target_id),
+			DK_PROP_UINT8(SCSI_DEVICE_TARGET_LUN_ITEM, target_lun),
+
+			// inquiry data (used for both identification and information)
+			{ SCSI_DEVICE_INQUIRY_ITEM, B_RAW_TYPE,
+				{ .raw = { inquiry_data, sizeof(*inquiry_data) }}},
+
+			// some more info for driver loading
+			DK_PROP_UINT8(SCSI_DEVICE_TYPE_ITEM, inquiry_data->device_type),
+			DK_PROP_STRING(SCSI_DEVICE_VENDOR_ITEM, vendor_ident),
+			DK_PROP_STRING(SCSI_DEVICE_PRODUCT_ITEM, product_ident),
+			DK_PROP_STRING(SCSI_DEVICE_REVISION_ITEM, product_rev),
+
+			// description of peripheral drivers
+			DK_PROP_STRING(KOSM_DEVICE_BUS, "scsi"),
+
+			// extra restriction of maximum number of blocks per transfer
+			DK_PROP_UINT32(KOSM_DMA_MAX_TRANSFER_BLOCKS, max_blocks),
+
+			// atapi emulation
+			DK_PROP_UINT8(SCSI_DEVICE_IS_ATAPI_ITEM, is_atapi),
+			// manual autosense
+			DK_PROP_UINT8(SCSI_DEVICE_MANUAL_AUTOSENSE_ITEM, manual_autosense),
+			DK_PROP_END
+		};
 
 		return pnp->register_node(bus->node, SCSI_DEVICE_MODULE_NAME, attrs,
 			NULL, NULL);
@@ -154,7 +155,7 @@ scsi_register_device(scsi_bus_info *bus, uchar target_id,
 
 // create data structure for a device
 static scsi_device_info *
-scsi_create_device(device_node *node, scsi_bus_info *bus,
+scsi_create_device(dk_node *node, scsi_bus_info *bus,
 	int target_id, int target_lun)
 {
 	scsi_device_info *device;
@@ -274,10 +275,10 @@ err:
 #define SET_EMULATION_BIT(field, bit) field[(bit) >> 3] |= 1 << ((bit) & 7)
 
 static status_t
-scsi_init_device(device_node *node, void **cookie)
+scsi_device_attach(dk_node *node, void **cookie)
 {
-	const scsi_res_inquiry *inquiry_data = NULL;
-	uint8 target_id, target_lun, path_id;
+	scsi_res_inquiry inquiry_data;
+	uint8 target_id, target_lun;
 	scsi_bus_info *bus;
 	scsi_device_info *device;
 	status_t res;
@@ -286,32 +287,37 @@ scsi_init_device(device_node *node, void **cookie)
 
 	SHOW_FLOW0(3, "");
 
-	if (pnp->get_attr_uint8( node, SCSI_DEVICE_TARGET_ID_ITEM, &target_id, false) != B_OK
-		|| pnp->get_attr_uint8( node, SCSI_DEVICE_TARGET_LUN_ITEM, &target_lun, false) != B_OK
-		|| pnp->get_attr_uint8( node, SCSI_DEVICE_IS_ATAPI_ITEM, &is_atapi, false) != B_OK
-		|| pnp->get_attr_uint8( node, SCSI_DEVICE_MANUAL_AUTOSENSE_ITEM, &manual_autosense, false) != B_OK
-		|| pnp->get_attr_raw( node, SCSI_DEVICE_INQUIRY_ITEM,
-				(const void **)&inquiry_data, &inquiry_data_len, false) != B_OK
-		|| inquiry_data_len != sizeof(*inquiry_data)) {
+	if (pnp->get_property_uint8(node, SCSI_DEVICE_TARGET_ID_ITEM,
+			&target_id, false) != B_OK
+		|| pnp->get_property_uint8(node, SCSI_DEVICE_TARGET_LUN_ITEM,
+			&target_lun, false) != B_OK
+		|| pnp->get_property_uint8(node, SCSI_DEVICE_IS_ATAPI_ITEM,
+			&is_atapi, false) != B_OK
+		|| pnp->get_property_uint8(node, SCSI_DEVICE_MANUAL_AUTOSENSE_ITEM,
+			&manual_autosense, false) != B_OK
+		|| pnp->get_property_raw(node, SCSI_DEVICE_INQUIRY_ITEM,
+				&inquiry_data, sizeof(inquiry_data), &inquiry_data_len,
+				false) != B_OK
+		|| inquiry_data_len != sizeof(inquiry_data)) {
 		return B_ERROR;
 	}
 
-	{
-		device_node *parent = pnp->get_parent_node(node);
-		pnp->get_driver(parent, NULL, (void **)&bus);
-		pnp->put_node(parent);
+	// Retrieve the scsi bus via the interface it published on its node
+	// (our parent — scsi_bus_node). The bus manager stores the bus
+	// pointer as its driver cookie which is returned as the interface
+	// cookie.
+	scsi_bus_interface *busOps;
+	if (pnp->get_interface(node, SCSI_BUS_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void **)&busOps, (void **)&bus) != B_OK) {
+		return B_ERROR;
 	}
 
 	device = scsi_create_device(node, bus, target_id, target_lun);
 	if (device == NULL)
 		return B_NO_MEMORY;
 
-	// never mind if there is no path - it might be an emulated controller
-	path_id = (uint8)-1;
-
-	pnp->get_attr_uint8(node, SCSI_BUS_PATH_ID_ITEM, &path_id, true);
-
-	device->inquiry_data = *inquiry_data;
+	device->inquiry_data = inquiry_data;
 
 	// save restrictions
 	device->is_atapi = is_atapi;
@@ -366,14 +372,17 @@ err:
 
 
 static void
-scsi_uninit_device(scsi_device_info *device)
+scsi_device_detach(void *cookie)
 {
 	SHOW_FLOW0(3, "");
-
+	scsi_device_info *device = (scsi_device_info *)cookie;
 	scsi_free_device(device);
 }
 
 
+#if 0
+// TODO: wire to dk_device_ops::device_removed when SCSI devices get
+// their own dk_device_ops. Currently unused.
 static void
 scsi_device_removed(scsi_device_info *device)
 {
@@ -385,6 +394,7 @@ scsi_device_removed(scsi_device_info *device)
 	// atomically mark device as invalid for cross-CPU visibility
 	scsi_device_set_valid(device, false);
 }
+#endif
 
 
 /**	get device info; create a temporary one if it's not registered
@@ -396,14 +406,14 @@ status_t
 scsi_force_get_device(scsi_bus_info *bus, uchar target_id,
 	uchar target_lun, scsi_device_info **res_device)
 {
-	device_attr attrs[] = {
-		{ SCSI_DEVICE_TARGET_ID_ITEM, B_UINT8_TYPE, { .ui8 = target_id }},
-		{ SCSI_DEVICE_TARGET_LUN_ITEM, B_UINT8_TYPE, { .ui8 = target_lun }},
-		{ NULL }
+	dk_match_rule attrs[] = {
+		DK_MATCH_UINT8(SCSI_DEVICE_TARGET_ID_ITEM, target_id),
+		DK_MATCH_UINT8(SCSI_DEVICE_TARGET_LUN_ITEM, target_lun),
+		DK_MATCH_END
 	};
-	device_node *node;
+	dk_node *node;
 	status_t res;
-	driver_module_info *driver_interface;
+	dk_driver_info *driver_interface;
 	scsi_device device;
 
 	SHOW_FLOW0(3, "");
@@ -420,7 +430,7 @@ scsi_force_get_device(scsi_bus_info *bus, uchar target_id,
 	if (node != NULL) {
 		// TODO: have a second look a this one!
 		// there is one - get it
-		res = pnp->get_driver(node, &driver_interface, (void **)&device);
+		res = pnp->get_node_driver(node, &driver_interface, (void **)&device);
 		if (res != B_OK)
 			pnp->put_node(node);
 	} else {
@@ -510,23 +520,28 @@ std_ops(int32 op, ...)
 }
 
 
-scsi_device_interface scsi_device_module = {
-	{
-		{
-			SCSI_DEVICE_MODULE_NAME,
-			0,
-			std_ops
-		},
+// Attach wrapper that also publishes the scsi_device_interface so
+// peripheral drivers (scsi_disk, scsi_cd) can retrieve it via
+// get_interface walk-up to this node.
+static status_t
+scsi_device_attach_publish(dk_node *node, void **cookie)
+{
+	status_t status = scsi_device_attach(node, cookie);
+	if (status != B_OK)
+		return status;
 
-		NULL,	// supported devices
-		NULL,	// register node
-		scsi_init_device,
-		(void (*)(void *)) scsi_uninit_device,
-		NULL,	// register child devices
-		NULL,	// rescan
-		(void (*)(void *)) scsi_device_removed
-	},
+	status = pnp->publish_interface(node, SCSI_DEVICE_INTERFACE_NAME,
+		&scsi_device_ops);
+	if (status != B_OK) {
+		scsi_device_detach(*cookie);
+		return status;
+	}
+	return B_OK;
+}
 
+
+// Plain scsi_device_interface published on each scsi device node.
+scsi_device_interface scsi_device_ops = {
 	scsi_alloc_ccb,
 	scsi_free_ccb,
 
@@ -536,4 +551,15 @@ scsi_device_interface scsi_device_module = {
 	scsi_reset_device,
 	scsi_term_io,
 	scsi_ioctl,
+};
+
+
+// Each SCSI device node gets this driver attached via auto-attach by
+// module name (register_node was called with SCSI_DEVICE_MODULE_NAME
+// in scsi_register_device).
+struct dk_driver_info gSCSIDeviceDriver = {
+	.info		= { SCSI_DEVICE_MODULE_NAME, 0, std_ops },
+	.attach		= scsi_device_attach_publish,
+	.detach		= scsi_device_detach,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };

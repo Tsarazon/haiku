@@ -86,7 +86,7 @@ typedef struct scsi_periph_interface {
 	// preferred_ccb_size - preferred command size; if zero, the shortest is used
 	status_t (*register_device)(periph_device_cookie cookie,
 		scsi_periph_callbacks *callbacks, scsi_device scsiDevice,
-		scsi_device_interface *scsi, device_node *node, bool removable,
+		scsi_device_interface *scsi, dk_node *node, bool removable,
 		int preferredCcbSize, scsi_periph_device *driver);
 	status_t (*unregister_device)(scsi_periph_device driver);
 
@@ -143,9 +143,9 @@ typedef struct scsi_periph_interface {
 
 	// compose device name consisting of prefix and path/target/LUN
 	// (result must be freed by caller)
-	char *(*compose_device_name)(device_node *device_node, const char *prefix);
+	char *(*compose_device_name)(dk_node *node, const char *prefix);
 } scsi_periph_interface;
 
-#define SCSI_PERIPH_MODULE_NAME "generic/scsi_periph/v1"
+#define SCSI_PERIPH_MODULE_NAME "generic/scsi_periph/dk_driver_v1"
 
 #endif	/* _SCSI_PERIPH_H */

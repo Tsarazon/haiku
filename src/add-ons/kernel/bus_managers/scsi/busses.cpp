@@ -16,6 +16,7 @@
 
 #include "scsi_internal.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <malloc.h>
 
@@ -84,7 +85,7 @@ scsi_service_threadproc(void *arg)
 
 
 static scsi_bus_info *
-scsi_create_bus(device_node *node, uint8 path_id)
+scsi_create_bus(dk_node *node, uint8 path_id)
 {
 	scsi_bus_info *bus;
 	int res;
@@ -99,9 +100,11 @@ scsi_create_bus(device_node *node, uint8 path_id)
 
 	bus->path_id = path_id;
 
-	if (pnp->get_attr_uint32(node, SCSI_DEVICE_MAX_TARGET_COUNT, &bus->max_target_count, true) != B_OK)
+	if (pnp->get_property_uint32(node, SCSI_DEVICE_MAX_TARGET_COUNT,
+			&bus->max_target_count, true) != B_OK)
 		bus->max_target_count = MAX_TARGET_ID + 1;
-	if (pnp->get_attr_uint32(node, SCSI_DEVICE_MAX_LUN_COUNT, &bus->max_lun_count, true) != B_OK)
+	if (pnp->get_property_uint32(node, SCSI_DEVICE_MAX_LUN_COUNT,
+			&bus->max_lun_count, true) != B_OK)
 		bus->max_lun_count = MAX_LUN_ID + 1;
 
 	// our scsi_ccb only has a uchar for target_id
@@ -177,38 +180,50 @@ scsi_destroy_bus(scsi_bus_info *bus)
 
 
 static status_t
-scsi_init_bus(device_node *node, void **cookie)
+scsi_bus_attach(dk_node *node, void **cookie)
 {
-	uint8 path_id;
 	scsi_bus_info *bus;
 	status_t res;
 
 	SHOW_FLOW0( 3, "" );
 
-	if (pnp->get_attr_uint8(node, SCSI_BUS_PATH_ID_ITEM, &path_id, false) != B_OK)
+	// Allocate SCSI path id for this bus.
+	int32 pathID = pnp->create_id(SCSI_PATHID_GENERATOR);
+	if (pathID < 0) {
+		dprintf("scsi: out of path IDs\n");
+		return pathID;
+	}
+	if (pathID > MAX_PATH_ID) {
+		dprintf("scsi: path ID %" B_PRId32 " exceeds max %d\n",
+			pathID, MAX_PATH_ID);
+		pnp->free_id(SCSI_PATHID_GENERATOR, pathID);
 		return B_ERROR;
+	}
 
-	bus = scsi_create_bus(node, path_id);
-	if (bus == NULL)
+	bus = scsi_create_bus(node, (uint8)pathID);
+	if (bus == NULL) {
+		pnp->free_id(SCSI_PATHID_GENERATOR, pathID);
 		return B_NO_MEMORY;
+	}
 
-	// extract controller/protocoll restrictions from node
-	if (pnp->get_attr_uint32(node, B_DMA_ALIGNMENT, &bus->dma_params.alignment,
-			true) != B_OK)
+	// extract controller/protocol restrictions from node (recursive
+	// so they can be inherited from the SIM node set by the controller)
+	if (pnp->get_property_uint32(node, KOSM_DMA_ALIGNMENT,
+			&bus->dma_params.alignment, true) != B_OK)
 		bus->dma_params.alignment = 0;
-	if (pnp->get_attr_uint32(node, B_DMA_MAX_TRANSFER_BLOCKS,
+	if (pnp->get_property_uint32(node, KOSM_DMA_MAX_TRANSFER_BLOCKS,
 			&bus->dma_params.max_blocks, true) != B_OK)
 		bus->dma_params.max_blocks = UINT32_MAX;
-	if (pnp->get_attr_uint32(node, B_DMA_BOUNDARY,
+	if (pnp->get_property_uint32(node, KOSM_DMA_BOUNDARY,
 			&bus->dma_params.dma_boundary, true) != B_OK)
 		bus->dma_params.dma_boundary = UINT32_MAX;
-	if (pnp->get_attr_uint32(node, B_DMA_MAX_SEGMENT_BLOCKS,
+	if (pnp->get_property_uint32(node, KOSM_DMA_MAX_SEGMENT_BLOCKS,
 			&bus->dma_params.max_sg_block_size, true) != B_OK)
 		bus->dma_params.max_sg_block_size = UINT32_MAX;
-	if (pnp->get_attr_uint32(node, B_DMA_MAX_SEGMENT_COUNT,
+	if (pnp->get_property_uint32(node, KOSM_DMA_MAX_SEGMENT_COUNT,
 			&bus->dma_params.max_sg_blocks, true) != B_OK)
 		bus->dma_params.max_sg_blocks = UINT32_MAX;
-	if (pnp->get_attr_uint64(node, B_DMA_HIGH_ADDRESS,
+	if (pnp->get_property_uint64(node, KOSM_DMA_HIGH_ADDRESS,
 			&bus->dma_params.high_address, true) != B_OK)
 		bus->dma_params.high_address = UINT64_MAX;
 
@@ -244,13 +259,36 @@ scsi_init_bus(device_node *node, void **cookie)
 		goto err;
 	}
 
-	{
-		device_node *parent = pnp->get_parent_node(node);
-		pnp->get_driver(parent, (driver_module_info **)&bus->interface,
-			(void **)&bus->sim_cookie);
-		pnp->put_node(parent);
+	// Walk up to the SIM node (our parent, since we were attached as
+	// child via ProbeAndAttachAll) to retrieve scsi_sim_interface.
+	res = pnp->get_interface(node, SCSI_SIM_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void **)&bus->interface, (void **)&bus->sim_cookie);
+	if (res != B_OK) {
+		SHOW_ERROR(0, "No SCSI SIM interface on parent: %s",
+			strerror(res));
+		goto err;
+	}
+	if (bus->interface == NULL || bus->sim_cookie == NULL) {
+		res = B_ERROR;
+		goto err;
+	}
 
-		bus->interface->set_scsi_bus(bus->sim_cookie, bus);
+	bus->interface->set_scsi_bus(bus->sim_cookie, bus);
+
+	// Publish the SCSI bus interface so peripheral drivers on child
+	// device nodes can retrieve it via get_interface walk-up.
+	res = pnp->publish_interface(node, SCSI_BUS_INTERFACE_NAME,
+		&scsi_bus_ops);
+	if (res != B_OK)
+		goto err;
+
+	// Publish path_id as a property so peripheral drivers can find it
+	// via recursive property lookup (compose_device_name needs it).
+	{
+		dk_property pathProp = DK_PROP_UINT8(SCSI_BUS_PATH_ID_ITEM,
+			bus->path_id);
+		pnp->set_property(node, &pathProp);
 	}
 
 	// cache inquiry data
@@ -262,18 +300,43 @@ scsi_init_bus(device_node *node, void **cookie)
 
 	*cookie = bus;
 
+	// Publish devfs entry bus/scsi/<path_id>/bus_raw for userspace
+	// raw bus access (ioctl reset/path_inquiry).
+	{
+		char rawPath[64];
+		snprintf(rawPath, sizeof(rawPath), "bus/scsi/%d/bus_raw",
+			(int)bus->path_id);
+		pnp->publish_device(node, rawPath, &gSCSIBusRawOps);
+	}
+
+	// Scan the SCSI bus; found devices register as child nodes
+	// of this node and get auto-probed by peripheral drivers
+	// (scsi_disk, scsi_cd) via the KOSM_FIND_MULTIPLE_CHILDREN flag.
+	scsi_scan_bus(bus);
+
 	return B_OK;
 
 err:
+	pnp->free_id(SCSI_PATHID_GENERATOR, pathID);
 	scsi_destroy_bus(bus);
 	return res;
 }
 
 
 static void
-scsi_uninit_bus(scsi_bus_info *bus)
+scsi_bus_detach(void *cookie)
 {
+	scsi_bus_info *bus = (scsi_bus_info *)cookie;
+	pnp->free_id(SCSI_PATHID_GENERATOR, bus->path_id);
 	scsi_destroy_bus(bus);
+}
+
+
+static status_t
+scsi_bus_rescan(void *cookie)
+{
+	scsi_bus_info *bus = (scsi_bus_info *)cookie;
+	return scsi_scan_bus(bus);
 }
 
 
@@ -330,23 +393,34 @@ std_ops(int32 op, ...)
 }
 
 
-scsi_bus_interface scsi_bus_module = {
-	{
-		{
-			SCSI_BUS_MODULE_NAME,
-			0,
-			std_ops
-		},
-
-		NULL,	// supported devices
-		NULL,	// register node
-		scsi_init_bus,
-		(void (*)(void *))scsi_uninit_bus,
-		(status_t (*)(void *))scsi_scan_bus,
-		(status_t (*)(void *))scsi_scan_bus,
-		NULL
-	},
-
+// Plain scsi_bus_interface published via publish_interface on each
+// scsi bus node. Peripheral drivers retrieve it via get_interface.
+scsi_bus_interface scsi_bus_ops = {
 	scsi_inquiry_path,
 	scsi_reset_bus,
+};
+
+
+// Match rule: attach on any node whose KOSM_DEVICE_BUS = "scsi-host".
+// SCSI SIM drivers (ahci_sim, virtio_scsi_sim, usb_scsi) set this
+// property on their node and publish scsi_sim_interface; then the
+// framework creates a child scsi bus node here and attaches us to it.
+static const dk_match_rule sSCSIBusMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "scsi-host"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sSCSIBusMatchDict = {
+	sSCSIBusMatchRules,
+	0
+};
+
+
+struct dk_driver_info gSCSIBusDriver = {
+	.info		= { SCSI_BUS_MODULE_NAME, 0, std_ops },
+	.match		= &sSCSIBusMatchDict,
+	.attach		= scsi_bus_attach,
+	.detach		= scsi_bus_detach,
+	.rescan_children = scsi_bus_rescan,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };
