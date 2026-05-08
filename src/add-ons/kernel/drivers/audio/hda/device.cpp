@@ -9,19 +9,16 @@
 
 #include "driver.h"
 
+#include <device_keeper.h>
+
 
 static status_t
-hda_open(const char* name, uint32 flags, void** cookie)
+hda_open(void* deviceCookie, const char* name, int openMode, void** _cookie)
 {
-	hda_controller* controller = NULL;
-
-	for (uint32 i = 0; i < gNumCards; i++) {
-		if (strcmp(gCards[i].devfs_path, name) == 0) {
-			controller = &gCards[i];
-			break;
-		}
-	}
-
+	// deviceCookie is the hda_controller* set as node cookie in attach().
+	// DeviceKeeper's Publisher forwards fNode->DriverCookie() here, so
+	// each published devfs path resolves directly to its owning card.
+	hda_controller* controller = (hda_controller*)deviceCookie;
 	if (controller == NULL)
 		return ENODEV;
 
@@ -34,7 +31,7 @@ hda_open(const char* name, uint32 flags, void** cookie)
 
 	atomic_add(&controller->opened, 1);
 
-	*cookie = controller;
+	*_cookie = controller;
 
 	// optional user-settable buffer frames and count
 	get_settings_from_file();
@@ -91,11 +88,15 @@ hda_free(void* cookie)
 }
 
 
-device_hooks gDriverHooks = {
+dk_device_ops gHdaDeviceOps = {
 	hda_open,
 	hda_close,
 	hda_free,
-	hda_control,
 	hda_read,
-	hda_write
+	hda_write,
+	NULL,	// io
+	hda_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
 };

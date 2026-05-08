@@ -55,6 +55,9 @@ struct hda_multi;
 */
 struct hda_controller {
 	struct pci_info	pci_info;
+	pci_device_ops*	pci_ops;
+	pci_device*		pci_dev;
+	struct dk_node*	node;
 	int32			opened;
 	const char*		devfs_path;
 
@@ -350,9 +353,6 @@ struct hda_multi {
 
 
 /* driver.c */
-extern device_hooks gDriverHooks;
-extern pci_device_module_info* gPci;
-extern pci_device* gPciDev;
 extern hda_controller gCards[MAX_CARDS];
 extern uint32 gNumCards;
 

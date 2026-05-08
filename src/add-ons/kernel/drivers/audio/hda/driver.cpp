@@ -9,20 +9,18 @@
 
 #include "driver.h"
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <stdlib.h>
 #include <string.h>
 
 
-#define HDA_DRIVER_MODULE_NAME "drivers/audio/hda/driver_v1"
-#define HDA_DEVICE_MODULE_NAME "drivers/audio/hda/device_v1"
+#define HDA_DRIVER_MODULE_NAME "drivers/audio/hda/dk_driver_v1"
 
 
 hda_controller gCards[MAX_CARDS];
 uint32 gNumCards;
-pci_device_module_info* gPci;
-pci_device* gPciDev;
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
+extern dk_device_ops gHdaDeviceOps;
 
 
 static const struct {
@@ -57,187 +55,142 @@ is_supported_device(uint16 vendorId, uint16 deviceId)
 }
 
 
-static status_t
-add_card_from_node(device_node *node)
+//	#pragma mark - card slot management
+
+
+/*! Find a free slot in gCards[] (devfs_path == NULL), or allocate a new
+	slot at gNumCards. Returns the slot index, or -1 if full.
+*/
+static int32
+allocate_card_slot()
 {
+	for (uint32 i = 0; i < gNumCards; i++) {
+		if (gCards[i].devfs_path == NULL)
+			return (int32)i;
+	}
+
 	if (gNumCards >= MAX_CARDS)
-		return B_NO_MORE_FDS;
+		return -1;
 
-	// Get pci_device_module_info from parent node
-	device_node *parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&gPci,
-		(void **)&gPciDev);
-	sDeviceManager->put_node(parent);
-
-	pci_info info;
-	gPci->get_pci_info(gPciDev, &info);
-
-	memset(&gCards[gNumCards], 0, sizeof(hda_controller));
-	gCards[gNumCards].pci_info = info;
-	gCards[gNumCards].opened = 0;
-
-	char path[B_PATH_NAME_LENGTH];
-	sprintf(path, DEVFS_PATH_FORMAT, gNumCards);
-	gCards[gNumCards].devfs_path = strdup(path);
-
-	dprintf("HDA: Detected controller @ PCI:%d:%d:%d, IRQ:%d, "
-		"type %04x/%04x (%04x/%04x)\n",
-		info.bus, info.device, info.function,
-		info.u.h0.interrupt_line, info.vendor_id, info.device_id,
-		info.u.h0.subsystem_vendor_id, info.u.h0.subsystem_id);
-
-	gNumCards++;
-	return B_OK;
+	return (int32)gNumCards++;
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sHdaMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sHdaMatchDict = {
+	sHdaMatchRules,
+	0	// priority
+};
 
 
 static float
-hda_supports_device(device_node *parent)
+hda_probe(dk_node* node)
 {
-	const char *bus;
-
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "pci"))
-		return 0.0;
-
+	// match PCI HD Audio class (multimedia / hd_audio subclass)
 	uint8 classBase = 0, classSub = 0;
-	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
-	sDeviceManager->get_attr_uint8(parent, B_DEVICE_SUB_TYPE, &classSub,
-		false);
+	sDeviceKeeper->get_property_uint8(node, KOSM_DEVICE_TYPE,
+		&classBase, false);
+	sDeviceKeeper->get_property_uint8(node, KOSM_DEVICE_SUB_TYPE,
+		&classSub, false);
 
-	// match PCI HD Audio class
 	if (classBase == PCI_multimedia && classSub == PCI_hd_audio)
-		return 0.6;
+		return 0.6f;
 
-	// also match specific device IDs
+	// also match specific vendor/device IDs from the allowlist
 	uint16 vendorId = 0, deviceId = 0;
-	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
 		&vendorId, false);
-	sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+	sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID,
 		&deviceId, false);
 
 	if (is_supported_device(vendorId, deviceId))
-		return 0.6;
+		return 0.6f;
 
-	return 0.0;
+	return 0.0f;
 }
 
 
 static status_t
-hda_register_device(device_node *node)
+hda_attach(dk_node* node, void** _cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "HD Audio Controller"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, HDA_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-hda_init_driver(device_node *node, void **cookie)
-{
-	status_t status = add_card_from_node(node);
-	if (status != B_OK)
+	// Get PCI bus ops from a matching ancestor.
+	pci_device_ops* pciOps = NULL;
+	pci_device* pciDev = NULL;
+	status_t status = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pciOps, (void**)&pciDev);
+	if (status != B_OK) {
+		dprintf("hda: get_interface(PCI) failed: %s\n", strerror(status));
 		return status;
+	}
+	if (pciOps == NULL || pciDev == NULL)
+		return B_ERROR;
 
-	*cookie = node;
-	return B_OK;
-}
+	int32 slot = allocate_card_slot();
+	if (slot < 0)
+		return B_NO_MORE_FDS;
 
+	hda_controller* controller = &gCards[slot];
+	memset(controller, 0, sizeof(hda_controller));
+	controller->pci_ops = pciOps;
+	controller->pci_dev = pciDev;
+	controller->node = node;
+	controller->opened = 0;
 
-static void
-hda_uninit_driver(void *_cookie)
-{
-	// cleanup happens globally, not per-device
-}
+	pciOps->get_pci_info(pciDev, &controller->pci_info);
 
+	char path[B_PATH_NAME_LENGTH];
+	snprintf(path, sizeof(path), DEVFS_PATH_FORMAT, (uint32)slot);
+	controller->devfs_path = strdup(path);
+	if (controller->devfs_path == NULL)
+		return B_NO_MEMORY;
 
-static status_t
-hda_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
+	dprintf("HDA: Detected controller @ PCI:%d:%d:%d, IRQ:%d, "
+		"type %04x/%04x (%04x/%04x)\n",
+		controller->pci_info.bus, controller->pci_info.device,
+		controller->pci_info.function,
+		controller->pci_info.u.h0.interrupt_line,
+		controller->pci_info.vendor_id, controller->pci_info.device_id,
+		controller->pci_info.u.h0.subsystem_vendor_id,
+		controller->pci_info.u.h0.subsystem_id);
 
-	for (uint32 i = 0; i < gNumCards; i++) {
-		if (gCards[i].devfs_path != NULL) {
-			sDeviceManager->publish_device(node, gCards[i].devfs_path,
-				HDA_DEVICE_MODULE_NAME);
-		}
+	// Publish only THIS card. DeviceKeeper invokes attach() once per
+	// matched node, so each controller publishes exactly one devfs entry.
+	status = sDeviceKeeper->publish_device(node, controller->devfs_path,
+		&gHdaDeviceOps);
+	if (status != B_OK) {
+		dprintf("hda: publish_device(%s) failed: %s\n",
+			controller->devfs_path, strerror(status));
+		free((void*)controller->devfs_path);
+		controller->devfs_path = NULL;
+		return status;
 	}
 
-	return B_OK;
-}
-
-
-//	#pragma mark - device module API
-
-
-static status_t
-hda_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
+	*_cookie = controller;
 	return B_OK;
 }
 
 
 static void
-hda_uninit_device(void *_cookie)
+hda_detach(void* cookie)
 {
-}
+	hda_controller* controller = (hda_controller*)cookie;
+	if (controller == NULL || controller->devfs_path == NULL)
+		return;
 
+	sDeviceKeeper->unpublish_device(controller->node, controller->devfs_path);
 
-//	#pragma mark -
-
-// The device hooks (open/close/free/read/write/control) are defined
-// in device.cpp as gDriverHooks. We wrap them for device_module_info.
-
-static status_t
-hda_open(void *_info, const char *path, int openMode, void **_cookie)
-{
-	return gDriverHooks.open(path, openMode, _cookie);
-}
-
-
-static status_t
-hda_close(void *cookie)
-{
-	return gDriverHooks.close(cookie);
-}
-
-
-static status_t
-hda_free(void *cookie)
-{
-	return gDriverHooks.free(cookie);
-}
-
-
-static status_t
-hda_read(void *cookie, off_t position, void *buffer, size_t *numBytes)
-{
-	return gDriverHooks.read(cookie, position, buffer, numBytes);
-}
-
-
-static status_t
-hda_write(void *cookie, off_t position, const void *buffer, size_t *numBytes)
-{
-	return gDriverHooks.write(cookie, position, buffer, numBytes);
-}
-
-
-static status_t
-hda_control(void *cookie, uint32 op, void *buffer, size_t length)
-{
-	return gDriverHooks.control(cookie, op, buffer, length);
+	free((void*)controller->devfs_path);
+	controller->devfs_path = NULL;
+	controller->pci_ops = NULL;
+	controller->pci_dev = NULL;
 }
 
 
@@ -245,51 +198,20 @@ hda_control(void *cookie, uint32 op, void *buffer, size_t length)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sHdaDevice = {
-	{
-		HDA_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	hda_init_device,
-	hda_uninit_device,
-	NULL,	// device_removed
-
-	hda_open,
-	hda_close,
-	hda_free,
-	hda_read,
-	hda_write,
-	NULL,	// io
-	hda_control,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sHdaDriver = {
-	{
-		HDA_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	hda_supports_device,
-	hda_register_device,
-	hda_init_driver,
-	hda_uninit_driver,
-	hda_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+struct dk_driver_info sHdaDriver = {
+	.info   = { HDA_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sHdaMatchDict,
+	.probe  = hda_probe,
+	.attach = hda_attach,
+	.detach = hda_detach,
+	.ops    = &gHdaDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sHdaDriver,
-	(module_info*)&sHdaDevice,
 	NULL
 };
