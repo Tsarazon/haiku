@@ -29,8 +29,8 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define VIRTIO_PCI_DEVICE_MODULE_NAME "busses/virtio/virtio_pci/driver_v1"
-#define VIRTIO_PCI_SIM_MODULE_NAME "busses/virtio/virtio_pci/device/v1"
+#define VIRTIO_PCI_DEVICE_MODULE_NAME "busses/virtio/virtio_pci/dk_driver_v1"
+#define VIRTIO_PCI_SIM_MODULE_NAME "busses/virtio/virtio_pci/device/dk_driver_v1"
 
 #define VIRTIO_PCI_CONTROLLER_TYPE_NAME "virtio pci controller"
 
@@ -46,7 +46,7 @@ typedef struct {
 } virtio_pci_queue_cookie;
 
 typedef struct {
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
 	bool virtio1;
 	addr_t base_addr;
@@ -61,14 +61,14 @@ typedef struct {
 	uint16 queue_count;
 	addr_t* notifyOffsets;
 
-	device_node* node;
+	dk_node* node;
 	pci_info info;
 
 	virtio_pci_queue_cookie *cookies;
 } virtio_pci_sim_info;
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 virtio_for_controller_interface* gVirtio;
 
 
@@ -603,27 +603,42 @@ notify_queue(void* cookie, uint16 queue)
 //	#pragma mark -
 
 
+// ops struct defined before init_bus so publish_interface can reference it
+static virtio_sim_interface gVirtioPCISimOps = {
+	set_sim,
+	read_host_features,
+	write_guest_features,
+	get_status,
+	set_status,
+	read_device_config,
+	write_device_config,
+	get_queue_ring_size,
+	setup_queue,
+	setup_interrupt,
+	free_interrupt,
+	notify_queue
+};
+
+
 static status_t
-init_bus(device_node* node, void** bus_cookie)
+init_bus(dk_node* node, void** bus_cookie)
 {
 	CALLED();
-	status_t status = B_OK;
 
 	virtio_pci_sim_info* bus = new(std::nothrow) virtio_pci_sim_info;
-	if (bus == NULL) {
+	if (bus == NULL)
 		return B_NO_MEMORY;
-	}
 	memset(bus, 0, sizeof(virtio_pci_sim_info));
 
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
-	{
-		device_node* parent = gDeviceManager->get_parent_node(node);
-		device_node* pciParent = gDeviceManager->get_parent_node(parent);
-		gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-			(void**)&device);
-		gDeviceManager->put_node(pciParent);
-		gDeviceManager->put_node(parent);
+	status_t status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pci, (void**)&device);
+	if (status != B_OK) {
+		ERROR("init_bus: can't get PCI interface: %s\n", strerror(status));
+		delete bus;
+		return status;
 	}
 
 	bus->node = node;
@@ -644,10 +659,12 @@ init_bus(device_node* node, void** bus_cookie)
 		bool deviceCfgFound = false;
 		if (virtio_pci_find_capability(bus, VIRTIO_PCI_CAP_COMMON_CFG, &common,
 			sizeof(common)) != B_OK) {
+			delete bus;
 			return B_DEVICE_NOT_FOUND;
 		}
 		if (virtio_pci_find_capability(bus, VIRTIO_PCI_CAP_ISR_CFG, &isr,
 			sizeof(isr)) != B_OK) {
+			delete bus;
 			return B_DEVICE_NOT_FOUND;
 		}
 		if (virtio_pci_find_capability(bus, VIRTIO_PCI_CAP_DEVICE_CFG, &deviceCap,
@@ -658,6 +675,7 @@ init_bus(device_node* node, void** bus_cookie)
 		}
 		if (virtio_pci_find_capability(bus, VIRTIO_PCI_CAP_NOTIFY_CFG, &notify,
 			sizeof(notify)) != B_OK) {
+			delete bus;
 			return B_DEVICE_NOT_FOUND;
 		}
 
@@ -713,16 +731,14 @@ init_bus(device_node* node, void** bus_cookie)
 		bus->notifyOffsets = new addr_t[bus->queue_count];
 
 	} else {
-		// legacy interrupt
+		// legacy
 		bus->base_addr = pciInfo->u.h0.base_registers[0];
 
-		// enable bus master and io
 		uint16 pcicmd = pci->read_pci_config(device, PCI_command, 2);
 		pcicmd &= ~(PCI_command_memory | PCI_command_int_disable);
 		pcicmd |= PCI_command_master | PCI_command_io;
 		pci->write_pci_config(device, PCI_command, 2, pcicmd);
 	}
-
 
 	set_status(bus, VIRTIO_CONFIG_STATUS_RESET);
 	set_status(bus, VIRTIO_CONFIG_STATUS_ACK);
@@ -731,7 +747,38 @@ init_bus(device_node* node, void** bus_cookie)
 		bus->pci, bus->device);
 
 	*bus_cookie = bus;
-	return status;
+
+	// publish transport interface so virtio bus manager can find it via get_interface
+	gDeviceKeeper->publish_interface(node, VIRTIO_HOST_INTERFACE_NAME,
+		&gVirtioPCISimOps);
+
+	// register child node for the virtio bus manager; it will attach, retrieve
+	// VIRTIO_HOST_INTERFACE_NAME from us and publish VIRTIO_DEVICE_INTERFACE_NAME
+	// for peripheral drivers (virtio_input, virtio_gpu, ...).
+	uint16 virtioType = 0, vringAlign = 0;
+	uint8 virtioVersion = 0;
+	gDeviceKeeper->get_property_uint16(node, VIRTIO_DEVICE_TYPE_ITEM,
+		&virtioType, false);
+	gDeviceKeeper->get_property_uint16(node, VIRTIO_VRING_ALIGNMENT_ITEM,
+		&vringAlign, false);
+	gDeviceKeeper->get_property_uint8(node, VIRTIO_VERSION_ITEM,
+		&virtioVersion, false);
+
+	dk_property childAttrs[] = {
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "virtio"),
+		DK_PROP_UINT16(VIRTIO_DEVICE_TYPE_ITEM, virtioType),
+		DK_PROP_UINT16(VIRTIO_VRING_ALIGNMENT_ITEM, vringAlign),
+		DK_PROP_UINT8(VIRTIO_VERSION_ITEM, virtioVersion),
+		DK_PROP_END
+	};
+	status_t childStatus = gDeviceKeeper->register_node(node,
+		VIRTIO_DEVICE_MODULE_NAME, childAttrs, NULL, NULL);
+	if (childStatus != B_OK) {
+		ERROR("register_node(virtio/device) failed: %s\n",
+			strerror(childStatus));
+	}
+
+	return B_OK;
 }
 
 
@@ -748,8 +795,7 @@ uninit_bus(void* bus_cookie)
 		} else {
 			remove_io_interrupt_handler(irq, virtio_pci_queues_interrupt, bus);
 		}
-		remove_io_interrupt_handler(bus->irq, virtio_pci_config_interrupt,
-				bus);
+		remove_io_interrupt_handler(bus->irq, virtio_pci_config_interrupt, bus);
 
 		bus->pci->disable_msi(bus->device);
 		bus->pci->unconfigure_msi(bus->device);
@@ -770,29 +816,33 @@ uninit_bus(void* bus_cookie)
 }
 
 
-static void
-bus_removed(void* bus_cookie)
-{
-	return;
-}
-
-
 //	#pragma mark -
 
 
 static status_t
-register_child_devices(void* cookie)
+init_device(dk_node* node, void** device_cookie)
 {
 	CALLED();
-	device_node* node = (device_node*)cookie;
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	pci_device_module_info* pci;
+	*device_cookie = node;
+
+	pci_device_ops* pci;
 	pci_device* device;
-	gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-		(void**)&device);
+	status_t status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pci, (void**)&device);
+	if (status != B_OK)
+		return status;
 
 	uint16 pciSubDeviceId = pci->read_pci_config(device, PCI_subsystem_id, 2);
 	uint16 pciDeviceId = pci->read_pci_config(device, PCI_device_id, 2);
+
+	// reject legacy devices with non-zero PCI revision
+	uint8 pciRevision = pci->read_pci_config(device, PCI_revision, 1);
+	if (pciDeviceId >= VIRTIO_PCI_DEVICEID_MIN
+		&& pciDeviceId <= VIRTIO_PCI_DEVICEID_LEGACY_MAX
+		&& pciRevision != 0) {
+		return B_NOT_SUPPORTED;
+	}
 
 	uint8 virtioVersion = 0;
 	uint16 virtioDeviceId = pciSubDeviceId;
@@ -804,93 +854,51 @@ register_child_devices(void* cookie)
 	char prettyName[25];
 	sprintf(prettyName, "Virtio Device %" B_PRIu16, virtioDeviceId);
 
-	device_attr attrs[] = {
-		// properties of this controller for virtio bus manager
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = prettyName }},
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{ .string = VIRTIO_FOR_CONTROLLER_MODULE_NAME }},
-
-		// private data to identify the device
-		{ VIRTIO_DEVICE_TYPE_ITEM, B_UINT16_TYPE,
-			{ .ui16 = virtioDeviceId }},
-		{ VIRTIO_VRING_ALIGNMENT_ITEM, B_UINT16_TYPE,
-			{ .ui16 = VIRTIO_PCI_VRING_ALIGN }},
-		{ VIRTIO_VERSION_ITEM, B_UINT8_TYPE,
-			{ .ui8 = virtioVersion }},
-		{ NULL }
+	dk_property attrs[] = {
+		DK_PROP_STRING(KOSM_LABEL, prettyName),
+		DK_PROP_UINT16(VIRTIO_DEVICE_TYPE_ITEM, virtioDeviceId),
+		DK_PROP_UINT16(VIRTIO_VRING_ALIGNMENT_ITEM, VIRTIO_PCI_VRING_ALIGN),
+		DK_PROP_UINT8(VIRTIO_VERSION_ITEM, virtioVersion),
+		DK_PROP_END
 	};
 
-	return gDeviceManager->register_node(node, VIRTIO_PCI_SIM_MODULE_NAME,
-		attrs, NULL, &node);
-}
-
-
-static status_t
-init_device(device_node* node, void** device_cookie)
-{
-	CALLED();
-	*device_cookie = node;
-	return B_OK;
-}
-
-
-static status_t
-register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Virtio PCI"}},
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, VIRTIO_PCI_DEVICE_MODULE_NAME,
+	return gDeviceKeeper->register_node(node, VIRTIO_PCI_SIM_MODULE_NAME,
 		attrs, NULL, NULL);
 }
 
 
+// Match rules: bus="pci", vendor=0x1AF4.
+static const dk_match_rule kVirtioPCIMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_UINT16(KOSM_DEVICE_VENDOR_ID, VIRTIO_PCI_VENDORID),
+	DK_MATCH_END
+};
+
+static const dk_match_dict kVirtioPCIMatch = {
+	kVirtioPCIMatchRules,
+	0
+};
+
+
 static float
-supports_device(device_node* parent)
+supports_device(dk_node* node)
 {
 	CALLED();
-	const char* bus;
-	uint16 vendorID, deviceID;
+	uint16 deviceID;
 
-	// make sure parent is a PCI Virtio device node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
-				&vendorID, false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID, &deviceID,
-				false) < B_OK) {
-		return -1;
+	// bus and vendor already filtered by match rules
+	if (gDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID, &deviceID,
+			false) != B_OK) {
+		return -1.0f;
 	}
 
-	if (strcmp(bus, "pci") != 0)
+	if (deviceID < VIRTIO_PCI_DEVICEID_MIN
+		|| deviceID > VIRTIO_PCI_DEVICEID_MODERN_MAX) {
 		return 0.0f;
-
-	if (vendorID == VIRTIO_PCI_VENDORID) {
-		if (deviceID < VIRTIO_PCI_DEVICEID_MIN
-			|| deviceID > VIRTIO_PCI_DEVICEID_MODERN_MAX) {
-			return 0.0f;
-		}
-
-		pci_device_module_info* pci;
-		pci_device* device;
-		gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-			(void**)&device);
-		uint8 pciRevision = pci->read_pci_config(device, PCI_revision,
-			1);
-		if (deviceID >= VIRTIO_PCI_DEVICEID_MIN
-			&& deviceID <= VIRTIO_PCI_DEVICEID_LEGACY_MAX
-			&& pciRevision != 0) {
-			return 0.0f;
-		}
-
-		TRACE("Virtio device found! vendor 0x%04x, device 0x%04x\n", vendorID,
-			deviceID);
-		return 0.8f;
 	}
 
-	return 0.0f;
+	TRACE("Virtio device found! device 0x%04x\n", deviceID);
+	return 0.8f;
 }
 
 
@@ -899,61 +907,27 @@ supports_device(device_node* parent)
 
 module_dependency module_dependencies[] = {
 	{ VIRTIO_FOR_CONTROLLER_MODULE_NAME, (module_info**)&gVirtio },
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{}
 };
 
 
-static virtio_sim_interface gVirtioPCIDeviceModule = {
-	{
-		{
-			VIRTIO_PCI_SIM_MODULE_NAME,
-			0,
-			NULL
-		},
-
-		NULL,	// supports device
-		NULL,	// register device
-		init_bus,
-		uninit_bus,
-		NULL,	// register child devices
-		NULL,	// rescan
-		bus_removed,
-	},
-
-	set_sim,
-	read_host_features,
-	write_guest_features,
-	get_status,
-	set_status,
-	read_device_config,
-	write_device_config,
-	get_queue_ring_size,
-	setup_queue,
-	setup_interrupt,
-	free_interrupt,
-	notify_queue
+static dk_driver_info gVirtioPCISimDriver = {
+	.info = { VIRTIO_PCI_SIM_MODULE_NAME, 0, NULL },
+	.attach = init_bus,
+	.detach = uninit_bus,
 };
 
 
-static driver_module_info sVirtioDevice = {
-	{
-		VIRTIO_PCI_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	supports_device,
-	register_device,
-	init_device,
-	NULL,	// uninit
-	register_child_devices,
-	NULL,	// rescan
-	NULL,	// device removed
+static dk_driver_info sVirtioDevice = {
+	.info  = { VIRTIO_PCI_DEVICE_MODULE_NAME, 0, NULL },
+	.match = &kVirtioPCIMatch,
+	.probe = supports_device,
+	.attach = init_device,
 };
 
 module_info* modules[] = {
-	(module_info* )&sVirtioDevice,
-	(module_info* )&gVirtioPCIDeviceModule,
+	(module_info*)&sVirtioDevice,
+	(module_info*)&gVirtioPCISimDriver,
 	NULL
 };
