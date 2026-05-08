@@ -16,12 +16,13 @@ extern "C" {
 
 
 static status_t
-acpi_install_notify_handler(acpi_device device,	uint32 handlerType,
+acpi_install_notify_handler(acpi_device device, uint32 handlerType,
 	acpi_notify_handler handler, void *context)
 {
 	return install_notify_handler(device->handle, handlerType, handler,
 		context);
 }
+
 
 static status_t
 acpi_remove_notify_handler(acpi_device device, uint32 handlerType,
@@ -33,11 +34,12 @@ acpi_remove_notify_handler(acpi_device device, uint32 handlerType,
 
 static status_t
 acpi_install_address_space_handler(acpi_device device, uint32 spaceId,
-	acpi_adr_space_handler handler,	acpi_adr_space_setup setup,	void *data)
+	acpi_adr_space_handler handler, acpi_adr_space_setup setup, void *data)
 {
 	return install_address_space_handler(device->handle, spaceId, handler,
 		setup, data);
 }
+
 
 static status_t
 acpi_remove_address_space_handler(acpi_device device, uint32 spaceId,
@@ -55,7 +57,8 @@ acpi_get_object_type(acpi_device device)
 
 
 static status_t
-acpi_get_object(acpi_device device, const char *path, acpi_object_type **return_value)
+acpi_get_object(acpi_device device, const char *path,
+	acpi_object_type **return_value)
 {
 	if (device->path == NULL)
 		return B_BAD_VALUE;
@@ -94,78 +97,7 @@ acpi_walk_namespace(acpi_device device, uint32 objectType, uint32 maxDepth,
 }
 
 
-static status_t
-acpi_device_init_driver(device_node *node, void **cookie)
-{
-	ACPI_HANDLE handle = NULL;
-	const char *path = NULL;
-	uint32 type;
-
-	if (gDeviceManager->get_attr_uint32(node, ACPI_DEVICE_TYPE_ITEM, &type, false) != B_OK)
-		return B_ERROR;
-	gDeviceManager->get_attr_string(node, ACPI_DEVICE_PATH_ITEM, &path, false);
-
-	acpi_device_cookie *device = (acpi_device_cookie*)malloc(sizeof(*device));
-	if (device == NULL)
-		return B_NO_MEMORY;
-
-	memset(device, 0, sizeof(*device));
-
-	if (path != NULL && AcpiGetHandle(NULL, (ACPI_STRING)path, &handle) != AE_OK) {
-		free(device);
-		return B_ENTRY_NOT_FOUND;
-	}
-
-	device->handle = handle;
-	device->path = path != NULL ? strdup(path) : NULL;
-	device->type = type;
-	device->node = node;
-
-	snprintf(device->name, sizeof(device->name), "acpi_device %s", path);
-	*cookie = device;
-	return B_OK;
-}
-
-
-static void
-acpi_device_uninit_driver(void *cookie)
-{
-	acpi_device_cookie *device = (acpi_device_cookie*)cookie;
-
-	free(device->path);
-	free(device);
-}
-
-
-static status_t
-acpi_device_std_ops(int32 op, ...)
-{
-	switch (op) {
-		case B_MODULE_INIT:
-		case B_MODULE_UNINIT:
-			return B_OK;
-	}
-
-	return B_BAD_VALUE;
-}
-
-
-acpi_device_module_info gACPIDeviceModule = {
-	{
-		{
-			ACPI_DEVICE_MODULE_NAME,
-			0,
-			acpi_device_std_ops
-		},
-
-		NULL,		// supports device
-		NULL,		// register device (our parent registered us)
-		acpi_device_init_driver,
-		acpi_device_uninit_driver,
-		NULL,	// register child devices
-		NULL,	// rescan devices
-		NULL,	// device removed
-	},
+acpi_device_module_info gACPIDeviceInterface = {
 	acpi_install_notify_handler,
 	acpi_remove_notify_handler,
 	acpi_install_address_space_handler,
@@ -175,4 +107,75 @@ acpi_device_module_info gACPIDeviceModule = {
 	acpi_walk_namespace,
 	acpi_evaluate_method,
 	acpi_walk_resources
+};
+
+
+//	#pragma mark - dk_driver_info
+
+
+static status_t
+acpi_device_attach(dk_node* node, void** cookie)
+{
+	ACPI_HANDLE handle = NULL;
+	char pathBuf[255];
+	uint32 type;
+
+	if (gDeviceKeeper->get_property_uint32(node, KOSM_ACPI_DEVICE_TYPE,
+			&type, false) != B_OK)
+		return B_ERROR;
+
+	status_t pathStatus = gDeviceKeeper->get_property_string(node,
+		KOSM_ACPI_DEVICE_PATH, pathBuf, sizeof(pathBuf), NULL, false);
+	const char* path = (pathStatus == B_OK) ? pathBuf : NULL;
+
+	acpi_device_cookie* device
+		= (acpi_device_cookie*)malloc(sizeof(*device));
+	if (device == NULL)
+		return B_NO_MEMORY;
+	memset(device, 0, sizeof(*device));
+
+	if (path != NULL
+		&& AcpiGetHandle(NULL, (ACPI_STRING)path, &handle) != AE_OK) {
+		free(device);
+		return B_ENTRY_NOT_FOUND;
+	}
+
+	device->handle = handle;
+	device->path = path != NULL ? strdup(path) : NULL;
+	device->type = type;
+	device->node = node;
+	snprintf(device->name, sizeof(device->name), "acpi_device %s",
+		path != NULL ? path : "(none)");
+
+	// Publish the acpi_device_module_info interface on this node; child
+	// drivers (like acpi_button, acpi_battery, etc) retrieve it via
+	// get_interface(node, ACPI_DEVICE_INTERFACE_NAME, ...).
+	status_t status = gDeviceKeeper->publish_interface(node,
+		ACPI_DEVICE_INTERFACE_NAME, &gACPIDeviceInterface);
+	if (status != B_OK) {
+		free(device->path);
+		free(device);
+		return status;
+	}
+
+	*cookie = device;
+	return B_OK;
+}
+
+
+static void
+acpi_device_detach(void* cookie)
+{
+	acpi_device_cookie* device = (acpi_device_cookie*)cookie;
+	free(device->path);
+	free(device);
+}
+
+
+// Matches every acpi/* node. Attached via module-name auto-attach from
+// register_node() calls in Module.cpp; no match rule needed.
+struct dk_driver_info gACPIDeviceDriver = {
+	.info	= { ACPI_DEVICE_MODULE_NAME, 0, NULL },
+	.attach	= acpi_device_attach,
+	.detach	= acpi_device_detach,
 };

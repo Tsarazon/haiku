@@ -9,27 +9,27 @@
 
 #include <sys/cdefs.h>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <ACPI.h>
 #include <bus/PCI.h>
 
-// name of ACPI root module
-#define ACPI_ROOT_MODULE_NAME 	"bus_managers/acpi/root/driver_v1"
+// name of ACPI root module (matches "bus=root", creates acpi tree)
+#define ACPI_ROOT_MODULE_NAME	"bus_managers/acpi/root/dk_driver_v1"
 
-// name of ACPI device modules
-#define ACPI_DEVICE_MODULE_NAME "bus_managers/acpi/driver_v1"
+// name of ACPI device module (attached to each acpi/* node)
+#define ACPI_DEVICE_MODULE_NAME	"bus_managers/acpi/device/dk_driver_v1"
 
-// name of the ACPI namespace device
-#define ACPI_NS_DUMP_DEVICE_MODULE_NAME "bus_managers/acpi/namespace/device_v1"
-
-// name of the ACPI call device
-#define ACPI_CALL_DEVICE_MODULE_NAME "bus_managers/acpi/call/device_v1"
+// Leaf drivers that publish devfs nodes on acpi root.
+#define ACPI_NS_DUMP_DRIVER_NAME	\
+	"bus_managers/acpi/namespace/dk_driver_v1"
+#define ACPI_CALL_DRIVER_NAME		\
+	"bus_managers/acpi/call/dk_driver_v1"
 
 
 __BEGIN_DECLS
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 extern pci_module_info* gPCIManager;
 
 // information about one ACPI device
@@ -37,7 +37,7 @@ typedef struct acpi_device_cookie {
 	char*			path;			// path
 	acpi_handle		handle;
 	uint32			type;			// type
-	device_node*	node;
+	dk_node*		node;
 	char			name[32];		// name (for fast log)
 } acpi_device_cookie;
 
@@ -48,9 +48,12 @@ typedef acpi_status (*acpi_walk_resources_callback)(acpi_resource* resource,
 
 
 // ACPI root.
-typedef struct acpi_root_info {
-	driver_module_info info;
+// Plain interface (no driver_module_info prefix); published via
+// publish_interface(node, ACPI_ROOT_INTERFACE_NAME, ...) and retrieved
+// by leaf devfs drivers via get_interface.
+#define ACPI_ROOT_INTERFACE_NAME	"interface/acpi/root/v1"
 
+typedef struct acpi_root_info {
 	status_t	(*get_handle)(acpi_handle parent, const char *pathname,
 					acpi_handle *retHandle);
 	status_t 	(*get_name)(acpi_handle handle, uint32 nameType,
@@ -161,15 +164,15 @@ typedef struct acpi_root_info {
 
 
 extern struct acpi_module_info gACPIModule;
+extern struct acpi_root_info gACPIRootInterface;
+extern acpi_device_module_info gACPIDeviceInterface;
 
-extern struct device_module_info acpi_ns_dump_module;
+extern struct dk_driver_info gACPIRootDriver;
+extern struct dk_driver_info gACPIDeviceDriver;
+extern struct dk_driver_info gACPINsDumpDriver;
+extern struct dk_driver_info gACPICallDriver;
 
-extern struct driver_module_info embedded_controller_driver_module;
-extern struct device_module_info embedded_controller_device_module;
-
-extern acpi_device_module_info gACPIDeviceModule;
-
-extern struct device_module_info gAcpiCallDeviceModule;
+extern struct dk_driver_info embedded_controller_driver_module;
 
 
 status_t get_handle(acpi_handle parent, const char* pathname,

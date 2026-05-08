@@ -26,49 +26,34 @@ extern "C" {
 #endif
 
 
-device_manager_info* gDeviceManager = NULL;
+dk_keeper_info* gDeviceKeeper = NULL;
 pci_module_info* gPCIManager = NULL;
 dpc_module_info* gDPC = NULL;
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager},
-	{B_PCI_MODULE_NAME, (module_info**)&gPCIManager},
-	{B_DPC_MODULE_NAME, (module_info**)&gDPC},
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
+	{ B_PCI_MODULE_NAME, (module_info**)&gPCIManager },
+	{ B_DPC_MODULE_NAME, (module_info**)&gDPC },
 	{}
 };
 
 
-static float
-acpi_module_supports_device(device_node* parent)
-{
-	// make sure parent is really device root
-	const char* bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return B_ERROR;
-
-	if (strcmp(bus, "root"))
-		return 0.0;
-
-	return 1.0;
-}
+//	#pragma mark - ACPI root driver
 
 
-static status_t
-acpi_module_register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "ACPI" }},
-		{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_KEEP_DRIVER_LOADED }},
-		{}
-	};
+static const dk_match_rule sACPIRootMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "root"),
+	DK_MATCH_END
+};
 
-	return gDeviceManager->register_node(parent, ACPI_ROOT_MODULE_NAME, attrs,
-		NULL, NULL);
-}
+static const dk_match_dict sACPIRootMatchDict = {
+	sACPIRootMatchRules,
+	0
+};
 
 
 static status_t
-acpi_enumerate_child_devices(device_node* node, const char* root)
+acpi_enumerate_child_devices(dk_node* node, const char* root)
 {
 	char result[255];
 	void* counter = NULL;
@@ -78,25 +63,26 @@ acpi_enumerate_child_devices(device_node* node, const char* root)
 	while (get_next_entry(ACPI_TYPE_ANY, root, result,
 			sizeof(result), &counter) == B_OK) {
 		uint32 type = get_object_type(result);
-		device_node* deviceNode;
+		dk_node* deviceNode;
 
 		switch (type) {
 			case ACPI_TYPE_POWER:
 			case ACPI_TYPE_PROCESSOR:
 			case ACPI_TYPE_THERMAL:
 			case ACPI_TYPE_DEVICE: {
-				device_attr attrs[16] = {
+				dk_property attrs[16] = {
 					// info about device
-					{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
+					DK_PROP_STRING(KOSM_DEVICE_BUS, "acpi"),
 
 					// location on ACPI bus
-					{ ACPI_DEVICE_PATH_ITEM, B_STRING_TYPE, { .string = result }},
+					DK_PROP_STRING(KOSM_ACPI_DEVICE_PATH, result),
 
 					// info about the device
-					{ ACPI_DEVICE_TYPE_ITEM, B_UINT32_TYPE, { .ui32 = type }},
+					DK_PROP_UINT32(KOSM_ACPI_DEVICE_TYPE, type),
 
-					{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_FIND_MULTIPLE_CHILDREN }},
-					{ NULL }
+					DK_PROP_UINT32(KOSM_DEVICE_FLAGS,
+						KOSM_FIND_MULTIPLE_CHILDREN),
+					DK_PROP_END
 				};
 
 				uint32 attrCount = 4;
@@ -108,49 +94,52 @@ acpi_enumerate_child_devices(device_node* node, const char* root)
 					if (get_device_info(result, &hid, (char**)&cidList, 8,
 						&uid, &cls) == B_OK) {
 						if (hid != NULL) {
-							attrs[attrCount].name = ACPI_DEVICE_HID_ITEM;
+							attrs[attrCount].name = KOSM_ACPI_DEVICE_HID;
 							attrs[attrCount].type = B_STRING_TYPE;
 							attrs[attrCount].value.string = hid;
 							attrCount++;
 						}
 						for (int i = 0; cidList[i] != NULL; i++) {
-							attrs[attrCount].name = ACPI_DEVICE_CID_ITEM;
+							attrs[attrCount].name = KOSM_ACPI_DEVICE_CID;
 							attrs[attrCount].type = B_STRING_TYPE;
 							attrs[attrCount].value.string = cidList[i];
 							attrCount++;
 						}
 						if (uid != NULL) {
-							attrs[attrCount].name = ACPI_DEVICE_UID_ITEM;
+							attrs[attrCount].name = KOSM_ACPI_DEVICE_UID;
 							attrs[attrCount].type = B_STRING_TYPE;
 							attrs[attrCount].value.string = uid;
 							attrCount++;
 						}
 						if (cls != NULL) {
 							uint32 clsClass = strtoul(cls, NULL, 16);
-							attrs[attrCount].name = B_DEVICE_TYPE;
+							attrs[attrCount].name = KOSM_DEVICE_TYPE;
 							attrs[attrCount].type = B_UINT16_TYPE;
-							attrs[attrCount].value.ui16 = (clsClass >> 16) & 0xff ;
+							attrs[attrCount].value.ui16
+								= (clsClass >> 16) & 0xff;
 							attrCount++;
-							attrs[attrCount].name = B_DEVICE_SUB_TYPE;
+							attrs[attrCount].name = KOSM_DEVICE_SUB_TYPE;
 							attrs[attrCount].type = B_UINT16_TYPE;
-							attrs[attrCount].value.ui16 = (clsClass >> 8) & 0xff ;
+							attrs[attrCount].value.ui16
+								= (clsClass >> 8) & 0xff;
 							attrCount++;
-							attrs[attrCount].name = B_DEVICE_INTERFACE;
+							attrs[attrCount].name = KOSM_DEVICE_INTERFACE;
 							attrs[attrCount].type = B_UINT16_TYPE;
-							attrs[attrCount].value.ui16 = (clsClass >> 0) & 0xff ;
+							attrs[attrCount].value.ui16
+								= (clsClass >> 0) & 0xff;
 							attrCount++;
 						}
 					}
 					uint32 addr;
 					if (get_device_addr(result, &addr) == B_OK) {
-						attrs[attrCount].name = ACPI_DEVICE_ADDR_ITEM;
+						attrs[attrCount].name = KOSM_ACPI_DEVICE_ADR;
 						attrs[attrCount].type = B_UINT32_TYPE;
 						attrs[attrCount].value.ui32 = addr;
 						attrCount++;
 					}
 				}
 
-				status_t status = gDeviceManager->register_node(node,
+				status_t status = gDeviceKeeper->register_node(node,
 						ACPI_DEVICE_MODULE_NAME, attrs, NULL, &deviceNode);
 				free(hid);
 				free(uid);
@@ -166,7 +155,6 @@ acpi_enumerate_child_devices(device_node* node, const char* root)
 				acpi_enumerate_child_devices(node, result);
 				break;
 		}
-
 	}
 
 	return B_OK;
@@ -174,77 +162,73 @@ acpi_enumerate_child_devices(device_node* node, const char* root)
 
 
 static status_t
-acpi_module_register_child_devices(void* cookie)
+acpi_root_attach(dk_node* node, void** _cookie)
 {
-	device_node* node = (device_node*)cookie;
+	// Publish the acpi_root_info interface so leaf drivers (namespace
+	// dump, acpi call) can retrieve it via get_interface.
+	status_t status = gDeviceKeeper->publish_interface(node,
+		ACPI_ROOT_INTERFACE_NAME, &gACPIRootInterface);
+	if (status != B_OK)
+		return status;
 
-	status_t status = gDeviceManager->publish_device(node, "acpi/namespace",
-		ACPI_NS_DUMP_DEVICE_MODULE_NAME);
-	if (status != B_OK)
-		return status;
-	status = gDeviceManager->publish_device(node, "acpi/call",
-		ACPI_CALL_DEVICE_MODULE_NAME);
-	if (status != B_OK)
-		return status;
+	// Register devfs nodes as child nodes. These drivers publish
+	// themselves in their attach().
+	dk_property nsDumpAttrs[] = {
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "acpi"),
+		DK_PROP_END
+	};
+	gDeviceKeeper->register_node(node, ACPI_NS_DUMP_DRIVER_NAME,
+		nsDumpAttrs, NULL, NULL);
+
+	dk_property callAttrs[] = {
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "acpi"),
+		DK_PROP_END
+	};
+	gDeviceKeeper->register_node(node, ACPI_CALL_DRIVER_NAME,
+		callAttrs, NULL, NULL);
 
 	if ((AcpiGbl_FADT.Flags & ACPI_FADT_POWER_BUTTON) == 0) {
 		dprintf("registering power button\n");
-		device_attr attrs[] = {
-			// info about device
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
-
-			// info about the device
-			{ ACPI_DEVICE_HID_ITEM, B_STRING_TYPE, { .string = "ACPI_FPB" }},
-			{ ACPI_DEVICE_TYPE_ITEM, B_UINT32_TYPE, { .ui32 = ACPI_TYPE_DEVICE }},
-
-			// consumer specification
-			{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_FIND_MULTIPLE_CHILDREN }},
-			{ NULL }
+		dk_property attrs[] = {
+			DK_PROP_STRING(KOSM_DEVICE_BUS, "acpi"),
+			DK_PROP_STRING(KOSM_ACPI_DEVICE_HID, "ACPI_FPB"),
+			DK_PROP_UINT32(KOSM_ACPI_DEVICE_TYPE, ACPI_TYPE_DEVICE),
+			DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+			DK_PROP_END
 		};
-		device_node* deviceNode;
-		gDeviceManager->register_node(node, ACPI_DEVICE_MODULE_NAME, attrs,
-				NULL, &deviceNode);
+		dk_node* deviceNode;
+		gDeviceKeeper->register_node(node, ACPI_DEVICE_MODULE_NAME, attrs,
+			NULL, &deviceNode);
 	}
 	if ((AcpiGbl_FADT.Flags & ACPI_FADT_SLEEP_BUTTON) == 0) {
 		dprintf("registering sleep button\n");
-		device_attr attrs[] = {
-			// info about device
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
-
-			// info about the device
-			{ ACPI_DEVICE_HID_ITEM, B_STRING_TYPE, { .string = "ACPI_FSB" }},
-			{ ACPI_DEVICE_TYPE_ITEM, B_UINT32_TYPE, { .ui32 = ACPI_TYPE_DEVICE }},
-
-			// consumer specification
-			{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_FIND_MULTIPLE_CHILDREN }},
-			{ NULL }
+		dk_property attrs[] = {
+			DK_PROP_STRING(KOSM_DEVICE_BUS, "acpi"),
+			DK_PROP_STRING(KOSM_ACPI_DEVICE_HID, "ACPI_FSB"),
+			DK_PROP_UINT32(KOSM_ACPI_DEVICE_TYPE, ACPI_TYPE_DEVICE),
+			DK_PROP_UINT32(KOSM_DEVICE_FLAGS, KOSM_FIND_MULTIPLE_CHILDREN),
+			DK_PROP_END
 		};
-		device_node* deviceNode;
-		gDeviceManager->register_node(node, ACPI_DEVICE_MODULE_NAME, attrs,
-				NULL, &deviceNode);
-
+		dk_node* deviceNode;
+		gDeviceKeeper->register_node(node, ACPI_DEVICE_MODULE_NAME, attrs,
+			NULL, &deviceNode);
 	}
 
-	return acpi_enumerate_child_devices(node, "\\");
-}
+	acpi_enumerate_child_devices(node, "\\");
 
-
-static status_t
-acpi_module_init(device_node* node, void** _cookie)
-{
 	*_cookie = node;
 	return B_OK;
 }
 
 
 static void
-acpi_module_uninit(void* cookie)
+acpi_root_detach(void* cookie)
 {
 }
 
 
-static int32
-acpi_module_std_ops(int32 op, ...)
+static status_t
+acpi_std_ops_stub(int32 op, ...)
 {
 	switch (op) {
 		case B_MODULE_INIT:
@@ -262,23 +246,7 @@ acpi_module_std_ops(int32 op, ...)
 }
 
 
-static struct acpi_root_info sACPIRootModule = {
-	{
-		{
-			ACPI_ROOT_MODULE_NAME,
-			0,
-			acpi_module_std_ops
-		},
-
-		acpi_module_supports_device,
-		acpi_module_register_device,
-		acpi_module_init,
-		acpi_module_uninit,
-		acpi_module_register_child_devices,
-		NULL,	// rescan devices
-		NULL,	// device removed
-	},
-
+struct acpi_root_info gACPIRootInterface = {
 	get_handle,
 	get_name,
 	acquire_global_lock,
@@ -323,13 +291,21 @@ static struct acpi_root_info sACPIRootModule = {
 };
 
 
+struct dk_driver_info gACPIRootDriver = {
+	.info		= { ACPI_ROOT_MODULE_NAME, 0, acpi_std_ops_stub },
+	.match		= &sACPIRootMatchDict,
+	.attach		= acpi_root_attach,
+	.detach		= acpi_root_detach,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN | KOSM_KEEP_DRIVER_LOADED,
+};
+
+
 module_info* modules[] = {
 	(module_info*)&gACPIModule,
-	(module_info*)&sACPIRootModule,
-	(module_info*)&acpi_ns_dump_module,
-	(module_info*)&gACPIDeviceModule,
+	(module_info*)&gACPIRootDriver,
+	(module_info*)&gACPINsDumpDriver,
+	(module_info*)&gACPIDeviceDriver,
 	(module_info*)&embedded_controller_driver_module,
-	(module_info*)&embedded_controller_device_module,
-	(module_info*)&gAcpiCallDeviceModule,
+	(module_info*)&gACPICallDriver,
 	NULL
 };

@@ -42,9 +42,8 @@
 #include <drivers/bus/PCI.h>
 
 
-#define ACPI_EC_DRIVER_NAME "drivers/power/acpi_embedded_controller/driver_v1"
-
-#define ACPI_EC_DEVICE_NAME "drivers/power/acpi_embedded_controller/device_v1"
+#define ACPI_EC_DRIVER_NAME \
+	"drivers/power/acpi_embedded_controller/dk_driver_v1"
 
 /* Base Namespace devices are published to */
 #define ACPI_EC_BASENAME "power/embedded_controller/%d"
@@ -212,76 +211,42 @@ embedded_controller_free(void* cookie)
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - dk_driver_info
 
 
-static int32
-acpi_get_type(device_node* dev)
-{
-	const char *bus;
-	if (gDeviceManager->get_attr_string(dev, B_DEVICE_BUS, &bus, false))
-		return -1;
+static const dk_match_rule sECMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "acpi"),
+	DK_MATCH_STRING(KOSM_ACPI_DEVICE_HID, "PNP0C09"),
+	DK_MATCH_END
+};
 
-	if (strcmp(bus, "acpi"))
-		return -1;
-
-	uint32 deviceType;
-	if (gDeviceManager->get_attr_uint32(dev, ACPI_DEVICE_TYPE_ITEM,
-			&deviceType, false) != B_OK)
-		return -1;
-
-	return deviceType;
-}
+static const dk_match_dict sECMatchDict = {
+	sECMatchRules,
+	0
+};
 
 
 static float
-embedded_controller_support(device_node* dev)
+embedded_controller_probe(dk_node* dev)
 {
-	TRACE("embedded_controller_support()\n");
+	TRACE("embedded_controller_probe()\n");
 
-	// Check that this is a device
-	if (acpi_get_type(dev) != ACPI_TYPE_DEVICE)
-		return 0.0;
+	uint32 deviceType;
+	if (gDeviceKeeper->get_property_uint32(dev, KOSM_ACPI_DEVICE_TYPE,
+			&deviceType, false) != B_OK)
+		return 0.0f;
+	if (deviceType != ACPI_TYPE_DEVICE)
+		return 0.0f;
 
-	const char* name;
-	if (gDeviceManager->get_attr_string(dev, ACPI_DEVICE_HID_ITEM, &name, false)
-			!= B_OK)
-		return 0.0;
-
-	// Test all known IDs
-
-	static const char* kEmbeddedControllerIDs[] = { "PNP0C09" };
-
-	for (size_t i = 0; i < sizeof(kEmbeddedControllerIDs)
-			/ sizeof(kEmbeddedControllerIDs[0]); i++) {
-		if (!strcmp(name, kEmbeddedControllerIDs[i])) {
-			TRACE("supported device found %s\n", name);
-			return 0.6;
-		}
-	}
-
-	return 0.0;
+	TRACE("supported EC device found\n");
+	return 0.6f;
 }
 
 
 static status_t
-embedded_controller_register_device(device_node* node)
+embedded_controller_attach(dk_node* dev, void** _driverCookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = "ACPI embedded controller" }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, ACPI_EC_DRIVER_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-embedded_controller_init_driver(device_node* dev, void** _driverCookie)
-{
-	TRACE("init driver\n");
+	TRACE("attach\n");
 
 	acpi_ec_cookie* sc;
 	sc = (acpi_ec_cookie*)malloc(sizeof(acpi_ec_cookie));
@@ -295,10 +260,17 @@ embedded_controller_init_driver(device_node* dev, void** _driverCookie)
 
 	sc->ec_condition_var.Init(NULL, "ec condition variable");
 	mutex_init(&sc->ec_lock, "ec lock");
-	device_node* parent = gDeviceManager->get_parent_node(dev);
-	gDeviceManager->get_driver(parent, (driver_module_info**)&sc->ec_acpi,
-		(void**)&sc->ec_handle);
-	gDeviceManager->put_node(parent);
+
+	// Retrieve the acpi_device_module_info interface published by the
+	// ACPI device driver on the parent ACPI device node. This driver
+	// attaches as a child of an ACPI device node via match rules, and
+	// the ACPI device interface is published on the parent.
+	if (gDeviceKeeper->get_interface(dev, ACPI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&sc->ec_acpi, (void**)&sc->ec_handle) != B_OK) {
+		free(sc);
+		return B_ERROR;
+	}
 
 	if (get_module(B_ACPI_MODULE_NAME, (module_info**)&sc->ec_acpi_module)
 			!= B_OK)
@@ -398,19 +370,14 @@ error1:
 
 error2:
 	free(buf.pointer);
-
-	// remove child nodes
-	device_node *child = NULL;
-	const device_attr attrs[] = { { NULL } };
-	while (gDeviceManager->get_next_child_node(dev, attrs, &child) == B_OK)
-		gDeviceManager->unregister_node(child);
-
+	put_module(B_ACPI_MODULE_NAME);
+	free(sc);
 	return ENXIO;
 }
 
 
 static void
-embedded_controller_uninit_driver(void* driverCookie)
+embedded_controller_detach(void* driverCookie)
 {
 	acpi_ec_cookie* sc = (struct acpi_ec_cookie*)driverCookie;
 	mutex_destroy(&sc->ec_lock);
@@ -419,76 +386,55 @@ embedded_controller_uninit_driver(void* driverCookie)
 }
 
 
-static status_t
-embedded_controller_register_child_devices(void* _cookie)
-{
-	device_node* node = ((acpi_ec_cookie*)_cookie)->ec_dev;
+static dk_device_ops sECDeviceOps = {
+	embedded_controller_open,
+	embedded_controller_close,
+	embedded_controller_free,
+	embedded_controller_read,
+	embedded_controller_write,
+	NULL,	// io
+	embedded_controller_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
 
-	int pathID = gDeviceManager->create_id(ACPI_EC_PATHID_GENERATOR);
+
+// Attach wrapper that publishes the devfs path after initializing hw.
+static status_t
+embedded_controller_attach_full(dk_node* dev, void** _driverCookie)
+{
+	status_t status = embedded_controller_attach(dev, _driverCookie);
+	if (status != B_OK)
+		return status;
+
+	int pathID = gDeviceKeeper->create_id(ACPI_EC_PATHID_GENERATOR);
 	if (pathID < 0) {
-		TRACE("register_child_device couldn't create a path_id\n");
+		TRACE("attach couldn't create path_id\n");
+		embedded_controller_detach(*_driverCookie);
 		return B_ERROR;
 	}
 
 	char name[B_DEV_NAME_LENGTH];
 	snprintf(name, sizeof(name), ACPI_EC_BASENAME, pathID);
 
-	return gDeviceManager->publish_device(node, name, ACPI_EC_DEVICE_NAME);
-}
+	status = gDeviceKeeper->publish_device(dev, name, &sECDeviceOps);
+	if (status != B_OK) {
+		embedded_controller_detach(*_driverCookie);
+		return status;
+	}
 
-
-static status_t
-embedded_controller_init_device(void* driverCookie, void** cookie)
-{
-	*cookie = driverCookie;
 	return B_OK;
 }
 
 
-static void
-embedded_controller_uninit_device(void* _cookie)
-{
-}
-
-
-driver_module_info embedded_controller_driver_module = {
-	{
-		ACPI_EC_DRIVER_NAME,
-		0,
-		NULL
-	},
-
-	embedded_controller_support,
-	embedded_controller_register_device,
-	embedded_controller_init_driver,
-	embedded_controller_uninit_driver,
-	embedded_controller_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
-
-
-struct device_module_info embedded_controller_device_module = {
-	{
-		ACPI_EC_DEVICE_NAME,
-		0,
-		NULL
-	},
-
-	embedded_controller_init_device,
-	embedded_controller_uninit_device,
-	NULL,
-
-	embedded_controller_open,
-	embedded_controller_close,
-	embedded_controller_free,
-	embedded_controller_read,
-	embedded_controller_write,
-	NULL,
-	embedded_controller_control,
-
-	NULL,
-	NULL
+struct dk_driver_info embedded_controller_driver_module = {
+	.info	= { ACPI_EC_DRIVER_NAME, 0, NULL },
+	.match	= &sECMatchDict,
+	.probe	= embedded_controller_probe,
+	.attach	= embedded_controller_attach_full,
+	.detach	= embedded_controller_detach,
+	.ops	= &sECDeviceOps,
 };
 
 

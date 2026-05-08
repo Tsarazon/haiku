@@ -135,7 +135,7 @@ typedef uint8							EC_EVENT;
  * Driver cookie.
  */
 struct acpi_ec_cookie {
-	device_node*				ec_dev;
+	dk_node*				ec_dev;
 	acpi_module_info*			ec_acpi_module;
 	acpi_device_module_info* 	ec_acpi;
 	acpi_device					ec_handle;

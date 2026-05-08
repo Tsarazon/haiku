@@ -40,12 +40,12 @@ private:
 
 
 typedef struct acpi_ns_device_info {
-	device_node *node;
-	acpi_root_info	*acpi;
-	void	*acpi_cookie;
-	thread_id thread;
-	sem_id read_sem;
-	RingBuffer *buffer;
+	dk_node*		node;
+	acpi_root_info*	acpi;
+	void*			acpi_cookie;
+	thread_id		thread;
+	sem_id			read_sem;
+	RingBuffer*		buffer;
 } acpi_ns_device_info;
 
 
@@ -186,15 +186,17 @@ acpi_namespace_dump(void *arg)
 	return 0;
 }
 
+
 extern "C" {
-/* ----------
-	acpi_namespace_open - handle open() calls
------ */
+
+
+//	#pragma mark - dk_device_ops
+
 
 static status_t
-acpi_namespace_open(void *_cookie, const char* path, int flags, void** cookie)
+acpi_namespace_open(void *deviceCookie, const char* path, int flags, void** cookie)
 {
-	acpi_ns_device_info *device = (acpi_ns_device_info *)_cookie;
+	acpi_ns_device_info *device = (acpi_ns_device_info *)deviceCookie;
 
 	dprintf("\nacpi_ns_dump: device_open\n");
 
@@ -226,9 +228,6 @@ acpi_namespace_open(void *_cookie, const char* path, int flags, void** cookie)
 }
 
 
-/* ----------
-	acpi_namespace_read - handle read() calls
------ */
 static status_t
 acpi_namespace_read(void *_cookie, off_t position, void *buf, size_t* num_bytes)
 {
@@ -260,10 +259,6 @@ acpi_namespace_read(void *_cookie, off_t position, void *buf, size_t* num_bytes)
 }
 
 
-/* ----------
-	acpi_namespace_write - handle write() calls
------ */
-
 static status_t
 acpi_namespace_write(void* cookie, off_t position, const void* buffer, size_t* num_bytes)
 {
@@ -271,10 +266,6 @@ acpi_namespace_write(void* cookie, off_t position, const void* buffer, size_t* n
 	return B_IO_ERROR;
 }
 
-
-/* ----------
-	acpi_namespace_control - handle ioctl calls
------ */
 
 static status_t
 acpi_namespace_control(void* cookie, uint32 op, void* arg, size_t len)
@@ -284,10 +275,6 @@ acpi_namespace_control(void* cookie, uint32 op, void* arg, size_t len)
 }
 
 
-/* ----------
-	acpi_namespace_close - handle close() calls
------ */
-
 static status_t
 acpi_namespace_close(void* cookie)
 {
@@ -296,10 +283,6 @@ acpi_namespace_close(void* cookie)
 }
 
 
-/* -----
-	acpi_namespace_free - called after the last device is closed, and after
-	all i/o is complete.
------ */
 static status_t
 acpi_namespace_free(void* cookie)
 {
@@ -318,62 +301,70 @@ acpi_namespace_free(void* cookie)
 }
 
 
-//	#pragma mark - device module API
+}	// extern "C"
 
 
-static status_t
-acpi_namespace_init_device(void *_cookie, void **cookie)
-{
-	device_node *node = (device_node *)_cookie;
-	status_t err;
-
-	acpi_ns_device_info *device = (acpi_ns_device_info *)calloc(1, sizeof(*device));
-	if (device == NULL)
-		return B_NO_MEMORY;
-
-	device->node = node;
-	err = gDeviceManager->get_driver(node, (driver_module_info **)&device->acpi,
-		(void **)&device->acpi_cookie);
-	if (err != B_OK) {
-		free(device);
-		return err;
-	}
-
-	*cookie = device;
-	return B_OK;
-}
-
-
-static void
-acpi_namespace_uninit_device(void *_cookie)
-{
-	acpi_ns_device_info *device = (acpi_ns_device_info *)_cookie;
-	free(device);
-}
-
-}
-
-struct device_module_info acpi_ns_dump_module = {
-	{
-		ACPI_NS_DUMP_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	acpi_namespace_init_device,
-	acpi_namespace_uninit_device,
-	NULL,
-
+static dk_device_ops sACPINsDumpDeviceOps = {
 	acpi_namespace_open,
 	acpi_namespace_close,
 	acpi_namespace_free,
 	acpi_namespace_read,
 	acpi_namespace_write,
-	NULL,
+	NULL,	// io
 	acpi_namespace_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
 
-	NULL,
-	NULL
+
+//	#pragma mark - dk_driver_info
+
+
+static status_t
+acpi_ns_dump_attach(dk_node* node, void** _cookie)
+{
+	acpi_ns_device_info* device
+		= (acpi_ns_device_info*)calloc(1, sizeof(*device));
+	if (device == NULL)
+		return B_NO_MEMORY;
+
+	device->node = node;
+
+	// Get the acpi_root_info published on the acpi root node.
+	status_t status = gDeviceKeeper->get_interface(node,
+		ACPI_ROOT_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&device->acpi, &device->acpi_cookie);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
+
+	status = gDeviceKeeper->publish_device(node, "acpi/namespace",
+		&sACPINsDumpDeviceOps);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
+
+	*_cookie = device;
+	return B_OK;
+}
+
+
+static void
+acpi_ns_dump_detach(void* cookie)
+{
+	acpi_ns_device_info* device = (acpi_ns_device_info*)cookie;
+	free(device);
+}
+
+
+struct dk_driver_info gACPINsDumpDriver = {
+	.info	= { ACPI_NS_DUMP_DRIVER_NAME, 0, NULL },
+	.attach	= acpi_ns_dump_attach,
+	.detach	= acpi_ns_dump_detach,
+	.ops	= &sACPINsDumpDeviceOps,
 };
 
 
@@ -424,7 +415,6 @@ RingBuffer::WritableAmount() const
 bool
 RingBuffer::Lock()
 {
-	//status_t status = acquire_sem_etc(fLock, 1, B_CAN_INTERRUPT, 0);
 	status_t status = acquire_sem(fLock);
 	return status == B_OK;
 }
@@ -442,4 +432,3 @@ RingBuffer::DestroyLock()
 {
 	delete_sem(fLock);
 }
-

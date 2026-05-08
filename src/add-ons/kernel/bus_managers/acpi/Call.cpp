@@ -22,9 +22,9 @@
 
 
 typedef struct {
-	device_node *node;
-	acpi_root_info	*acpi;
-	void	*acpi_cookie;
+	dk_node*		node;
+	acpi_root_info*	acpi;
+	void*			acpi_cookie;
 } acpi_call_device_info;
 
 
@@ -32,52 +32,20 @@ struct acpi_call_desc
 {
 	char*			path;
 	acpi_objects	args;
-	acpi_status	retval;
-	acpi_data	result;
-	acpi_size	reslen;
+	acpi_status		retval;
+	acpi_data		result;
+	acpi_size		reslen;
 };
 
 
-//	#pragma mark - device module API
+//	#pragma mark - dk_device_ops
 
 
 static status_t
-acpi_call_init_device(void* _node, void** _cookie)
+acpi_call_open(void* deviceCookie, const char* path, int openMode, void** _cookie)
 {
 	CALLED();
-	device_node *node = (device_node *)_node;
-
-	acpi_call_device_info* device = (acpi_call_device_info*)calloc(1, sizeof(acpi_call_device_info));
-	if (device == NULL)
-		return B_NO_MEMORY;
-
-	device->node = node;
-	status_t err = gDeviceManager->get_driver(node, (driver_module_info **)&device->acpi,
-		(void **)&device->acpi_cookie);
-	if (err != B_OK) {
-		free(device);
-		return err;
-	}
-
-	*_cookie = device;
-	return err;
-}
-
-
-static void
-acpi_call_uninit_device(void* _cookie)
-{
-	CALLED();
-	acpi_call_device_info* device = (acpi_call_device_info*)_cookie;
-	free(device);
-}
-
-
-static status_t
-acpi_call_open(void* _device, const char* path, int openMode, void** _cookie)
-{
-	CALLED();
-	acpi_call_device_info* device = (acpi_call_device_info*)_device;
+	acpi_call_device_info* device = (acpi_call_device_info*)deviceCookie;
 
 	*_cookie = device;
 	return B_OK;
@@ -173,20 +141,7 @@ acpi_call_free(void *cookie)
 }
 
 
-//	#pragma mark -
-
-
-struct device_module_info gAcpiCallDeviceModule = {
-	{
-		ACPI_CALL_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	acpi_call_init_device,
-	acpi_call_uninit_device,
-	NULL, // remove,
-
+static dk_device_ops sACPICallDeviceOps = {
 	acpi_call_open,
 	acpi_call_close,
 	acpi_call_free,
@@ -194,8 +149,58 @@ struct device_module_info gAcpiCallDeviceModule = {
 	acpi_call_write,
 	NULL,	// io
 	acpi_call_control,
-
 	NULL,	// select
 	NULL,	// deselect
+	NULL,	// device_removed
 };
 
+
+//	#pragma mark - dk_driver_info
+
+
+static status_t
+acpi_call_attach(dk_node* node, void** _cookie)
+{
+	CALLED();
+
+	acpi_call_device_info* device
+		= (acpi_call_device_info*)calloc(1, sizeof(*device));
+	if (device == NULL)
+		return B_NO_MEMORY;
+
+	device->node = node;
+	status_t status = gDeviceKeeper->get_interface(node,
+		ACPI_ROOT_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&device->acpi, &device->acpi_cookie);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
+
+	status = gDeviceKeeper->publish_device(node, "acpi/call",
+		&sACPICallDeviceOps);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
+
+	*_cookie = device;
+	return B_OK;
+}
+
+
+static void
+acpi_call_detach(void* cookie)
+{
+	CALLED();
+	acpi_call_device_info* device = (acpi_call_device_info*)cookie;
+	free(device);
+}
+
+
+struct dk_driver_info gACPICallDriver = {
+	.info	= { ACPI_CALL_DRIVER_NAME, 0, NULL },
+	.attach	= acpi_call_attach,
+	.detach	= acpi_call_detach,
+	.ops	= &sACPICallDeviceOps,
+};
