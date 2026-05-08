@@ -17,6 +17,18 @@ NO_HAIKU_CHECK_DISABLE_INTERRUPTS();
 NO_HAIKU_REENABLE_INTERRUPTS();
 
 
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	driver_t *drivers[] = {
+		DRIVER_MODULE_NAME(em, pci),
+		DRIVER_MODULE_NAME(igb, pci),
+		NULL
+	};
+	return __haiku_probe_drivers(dev, drivers);
+}
+
+
 void
 __haiku_init_hardware()
 {
