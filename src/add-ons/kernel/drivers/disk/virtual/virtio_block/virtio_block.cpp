@@ -4,6 +4,8 @@
  */
 
 
+#include <new>
+
 #include <condition_variable.h>
 #include <lock.h>
 #include <StackOrHeapArray.h>
@@ -44,13 +46,12 @@ static const uint8 kDriveIcon[] = {
 };
 
 
-#define VIRTIO_BLOCK_DRIVER_MODULE_NAME "drivers/disk/virtual/virtio_block/driver_v1"
-#define VIRTIO_BLOCK_DEVICE_MODULE_NAME "drivers/disk/virtual/virtio_block/device_v1"
+#define VIRTIO_BLOCK_DRIVER_MODULE_NAME "drivers/disk/virtual/virtio_block/dk_driver_v1"
 #define VIRTIO_BLOCK_DEVICE_ID_GENERATOR	"virtio_block/device_id"
 
 
-typedef struct {
-	device_node*			node;
+struct virtio_block_driver_info {
+	dk_node*			node;
 	::virtio_device			virtio_device;
 	virtio_device_interface*	virtio;
 	::virtio_queue			virtio_queue;
@@ -72,7 +73,40 @@ typedef struct {
 	mutex					lock;
 	int32					currentRequest;
 	ConditionVariable		interruptCondition;
-} virtio_block_driver_info;
+
+	int32					id;
+	char					publishedPath[64];
+
+	virtio_block_driver_info()
+		:
+		node(NULL),
+		virtio_device(NULL),
+		virtio(NULL),
+		virtio_queue(NULL),
+		io_scheduler(NULL),
+		dma_resource(NULL),
+		bufferArea(-1),
+		bufferAddr(0),
+		bufferPhysAddr(0),
+		features(0),
+		capacity(0),
+		block_size(0),
+		physical_block_size(0),
+		media_status(B_OK),
+		currentRequest(0),
+		id(-1)
+	{
+		memset(&config, 0, sizeof(config));
+		mutex_init(&lock, "virtio block lock");
+		interruptCondition.Init(this, "virtio block transfer");
+		publishedPath[0] = '\0';
+	}
+
+	~virtio_block_driver_info()
+	{
+		mutex_destroy(&lock);
+	}
+};
 
 
 typedef struct {
@@ -101,7 +135,7 @@ typedef struct {
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 
 
 bool virtio_block_set_capacity(virtio_block_driver_info* info);
@@ -254,72 +288,6 @@ do_io(void* cookie, IOOperation* operation)
 
 
 //	#pragma mark - device module API
-
-
-static status_t
-virtio_block_init_device(void* _info, void** _cookie)
-{
-	CALLED();
-	virtio_block_driver_info* info = (virtio_block_driver_info*)_info;
-
-	device_node* parent = sDeviceManager->get_parent_node(info->node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&info->virtio,
-		(void **)&info->virtio_device);
-	sDeviceManager->put_node(parent);
-
-	info->virtio->negotiate_features(info->virtio_device,
-		VIRTIO_BLK_F_BARRIER | VIRTIO_BLK_F_SIZE_MAX
-			| VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_GEOMETRY
-			| VIRTIO_BLK_F_RO | VIRTIO_BLK_F_BLK_SIZE
-			| VIRTIO_BLK_F_FLUSH | VIRTIO_BLK_F_TOPOLOGY
-			| VIRTIO_FEATURE_RING_INDIRECT_DESC,
-		&info->features, &get_feature_name);
-
-	status_t status = info->virtio->read_device_config(
-		info->virtio_device, 0, &info->config,
-		sizeof(struct virtio_blk_config));
-	if (status != B_OK)
-		return status;
-
-	virtio_block_set_capacity(info);
-
-	TRACE("virtio_block: capacity: %" B_PRIu64 ", block_size %" B_PRIu32 "\n",
-		info->capacity, info->block_size);
-
-	uint16 requestedSize = 0;
-	if ((info->features & VIRTIO_BLK_F_SEG_MAX) != 0)
-		requestedSize = info->config.seg_max + 2;
-			// two entries are taken up by the header and result
-
-	status = info->virtio->alloc_queues(info->virtio_device, 1,
-		&info->virtio_queue, &requestedSize);
-	if (status != B_OK) {
-		ERROR("queue allocation failed (%s)\n", strerror(status));
-		return status;
-	}
-
-	status = info->virtio->setup_interrupt(info->virtio_device,
-		virtio_block_config_callback, info);
-
-	if (status == B_OK) {
-		status = info->virtio->queue_setup_interrupt(info->virtio_queue,
-			virtio_block_callback, info);
-	}
-
-	*_cookie = info;
-	return status;
-}
-
-
-static void
-virtio_block_uninit_device(void* _cookie)
-{
-	CALLED();
-	virtio_block_driver_info* info = (virtio_block_driver_info*)_cookie;
-
-	delete info->io_scheduler;
-	delete info->dma_resource;
-}
 
 
 static status_t
@@ -502,22 +470,35 @@ virtio_block_set_capacity(virtio_block_driver_info* info)
 //	#pragma mark - driver module API
 
 
+static dk_device_ops sVirtioBlockDeviceOps = {
+	.open    = virtio_block_open,
+	.close   = virtio_block_close,
+	.free    = virtio_block_free,
+	.read    = NULL,
+	.write   = NULL,
+	.io      = virtio_block_io,
+	.control = virtio_block_ioctl,
+	.select  = NULL,
+	.deselect = NULL,
+	.device_removed = NULL,
+};
+
+
 static float
-virtio_block_supports_device(device_node *parent)
+virtio_block_supports_device(dk_node *parent)
 {
 	CALLED();
-	const char *bus;
+	char bus[64];
 	uint16 deviceType;
 
-	// make sure parent is really the Virtio bus manager
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 
 	if (strcmp(bus, "virtio"))
 		return 0.0;
 
-	// check whether it's really a Direct Access Device
-	if (sDeviceManager->get_attr_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
+	if (sDeviceKeeper->get_property_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != VIRTIO_DEVICE_ID_BLOCK)
 		return 0.0;
 
@@ -528,65 +509,107 @@ virtio_block_supports_device(device_node *parent)
 
 
 static status_t
-virtio_block_register_device(device_node *node)
+virtio_block_attach(dk_node *node, void **cookie)
 {
 	CALLED();
 
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Virtio Block"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, VIRTIO_BLOCK_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-virtio_block_init_driver(device_node *node, void **cookie)
-{
-	CALLED();
-
-	virtio_block_driver_info* info = (virtio_block_driver_info*)malloc(
-		sizeof(virtio_block_driver_info));
+	virtio_block_driver_info* info
+		= new(std::nothrow) virtio_block_driver_info();
 	if (info == NULL)
 		return B_NO_MEMORY;
 
-	memset(info, 0, sizeof(*info));
-
-	info->media_status = B_OK;
-	info->dma_resource = new(std::nothrow) DMAResource;
-	if (info->dma_resource == NULL) {
-		free(info);
-		return B_NO_MEMORY;
-	}
-
-	// create command buffer area
-	info->bufferArea = create_area("virtio_block command buffer", (void**)&info->bufferAddr,
-		B_ANY_KERNEL_BLOCK_ADDRESS, B_PAGE_SIZE,
-		B_FULL_LOCK, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA);
-	if (info->bufferArea < B_OK) {
-		status_t status = info->bufferArea;
-		delete info->dma_resource;
-		free(info);
-		return status;
-	}
-
-	physical_entry entry;
-	status_t status = get_memory_map((void*)info->bufferAddr, B_PAGE_SIZE, &entry, 1);
-	if (status != B_OK) {
-		delete_area(info->bufferArea);
-		delete info->dma_resource;
-		free(info);
-		return status;
-	}
-
-	info->bufferPhysAddr = entry.address;
-	info->interruptCondition.Init(info, "virtio block transfer");
-	info->currentRequest = 0;
-	mutex_init(&info->lock, "virtio block request");
-
 	info->node = node;
+
+	// Walk up to the virtio bus manager ancestor for the peripheral-facing
+	// interface and our virtio_device cookie.
+	status_t status = sDeviceKeeper->get_interface(node,
+		VIRTIO_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&info->virtio, (void**)&info->virtio_device);
+	if (status != B_OK) {
+		ERROR("get_interface(virtio device) failed: %s\n", strerror(status));
+		delete info;
+		return status;
+	}
+	if (info->virtio == NULL || info->virtio_device == NULL) {
+		ERROR("virtio bus manager returned NULL ops/cookie\n");
+		delete info;
+		return B_ERROR;
+	}
+
+	info->virtio->negotiate_features(info->virtio_device,
+		VIRTIO_BLK_F_BARRIER | VIRTIO_BLK_F_SIZE_MAX
+			| VIRTIO_BLK_F_SEG_MAX | VIRTIO_BLK_F_GEOMETRY
+			| VIRTIO_BLK_F_RO | VIRTIO_BLK_F_BLK_SIZE
+			| VIRTIO_BLK_F_FLUSH | VIRTIO_BLK_F_TOPOLOGY
+			| VIRTIO_FEATURE_RING_INDIRECT_DESC,
+		&info->features, &get_feature_name);
+
+	status = info->virtio->read_device_config(
+		info->virtio_device, 0, &info->config,
+		sizeof(struct virtio_blk_config));
+	if (status != B_OK) {
+		delete info;
+		return status;
+	}
+
+	virtio_block_set_capacity(info);
+
+	TRACE("virtio_block: capacity: %" B_PRIu64 ", block_size %" B_PRIu32 "\n",
+		info->capacity, info->block_size);
+
+	uint16 requestedSize = 0;
+	if ((info->features & VIRTIO_BLK_F_SEG_MAX) != 0)
+		requestedSize = info->config.seg_max + 2;
+			// two entries are taken up by the header and result
+
+	status = info->virtio->alloc_queues(info->virtio_device, 1,
+		&info->virtio_queue, &requestedSize);
+	if (status != B_OK) {
+		ERROR("queue allocation failed (%s)\n", strerror(status));
+		delete info;
+		return status;
+	}
+
+	status = info->virtio->setup_interrupt(info->virtio_device,
+		virtio_block_config_callback, info);
+	if (status != B_OK) {
+		info->virtio->free_queues(info->virtio_device);
+		delete info;
+		return status;
+	}
+
+	status = info->virtio->queue_setup_interrupt(info->virtio_queue,
+		virtio_block_callback, info);
+	if (status != B_OK) {
+		info->virtio->free_interrupts(info->virtio_device);
+		info->virtio->free_queues(info->virtio_device);
+		delete info;
+		return status;
+	}
+
+	// Publish devfs entry
+	info->id = sDeviceKeeper->create_id(VIRTIO_BLOCK_DEVICE_ID_GENERATOR);
+	if (info->id < 0) {
+		status = info->id;
+		info->virtio->free_interrupts(info->virtio_device);
+		info->virtio->free_queues(info->virtio_device);
+		delete info;
+		return status;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		"disk/virtual/virtio_block/%" B_PRId32 "/raw", info->id);
+	status = sDeviceKeeper->publish_device(node, info->publishedPath,
+		&sVirtioBlockDeviceOps);
+	if (status != B_OK) {
+		ERROR("publish_device(%s) failed: %s\n", info->publishedPath,
+			strerror(status));
+		sDeviceKeeper->free_id(VIRTIO_BLOCK_DEVICE_ID_GENERATOR, info->id);
+		info->virtio->free_interrupts(info->virtio_device);
+		info->virtio->free_queues(info->virtio_device);
+		delete info;
+		return status;
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -594,35 +617,26 @@ virtio_block_init_driver(device_node *node, void **cookie)
 
 
 static void
-virtio_block_uninit_driver(void *_cookie)
+virtio_block_detach(void *_cookie)
 {
 	CALLED();
 	virtio_block_driver_info* info = (virtio_block_driver_info*)_cookie;
-	mutex_destroy(&info->lock);
-	delete_area(info->bufferArea);
-	free(info);
-}
+	if (info == NULL)
+		return;
 
+	if (info->publishedPath[0] != '\0')
+		sDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->id >= 0)
+		sDeviceKeeper->free_id(VIRTIO_BLOCK_DEVICE_ID_GENERATOR, info->id);
 
-static status_t
-virtio_block_register_child_devices(void* _cookie)
-{
-	CALLED();
-	virtio_block_driver_info* info = (virtio_block_driver_info*)_cookie;
-	status_t status;
+	if (info->virtio != NULL && info->virtio_device != NULL) {
+		info->virtio->free_interrupts(info->virtio_device);
+		info->virtio->free_queues(info->virtio_device);
+	}
 
-	int32 id = sDeviceManager->create_id(VIRTIO_BLOCK_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), "disk/virtual/virtio_block/%" B_PRId32 "/raw",
-		id);
-
-	status = sDeviceManager->publish_device(info->node, name,
-		VIRTIO_BLOCK_DEVICE_MODULE_NAME);
-
-	return status;
+	delete info->io_scheduler;
+	delete info->dma_resource;
+	delete info;
 }
 
 
@@ -630,51 +644,36 @@ virtio_block_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
-	{ NULL }
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
+	{}
 };
 
-struct device_module_info sVirtioBlockDevice = {
-	{
-		VIRTIO_BLOCK_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
 
-	virtio_block_init_device,
-	virtio_block_uninit_device,
-	NULL, // remove,
-
-	virtio_block_open,
-	virtio_block_close,
-	virtio_block_free,
-	NULL,	// read
-	NULL,	// write
-	virtio_block_io,
-	virtio_block_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
+static const dk_match_rule sVirtioBlockMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "virtio"),
+	DK_MATCH_END
 };
 
-struct driver_module_info sVirtioBlockDriver = {
-	{
+static const dk_match_dict sVirtioBlockMatchDict = {
+	sVirtioBlockMatchRules,
+	0
+};
+
+
+static dk_driver_info sVirtioBlockDriver = {
+	.info = {
 		VIRTIO_BLOCK_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	virtio_block_supports_device,
-	virtio_block_register_device,
-	virtio_block_init_driver,
-	virtio_block_uninit_driver,
-	virtio_block_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sVirtioBlockMatchDict,
+	.probe   = virtio_block_supports_device,
+	.attach  = virtio_block_attach,
+	.detach  = virtio_block_detach,
+	.ops     = &sVirtioBlockDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sVirtioBlockDriver,
-	(module_info*)&sVirtioBlockDevice,
 	NULL
 };
