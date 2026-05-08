@@ -17,76 +17,11 @@
 // information about one PCI device
 struct pci_device {
 	PCIDev*					device;
-	device_node*			node;
+	dk_node*				node;
 };
 
 
-static status_t
-pci_device_init_driver(device_node* node, void** _cookie)
-{
-	uint8 domain;
-	uint8 bus, deviceNumber, function;
-	if (gDeviceManager->get_attr_uint8(node, B_PCI_DEVICE_DOMAIN, &domain,
-			false) != B_OK
-		|| gDeviceManager->get_attr_uint8(node, B_PCI_DEVICE_BUS, &bus,
-			false) != B_OK
-		|| gDeviceManager->get_attr_uint8(node, B_PCI_DEVICE_DEVICE,
-			&deviceNumber, false) != B_OK
-		|| gDeviceManager->get_attr_uint8(node, B_PCI_DEVICE_FUNCTION,
-			&function, false) != B_OK)
-		return B_ERROR;
-
-	PCIDev *dev = gPCI->FindDevice(domain, bus, deviceNumber, function);
-	if (dev == NULL) {
-		panic("device not found!\n");
-		return ENODEV;
-	}
-
-	pci_device* device = (pci_device*)malloc(sizeof(*device));
-	if (device == NULL)
-		return B_NO_MEMORY;
-
-	device->device = dev;
-	device->node = node;
-
-	*_cookie = device;
-	return B_OK;
-}
-
-
-static void
-pci_device_uninit_driver(void* cookie)
-{
-	pci_device* device = (pci_device*)cookie;
-	free(device);
-}
-
-
-static status_t
-pci_device_std_ops(int32 op, ...)
-{
-	switch (op) {
-		case B_MODULE_INIT:
-		case B_MODULE_UNINIT:
-			return B_OK;
-	}
-
-	return B_BAD_VALUE;
-}
-
-
-pci_device_module_info gPCIDeviceModule = {
-	{
-		{
-			PCI_DEVICE_MODULE_NAME,
-			0,
-			pci_device_std_ops
-		},
-
-		.init_driver = pci_device_init_driver,
-		.uninit_driver = pci_device_uninit_driver,
-	},
-
+pci_device_ops gPCIDeviceInterface = {
 	.read_io_8 = [](pci_device *device, addr_t mappedIOAddress) {
 		return pci_read_io_8(mappedIOAddress);
 	},
@@ -155,4 +90,65 @@ pci_device_module_info gPCIDeviceModule = {
 	.enable_msix = [](pci_device *device) {
 		return gPCI->EnableMSIX(device->device);
 	}
+};
+
+
+static status_t
+pci_device_attach(dk_node* node, void** _cookie)
+{
+	uint8 domain;
+	uint8 bus, deviceNumber, function;
+	if (gDeviceKeeper->get_property_uint8(node, KOSM_PCI_DEVICE_DOMAIN, &domain,
+			false) != B_OK
+		|| gDeviceKeeper->get_property_uint8(node, KOSM_PCI_DEVICE_BUS, &bus,
+			false) != B_OK
+		|| gDeviceKeeper->get_property_uint8(node, KOSM_PCI_DEVICE_DEVICE,
+			&deviceNumber, false) != B_OK
+		|| gDeviceKeeper->get_property_uint8(node, KOSM_PCI_DEVICE_FUNCTION,
+			&function, false) != B_OK)
+		return B_ERROR;
+
+	PCIDev *dev = gPCI->FindDevice(domain, bus, deviceNumber, function);
+	if (dev == NULL) {
+		panic("device not found!\n");
+		return ENODEV;
+	}
+
+	pci_device* device = (pci_device*)malloc(sizeof(*device));
+	if (device == NULL)
+		return B_NO_MEMORY;
+
+	device->device = dev;
+	device->node = node;
+
+	// Publish the typed PCI device interface on this node so that child
+	// drivers can retrieve it via
+	//   gDeviceKeeper->get_interface(node, PCI_DEVICE_INTERFACE_NAME, ...)
+	status_t status = gDeviceKeeper->publish_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, &gPCIDeviceInterface);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
+
+	*_cookie = device;
+	return B_OK;
+}
+
+
+static void
+pci_device_detach(void* cookie)
+{
+	pci_device* device = (pci_device*)cookie;
+	free(device);
+}
+
+
+// Auto-attached by module name when register_node(PCI_DEVICE_MODULE_NAME)
+// is called from pci_root_traverse().
+struct dk_driver_info gPCIDeviceDriver = {
+	.info		= { PCI_DEVICE_MODULE_NAME, 0, NULL },
+	.attach		= pci_device_attach,
+	.detach		= pci_device_detach,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };

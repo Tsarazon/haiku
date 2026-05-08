@@ -81,7 +81,7 @@ pci_ram_address(phys_addr_t childAdr)
 #else
 	uint8 domain;
 	pci_resource_range range;
-	if (gPCI->LookupRange(B_IO_MEMORY, childAdr, domain, range) >= B_OK)
+	if (gPCI->LookupRange(KOSM_RESOURCE_IO_MEMORY, childAdr, domain, range) >= B_OK)
 		hostAdr = childAdr - range.pci_address + range.host_address;
 #endif
 	//dprintf("pci_ram_address(%#" B_PRIx64 ") -> %#" B_PRIx64 "\n", childAdr, hostAdr);
@@ -138,38 +138,38 @@ pci_reserve_device(uchar virtualBus, uchar device, uchar function,
 	//TRACE(("%s(%d [%d:%d], %d, %d, %s, %p)\n", __FUNCTION__, virtualBus,
 	//	domain, bus, device, function, driverName, nodeCookie));
 
-	device_attr matchThis[] = {
+	dk_match_rule matchThis[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "pci"}},
+		DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
 
 		// location on PCI bus
-		{B_PCI_DEVICE_DOMAIN, B_UINT8_TYPE, {.ui8 = domain}},
-		{B_PCI_DEVICE_BUS, B_UINT8_TYPE, {.ui8 = bus}},
-		{B_PCI_DEVICE_DEVICE, B_UINT8_TYPE, {.ui8 = device}},
-		{B_PCI_DEVICE_FUNCTION, B_UINT8_TYPE, {.ui8 = function}},
-		{NULL}
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_DOMAIN, domain),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_BUS, bus),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_DEVICE, device),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_FUNCTION, function),
+		DK_MATCH_END
 	};
-	device_attr legacyAttrs[] = {
+	dk_property legacyAttrs[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "legacy_driver"}},
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Legacy Driver Reservation"}},
-		{NULL}
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "legacy_driver"),
+		DK_PROP_STRING(KOSM_LABEL, "Legacy Driver Reservation"),
+		DK_PROP_END
 	};
-	device_attr drvAttrs[] = {
+	dk_property drvAttrs[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "legacy_driver"}},
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = driverName}},
-		{"legacy_driver", B_STRING_TYPE, {.string = driverName}},
-		{"legacy_driver_cookie", B_UINT64_TYPE, {.ui64 = (uint64)nodeCookie}},
-		{NULL}
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "legacy_driver"),
+		DK_PROP_STRING(KOSM_LABEL, driverName),
+		DK_PROP_STRING("legacy_driver", driverName),
+		DK_PROP_UINT64("legacy_driver_cookie", (uint64)nodeCookie),
+		DK_PROP_END
 	};
-	device_node *node, *legacy;
+	dk_node *node, *legacy;
 
 	status = B_DEVICE_NOT_FOUND;
-	device_node *root_pci_node = gPCI->_GetDomainData(domain)->root_node;
+	dk_node *root_pci_node = gPCI->_GetDomainData(domain)->root_node;
 
 	node = NULL;
-	if (gDeviceManager->get_next_child_node(root_pci_node,
+	if (gDeviceKeeper->get_next_child_node(root_pci_node,
 		matchThis, &node) < B_OK) {
 		goto err1;
 	}
@@ -177,24 +177,24 @@ pci_reserve_device(uchar virtualBus, uchar device, uchar function,
 	// common API for all legacy modules ?
 	//status = legacy_driver_register(node, driverName, nodeCookie, PCI_LEGACY_DRIVER_MODULE_NAME);
 
-	status = gDeviceManager->register_node(node, PCI_LEGACY_DRIVER_MODULE_NAME,
+	status = gDeviceKeeper->register_node(node, PCI_LEGACY_DRIVER_MODULE_NAME,
 		legacyAttrs, NULL, &legacy);
 	if (status < B_OK)
 		goto err2;
 
-	status = gDeviceManager->register_node(legacy, PCI_LEGACY_DRIVER_MODULE_NAME,
+	status = gDeviceKeeper->register_node(legacy, PCI_LEGACY_DRIVER_MODULE_NAME,
 		drvAttrs, NULL, NULL);
 	if (status < B_OK)
 		goto err3;
 
-	gDeviceManager->put_node(node);
+	gDeviceKeeper->put_node(node);
 
 	return B_OK;
 
 err3:
-	gDeviceManager->unregister_node(legacy);
+	gDeviceKeeper->unregister_node(legacy);
 err2:
-	gDeviceManager->put_node(node);
+	gDeviceKeeper->put_node(node);
 err1:
 	TRACE(("pci_reserve_device for driver %s failed: %s\n", driverName,
 		strerror(status)));
@@ -218,67 +218,67 @@ pci_unreserve_device(uchar virtualBus, uchar device, uchar function,
 	//TRACE(("%s(%d [%d:%d], %d, %d, %s, %p)\n", __FUNCTION__, virtualBus,
 	//	domain, bus, device, function, driverName, nodeCookie));
 
-	device_attr matchThis[] = {
+	dk_match_rule matchThis[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "pci"}},
+		DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
 
 		// location on PCI bus
-		{B_PCI_DEVICE_DOMAIN, B_UINT8_TYPE, {.ui8 = domain}},
-		{B_PCI_DEVICE_BUS, B_UINT8_TYPE, {.ui8 = bus}},
-		{B_PCI_DEVICE_DEVICE, B_UINT8_TYPE, {.ui8 = device}},
-		{B_PCI_DEVICE_FUNCTION, B_UINT8_TYPE, {.ui8 = function}},
-		{NULL}
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_DOMAIN, domain),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_BUS, bus),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_DEVICE, device),
+		DK_MATCH_UINT8(KOSM_PCI_DEVICE_FUNCTION, function),
+		DK_MATCH_END
 	};
-	device_attr legacyAttrs[] = {
+	dk_match_rule legacyAttrs[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "legacy_driver"}},
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Legacy Driver Reservation"}},
-		{NULL}
+		DK_MATCH_STRING(KOSM_DEVICE_BUS, "legacy_driver"),
+		DK_MATCH_STRING(KOSM_LABEL, "Legacy Driver Reservation"),
+		DK_MATCH_END
 	};
-	device_attr drvAttrs[] = {
+	dk_match_rule drvAttrs[] = {
 		// info about device
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "legacy_driver"}},
-		{"legacy_driver", B_STRING_TYPE, {.string = driverName}},
-		{"legacy_driver_cookie", B_UINT64_TYPE, {.ui64 = (uint64)nodeCookie}},
-		{NULL}
+		DK_MATCH_STRING(KOSM_DEVICE_BUS, "legacy_driver"),
+		DK_MATCH_STRING("legacy_driver", driverName),
+		DK_MATCH_UINT64("legacy_driver_cookie", (uint64)nodeCookie),
+		DK_MATCH_END
 	};
-	device_node *pci, *node, *legacy, *drv;
+	dk_node *pci, *node, *legacy, *drv;
 
 	status = B_DEVICE_NOT_FOUND;
 
 	pci = gPCI->_GetDomainData(domain)->root_node;
 
 	node = NULL;
-	if (gDeviceManager->get_next_child_node(pci, matchThis, &node) < B_OK)
+	if (gDeviceKeeper->get_next_child_node(pci, matchThis, &node) < B_OK)
 		goto err1;
 
 	// common API for all legacy modules ?
 	//status = legacy_driver_unregister(node, driverName, nodeCookie);
 
 	legacy = NULL;
-	if (gDeviceManager->get_next_child_node(node, legacyAttrs, &legacy) < B_OK)
+	if (gDeviceKeeper->get_next_child_node(node, legacyAttrs, &legacy) < B_OK)
 		goto err2;
 
 	drv = NULL;
-	if (gDeviceManager->get_next_child_node(legacy, drvAttrs, &drv) < B_OK)
+	if (gDeviceKeeper->get_next_child_node(legacy, drvAttrs, &drv) < B_OK)
 		goto err3;
 
-	gDeviceManager->put_node(drv);
-	status = gDeviceManager->unregister_node(drv);
+	gDeviceKeeper->put_node(drv);
+	status = gDeviceKeeper->unregister_node(drv);
 	//dprintf("unreg:drv:%s\n", strerror(status));
 
-	gDeviceManager->put_node(legacy);
-	status = gDeviceManager->unregister_node(legacy);
+	gDeviceKeeper->put_node(legacy);
+	status = gDeviceKeeper->unregister_node(legacy);
 	//dprintf("unreg:legacy:%s\n", strerror(status));
 	// we'll get EBUSY here anyway...
 
-	gDeviceManager->put_node(node);
+	gDeviceKeeper->put_node(node);
 	return B_OK;
 
 err3:
-	gDeviceManager->put_node(legacy);
+	gDeviceKeeper->put_node(legacy);
 err2:
-	gDeviceManager->put_node(node);
+	gDeviceKeeper->put_node(node);
 err1:
 	TRACE(("pci_unreserve_device for driver %s failed: %s\n", driverName,
 		strerror(status)));
@@ -634,8 +634,8 @@ PCI::ResolveVirtualBus(uint8 virtualBus, uint8 *domain, uint8 *bus)
 
 
 status_t
-PCI::AddController(pci_controller_module_info *controller,
-	void *controllerCookie, device_node *rootNode, domain_data **domainData)
+PCI::AddController(pci_controller_ops *controller,
+	void *controllerCookie, dk_node *rootNode, domain_data **domainData)
 {
 	if (fDomainCount == MAX_PCI_DOMAINS)
 		return B_ERROR;
@@ -686,7 +686,7 @@ PCI::LookupRange(uint32 type, phys_addr_t pciAddr,
 				domain = curDomain;
 				range = curRange;
 #if !(defined(__i386__) || defined(__x86_64__))
-				if (type == B_IO_PORT && mappedAdr != NULL)
+				if (type == KOSM_RESOURCE_IO_PORT && mappedAdr != NULL)
 					*mappedAdr = fDomainData[curDomain].io_port_adr;
 #endif
 				return B_OK;
@@ -704,7 +704,7 @@ PCI::InitDomainData(domain_data &data)
 	int32 count;
 	status_t status;
 
-	pci_controller_module_info *ctrl = data.controller;
+	pci_controller_ops *ctrl = data.controller;
 	void *ctrlCookie = data.controller_cookie;
 
 	status = ctrl->get_max_bus_devices(ctrlCookie, &count);
@@ -717,7 +717,7 @@ PCI::InitDomainData(domain_data &data)
 #if !(defined(__i386__) || defined(__x86_64__))
 	for (int32 i = 0; i < data.ranges.Count(); i++) {
 		pci_resource_range &ioPortRange = data.ranges[i];
-		if (ioPortRange.type != B_IO_PORT)
+		if (ioPortRange.type != KOSM_RESOURCE_IO_PORT)
 			continue;
 
 		if (ioPortRange.size > 0) {

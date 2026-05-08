@@ -56,9 +56,9 @@ struct domain_data {
 	}
 
 	// These two are set in PCI::AddController:
-	pci_controller_module_info *controller;
+	pci_controller_ops *controller;
 	void *				controller_cookie;
-	device_node *		root_node;
+	dk_node *		root_node;
 	PCIBus *			bus;
 
 	// All the rest is set in PCI::InitDomainData
@@ -80,8 +80,8 @@ public:
 			void			InitDomainData(domain_data &data);
 			void			InitBus(PCIBus *bus);
 
-			status_t		AddController(pci_controller_module_info *controller,
-								void *controllerCookie, device_node *rootNode,
+			status_t		AddController(pci_controller_ops *controller,
+								void *controllerCookie, dk_node *rootNode,
 								domain_data **domainData);
 
 			status_t		LookupRange(uint32 type, phys_addr_t pciAddr,

@@ -9,24 +9,23 @@
 
 
 #include <KernelExport.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <bus/PCI.h>
 
 // name of PCI legacy driver endpoint module
-#define PCI_LEGACY_DRIVER_MODULE_NAME "bus_managers/pci/legacy_v1"
+#define PCI_LEGACY_DRIVER_MODULE_NAME "bus_managers/pci/legacy/dk_driver_v1"
 
 // name of PCI device modules
-#define PCI_DEVICE_MODULE_NAME "bus_managers/pci/driver_v1"
+#define PCI_DEVICE_MODULE_NAME "bus_managers/pci/device/dk_driver_v1"
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
 
-// PCI root.
-// apart from being the common parent of all PCI devices, it
-// manages access to PCI config space
+// PCI root interface published via publish_interface on the root PCI
+// domain node. Consumed internally by pci.cpp helpers only.
+#define PCI_ROOT_INTERFACE_NAME		"interface/pci/root/v1"
+
 typedef struct pci_root_module_info {
-	driver_module_info info;
-
 	// read PCI config space
 	uint32 (*read_pci_config)(uint8 bus, uint8 device, uint8 function,
 				uint16 offset, uint8 size);
@@ -36,8 +35,12 @@ typedef struct pci_root_module_info {
 				uint16 offset, uint8 size, uint32 value);
 } pci_root_module_info;
 
-extern pci_root_module_info gPCIRootModule;
-extern pci_device_module_info gPCIDeviceModule;
+extern pci_root_module_info gPCIRootInterface;
+extern pci_device_ops gPCIDeviceInterface;
+
+extern struct dk_driver_info gPCIRootDriver;
+extern struct dk_driver_info gPCIDeviceDriver;
+extern struct dk_driver_info gPCILegacyDriver;
 
 
 #ifdef __cplusplus

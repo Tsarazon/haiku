@@ -16,7 +16,7 @@
 #define CHECK_RET(err) {status_t _err = (err); if (_err < B_OK) return _err;}
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 
 
 static int32
@@ -140,23 +140,21 @@ static struct pci_module_info sOldPCIModule = {
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper},
 	{}
 };
 
-driver_module_info gPCILegacyDriverModule = {
-	{
-		PCI_LEGACY_DRIVER_MODULE_NAME,
-		0,
-		NULL,
-	},
-	NULL
+// Stub driver used by pci_reserve_device as a placeholder for "this PCI
+// device has been claimed by a legacy driver". No match/probe/attach —
+// instantiated only via register_node from pci_reserve_device.
+struct dk_driver_info gPCILegacyDriver = {
+	.info = { PCI_LEGACY_DRIVER_MODULE_NAME, 0, NULL },
 };
 
 module_info *modules[] = {
 	(module_info *)&sOldPCIModule,
-	(module_info *)&gPCIRootModule,
-	(module_info *)&gPCIDeviceModule,
-	(module_info *)&gPCILegacyDriverModule,
+	(module_info *)&gPCIRootDriver,
+	(module_info *)&gPCIDeviceDriver,
+	(module_info *)&gPCILegacyDriver,
 	NULL
 };
