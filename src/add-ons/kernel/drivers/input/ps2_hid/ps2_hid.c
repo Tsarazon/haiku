@@ -9,7 +9,7 @@
  */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <string.h>
@@ -18,110 +18,71 @@
 
 #define TRACE(x) dprintf x
 
-#define PS2_HID_DRIVER_MODULE_NAME "drivers/input/ps2_hid/driver_v1"
-#define PS2_HID_DEVICE_MODULE_NAME "drivers/input/ps2_hid/device_v1"
+#define PS2_HID_DRIVER_MODULE_NAME "drivers/input/ps2_hid/dk_driver_v1"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 static bool sPublished = false;
 
 ps2_module_info *gPs2 = NULL;
 
 
+static const dk_match_rule sPs2HidMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sPs2HidMatchDict = {
+	sPs2HidMatchRules,
+	0
+};
+
+
 static float
-ps2_hid_supports_device(device_node *parent)
+ps2_hid_probe(dk_node *node)
 {
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-ps2_hid_register_device(device_node *node)
+ps2_hid_attach(dk_node *node, void **cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "PS/2 HID"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node,
-		PS2_HID_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-static status_t
-ps2_hid_init_driver(device_node *node, void **cookie)
-{
-	TRACE(("ps2_hid: init_driver\n"));
+	TRACE(("ps2_hid: attach\n"));
 	status_t status = get_module(B_PS2_MODULE_NAME, (module_info **)&gPs2);
 	if (status != B_OK)
 		return status;
+	sPublished = true;
 	*cookie = node;
 	return B_OK;
 }
 
 
 static void
-ps2_hid_uninit_driver(void *_cookie)
+ps2_hid_detach(void *_cookie)
 {
-	TRACE(("ps2_hid: uninit_driver\n"));
+	TRACE(("ps2_hid: detach\n"));
 	put_module(B_PS2_MODULE_NAME);
 	sPublished = false;
 }
 
 
-static status_t
-ps2_hid_register_child_devices(void *_cookie)
-{
-	/* ps2_hid publishes no devices — PS/2 bus manager handles device creation */
-	(void)_cookie;
-	sPublished = true;
-	return B_OK;
-}
-
-
-static status_t ps2_hid_init_device(void *i, void **c)
-{ *c = i; return B_OK; }
-static void ps2_hid_uninit_device(void *c) {}
-
-static status_t ps2_hid_open(void *i, const char *n, int m, void **c)
-{ return B_ERROR; }
-static status_t ps2_hid_close(void *c) { return B_OK; }
-static status_t ps2_hid_free(void *c) { return B_OK; }
-static status_t ps2_hid_read(void *c, off_t p, void *b, size_t *l)
-{ *l = 0; return B_ERROR; }
-static status_t ps2_hid_write(void *c, off_t p, const void *b, size_t *l)
-{ *l = 0; return B_ERROR; }
-static status_t ps2_hid_control(void *c, uint32 o, void *b, size_t l)
-{ return B_ERROR; }
-
-
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sPs2HidDevice = {
-	{ PS2_HID_DEVICE_MODULE_NAME, 0, NULL },
-	ps2_hid_init_device, ps2_hid_uninit_device, NULL,
-	ps2_hid_open, ps2_hid_close, ps2_hid_free,
-	ps2_hid_read, ps2_hid_write, NULL, ps2_hid_control,
-	NULL, NULL
-};
-
-struct driver_module_info sPs2HidDriver = {
-	{ PS2_HID_DRIVER_MODULE_NAME, 0, NULL },
-	ps2_hid_supports_device, ps2_hid_register_device,
-	ps2_hid_init_driver, ps2_hid_uninit_driver,
-	ps2_hid_register_child_devices, NULL, NULL
+struct dk_driver_info sPs2HidDriver = {
+	.info	= { PS2_HID_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sPs2HidMatchDict,
+	.probe	= ps2_hid_probe,
+	.attach	= ps2_hid_attach,
+	.detach	= ps2_hid_detach,
+	/* no .ops — ps2_hid does not publish a devfs device */
 };
 
 module_info *modules[] = {
 	(module_info *)&sPs2HidDriver,
-	(module_info *)&sPs2HidDevice,
 	NULL
 };
