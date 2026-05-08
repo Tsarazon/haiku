@@ -3,22 +3,21 @@
  * Permission is hereby granted under the terms of the MIT license.
  */
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <Errors.h>
 #include <string.h>
 
-#define TEST_DRIVER_MODULE_NAME "drivers/misc/test/driver_v1"
-#define TEST_DEVICE_MODULE_NAME "drivers/misc/test/device_v1"
+#define TEST_DRIVER_MODULE_NAME "drivers/misc/test/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sPublished = false;
 static int32 sOpenMask;
 
 
 static status_t
-driver_open(void* _info, const char* name, int flags, void** _cookie)
+driver_open(void* driverCookie, const char* name, int flags, void** _cookie)
 {
 	dprintf("test: open\n");
 
@@ -80,80 +79,75 @@ driver_control(void* cookie, uint32 op, void* arg, size_t len)
 }
 
 
-/*	#pragma mark - driver module API */
+static dk_device_ops sDeviceOps = {
+	driver_open,
+	driver_close,
+	driver_free,
+	driver_read,
+	driver_write,
+	NULL,	/* io */
+	driver_control,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
+/*	#pragma mark - dk_driver_info */
+
+
+static const dk_match_rule sTestMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sTestMatchDict = {
+	sTestMatchRules,
+	0
+};
 
 
 static float
-test_supports_device(device_node* parent)
+test_probe(dk_node* node)
 {
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-test_register_device(device_node* node)
+test_attach(dk_node* node, void** cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Test Driver"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, TEST_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-test_init_driver(device_node* node, void** cookie)
-{
+	sPublished = true;
+	sDeviceKeeper->publish_device(node, "misc/test/1", &sDeviceOps);
 	*cookie = node;
 	return B_OK;
 }
 
-static void test_uninit_driver(void* c) { sPublished = false; }
 
-static status_t
-test_register_child_devices(void* _cookie)
+static void
+test_detach(void* _cookie)
 {
-	device_node* node = (device_node*)_cookie;
-	if (sPublished) return B_OK;
-	sPublished = true;
-	return sDeviceManager->publish_device(node, "misc/test/1",
-		TEST_DEVICE_MODULE_NAME);
+	sPublished = false;
 }
-
-static status_t test_init_device(void* i, void** c)
-{ *c = i; return B_OK; }
-static void test_uninit_device(void* c) {}
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sTestDevice = {
-	{ TEST_DEVICE_MODULE_NAME, 0, NULL },
-	test_init_device, test_uninit_device, NULL,
-	driver_open, driver_close, driver_free,
-	driver_read, driver_write, NULL, driver_control,
-	NULL, NULL
-};
-
-struct driver_module_info sTestDriver = {
-	{ TEST_DRIVER_MODULE_NAME, 0, NULL },
-	test_supports_device, test_register_device,
-	test_init_driver, test_uninit_driver,
-	test_register_child_devices, NULL, NULL
+struct dk_driver_info sTestDriver = {
+	.info	= { TEST_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sTestMatchDict,
+	.probe	= test_probe,
+	.attach	= test_attach,
+	.detach	= test_detach,
+	.ops	= &sDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sTestDriver,
-	(module_info*)&sTestDevice,
 	NULL
 };
