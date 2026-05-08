@@ -3,6 +3,7 @@
 	Copyright (C) 2008 Michael Lotz <mmlr@mlotz.ch>
 	Distributed under the terms of the MIT license.
 */
+#include <new>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,54 +18,14 @@
 
 #define DEVICE_BASE_NAME "net/usb_ecm/"
 usb_module_info *gUSBModule = NULL;
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 
 
-#define USB_ECM_DRIVER_MODULE_NAME "drivers/network/usb_ecm/driver_v1"
-#define USB_ECM_DEVICE_MODULE_NAME "drivers/network/usb_ecm/device_v1"
+#define USB_ECM_DRIVER_MODULE_NAME "drivers/network/usb_ecm/dk_driver_v1"
 #define USB_ECM_DEVICE_ID_GENERATOR	"usb_ecm/device_id"
 
 
-//	#pragma mark - device module API
-
-
-static status_t
-usb_ecm_init_device(void* _info, void** _cookie)
-{
-	CALLED();
-	usb_ecm_driver_info* info = (usb_ecm_driver_info*)_info;
-
-	device_node* parent = gDeviceManager->get_parent_node(info->node);
-	gDeviceManager->get_driver(parent, (driver_module_info **)&info->usb,
-		(void **)&info->usb_device);
-	gDeviceManager->put_node(parent);
-
-	usb_device device;
-	if (gDeviceManager->get_attr_uint32(info->node, USB_DEVICE_ID_ITEM, &device, true) != B_OK)
-		return B_ERROR;
-
-	ECMDevice *ecmDevice = new ECMDevice(device);
-	status_t status = ecmDevice->InitCheck();
-	if (status < B_OK) {
-		delete ecmDevice;
-		return status;
-	}
-
-	info->device = ecmDevice;
-
-	*_cookie = info;
-	return status;
-}
-
-
-static void
-usb_ecm_uninit_device(void* _cookie)
-{
-	CALLED();
-	usb_ecm_driver_info* info = (usb_ecm_driver_info*)_cookie;
-
-	delete info->device;
-}
+//	#pragma mark - device ops
 
 
 static void
@@ -137,27 +98,50 @@ usb_ecm_free(void *cookie)
 }
 
 
+static dk_device_ops sUsbEcmDeviceOps = {
+	usb_ecm_open,
+	usb_ecm_close,
+	usb_ecm_free,
+	usb_ecm_read,
+	usb_ecm_write,
+	NULL,	// io
+	usb_ecm_control,
+	NULL,	// select
+	NULL,	// deselect
+	usb_ecm_device_removed,
+};
+
+
 //	#pragma mark - driver module API
 
 
 static float
-usb_ecm_supports_device(device_node *parent)
+usb_ecm_supports_device(dk_node *parent)
 {
 	CALLED();
-	const char *bus;
+	char bus[64];
 
-	// make sure parent is really the usb bus manager
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 
 	if (strcmp(bus, "usb"))
 		return 0.0;
 
-
 	// check whether it's really an ECM device
-	device_attr *attr = NULL;
+	dk_property *attr = NULL;
 	uint8 baseClass = 0, subclass = 0;
-	while (gDeviceManager->get_next_attr(parent, &attr) == B_OK) {
+	uint64 version = 0;
+	while (true) {
+		status_t s = gDeviceKeeper->get_next_property(parent, &attr, &version);
+		if (s == B_INTERRUPTED) {
+			// store mutated mid-iteration — restart from scratch
+			attr = NULL;
+			baseClass = subclass = 0;
+			continue;
+		}
+		if (s != B_OK)
+			break;
 		if (attr->type != B_UINT8_TYPE)
 			continue;
 
@@ -182,22 +166,7 @@ usb_ecm_supports_device(device_node *parent)
 
 
 static status_t
-usb_ecm_register_device(device_node *node)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "USB ECM"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, USB_ECM_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_ecm_init_driver(device_node *node, void **cookie)
+usb_ecm_attach(dk_node *node, void **cookie)
 {
 	CALLED();
 
@@ -208,6 +177,52 @@ usb_ecm_init_driver(device_node *node, void **cookie)
 
 	memset(info, 0, sizeof(*info));
 	info->node = node;
+	info->id = -1;
+
+	// USB peripheral drivers consume the gUSBModule singleton (kernel
+	// module dependency) and address the device via the USB_DEVICE_ID_ITEM
+	// property set by the USB bus manager on the parent node. There is no
+	// typed per-device bus interface to retrieve via get_interface().
+	usb_device device;
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
+			&device, true) != B_OK) {
+		free(info);
+		return B_ERROR;
+	}
+
+	ECMDevice *ecmDevice = new(std::nothrow) ECMDevice(device);
+	if (ecmDevice == NULL) {
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	status_t status = ecmDevice->InitCheck();
+	if (status < B_OK) {
+		delete ecmDevice;
+		free(info);
+		return status;
+	}
+
+	info->device = ecmDevice;
+
+	info->id = gDeviceKeeper->create_id(USB_ECM_DEVICE_ID_GENERATOR);
+	if (info->id < 0) {
+		status = info->id;
+		delete ecmDevice;
+		free(info);
+		return status;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		DEVICE_BASE_NAME "%" B_PRId32, info->id);
+	status = gDeviceKeeper->publish_device(node, info->publishedPath,
+		&sUsbEcmDeviceOps);
+	if (status != B_OK) {
+		gDeviceKeeper->free_id(USB_ECM_DEVICE_ID_GENERATOR, info->id);
+		delete ecmDevice;
+		free(info);
+		return status;
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -215,33 +230,20 @@ usb_ecm_init_driver(device_node *node, void **cookie)
 
 
 static void
-usb_ecm_uninit_driver(void *_cookie)
+usb_ecm_detach(void *_cookie)
 {
 	CALLED();
 	usb_ecm_driver_info* info = (usb_ecm_driver_info*)_cookie;
+	if (info == NULL)
+		return;
+
+	if (info->publishedPath[0] != '\0')
+		gDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->id >= 0)
+		gDeviceKeeper->free_id(USB_ECM_DEVICE_ID_GENERATOR, info->id);
+
+	delete info->device;
 	free(info);
-}
-
-
-static status_t
-usb_ecm_register_child_devices(void* _cookie)
-{
-	CALLED();
-	usb_ecm_driver_info* info = (usb_ecm_driver_info*)_cookie;
-	status_t status;
-
-	int32 id = gDeviceManager->create_id(USB_ECM_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), DEVICE_BASE_NAME "%" B_PRId32,
-		id);
-
-	status = gDeviceManager->publish_device(info->node, name,
-		USB_ECM_DEVICE_MODULE_NAME);
-
-	return status;
 }
 
 
@@ -249,52 +251,36 @@ usb_ecm_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info**)&gUSBModule},
 	{ NULL }
 };
 
-struct device_module_info sUsbEcmDevice = {
-	{
-		USB_ECM_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	usb_ecm_init_device,
-	usb_ecm_uninit_device,
-	usb_ecm_device_removed,
-
-	usb_ecm_open,
-	usb_ecm_close,
-	usb_ecm_free,
-	usb_ecm_read,
-	usb_ecm_write,
-	NULL,	// io
-	usb_ecm_control,
-
-	NULL,	// select
-	NULL,	// deselect
+static const dk_match_rule sUsbEcmMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
 };
 
-struct driver_module_info sUsbEcmDriver = {
-	{
+static const dk_match_dict sUsbEcmMatchDict = {
+	sUsbEcmMatchRules,
+	0
+};
+
+
+static dk_driver_info sUsbEcmDriver = {
+	.info = {
 		USB_ECM_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_ecm_supports_device,
-	usb_ecm_register_device,
-	usb_ecm_init_driver,
-	usb_ecm_uninit_driver,
-	usb_ecm_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sUsbEcmMatchDict,
+	.probe   = usb_ecm_supports_device,
+	.attach  = usb_ecm_attach,
+	.detach  = usb_ecm_detach,
+	.ops     = &sUsbEcmDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sUsbEcmDriver,
-	(module_info*)&sUsbEcmDevice,
 	NULL
 };

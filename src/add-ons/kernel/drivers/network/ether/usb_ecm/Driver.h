@@ -6,7 +6,7 @@
 #ifndef _USB_ECM_DRIVER_H_
 #define _USB_ECM_DRIVER_H_
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
@@ -55,22 +55,16 @@ typedef struct cdc_connection_speed_s {
 } _PACKED cdc_connection_speed;
 
 extern usb_module_info *gUSBModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
 class ECMDevice;
 
-// bus manager device interface for peripheral driver
-typedef struct {
-        driver_module_info info;
-
-} usb_device_interface;
-
 
 typedef struct {
-	device_node*			node;
-	::usb_device			usb_device;
-	usb_device_interface*	usb;
-	ECMDevice *				device;
+	dk_node*		node;
+	int32			id;
+	char			publishedPath[64];
+	ECMDevice*		device;
 } usb_ecm_driver_info;
 
 
