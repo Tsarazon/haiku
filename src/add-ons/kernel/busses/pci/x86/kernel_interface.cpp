@@ -7,23 +7,10 @@
 #include "X86PCIController.h"
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 
 
-pci_controller_module_info gPciControllerDriver = {
-	.info = {
-		.info = {
-			.name = PCI_X86_DRIVER_MODULE_NAME,
-		},
-		.supports_device = X86PCIController::SupportsDevice,
-		.register_device = X86PCIController::RegisterDevice,
-		.init_driver = [](device_node* node, void** driverCookie) {
-			return X86PCIController::InitDriver(node, *(X86PCIController**)driverCookie);
-		},
-		.uninit_driver = [](void* driverCookie) {
-			return static_cast<X86PCIController*>(driverCookie)->UninitDriver();
-		},
-	},
+static pci_controller_ops sPciControllerOps = {
 	.read_pci_config = [](void* cookie,
 		uint8 bus, uint8 device, uint8 function,
 		uint16 offset, uint8 size, uint32* value) {
@@ -58,8 +45,49 @@ pci_controller_module_info gPciControllerDriver = {
 };
 
 
+static const dk_match_rule sPciRootMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "root"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sPciRootMatch = {
+	sPciRootMatchRules,
+	0
+};
+
+static dk_driver_info gPciControllerDriver = {
+	.info  = { PCI_X86_DRIVER_MODULE_NAME, 0, NULL },
+	.match = &sPciRootMatch,
+	.probe = X86PCIController::SupportsDevice,
+	.attach = [](dk_node* node, void** driverCookie) {
+		status_t status = X86PCIController::InitDriver(node,
+			*(X86PCIController**)driverCookie);
+		if (status != B_OK)
+			return status;
+
+		// Publish the PCI controller interface on this node so the PCI
+		// root bus manager can retrieve it via get_interface walk-up.
+		gDeviceKeeper->publish_interface(node,
+			PCI_CONTROLLER_INTERFACE_NAME, &sPciControllerOps);
+
+		// Register PCI root bus manager as child.
+		dk_property attrs[] = {
+			DK_PROP_STRING(KOSM_LABEL, "PCI Root Bus"),
+			DK_PROP_END
+		};
+		gDeviceKeeper->register_node(node,
+			"bus_managers/pci/root/dk_driver_v1", attrs, NULL, NULL);
+
+		return B_OK;
+	},
+	.detach = [](void* driverCookie) {
+		static_cast<X86PCIController*>(driverCookie)->UninitDriver();
+	},
+};
+
+
 _EXPORT module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{}
 };
 

@@ -30,10 +30,11 @@
 
 
 float
-X86PCIController::SupportsDevice(device_node* parent)
+X86PCIController::SupportsDevice(dk_node* parent)
 {
-	const char* bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) < B_OK)
+	char bus[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) < B_OK)
 		return -1.0f;
 
 	if (strcmp(bus, "root") == 0)
@@ -44,21 +45,9 @@ X86PCIController::SupportsDevice(device_node* parent)
 
 
 status_t
-X86PCIController::RegisterDevice(device_node* parent)
+X86PCIController::InitDriver(dk_node* node, X86PCIController*& outDriver)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "X86 PCI Host Controller"} },
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE, {.string = "bus_managers/pci/root/driver_v1"} },
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, PCI_X86_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-status_t
-X86PCIController::InitDriver(device_node* node, X86PCIController*& outDriver)
-{
+	dprintf("X86PCIController::InitDriver(%p) called\n", node);
 	bool search_mech1 = true;
 	bool search_mech2 = true;
 	bool search_mechpcie = true;
@@ -104,7 +93,7 @@ X86PCIController::InitDriver(device_node* node, X86PCIController*& outDriver)
 
 
 status_t
-X86PCIController::CreateDriver(device_node* node, X86PCIController* driverIn,
+X86PCIController::CreateDriver(dk_node* node, X86PCIController* driverIn,
 	X86PCIController*& driverOut)
 {
 	ObjectDeleter<X86PCIController> driver(driverIn);
@@ -118,7 +107,7 @@ X86PCIController::CreateDriver(device_node* node, X86PCIController* driverIn,
 
 
 status_t
-X86PCIController::InitDriverInt(device_node* node)
+X86PCIController::InitDriverInt(dk_node* node)
 {
 	fNode = node;
 	return B_OK;
@@ -170,7 +159,7 @@ X86PCIController::Finalize()
 
 
 status_t
-X86PCIControllerMeth1::InitDriverInt(device_node* node)
+X86PCIControllerMeth1::InitDriverInt(dk_node* node)
 {
 	CHECK_RET(X86PCIController::InitDriverInt(node));
 
@@ -251,7 +240,7 @@ status_t X86PCIControllerMeth1::GetMaxBusDevices(int32& count)
 
 
 status_t
-X86PCIControllerMeth2::InitDriverInt(device_node* node)
+X86PCIControllerMeth2::InitDriverInt(dk_node* node)
 {
 	CHECK_RET(X86PCIController::InitDriverInt(node));
 
@@ -338,27 +327,27 @@ status_t X86PCIControllerMeth2::GetMaxBusDevices(int32& count)
 
 
 status_t
-X86PCIControllerMethPcie::InitDriverInt(device_node* node)
+X86PCIControllerMethPcie::InitDriverInt(dk_node* node)
 {
 	status_t status = X86PCIController::InitDriverInt(node);
 	if (status != B_OK)
 		return status;
 
 	// search ACPI
-	device_node *acpiNode = NULL;
+	dk_node*acpiNode = NULL;
 	{
-		device_node* deviceRoot = gDeviceManager->get_root_node();
-		device_attr acpiAttrs[] = {
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
-			{ ACPI_DEVICE_HID_ITEM, B_STRING_TYPE, { .string = "PNP0A08" }},
-			{ NULL }
+		dk_node* deviceRoot = gDeviceKeeper->get_root_node();
+		dk_match_rule acpiAttrs[] = {
+			{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
+			{ KOSM_ACPI_DEVICE_HID, B_STRING_TYPE, { .string = "PNP0A08" }},
+			{}
 		};
-		if (gDeviceManager->find_child_node(deviceRoot, acpiAttrs, &acpiNode) != B_OK)
+		if (gDeviceKeeper->find_child_node(deviceRoot, acpiAttrs, &acpiNode) != B_OK)
 			return ENODEV;
 	}
 
 	status = fECAMPCIController.ReadResourceInfo(acpiNode);
-	gDeviceManager->put_node(acpiNode);
+	gDeviceKeeper->put_node(acpiNode);
 	return status;
 }
 
