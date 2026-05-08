@@ -12,28 +12,31 @@
 #include <stdint.h>
 
 
-MMCBus::MMCBus(device_node* node)
+MMCBus::MMCBus(dk_node* node)
 	:
 	fNode(node),
 	fController(NULL),
 	fCookie(NULL),
 	fStatus(B_OK),
 	fWorkerThread(-1),
-	fActiveDevice(0)
+	fActiveDevice(0),
+	fRegisteredCount(0)
 {
 	CALLED();
 
-	// Get the parent info, it includes the API to send commands to the hardware
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	fStatus = gDeviceManager->get_driver(parent,
-		(driver_module_info**)&fController, &fCookie);
-	gDeviceManager->put_node(parent);
+	// Walk up to the SDHCI slot node (parent) to retrieve the
+	// mmc_bus_interface published there.
+	fStatus = gDeviceKeeper->get_interface(node, MMC_BUS_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fController, &fCookie);
 
 	if (fStatus != B_OK) {
 		ERROR("Not able to establish the bus %s\n",
 			strerror(fStatus));
 		return;
 	}
+
+	memset(fRegisteredRCAs, 0, sizeof(fRegisteredRCAs));
 
 	fScanSemaphore = create_sem(0, "MMC bus scan");
 	fLockSemaphore = create_sem(1, "MMC bus lock");
@@ -62,7 +65,11 @@ MMCBus::~MMCBus()
 	if (fWorkerThread != 0)
 		wait_for_thread(fWorkerThread, &result);
 
-	// TODO power off cards, stop clock, etc if needed.
+	// Power off: reset all cards and stop the clock
+	if (fController != NULL && fCookie != NULL) {
+		fController->execute_command(fCookie, SD_GO_IDLE_STATE, 0, NULL);
+		fController->set_clock(fCookie, 0);
+	}
 }
 
 
@@ -136,6 +143,107 @@ MMCBus::_ActivateDevice(uint16_t rca)
 }
 
 
+bool
+MMCBus::_TrySelectCard(uint16_t rca)
+{
+	// Try to select the card. If it responds, it's still present.
+	uint32_t response;
+	status_t result = fController->execute_command(fCookie,
+		SD_SELECT_DESELECT_CARD, ((uint32)rca) << 16, &response);
+	if (result != B_OK)
+		return false;
+
+	// Check status bits — card should be in transfer state (4)
+	uint8_t state = (response >> 9) & 0xF;
+	if (state < 3 || state > 6) {
+		TRACE("Card RCA %x in unexpected state %d\n", rca, state);
+		return false;
+	}
+
+	return true;
+}
+
+
+status_t
+MMCBus::_TrySwitchHighSpeed(uint16_t rca)
+{
+	// CMD6 (SWITCH_FUNC) — check if high speed mode is supported.
+	// SD Physical Layer Spec v3.01+, section 4.3.10.
+	//
+	// Mode 0 (check): argument bit 31 = 0, function group 1 = 0xF (no change)
+	// Mode 1 (switch): argument bit 31 = 1, function group 1 = 1 (high speed)
+	//
+	// The response is 512 bits (64 bytes) returned in data phase,
+	// but we only need to check if the card supports the function.
+	// Since our execute_command doesn't do data-phase transfers,
+	// we use a simpler approach: just try to switch and check the
+	// card status.
+
+	// First read SCR to check spec version
+	// SCR needs ACMD51, which requires a data transfer — skip for now
+	// and just try the switch directly. Cards that don't support CMD6
+	// will return an error, and we fall back to 25MHz.
+
+	uint32_t response;
+	status_t result;
+
+	// Send CMD6 mode 1, switch to high speed (function group 1 = 1)
+	// Argument: [31] mode=1 (switch), [3:0] function group 1 = 1
+	result = fController->execute_command(fCookie, 6,
+		0x80000001, &response);
+
+	if (result != B_OK) {
+		TRACE("CMD6 switch to high speed failed: %s\n", strerror(result));
+		return result;
+	}
+
+	// Check card status for errors
+	if ((response & 0xFFFF8000) != 0) {
+		TRACE("CMD6 card reports error: %x\n", response);
+		return B_ERROR;
+	}
+
+	TRACE("Switched RCA %x to high speed mode\n", rca);
+	return B_OK;
+}
+
+
+void
+MMCBus::_UnpublishGoneCards()
+{
+	for (int32 i = fRegisteredCount - 1; i >= 0; i--) {
+		uint16_t rca = fRegisteredRCAs[i];
+
+		if (!_TrySelectCard(rca)) {
+			TRACE("Card RCA %x no longer responds, removing\n", rca);
+
+			// Remove from tracking array
+			fRegisteredRCAs[i] = fRegisteredRCAs[fRegisteredCount - 1];
+			fRegisteredCount--;
+
+			// Notify DeviceKeeper — trigger device_removed on child
+			// nodes that match this RCA. The child was registered
+			// with kMmcRcaAttribute, so we find it by attribute match.
+			dk_match_rule rules[] = {
+				{ kMmcRcaAttribute, B_UINT16_TYPE, { .ui16 = rca } },
+				{}
+			};
+
+			dk_node* child = NULL;
+			if (gDeviceKeeper->find_child_node(
+					reinterpret_cast<dk_node*>(fNode), rules, &child) == B_OK) {
+				gDeviceKeeper->unregister_node(child);
+				gDeviceKeeper->put_node(child);
+			}
+
+			// Reset active device tracking if it was this card
+			if (fActiveDevice == rca)
+				fActiveDevice = 0;
+		}
+	}
+}
+
+
 void MMCBus::_AcquireScanSemaphore()
 {
 	release_sem(fLockSemaphore);
@@ -183,6 +291,10 @@ MMCBus::_WorkerThread(void* cookie)
 
 	while (bus->fStatus != B_SHUTTING_DOWN) {
 		TRACE("Scanning the bus\n");
+
+		// Check for removed cards before scanning for new ones
+		if (bus->fRegisteredCount > 0)
+			bus->_UnpublishGoneCards();
 
 		// Use the low speed clock and 1bit bus width for scanning
 		bus->SetClock(400);
@@ -254,13 +366,13 @@ MMCBus::_WorkerThread(void* cookie)
 
 		// We use CMD2 (ALL_SEND_CID) and CMD3 (SEND_RELATIVE_ADDR) to assign
 		// an RCA to all cards. Initially all cards have an RCA of 0 and will
-		// all receive CMD2. But only ne of them will reply (they do collision
+		// all receive CMD2. But only one of them will reply (they do collision
 		// detection while sending the CID in reply). We assign a new RCA to
 		// that first card, and repeat the process with the remaining ones
 		// until no one answers to CMD2. Then we know all cards have an RCA
 		// (and a matching published device on our side).
 		uint32_t cid[4];
-		
+
 		// This being an if statement as opposed to a while statement restricts
 		// it to one device per bus.
 		if (bus->ExecuteCommand(0, SD_ALL_SEND_CID, 0, cid) == B_OK) {
@@ -270,15 +382,9 @@ MMCBus::_WorkerThread(void* cookie)
 
 			if ((response & 0xFF00) != 0x500) {
 				TRACE("Card did not enter data state\n");
-				// This probably means there are no more cards to scan on the
-				// bus, so exit the loop.
 				break;
 			}
 
-			// The card now has an RCA and it entered the data phase, which
-			// means our initializing job is over, we can pass it on to the
-			// mmc_disk driver.
-			
 			uint32_t vendor = cid[3] & 0xFFFFFF;
 			char name[6] = {(char)(cid[2] >> 24), (char)(cid[2] >> 16),
 				(char)(cid[2] >> 8), (char)cid[2], (char)(cid[1] >> 24), 0};
@@ -289,13 +395,13 @@ MMCBus::_WorkerThread(void* cookie)
 			uint8_t month = cid[0] & 0xF;
 			uint16_t year = 2000 + ((cid[0] >> 4) & 0xFF);
 			uint16_t rca = response >> 16;
-				
-			device_attr attrs[] = {
-				{ B_DEVICE_BUS, B_STRING_TYPE, {.string = "mmc" }},
-				{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "mmc device" }},
-				{ B_DEVICE_VENDOR_ID, B_UINT32_TYPE, {.ui32 = vendor}},
-				{ B_DEVICE_ID, B_STRING_TYPE, {.string = name}},
-				{ B_DEVICE_UNIQUE_ID, B_UINT32_TYPE, {.ui32 = serial}},
+
+			dk_property attrs[] = {
+				{ KOSM_DEVICE_BUS, B_STRING_TYPE, {.string = "mmc" }},
+				{ KOSM_LABEL, B_STRING_TYPE, {.string = "mmc device" }},
+				{ KOSM_DEVICE_VENDOR_ID, B_UINT32_TYPE, {.ui32 = vendor}},
+				{ KOSM_DEVICE_ID, B_STRING_TYPE, {.string = name}},
+				{ KOSM_DEVICE_UNIQUE_ID, B_UINT32_TYPE, {.ui32 = serial}},
 				{ "mmc/revision", B_UINT16_TYPE, {.ui16 = revision}},
 				{ "mmc/month", B_UINT8_TYPE, {.ui8 = month}},
 				{ "mmc/year", B_UINT16_TYPE, {.ui16 = year}},
@@ -305,18 +411,24 @@ MMCBus::_WorkerThread(void* cookie)
 			};
 
 			// publish child device for the card
-			gDeviceManager->register_node(bus->fNode, MMC_BUS_MODULE_NAME,
+			gDeviceKeeper->register_node(bus->fNode, MMC_BUS_MODULE_NAME,
 				attrs, NULL, NULL);
+
+			// Track the RCA for hotplug removal detection
+			if (bus->fRegisteredCount < kMaxCards)
+				bus->fRegisteredRCAs[bus->fRegisteredCount++] = rca;
+
+			// Try to switch to high speed mode (50MHz instead of 25MHz).
+			// CMD6 is optional — cards that don't support it will simply
+			// stay at default speed.
+			if (bus->_TrySwitchHighSpeed(rca) == B_OK)
+				bus->SetClock(50000);
+			else
+				bus->SetClock(25000);
+		} else {
+			// No new cards found — keep current clock
+			bus->SetClock(25000);
 		}
-
-		// TODO if there is a single card active, check if it supports CMD6
-		// (spec version 1.10 or later in SCR). If it does, check if CMD6 can
-		// enable high speed mode, use that to go to 50MHz instead of 25.
-		bus->SetClock(25000);
-
-		// FIXME we also need to unpublish devices that are gone. Probably need
-		// to "ping" all RCAs somehow? Or is there an interrupt we can look for
-		// to detect added/removed cards?
 
 		// Wait for the next scan request
 		// The thread will spend most of its time waiting here

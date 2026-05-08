@@ -9,10 +9,19 @@
 #define _MMC_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 
 
-#define MMC_BUS_MODULE_NAME "bus_managers/mmc/driver_v1"
+#define MMC_BUS_MODULE_NAME "bus_managers/mmc/dk_driver_v1"
+
+// Bus interface names for publish_interface/get_interface.
+// MMC_BUS_INTERFACE_NAME: published by sdhci-style controllers on their
+//   node; consumed by the mmc bus manager via get_interface.
+// MMC_DEVICE_INTERFACE_NAME: published by the mmc bus manager on each
+//   card node; consumed by mmc peripheral drivers (mmc_disk, sdio) via
+//   get_interface.
+#define MMC_BUS_INTERFACE_NAME		"interface/mmc/bus/v1"
+#define MMC_DEVICE_INTERFACE_NAME	"interface/mmc/device/v1"
 
 
 struct IOOperation;
@@ -71,8 +80,6 @@ enum SDHCI_APPLICATION_COMMANDS {
 // Interface between mmc_bus and underlying implementation (sdhci_pci or any
 // other thing that can execute mmc commands)
 typedef struct mmc_bus_interface {
-	driver_module_info info;
-
 	status_t (*set_clock)(void* controller, uint32_t kilohertz);
 		// Configure the bus clock. The bus is initialized with a slow clock
 		// that allows device enumeration in all cases, but after enumeration
@@ -97,14 +104,13 @@ typedef struct mmc_bus_interface {
 // provides a generic interface for all of them, and is not specific to any
 // type of card.
 typedef struct mmc_device_interface {
-	driver_module_info info;
-	status_t (*execute_command)(device_node* node, void* cookie, uint16_t rca,
+	status_t (*execute_command)(dk_node* node, void* cookie, uint16_t rca,
 		uint8_t command, uint32_t argument, uint32_t* result);
 		// Execute a command with no I/O phase
-	status_t (*do_io)(device_node* controller, void* cookie, uint16_t rca,
+	status_t (*do_io)(dk_node* controller, void* cookie, uint16_t rca,
 		uint8_t command, IOOperation* operation, bool offsetAsSectors);
 		// Execute a command that involves a data transfer.
-	void (*set_bus_width)(device_node* controller, void* cookie, int width);
+	void (*set_bus_width)(dk_node* controller, void* cookie, int width);
 		// Set the data bus width to 1, 4 or 8 bit mode.
 } mmc_device_interface;
 

@@ -28,15 +28,15 @@
 #define ERROR(x...)			dprintf("\33[33mmmc_bus:\33[0m " x)
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
+static const int kMaxCards = 16;
 
-class MMCBus;
 
 class MMCBus {
 public:
 
-								MMCBus(device_node *node);
+								MMCBus(dk_node *node);
 								~MMCBus();
 				status_t		InitCheck();
 				void			Rescan();
@@ -55,11 +55,14 @@ public:
 private:
 				status_t		_ActivateDevice(uint16_t rca);
 				void			_AcquireScanSemaphore();
+				bool			_TrySelectCard(uint16_t rca);
+				status_t		_TrySwitchHighSpeed(uint16_t rca);
+				void			_UnpublishGoneCards();
 		static	status_t		_WorkerThread(void*);
 
 private:
 
-		device_node* 			fNode;
+		dk_node* 				fNode;
 		mmc_bus_interface* 		fController;
 		void* 					fCookie;
 		status_t				fStatus;
@@ -67,6 +70,10 @@ private:
 		sem_id					fScanSemaphore;
 		sem_id					fLockSemaphore;
 		uint16					fActiveDevice;
+
+		// Tracking registered cards for hotplug removal detection
+		uint16					fRegisteredRCAs[kMaxCards];
+		int32					fRegisteredCount;
 };
 
 
