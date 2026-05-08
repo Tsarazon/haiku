@@ -15,7 +15,6 @@
 #include "ProtocolHandler.h"
 
 // includes for the different protocol handlers
-#include "JoystickProtocolHandler.h"
 #include "KeyboardProtocolHandler.h"
 #include "MouseProtocolHandler.h"
 #include "TabletProtocolHandler.h"
@@ -94,7 +93,6 @@ ProtocolHandler::AddHandlers(HIDDevice &device, ProtocolHandler *&handlerList,
 		// alternative configurations like a tablet that works as either
 		// regular (relative) mouse, or (absolute) tablet?
 		KeyboardProtocolHandler::AddHandlers(device, *collection, handlerList);
-		JoystickProtocolHandler::AddHandlers(device, *collection, handlerList);
 		MouseProtocolHandler::AddHandlers(device, *collection, handlerList);
 		TabletProtocolHandler::AddHandlers(device, *collection, handlerList);
 	}

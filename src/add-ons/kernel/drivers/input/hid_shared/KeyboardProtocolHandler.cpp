@@ -78,7 +78,9 @@ KeyboardProtocolHandler::KeyboardProtocolHandler(HIDReport &inputReport,
 	mutex_init(&fLock, DEVICE_PATH_SUFFIX " keyboard");
 
 	// find modifiers and keys
+#ifdef KEYBOARD_SUPPORTS_KDL
 	bool debugUsable = false;
+#endif
 
 	for (uint32 i = 0; i < inputReport.CountItems(); i++) {
 		HIDReportItem *item = inputReport.ItemAt(i);
@@ -91,7 +93,9 @@ KeyboardProtocolHandler::KeyboardProtocolHandler(HIDReport &inputReport,
 			TRACE("keyboard item with usage %" B_PRIx32 "\n",
 				item->Usage());
 
+#ifdef KEYBOARD_SUPPORTS_KDL
 			debugUsable = true;
+#endif
 
 			if (item->UsageID() >= B_HID_UID_KB_LEFT_CONTROL
 				&& item->UsageID() <= B_HID_UID_KB_RIGHT_GUI) {
