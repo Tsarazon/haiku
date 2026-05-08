@@ -1,17 +1,15 @@
 /*
  * Copyright 2020, Jérôme Duval, jerome.duval@gmail.com.
- *
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
- *
- * PCH Thermal driver.
  */
 
 
 #include <AreaKeeper.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <Errors.h>
 #include <KernelExport.h>
-#include <bus/PCI.h>
 #include <bus/PCI.h>
 
 #include <stdio.h>
@@ -21,18 +19,11 @@
 #include "pch_thermal.h"
 
 
-#define PCH_THERMAL_MODULE_NAME "drivers/power/pch_thermal/driver_v1"
-
-#define PCH_THERMAL_DEVICE_MODULE_NAME "drivers/power/pch_thermal/device_v1"
-
-/* Base Namespace devices are published to */
+#define PCH_THERMAL_MODULE_NAME "drivers/power/pch_thermal/dk_driver_v1"
 #define PCH_THERMAL_BASENAME "power/pch_thermal/%d"
-
-// name of pnp generator of path ids
 #define PCH_THERMAL_PATHID_GENERATOR "pch_thermal/path_id"
 
-static device_manager_info *sDeviceManager;
-
+static dk_keeper_info* sDeviceKeeper;
 
 //#define TRACE_PCH_THERMAL
 #ifdef TRACE_PCH_THERMAL
@@ -40,55 +31,50 @@ static device_manager_info *sDeviceManager;
 #else
 #	define TRACE(x...)
 #endif
-#define ERROR(x...)	dprintf("pch_thermal: " x)
+#define ERROR(x...) dprintf("pch_thermal: " x)
 
 
-#define write8(address, data) \
-	(*((volatile uint8*)(address)) = (data))
-#define read8(address) \
-	(*((volatile uint8*)(address)))
-#define write16(address, data) \
-	(*((volatile uint16*)(address)) = (data))
-#define read16(address) \
-	(*((volatile uint16*)(address)))
-#define write32(address, data) \
-	(*((volatile uint32*)(address)) = (data))
-#define read32(address) \
-	(*((volatile uint32*)(address)))
+#define write8(address, data)  (*((volatile uint8*)(address)) = (data))
+#define read8(address)         (*((volatile uint8*)(address)))
+#define write16(address, data) (*((volatile uint16*)(address)) = (data))
+#define read16(address)        (*((volatile uint16*)(address)))
+#define write32(address, data) (*((volatile uint32*)(address)) = (data))
+#define read32(address)        (*((volatile uint32*)(address)))
 
 
 typedef struct pch_thermal_device_info {
-	device_node *node;
-	pci_device_module_info *pci;
-	pci_device *pci_cookie;
+	pci_device_ops*	pci;
+	pci_device*		pci_cookie;
+	dk_node*		node;
+	int32			path_id;
+	char			publishedPath[B_DEV_NAME_LENGTH];
 
-	addr_t		registers;
-	area_id		registers_area;
+	addr_t			registers;
+	area_id			registers_area;
 
-	uint32	criticalTemp;
-	uint32	hotTemp;
-	uint32	passiveTemp;
+	uint32			criticalTemp;
+	uint32			hotTemp;
+	uint32			passiveTemp;
 } pch_thermal_device_info;
 
 
-status_t pch_thermal_control(void* _cookie, uint32 op, void* arg, size_t len);
+status_t pch_thermal_control(void* _cookie, uint32 op, void* arg,
+	size_t len);
 
 
 static status_t
-pch_thermal_open(void *_cookie, const char *path, int flags, void** cookie)
+pch_thermal_open(void* _cookie, const char* path, int flags, void** cookie)
 {
-	pch_thermal_device_info *device = (pch_thermal_device_info *)_cookie;
-	TRACE("pch_thermal_open %p\n", device);
-	*cookie = device;
+	*cookie = _cookie;
 	return B_OK;
 }
 
 
 static status_t
-pch_thermal_read(void* _cookie, off_t position, void *buf, size_t* num_bytes)
+pch_thermal_read(void* _cookie, off_t position, void* buf,
+	size_t* num_bytes)
 {
 	pch_thermal_device_info* device = (pch_thermal_device_info*)_cookie;
-	TRACE("pch_thermal_read %p\n", device);
 	pch_thermal_type therm_info;
 	if (*num_bytes < 1)
 		return B_IO_ERROR;
@@ -97,27 +83,30 @@ pch_thermal_read(void* _cookie, off_t position, void *buf, size_t* num_bytes)
 		char buffer[1024];
 		size_t maxLength = sizeof(buffer);
 		size_t totalCopied = 0;
-		char *str = (char *)buffer;
-		TRACE("pch_thermal: read()\n");
+		char* str = buffer;
+
 		pch_thermal_control(device, drvOpGetThermalType, &therm_info, 0);
 
-		int32 copied = snprintf(str, maxLength, "  Critical Temperature: %" B_PRIu32 ".%"
-			B_PRIu32 " C\n", (therm_info.critical_temp / 10),
+		int32 copied = snprintf(str, maxLength,
+			"  Critical Temperature: %" B_PRIu32 ".%" B_PRIu32 " C\n",
+			(therm_info.critical_temp / 10),
 			(therm_info.critical_temp % 10));
-
 		maxLength -= copied;
 		str += copied;
 		totalCopied += copied;
-		copied = snprintf(str, maxLength, "  Current Temperature: %" B_PRIu32 ".%"
-			B_PRIu32 " C\n", (therm_info.current_temp / 10),
+
+		copied = snprintf(str, maxLength,
+			"  Current Temperature: %" B_PRIu32 ".%" B_PRIu32 " C\n",
+			(therm_info.current_temp / 10),
 			(therm_info.current_temp % 10));
 
 		if (therm_info.hot_temp > 0) {
 			maxLength -= copied;
 			str += copied;
 			totalCopied += copied;
-			copied = snprintf(str, maxLength, "  Hot Temperature: %" B_PRIu32 ".%"
-				B_PRIu32 " C\n", (therm_info.hot_temp / 10),
+			copied = snprintf(str, maxLength,
+				"  Hot Temperature: %" B_PRIu32 ".%" B_PRIu32 " C\n",
+				(therm_info.hot_temp / 10),
 				(therm_info.hot_temp % 10));
 		}
 
@@ -146,15 +135,11 @@ status_t
 pch_thermal_control(void* _cookie, uint32 op, void* arg, size_t len)
 {
 	pch_thermal_device_info* device = (pch_thermal_device_info*)_cookie;
-	status_t err = B_ERROR;
-
-	pch_thermal_type *att = NULL;
 
 	switch (op) {
-		case drvOpGetThermalType: {
-			att = (pch_thermal_type *)arg;
-
-			// Read basic temperature thresholds.
+		case drvOpGetThermalType:
+		{
+			pch_thermal_type* att = (pch_thermal_type*)arg;
 			att->critical_temp = device->criticalTemp;
 			att->hot_temp = device->hotTemp;
 
@@ -163,141 +148,82 @@ pch_thermal_control(void* _cookie, uint32 op, void* arg, size_t len)
 				& PCH_THERMAL_TEMP_TSR_MASK;
 			att->current_temp = (uint32)temp * 10 / 2 - 500;
 
-			err = B_OK;
-			break;
+			return B_OK;
 		}
 	}
-	return err;
+	return B_ERROR;
 }
 
 
-static status_t
-pch_thermal_close (void* cookie)
-{
-	return B_OK;
-}
+static status_t pch_thermal_close(void* c) { return B_OK; }
+static status_t pch_thermal_free(void* c) { return B_OK; }
 
 
-static status_t
-pch_thermal_free (void* cookie)
-{
-	return B_OK;
-}
+static dk_device_ops sPchThermalDeviceOps = {
+	pch_thermal_open, pch_thermal_close, pch_thermal_free,
+	pch_thermal_read, pch_thermal_write, NULL,
+	pch_thermal_control, NULL, NULL, NULL
+};
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - match & driver
+
+
+static const dk_match_rule sPchThermalMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_UINT16(KOSM_DEVICE_VENDOR_ID, 0x8086),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sPchThermalMatchDict = {
+	sPchThermalMatchRules, 0
+};
 
 
 static float
-pch_thermal_support(device_node *parent)
+pch_thermal_support(dk_node* parent)
 {
-	const char *bus;
-
-	// make sure parent is really the PCI bus manager
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "pci"))
-		return 0.0;
-
-	uint16 vendorID;
 	uint16 deviceID;
-
-	// get vendor and device ID
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorID,
-			false) != B_OK
-		|| sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID, &deviceID,
-			false) != B_OK) {
-		return -1;
+	if (sDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID,
+		&deviceID, false) != B_OK) {
+		return -1.0f;
 	}
 
-	// check whether it's really a PCH thermal device
-	if (vendorID != 0x8086)
-		return 0.0;
-
-	const uint16 devices[] = { 0x9c24, 0x8c24, 0x9ca4, 0x9d31, 0xa131, 0x9df9,
-		0xa379, 0x06f9, 0x02f9, 0xa1b1, 0x8d24, 0 };
-	for (const uint16* device = devices; *device != 0; device++) {
-		if (*device == deviceID)
-			return 0.6;
-	}
-
-	return 0.0;
-}
-
-
-static status_t
-pch_thermal_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "PCH Thermal" }},
-		{ NULL }
+	const uint16 devices[] = {
+		0x9c24, 0x8c24, 0x9ca4, 0x9d31, 0xa131, 0x9df9,
+		0xa379, 0x06f9, 0x02f9, 0xa1b1, 0x8d24, 0
 	};
-
-	return sDeviceManager->register_node(node, PCH_THERMAL_MODULE_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-pch_thermal_init_driver(device_node *node, void **_driverCookie)
-{
-	*_driverCookie = node;
-
-	return B_OK;
-}
-
-
-static void
-pch_thermal_uninit_driver(void *driverCookie)
-{
-}
-
-
-static status_t
-pch_thermal_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node*)_cookie;
-	int path_id;
-	char name[B_DEV_NAME_LENGTH];
-
-	path_id = sDeviceManager->create_id(PCH_THERMAL_PATHID_GENERATOR);
-	if (path_id < 0) {
-		ERROR("pch_thermal_register_child_devices: couldn't create a path_id"
-			"\n");
-		return B_ERROR;
+	for (const uint16* d = devices; *d != 0; d++) {
+		if (*d == deviceID)
+			return 0.6f;
 	}
-
-	snprintf(name, sizeof(name), PCH_THERMAL_BASENAME, path_id);
-
-	return sDeviceManager->publish_device(node, name,
-		PCH_THERMAL_DEVICE_MODULE_NAME);
+	return 0.0f;
 }
 
 
 static status_t
-pch_thermal_init_device(void *_cookie, void **cookie)
+pch_thermal_attach(dk_node* node, void** _driverCookie)
 {
-	device_node *node = (device_node *)_cookie;
-	pch_thermal_device_info *device;
-	device_node *parent;
-	status_t status = B_NO_INIT;
-
-	device = (pch_thermal_device_info *)calloc(1, sizeof(*device));
+	pch_thermal_device_info* device;
+	device = (pch_thermal_device_info*)calloc(1, sizeof(*device));
 	if (device == NULL)
 		return B_NO_MEMORY;
 
+	status_t status = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&device->pci, (void**)&device->pci_cookie);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
 	device->node = node;
-
-	parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&device->pci,
-		(void **)&device->pci_cookie);
-	sDeviceManager->put_node(parent);
+	device->path_id = -1;
+	device->publishedPath[0] = '\0';
 
 	struct pci_info info;
 	device->pci->get_pci_info(device->pci_cookie, &info);
 
-	// map the registers (low + high for 64-bit when requested)
+	// map the registers (64-bit BAR support)
 	phys_addr_t physicalAddress = info.u.h0.base_registers[0];
 	if ((info.u.h0.base_register_flags[0] & PCI_address_type)
 			== PCI_address_type_64) {
@@ -309,7 +235,8 @@ pch_thermal_init_device(void *_cookie, void **cookie)
 	AreaKeeper mmioMapper;
 	device->registers_area = mmioMapper.Map("intel PCH thermal mmio",
 		physicalAddress, mapSize, B_ANY_KERNEL_ADDRESS,
-		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, (void**)&device->registers);
+		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
+		(void**)&device->registers);
 
 	if (mmioMapper.InitCheck() < B_OK) {
 		ERROR("could not map memory I/O!\n");
@@ -327,29 +254,51 @@ pch_thermal_init_device(void *_cookie, void **cookie)
 				status = B_DEVICE_NOT_FOUND;
 				goto err;
 			}
-
 			write8(device->registers + PCH_THERMAL_TSEL,
 				tsel | PCH_THERMAL_TSEL_ETS);
-
 			if ((tsel & PCH_THERMAL_TSEL_ETS) == 0) {
 				status = B_DEVICE_NOT_FOUND;
 				goto err;
 			}
 		}
 
-		// read config temperatures
 		uint16 ctt = read16(device->registers + PCH_THERMAL_CTT);
-		ctt = (ctt >> PCH_THERMAL_CTT_CTRIP_SHIFT) & PCH_THERMAL_CTT_CTRIP_MASK;
-		device->criticalTemp = (ctt != 0) ? (uint32)ctt * 10 / 2 - 500 : 0;
+		ctt = (ctt >> PCH_THERMAL_CTT_CTRIP_SHIFT)
+			& PCH_THERMAL_CTT_CTRIP_MASK;
+		device->criticalTemp = (ctt != 0)
+			? (uint32)ctt * 10 / 2 - 500 : 0;
 
 		uint16 phl = read16(device->registers + PCH_THERMAL_PHL);
-		phl = (phl >> PCH_THERMAL_PHL_PHLL_SHIFT) & PCH_THERMAL_PHL_PHLL_MASK;
-		device->hotTemp = (phl != 0) ? (uint32)phl * 10 / 2 - 500 : 0;
+		phl = (phl >> PCH_THERMAL_PHL_PHLL_SHIFT)
+			& PCH_THERMAL_PHL_PHLL_MASK;
+		device->hotTemp = (phl != 0)
+			? (uint32)phl * 10 / 2 - 500 : 0;
 	}
-	TRACE("pch_thermal_init_device %p\n", device);
+
+	TRACE("pch_thermal_attach %p\n", device);
+
+	{
+		int path_id = sDeviceKeeper->create_id(
+			PCH_THERMAL_PATHID_GENERATOR);
+		if (path_id < 0) {
+			ERROR("attach: couldn't create a path_id\n");
+			status = B_ERROR;
+			goto err;
+		}
+		device->path_id = path_id;
+
+		snprintf(device->publishedPath, sizeof(device->publishedPath),
+			PCH_THERMAL_BASENAME, path_id);
+		status = sDeviceKeeper->publish_device(node, device->publishedPath,
+			&sPchThermalDeviceOps);
+		if (status != B_OK) {
+			sDeviceKeeper->free_id(PCH_THERMAL_PATHID_GENERATOR, path_id);
+			goto err;
+		}
+	}
 
 	mmioMapper.Detach();
-	*cookie = device;
+	*_driverCookie = device;
 	return B_OK;
 
 err:
@@ -359,64 +308,48 @@ err:
 
 
 static void
-pch_thermal_uninit_device(void *_cookie)
+pch_thermal_detach(void* _cookie)
 {
-	pch_thermal_device_info *device = (pch_thermal_device_info *)_cookie;
-	TRACE("pch_thermal_uninit_device %p\n", device);
+	pch_thermal_device_info* device = (pch_thermal_device_info*)_cookie;
+	TRACE("pch_thermal_detach %p\n", device);
+	if (device == NULL)
+		return;
+
+	if (device->publishedPath[0] != '\0')
+		sDeviceKeeper->unpublish_device(device->node, device->publishedPath);
+	if (device->path_id >= 0)
+		sDeviceKeeper->free_id(PCH_THERMAL_PATHID_GENERATOR, device->path_id);
+
 	delete_area(device->registers_area);
 	free(device);
 }
 
 
+static status_t
+pch_thermal_std_ops(int32 op, ...)
+{
+	switch (op) {
+		case B_MODULE_INIT:
+			return get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info**)&sDeviceKeeper);
+		case B_MODULE_UNINIT:
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+			return B_OK;
+		default:
+			return B_ERROR;
+	}
+}
 
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
-	{}
+
+static dk_driver_info pch_thermal_driver = {
+	.info   = { PCH_THERMAL_MODULE_NAME, 0, pch_thermal_std_ops },
+	.match  = &sPchThermalMatchDict,
+	.probe  = pch_thermal_support,
+	.attach = pch_thermal_attach,
+	.detach = pch_thermal_detach,
 };
 
-
-driver_module_info pch_thermal_driver_module = {
-	{
-		PCH_THERMAL_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	pch_thermal_support,
-	pch_thermal_register_device,
-	pch_thermal_init_driver,
-	pch_thermal_uninit_driver,
-	pch_thermal_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
-
-
-struct device_module_info pch_thermal_device_module = {
-	{
-		PCH_THERMAL_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	pch_thermal_init_device,
-	pch_thermal_uninit_device,
-	NULL,
-
-	pch_thermal_open,
-	pch_thermal_close,
-	pch_thermal_free,
-	pch_thermal_read,
-	pch_thermal_write,
-	NULL,
-	pch_thermal_control,
-
-	NULL,
-	NULL
-};
-
-module_info *modules[] = {
-	(module_info *)&pch_thermal_driver_module,
-	(module_info *)&pch_thermal_device_module,
+module_info* modules[] = {
+	(module_info*)&pch_thermal_driver,
 	NULL
 };
