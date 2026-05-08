@@ -2,7 +2,6 @@ SubDir HAIKU_TOP src add-ons kernel bus_managers ;
 
 SubInclude HAIKU_TOP src add-ons kernel bus_managers acpi ;
 SubInclude HAIKU_TOP src add-ons kernel bus_managers agp_gart ;
-SubInclude HAIKU_TOP src add-ons kernel bus_managers ata ;
 SubInclude HAIKU_TOP src add-ons kernel bus_managers fdt ;
 SubInclude HAIKU_TOP src add-ons kernel bus_managers hyperv ;
 SubInclude HAIKU_TOP src add-ons kernel bus_managers i2c ;
