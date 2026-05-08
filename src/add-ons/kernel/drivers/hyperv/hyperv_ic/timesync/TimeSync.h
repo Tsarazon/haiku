@@ -21,12 +21,12 @@
 #define ERROR(x...)			dprintf("\33[94mhyperv_timesync:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-#define HYPERV_TIMESYNC_DRIVER_MODULE_NAME "drivers/hyperv/hyperv_ic/timesync/driver_v1"
+#define HYPERV_TIMESYNC_DRIVER_MODULE_NAME "drivers/hyperv/hyperv_ic/timesync/dk_driver_v1"
 
 
 class TimeSync : public ICBase {
 public:
-								TimeSync(device_node* node);
+								TimeSync(dk_node* node);
 
 protected:
 			void				OnProtocolNegotiated();

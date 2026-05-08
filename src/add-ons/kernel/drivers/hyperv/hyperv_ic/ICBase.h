@@ -20,7 +20,7 @@
 
 class ICBase {
 public:
-								ICBase(device_node* node, uint32 packetLength, uint16 messageType,
+								ICBase(dk_node* node, uint32 packetLength, uint16 messageType,
 									const uint32* messageVersions, uint32 messageVersionCount);
 	virtual						~ICBase();
 			status_t			InitCheck() const { return fStatus; }
@@ -35,7 +35,7 @@ protected:
 
 protected:
 			status_t			fStatus;
-			device_node*		fNode;
+			dk_node*		fNode;
 			uint32				fFrameworkVersion;
 			uint32				fMessageVersion;
 

@@ -6,14 +6,14 @@
 #define _HYPERV_IC_DRIVER_H_
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
-extern driver_module_info gHyperVHeartbeatDriverModule;
-extern driver_module_info gHyperVTimeSyncDriverModule;
+extern dk_driver_info gHyperVHeartbeatDriverModule;
+extern dk_driver_info gHyperVTimeSyncDriverModule;
 
 
 #endif // _HYPERV_IC_DRIVER_H_

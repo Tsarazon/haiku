@@ -9,7 +9,7 @@
 #include "TimeSync.h"
 
 
-TimeSync::TimeSync(device_node* node)
+TimeSync::TimeSync(dk_node* node)
 	: ICBase(node, HV_TIMESYNC_PKT_BUFFER_SIZE, HV_IC_MSGTYPE_TIMESYNC, hv_timesync_versions,
 		hv_timesync_version_count)
 {

@@ -7,7 +7,7 @@
 #include "Heartbeat.h"
 
 
-Heartbeat::Heartbeat(device_node* node)
+Heartbeat::Heartbeat(dk_node* node)
 	: ICBase(node, HV_HEARTBEAT_PKT_BUFFER_SIZE, HV_IC_MSGTYPE_HEARTBEAT, hv_heartbeat_versions,
 		hv_heartbeat_version_count)
 {

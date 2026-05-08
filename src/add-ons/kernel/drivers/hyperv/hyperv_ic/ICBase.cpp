@@ -18,7 +18,7 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-ICBase::ICBase(device_node* node, uint32 packetLength, uint16 messageType,
+ICBase::ICBase(dk_node* node, uint32 packetLength, uint16 messageType,
 		const uint32* messageVersions, uint32 messageVersionCount)
 	:
 	fStatus(B_NO_INIT),
@@ -35,9 +35,13 @@ ICBase::ICBase(device_node* node, uint32 packetLength, uint16 messageType,
 {
 	CALLED();
 
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, (driver_module_info**)&fHyperV, (void**)&fHyperVCookie);
-	gDeviceManager->put_node(parent);
+	fStatus = gDeviceKeeper->get_interface(node,
+		HYPERV_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fHyperV, (void**)&fHyperVCookie);
+	if (fStatus != B_OK) {
+		ERROR("failed to get Hyper-V device interface\n");
+		return;
+	}
 
 	fPacket = static_cast<uint8*>(malloc(fPacketLength));
 	if (fPacket == NULL) {

@@ -7,11 +7,11 @@
 #include "ICDriver.h"
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{}
 };
 

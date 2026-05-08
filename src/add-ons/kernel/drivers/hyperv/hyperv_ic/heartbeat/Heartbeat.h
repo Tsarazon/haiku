@@ -21,12 +21,12 @@
 #define ERROR(x...)			dprintf("\33[94mhyperv_heartbeat:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-#define HYPERV_HEARTBEAT_DRIVER_MODULE_NAME "drivers/hyperv/hyperv_ic/heartbeat/driver_v1"
+#define HYPERV_HEARTBEAT_DRIVER_MODULE_NAME "drivers/hyperv/hyperv_ic/heartbeat/dk_driver_v1"
 
 
 class Heartbeat : public ICBase {
 public:
-								Heartbeat(device_node* node);
+								Heartbeat(dk_node* node);
 
 protected:
 			void				OnProtocolNegotiated();

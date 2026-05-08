@@ -8,22 +8,21 @@
 
 
 static float
-hyperv_timesync_supports_device(device_node* parent)
+hyperv_timesync_supports_device(dk_node* parent)
 {
 	CALLED();
 
-	// Check if parent is the Hyper-V bus manager
-	const char* bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK)
+	char bus[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 
 	if (strcmp(bus, HYPERV_BUS_NAME) != 0)
 		return 0.0f;
 
-	// Check if parent is a Hyper-V time sync device
-	const char* type;
-	if (gDeviceManager->get_attr_string(parent, HYPERV_DEVICE_TYPE_STRING_ITEM, &type, false)
-			!= B_OK)
+	char type[128];
+	if (gDeviceKeeper->get_property_string(parent, HYPERV_DEVICE_TYPE_STRING_ITEM,
+			type, sizeof(type), NULL, false) != B_OK)
 		return 0.0f;
 
 	if (strcmp(type, VMBUS_TYPE_TIMESYNC) != 0)
@@ -35,23 +34,7 @@ hyperv_timesync_supports_device(device_node* parent)
 
 
 static status_t
-hyperv_timesync_register_device(device_node* parent)
-{
-	CALLED();
-
-	device_attr attributes[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = HYPERV_PRETTYNAME_TIMESYNC }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, HYPERV_TIMESYNC_DRIVER_MODULE_NAME, attributes,
-		NULL, NULL);
-}
-
-
-static status_t
-hyperv_timesync_init_driver(device_node* node, void** _driverCookie)
+hyperv_timesync_attach(dk_node* node, void** _driverCookie)
 {
 	CALLED();
 
@@ -75,7 +58,7 @@ hyperv_timesync_init_driver(device_node* node, void** _driverCookie)
 
 
 static void
-hyperv_timesync_uninit_driver(void* driverCookie)
+hyperv_timesync_detach(void* driverCookie)
 {
 	CALLED();
 	TimeSync* timeSync = reinterpret_cast<TimeSync*>(driverCookie);
@@ -83,18 +66,14 @@ hyperv_timesync_uninit_driver(void* driverCookie)
 }
 
 
-driver_module_info gHyperVTimeSyncDriverModule = {
+dk_driver_info gHyperVTimeSyncDriverModule = {
 	{
 		HYPERV_TIMESYNC_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
 
-	hyperv_timesync_supports_device,
-	hyperv_timesync_register_device,
-	hyperv_timesync_init_driver,
-	hyperv_timesync_uninit_driver,
-	NULL,	// register child devices
-	NULL,	// rescan
-	NULL	// removed
+	.probe = hyperv_timesync_supports_device,
+	.attach = hyperv_timesync_attach,
+	.detach = hyperv_timesync_detach,
 };
