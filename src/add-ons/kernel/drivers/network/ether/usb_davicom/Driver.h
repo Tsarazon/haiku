@@ -13,7 +13,7 @@
 #define _USB_DAVICOM_DRIVER_H_
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <USB3.h>
 
@@ -26,20 +26,15 @@
 
 const char* const kVersion = "ver.0.9.5";
 extern usb_module_info *gUSBModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
 class DavicomDevice;
 
-// bus manager device interface for peripheral driver
 typedef struct {
-	driver_module_info info;
-} usb_device_interface;
-
-typedef struct {
-	device_node*			node;
-	::usb_device			usb_device;
-	usb_device_interface*	usb;
-	DavicomDevice*			device;
+	dk_node*		node;
+	int32			id;
+	char			publishedPath[64];
+	DavicomDevice*	device;
 } usb_davicom_driver_info;
 
 
