@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <ctype.h>
 
-#include <drivers/device_manager.h>
+#include <device_keeper.h>
 #include <drivers/KernelExport.h>
 #include <drivers/Drivers.h>
 #include <kernel/OS.h>
@@ -26,8 +26,7 @@
 #endif
 
 
-#define NORFLASH_DEVICE_MODULE_NAME	"drivers/disk/norflash/device_v1"
-#define NORFLASH_DRIVER_MODULE_NAME	"drivers/disk/norflash/driver_v1"
+#define NORFLASH_DRIVER_MODULE_NAME	"drivers/disk/norflash/dk_driver_v1"
 
 
 #define NORFLASH_ADDR	0x00000000
@@ -37,7 +36,7 @@
 #define HIDDEN_BLOCKS	2
 
 struct nor_driver_info {
-	device_node *node;
+	dk_node *node;
 	size_t blocksize;
 	size_t totalsize;
 
@@ -46,39 +45,7 @@ struct nor_driver_info {
 };
 
 
-static device_manager_info *sDeviceManager;
-
-
-static status_t
-nor_init_device(void *_info, void **_cookie)
-{
-	TRACE("init_device\n");
-	nor_driver_info *info = (nor_driver_info*)_info;
-
-	info->mapped = NULL;
-	info->blocksize = 128 * 1024;
-	info->totalsize = (SIZE_IN_BLOCKS - HIDDEN_BLOCKS) * info->blocksize;
-
-	info->id = map_physical_memory("NORFlash", NORFLASH_ADDR, info->totalsize, B_ANY_KERNEL_ADDRESS, B_READ_AREA, (void **)&info->mapped);
-	if (info->id < 0)
-		return info->id;
-
-	info->mapped += HIDDEN_BLOCKS * info->blocksize;
-
-
-	*_cookie = info;
-	return B_OK;
-}
-
-
-static void
-nor_uninit_device(void *_cookie)
-{
-	TRACE("uninit_device\n");
-	nor_driver_info *info = (nor_driver_info*)_cookie;
-	if (info)
-		delete_area(info->id);	
-}
+static dk_keeper_info *sDeviceKeeper;
 
 
 static status_t
@@ -165,13 +132,27 @@ nor_write(void *_cookie, off_t position, const void *data, size_t *numbytes)
 }
 
 
+static dk_device_ops sNorFlashDeviceOps = {
+	nor_open,
+	nor_close,
+	nor_free,
+	nor_read,
+	nor_write,
+	NULL,	// io
+	nor_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+};
+
+
 static float
-nor_supports_device(device_node *parent)
+nor_supports_device(dk_node *parent)
 {
-	const char *bus;
+	char bus[64];
 	TRACE("supports_device\n");
 
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return B_ERROR;
 
 	if (strcmp(bus, "generic"))
@@ -182,23 +163,9 @@ nor_supports_device(device_node *parent)
 
 
 static status_t
-nor_register_device(device_node *node)
+nor_attach(dk_node *node, void **cookie)
 {
-	TRACE("register_device\n");
-	// ready to register
-	device_attr attrs[] = {
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, NORFLASH_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-nor_init_driver(device_node *node, void **cookie)
-{
-	TRACE("init_driver\n");
+	TRACE("attach\n");
 
 	nor_driver_info *info = (nor_driver_info*)malloc(sizeof(nor_driver_info));
 	if (info == NULL)
@@ -207,6 +174,20 @@ nor_init_driver(device_node *node, void **cookie)
 	memset(info, 0, sizeof(*info));
 
 	info->node = node;
+	info->mapped = NULL;
+	info->blocksize = 128 * 1024;
+	info->totalsize = (SIZE_IN_BLOCKS - HIDDEN_BLOCKS) * info->blocksize;
+
+	info->id = map_physical_memory("NORFlash", NORFLASH_ADDR, info->totalsize,
+		B_ANY_KERNEL_ADDRESS, B_READ_AREA, (void **)&info->mapped);
+	if (info->id < 0) {
+		free(info);
+		return info->id;
+	}
+
+	info->mapped += HIDDEN_BLOCKS * info->blocksize;
+
+	sDeviceKeeper->publish_device(node, "disk/nor/0/raw", &sNorFlashDeviceOps);
 
 	*cookie = info;
 	return B_OK;
@@ -214,78 +195,39 @@ nor_init_driver(device_node *node, void **cookie)
 
 
 static void
-nor_uninit_driver(void *_cookie)
+nor_detach(void *_cookie)
 {
-	TRACE("uninit_driver\n");
+	TRACE("detach\n");
 	nor_driver_info *info = (nor_driver_info*)_cookie;
-	free(info);
+	if (info) {
+		delete_area(info->id);
+		free(info);
+	}
 }
 
 
-static status_t
-nor_register_child_devices(void *_cookie)
-{
-	TRACE("register_child_devices\n");
-	nor_driver_info *info = (nor_driver_info*)_cookie;
-	status_t status;
-
-	status = sDeviceManager->publish_device(info->node, "disk/nor/0/raw",
-		NORFLASH_DEVICE_MODULE_NAME);
-
-	return status;
-}
-
-
-struct device_module_info sNORFlashDiskDevice = {
-	{
-		NORFLASH_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	nor_init_device,
-	nor_uninit_device,
-	NULL, //nor_remove,
-
-	nor_open,
-	nor_close,
-	nor_free,
-	nor_read,
-	nor_write,
-	NULL,	// nor_io,
-	nor_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
+module_dependency module_dependencies[] = {
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
+	{ }
 };
 
 
-
-struct driver_module_info sNORFlashDiskDriver = {
+static dk_driver_info sNorFlashDriver = {
 	{
 		NORFLASH_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
 
-	nor_supports_device,
-	nor_register_device,
-	nor_init_driver,
-	nor_uninit_driver,
-	nor_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
+	.probe = nor_supports_device,
+	.attach = nor_attach,
+	.detach = nor_detach,
 
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
-	{ }
+	.ops = &sNorFlashDeviceOps,
 };
 
 
 module_info *modules[] = {
-	(module_info*)&sNORFlashDiskDriver,
-	(module_info*)&sNORFlashDiskDevice,
+	(module_info*)&sNorFlashDriver,
 	NULL
 };
