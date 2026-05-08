@@ -5,7 +5,7 @@
  */
 #include "poke.h"
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <ISA.h>
@@ -22,8 +22,7 @@
 #endif
 
 
-#define POKE_DRIVER_MODULE_NAME "drivers/misc/poke/driver_v1"
-#define POKE_DEVICE_MODULE_NAME "drivers/misc/poke/device_v1"
+#define POKE_DRIVER_MODULE_NAME "drivers/misc/poke/dk_driver_v1"
 
 
 static status_t poke_open(void*, const char*, int, void**);
@@ -36,11 +35,11 @@ static status_t poke_write(void*, off_t, const void*, size_t*);
 
 static isa_module_info* isa;
 static pci_module_info* pci;
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sPublished = false;
 
 typedef struct {
-	device_node* node;
+	dk_node* node;
 } poke_driver_info;
 
 
@@ -300,43 +299,45 @@ poke_write(void* cookie, off_t position, const void* buffer, size_t* numBytes)
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - dk_device_ops / dk_driver_info
+
+
+static dk_device_ops sDeviceOps = {
+	poke_open,
+	poke_close,
+	poke_free,
+	poke_read,
+	poke_write,
+	NULL,	// io
+	poke_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+static const dk_match_rule sPokeMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sPokeMatchDict = {
+	sPokeMatchRules,
+	0
+};
 
 
 static float
-poke_supports_device(device_node *parent)
+poke_probe(dk_node *node)
 {
-	const char *bus;
-
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	// match any PCI device with very low priority — poke is a utility
-	// driver that provides raw hardware access, not a real device driver
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-poke_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Poke raw access"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, POKE_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-poke_init_driver(device_node *node, void **cookie)
+poke_attach(dk_node *node, void **cookie)
 {
 	if (get_module(B_ISA_MODULE_NAME, (module_info**)&isa) < B_OK)
 		return ENOSYS;
@@ -355,13 +356,18 @@ poke_init_driver(device_node *node, void **cookie)
 	}
 
 	info->node = node;
+
+	sPublished = true;
+	sDeviceKeeper->publish_device(node, "misc/" POKE_DEVICE_NAME,
+		&sDeviceOps);
+
 	*cookie = info;
 	return B_OK;
 }
 
 
 static void
-poke_uninit_driver(void *_cookie)
+poke_detach(void *_cookie)
 {
 	poke_driver_info *info = (poke_driver_info *)_cookie;
 
@@ -372,86 +378,28 @@ poke_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-poke_register_child_devices(void *_cookie)
-{
-	poke_driver_info *info = (poke_driver_info *)_cookie;
-
-	if (sPublished)
-		return B_OK;
-
-	sPublished = true;
-	return sDeviceManager->publish_device(info->node,
-		"misc/" POKE_DEVICE_NAME, POKE_DEVICE_MODULE_NAME);
-}
-
-
-//	#pragma mark - device init/uninit
-
-
-static status_t
-poke_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-poke_uninit_device(void *_cookie)
-{
-}
-
-
 //	#pragma mark -
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sPokeDevice = {
-	{
-		POKE_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	poke_init_device,
-	poke_uninit_device,
-	NULL,	// device_removed
-
-	poke_open,
-	poke_close,
-	poke_free,
-	poke_read,
-	poke_write,
-	NULL,	// io
-	poke_control,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sPokeDriver = {
-	{
+struct dk_driver_info sPokeDriver = {
+	.info = {
 		POKE_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	poke_supports_device,
-	poke_register_device,
-	poke_init_driver,
-	poke_uninit_driver,
-	poke_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match	= &sPokeMatchDict,
+	.probe	= poke_probe,
+	.attach	= poke_attach,
+	.detach	= poke_detach,
+	.ops	= &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sPokeDriver,
-	(module_info *)&sPokeDevice,
 	NULL
 };
