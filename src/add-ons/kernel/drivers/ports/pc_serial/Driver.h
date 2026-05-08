@@ -14,7 +14,7 @@
 
 #include <OS.h>
 #include <KernelExport.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <ISA.h>
 #include <bus/PCI.h>
@@ -130,7 +130,7 @@ typedef struct pc_serial_line_coding_s {
 extern isa_module_info *gISAModule;
 extern pci_module_info *gPCIModule;
 extern tty_module_info *gTTYModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern struct ddomain gSerialDomain;
 
 // Global device list for TTY service routing

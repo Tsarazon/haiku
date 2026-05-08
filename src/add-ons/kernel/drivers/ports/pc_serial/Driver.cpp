@@ -23,8 +23,7 @@
 #include "SerialDevice.h"
 
 
-#define PC_SERIAL_DRIVER_MODULE_NAME "drivers/ports/pc_serial/driver_v1"
-#define PC_SERIAL_DEVICE_MODULE_NAME "drivers/ports/pc_serial/device_v1"
+#define PC_SERIAL_DRIVER_MODULE_NAME "drivers/ports/pc_serial/dk_driver_v1"
 
 static const char *sDeviceBaseName = DEVFS_BASE;
 
@@ -34,7 +33,7 @@ isa_module_info *gISAModule = NULL;
 pci_module_info *gPCIModule = NULL;
 tty_module_info *gTTYModule = NULL;
 dpc_module_info *gDPCModule = NULL;
-device_manager_info *gDeviceManager = NULL;
+dk_keeper_info *gDeviceKeeper = NULL;
 void* gDPCHandle = NULL;
 sem_id gDriverLock = -1;
 bool gHandleISA = false;
@@ -591,12 +590,13 @@ pc_serial_free(void *cookie)
 
 
 static float
-pc_serial_supports_device(device_node *parent)
+pc_serial_supports_device(dk_node *parent)
 {
 	TRACE_FUNCALLS("> pc_serial_supports_device()\n");
-	const char *bus;
+	char bus[64];
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false))
 		return -1;
 
 	if (strcmp(bus, "pci"))
@@ -604,8 +604,8 @@ pc_serial_supports_device(device_node *parent)
 
 	// match PCI simple communications / serial class
 	uint8 classBase = 0, classSub = 0;
-	gDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
-	gDeviceManager->get_attr_uint8(parent, B_DEVICE_SUB_TYPE, &classSub,
+	gDeviceKeeper->get_property_uint8(parent, KOSM_DEVICE_TYPE, &classBase, false);
+	gDeviceKeeper->get_property_uint8(parent, KOSM_DEVICE_SUB_TYPE, &classSub,
 		false);
 
 	if (classBase == PCI_simple_communications
@@ -618,7 +618,7 @@ pc_serial_supports_device(device_node *parent)
 	if (classBase == PCI_simple_communications
 		&& classSub == PCI_simple_communications_other) {
 		uint16 vendorId = 0;
-		gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+		gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, false);
 		if (vendorId == 0x11C1) {
 			TRACE_ALWAYS("Lucent modem found!\n");
@@ -630,24 +630,23 @@ pc_serial_supports_device(device_node *parent)
 }
 
 
+
+
+static dk_device_ops sPcSerialDeviceOps = {
+	pc_serial_open,
+	pc_serial_close,
+	pc_serial_free,
+	pc_serial_read,
+	pc_serial_write,
+	NULL,	// io
+	pc_serial_control,
+	pc_serial_select,
+	pc_serial_deselect,
+};
+
+
 static status_t
-pc_serial_register_device(device_node *node)
-{
-	TRACE_FUNCALLS("> pc_serial_register_device()\n");
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "PC Serial Port"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node,
-		PC_SERIAL_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-static status_t
-pc_serial_init_driver(device_node *node, void **cookie)
+pc_serial_init_driver(dk_node *node, void **cookie)
 {
 	TRACE_FUNCALLS("> pc_serial_init_driver()\n");
 
@@ -655,7 +654,17 @@ pc_serial_init_driver(device_node *node, void **cookie)
 	if (status != B_OK)
 		return status;
 
-	// Store the node as cookie
+	// Publish serial port devices
+	acquire_sem(gDriverLock);
+	for (int32 i = 0; i < DEVICES_COUNT; i++) {
+		if (gSerialDevices[i] == NULL)
+			continue;
+		char name[64];
+		snprintf(name, sizeof(name), "%s%d", sDeviceBaseName, (int)i);
+		gDeviceKeeper->publish_device(node, name, &sPcSerialDeviceOps);
+	}
+	release_sem(gDriverLock);
+
 	*cookie = node;
 	return B_OK;
 }
@@ -669,96 +678,29 @@ pc_serial_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-pc_serial_register_child_devices(void *_cookie)
-{
-	TRACE_FUNCALLS("> pc_serial_register_child_devices()\n");
-	device_node *node = (device_node *)_cookie;
-
-	// Publish all detected serial ports
-	acquire_sem(gDriverLock);
-	for (int32 i = 0; i < DEVICES_COUNT; i++) {
-		if (gSerialDevices[i] == NULL)
-			continue;
-
-		char name[64];
-		snprintf(name, sizeof(name), "%s%d", sDeviceBaseName, (int)i);
-
-		gDeviceManager->publish_device(node, name,
-			PC_SERIAL_DEVICE_MODULE_NAME);
-	}
-	release_sem(gDriverLock);
-
-	return B_OK;
-}
-
-
-//	#pragma mark - device init/uninit
-
-
-static status_t
-pc_serial_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-pc_serial_uninit_device(void *_cookie)
-{
-}
-
-
 //	#pragma mark -
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sPcSerialDevice = {
-	{
-		PC_SERIAL_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	pc_serial_init_device,
-	pc_serial_uninit_device,
-	NULL,	// device_removed
-
-	pc_serial_open,
-	pc_serial_close,
-	pc_serial_free,
-	pc_serial_read,
-	pc_serial_write,
-	NULL,	// io
-	pc_serial_control,
-
-	pc_serial_select,
-	pc_serial_deselect,
-};
-
-struct driver_module_info sPcSerialDriver = {
+static dk_driver_info sPcSerialDriver = {
 	{
 		PC_SERIAL_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
 
-	pc_serial_supports_device,
-	pc_serial_register_device,
-	pc_serial_init_driver,
-	pc_serial_uninit_driver,
-	pc_serial_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.probe = pc_serial_supports_device,
+	.attach = pc_serial_init_driver,
+	.detach = pc_serial_uninit_driver,
+
+	.ops = &sPcSerialDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sPcSerialDriver,
-	(module_info *)&sPcSerialDevice,
 	NULL
 };
