@@ -15,7 +15,7 @@
 #include <ISA.h>
 #include <bus/ISA.h>
 #include <KernelExport.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <arch/cpu.h>
 
 #include <stdlib.h>
@@ -34,9 +34,9 @@
 //	(for example, the Pegasos (PPC based) also has an ISA bus)
 
 
-#define ISA_MODULE_NAME "bus_managers/isa/root/driver_v1"
+#define ISA_MODULE_NAME "bus_managers/isa/root/dk_driver_v1"
 
-device_manager_info *pnp;
+dk_keeper_info *pnp;
 
 
 static long
@@ -73,12 +73,34 @@ unlock_isa_dma_channel(long channel)
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - DeviceKeeper driver API
+
+
+// Bus interface published on the ISA root node via publish_interface.
+// Defined before isa_init_driver so the publish_interface call can
+// reference it without a forward declaration.
+static isa2_module_info sIsa2BusInterface = {
+	arch_isa_read_io_8, arch_isa_write_io_8,
+	arch_isa_read_io_16, arch_isa_write_io_16,
+	arch_isa_read_io_32, arch_isa_write_io_32,
+
+	arch_isa_ram_address,
+
+	arch_start_isa_dma,
+};
 
 
 static status_t
-isa_init_driver(device_node *node, void **cookie)
+isa_init_driver(dk_node *node, void **cookie)
 {
+	// Publish the ISA bus interface on this node so child drivers
+	// (universal ISA peripherals) can retrieve it via get_interface
+	// walk-up.
+	status_t status = pnp->publish_interface(node, ISA_INTERFACE_NAME,
+		&sIsa2BusInterface);
+	if (status != B_OK)
+		return status;
+
 	*cookie = node;
 	return B_OK;
 }
@@ -91,33 +113,19 @@ isa_uninit_driver(void *cookie)
 
 
 static float
-isa_supports_device(device_node *parent)
+isa_supports_device(dk_node *parent)
 {
-	const char *bus;
+	char bus[64];
 
-	// make sure parent is really pnp root
-	if (pnp->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return B_ERROR;
+	// make sure parent is really device root
+	if (pnp->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "root"))
-		return 0.0;
+	if (strcmp(bus, "root") != 0)
+		return 0.0f;
 
-	return 1.0;
-}
-
-
-static status_t
-isa_register_device(device_node *parent)
-{
-	static const device_attr attrs[] = {
-		// tell where to look for child devices
-		{B_DEVICE_BUS, B_STRING_TYPE, {.string = "isa" }},
-		{B_DEVICE_FLAGS, B_UINT32_TYPE,
-			{.ui32 = B_FIND_CHILD_ON_DEMAND | B_FIND_MULTIPLE_CHILDREN}},
-		{}
-	};
-
-	return pnp->register_node(parent, ISA_MODULE_NAME, attrs, NULL, NULL);
+	return 1.0f;
 }
 
 
@@ -137,10 +145,14 @@ std_ops(int32 op, ...)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&pnp },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&pnp },
 	{}
 };
 
+
+// Legacy bus_manager-style isa_module_info — still exposed via
+// get_module(B_ISA_MODULE_NAME, ...) for callers that haven't migrated
+// off the original Haiku bus_manager API.
 static isa_module_info isa_module = {
 	{
 		{
@@ -164,34 +176,29 @@ static isa_module_info isa_module = {
 	&unlock_isa_dma_channel
 };
 
-static isa2_module_info isa2_module = {
-	{
-		{
-			ISA_MODULE_NAME,
-			0,
-			std_ops
-		},
 
-		isa_supports_device,
-		isa_register_device,
-		isa_init_driver,
-		isa_uninit_driver,
-		NULL,	// removed device
-		NULL,	// register child devices
-		NULL,	// rescan bus
-	},
+static const dk_match_rule sIsaMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "root"),
+	DK_MATCH_END
+};
 
-	arch_isa_read_io_8, arch_isa_write_io_8,
-	arch_isa_read_io_16, arch_isa_write_io_16,
-	arch_isa_read_io_32, arch_isa_write_io_32,
+static const dk_match_dict sIsaMatchDict = {
+	sIsaMatchRules,
+	0
+};
 
-	arch_isa_ram_address,
 
-	arch_start_isa_dma,
+static dk_driver_info isa2_driver = {
+	.info       = { ISA_MODULE_NAME, 0, std_ops },
+	.match      = &sIsaMatchDict,
+	.probe      = isa_supports_device,
+	.attach     = isa_init_driver,
+	.detach     = isa_uninit_driver,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 module_info *modules[] = {
 	(module_info *)&isa_module,
-	(module_info *)&isa2_module,
+	(module_info *)&isa2_driver,
 	NULL
 };
