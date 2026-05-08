@@ -11,7 +11,7 @@
 	Huawei devices updated to usb-modeswitch-data-20150115
 */
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <lock.h>
@@ -36,11 +36,11 @@
 #define ENTER()	TRACE("%s", __FUNCTION__)
 
 
-#define USB_MODESWITCH_DRIVER_MODULE_NAME "drivers/common/usb_modeswitch/driver_v1"
+#define USB_MODESWITCH_DRIVER_MODULE_NAME "drivers/common/usb_modeswitch/dk_driver_v1"
 
 
 static usb_module_info *gUSBModule = NULL;
-static device_manager_info *gDeviceManager = NULL;
+static dk_keeper_info *gDeviceKeeper = NULL;
 
 
 enum msgType {
@@ -298,7 +298,7 @@ static uint32 kDevicesCount = sizeof(kDevices) / sizeof(kDevices[0]);
 
 
 typedef struct {
-	device_node*	node;
+	dk_node*		node;
 	usb_device		device;
 	usb_pipe		bulk_in;
 	usb_pipe		bulk_out;
@@ -435,24 +435,25 @@ my_modeswitch(usb_modeswitch_info *info)
 
 
 static float
-usb_modeswitch_supports_device(device_node *parent)
+usb_modeswitch_supports_device(dk_node *parent)
 {
 	TRACE("supports_device()\n");
-	const char *bus;
+	char bus[64];
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "usb"))
-		return 0.0;
+	if (strcmp(bus, "usb") != 0)
+		return -1.0f;
 
 	uint16 vendorId, productId;
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_USB_VENDOR_ID,
 			&vendorId, false) != B_OK)
-		return 0.0;
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+		return -1.0f;
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_USB_PRODUCT_ID,
 			&productId, false) != B_OK)
-		return 0.0;
+		return -1.0f;
 
 	// check against our device table
 	for (uint32 i = 0; i < kDevicesCount; i++) {
@@ -464,31 +465,15 @@ usb_modeswitch_supports_device(device_node *parent)
 			continue;
 		TRACE("USB modeswitch device found! vendor: 0x%04x, product: 0x%04x\n",
 			vendorId, productId);
-		return 0.6;
+		return 0.6f;
 	}
 
-	return 0.0;
+	return -1.0f;
 }
 
 
 static status_t
-usb_modeswitch_register_device(device_node *node)
-{
-	TRACE("register_device()\n");
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "USB Mode Switch"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node,
-		USB_MODESWITCH_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_modeswitch_init_driver(device_node *node, void **cookie)
+usb_modeswitch_attach(dk_node *node, void **cookie)
 {
 	TRACE("init_driver()\n");
 
@@ -501,7 +486,7 @@ usb_modeswitch_init_driver(device_node *node, void **cookie)
 	info->node = node;
 
 	// get USB device ID
-	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
 			&info->device, true) != B_OK) {
 		free(info);
 		return B_ERROR;
@@ -587,9 +572,9 @@ usb_modeswitch_init_driver(device_node *node, void **cookie)
 
 
 static void
-usb_modeswitch_uninit_driver(void *_cookie)
+usb_modeswitch_detach(void *_cookie)
 {
-	TRACE("uninit_driver()\n");
+	TRACE("detach()\n");
 	usb_modeswitch_info *info = (usb_modeswitch_info *)_cookie;
 
 	if (info->notify >= 0)
@@ -598,40 +583,38 @@ usb_modeswitch_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-usb_modeswitch_register_child_devices(void *_cookie)
-{
-	// This driver does not publish any devfs entries.
-	// It only performs mode switching on device attach.
-	return B_OK;
-}
-
-
 //
 //#pragma mark -
 //
 
 
+static const dk_match_rule sUsbModeSwitchMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sUsbModeSwitchMatchDict = {
+	sUsbModeSwitchMatchRules,
+	0
+};
+
+
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info **)&gUSBModule },
 	{ NULL }
 };
 
-struct driver_module_info sUsbModeSwitchDriver = {
-	{
+static dk_driver_info sUsbModeSwitchDriver = {
+	.info = {
 		USB_MODESWITCH_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_modeswitch_supports_device,
-	usb_modeswitch_register_device,
-	usb_modeswitch_init_driver,
-	usb_modeswitch_uninit_driver,
-	usb_modeswitch_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sUsbModeSwitchMatchDict,
+	.probe   = usb_modeswitch_supports_device,
+	.attach  = usb_modeswitch_attach,
+	.detach  = usb_modeswitch_detach,
 };
 
 module_info *modules[] = {
