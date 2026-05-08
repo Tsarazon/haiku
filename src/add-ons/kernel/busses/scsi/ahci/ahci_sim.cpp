@@ -27,8 +27,9 @@ ahci_set_scsi_bus(scsi_sim_cookie cookie, scsi_bus bus)
 static void
 ahci_scsi_io(scsi_sim_cookie cookie, scsi_ccb *request)
 {
-	FLOW("ahci_scsi_io, cookie %p, path_id %u, target_id %u, target_lun %u\n",
-		cookie, request->path_id, request->target_id, request->target_lun);
+	dprintf("ahci: scsi_io cookie=%p target=%u lun=%u opcode=0x%02x\n",
+		cookie, request->target_id, request->target_lun,
+		request->cdb[0]);
 	static_cast<AHCIController *>(cookie)->ExecuteRequest(request);
 }
 
@@ -122,21 +123,22 @@ ahci_ioctl(scsi_sim_cookie cookie, uint8 targetID, uint32 op, void *buffer,
 //	#pragma mark -
 
 
+extern scsi_sim_interface gAHCISimOps;	// defined below
+
+
 static status_t
-ahci_sim_init_bus(device_node *node, void **_cookie)
+ahci_sim_init_bus(dk_node *node, void **_cookie)
 {
 	TRACE("ahci_sim_init_bus\n");
 
-	// get the PCI device from our parent's parent
-	device_node *parent = gDeviceManager->get_parent_node(node);
-	device_node *pciParent = gDeviceManager->get_parent_node(parent);
-	gDeviceManager->put_node(parent);
-
-	pci_device_module_info *pci;
+	// get PCI device ops via walk-up
+	pci_device_ops *pci;
 	pci_device *pciDevice;
-	gDeviceManager->get_driver(pciParent, (driver_module_info **)&pci,
-		(void **)&pciDevice);
-	gDeviceManager->put_node(pciParent);
+	status_t status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&pci, (void **)&pciDevice);
+	if (status != B_OK)
+		return status;
 
 	TRACE("ahci_sim_init_bus: pciDevice %p\n", pciDevice);
 
@@ -144,8 +146,19 @@ ahci_sim_init_bus(device_node *node, void **_cookie)
 		pciDevice);
 	if (!controller)
 		return B_NO_MEMORY;
-	status_t status = controller->Init();
+	status = controller->Init();
 	if (status < B_OK) {
+		delete controller;
+		return status;
+	}
+
+	// Publish the SCSI SIM interface on this node. The SCSI bus manager
+	// walks up from its scsi_bus_node (created as our child by the
+	// framework) to find this interface via get_interface.
+	status = gDeviceKeeper->publish_interface(node, SCSI_SIM_INTERFACE_NAME,
+		&gAHCISimOps);
+	if (status != B_OK) {
+		controller->Uninit();
 		delete controller;
 		return status;
 	}
@@ -167,13 +180,6 @@ ahci_sim_uninit_bus(void *cookie)
 }
 
 
-static void
-ahci_sim_bus_removed(void *cookie)
-{
-	TRACE("ahci_sim_bus_removed, cookie %p\n", cookie);
-}
-
-
 static status_t
 std_ops(int32 op, ...)
 {
@@ -188,21 +194,7 @@ std_ops(int32 op, ...)
 }
 
 
-scsi_sim_interface gAHCISimInterface = {
-	{
-		{
-			AHCI_SIM_MODULE_NAME,
-			0,
-			std_ops
-		},
-		NULL,	// supported devices
-		NULL,	// register node
-		ahci_sim_init_bus,
-		ahci_sim_uninit_bus,
-		NULL,	// register child devices
-		NULL,	// rescan
-		ahci_sim_bus_removed
-	},
+scsi_sim_interface gAHCISimOps = {
 	ahci_set_scsi_bus,
 	ahci_scsi_io,
 	ahci_abort_io,
@@ -213,4 +205,15 @@ scsi_sim_interface gAHCISimInterface = {
 	ahci_reset_bus,
 	ahci_get_restrictions,
 	ahci_ioctl
+};
+
+// Auto-attached by module name when ahci.c register_sim() calls
+// register_node(AHCI_SIM_MODULE_NAME). node_flags=MULTI_CHILDREN
+// triggers ProbeAndAttachAll on our node, letting gSCSIBusDriver
+// (match_dict bus=scsi-host) attach as a child.
+dk_driver_info gAHCISimInterface = {
+	.info		= { AHCI_SIM_MODULE_NAME, 0, std_ops },
+	.attach		= ahci_sim_init_bus,
+	.detach		= ahci_sim_uninit_bus,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };

@@ -13,8 +13,8 @@
 extern "C" {
 #endif
 
-#define AHCI_DEVICE_MODULE_NAME "busses/scsi/ahci/driver_v1"
-#define AHCI_SIM_MODULE_NAME "busses/scsi/ahci/sim/driver_v1"
+#define AHCI_DEVICE_MODULE_NAME "busses/scsi/ahci/dk_driver_v1"
+#define AHCI_SIM_MODULE_NAME "busses/scsi/ahci/sim/dk_driver_v1"
 
 // RW1 = Write 1 to set bit (writing 0 is ignored)
 // RWC = Write 1 to clear bit (writing 0 is ignored)
@@ -321,8 +321,8 @@ status_t get_device_info(uint16 vendorID, uint16 deviceID, const char **name,
 	uint32 *flags);
 
 
-extern scsi_sim_interface gAHCISimInterface;
-extern device_manager_info *gDeviceManager;
+extern dk_driver_info gAHCISimInterface;
+extern dk_keeper_info *gDeviceKeeper;
 extern scsi_for_sim_interface *gSCSI;
 
 

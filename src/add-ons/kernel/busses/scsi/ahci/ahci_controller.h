@@ -12,8 +12,8 @@
 
 class AHCIController {
 public:
-							AHCIController(device_node *node,
-								pci_device_module_info *pciModule,
+							AHCIController(dk_node *node,
+								pci_device_ops *pciModule,
 								pci_device *pciDevice);
 							~AHCIController();
 
@@ -27,7 +27,7 @@ public:
 			void			GetRestrictions(uchar targetID, bool *isATAPI,
 								bool *noAutoSense, uint32 *maxBlocks);
 
-			device_node *	DeviceNode() { return fNode; }
+			dk_node *	DeviceNode() { return fNode; }
 
 private:
 			bool			IsDevicePresent(uint device);
@@ -39,8 +39,8 @@ private:
 	friend class AHCIPort;
 
 private:
-	device_node *			fNode;
-	pci_device_module_info *fPCI;
+	dk_node *			fNode;
+	pci_device_ops *fPCI;
 	pci_device *			fPCIDevice;
 	uint16					fPCIVendorID;
 	uint16					fPCIDeviceID;

@@ -979,8 +979,8 @@ AHCIPort::ScsiReadWrite(scsi_ccb* request, uint64 lba, size_t sectorCount,
 	bool isWrite)
 {
 	RWTRACE("[%lld] %ld ScsiReadWrite: position %llu, size %lu, isWrite %d\n",
-		system_time(), find_thread(NULL), lba * 512, sectorCount * 512,
-		isWrite);
+		system_time(), find_thread(NULL), lba * fSectorSize,
+		sectorCount * fSectorSize, isWrite);
 
 #if 0
 	if (isWrite) {
@@ -992,7 +992,7 @@ AHCIPort::ScsiReadWrite(scsi_ccb* request, uint64 lba, size_t sectorCount,
 	}
 #endif
 
-	ASSERT(request->data_length == sectorCount * 512);
+	ASSERT(request->data_length == sectorCount * fSectorSize);
 	sata_request* sreq = new(std::nothrow) sata_request(request);
 	if (sreq == NULL) {
 		TRACE("out of memory when allocating read/write request\n");
@@ -1448,6 +1448,19 @@ AHCIPort::ScsiExecuteRequest(scsi_ccb* request)
 			}
 			break;
 		}
+		// CD/DVD-only opcodes routinely probed by user-space volume
+		// detection (raw ioctl from a media-detect daemon). The target
+		// is an HDD here (fIsATAPI is false on this path); reply INVALID
+		// quietly so callers fall back without flooding the log.
+		case 0x43: // READ_TOC
+		case 0x46: // GET_CONFIGURATION
+		case 0x4A: // GET_EVENT_STATUS_NOTIFICATION
+		case 0x51: // READ_DISC_INFORMATION
+		case 0x52: // READ_TRACK_INFORMATION
+		case 0xBE: // READ_CD
+			request->subsys_status = SCSI_REQ_INVALID;
+			gSCSI->finished(request, 1);
+			break;
 		default:
 			ERROR("AHCIPort::ScsiExecuteRequest port %d unsupported request "
 				"opcode 0x%02x\n", fIndex, request->cdb[0]);

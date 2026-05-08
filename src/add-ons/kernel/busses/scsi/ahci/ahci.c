@@ -157,7 +157,7 @@ const device_info kSupportedDevices[] = {
 };
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 scsi_for_sim_interface *gSCSI;
 
 
@@ -180,34 +180,54 @@ get_device_info(uint16 vendorID, uint16 deviceID, const char **name,
 
 
 static status_t
-register_sim(device_node *parent)
+register_sim(dk_node *parent)
 {
-	int32 id = gDeviceManager->create_id(AHCI_ID_GENERATOR);
+	int32 id = gDeviceKeeper->create_id(AHCI_ID_GENERATOR);
 	if (id < 0)
 		return id;
 
 	{
-		device_attr attrs[] = {
-			{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-				{ .string = SCSI_FOR_SIM_MODULE_NAME }},
-			{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+		dk_property attrs[] = {
+			// The SCSI bus manager (gSCSIBusDriver) matches nodes with
+			// bus="scsi-host" and attaches as a child, creating the
+			// scsi_bus_node. Our ahci_sim driver publishes
+			// SCSI_SIM_INTERFACE_NAME on this node so the SCSI bus
+			// manager can retrieve our ops via walk-up.
+			{ KOSM_DEVICE_BUS, B_STRING_TYPE,
+				{ .string = "scsi-host" }},
+			{ KOSM_LABEL, B_STRING_TYPE,
 				{ .string = AHCI_CONTROLLER_PRETTY_NAME }},
 
 			{ SCSI_DESCRIPTION_CONTROLLER_NAME, B_STRING_TYPE,
 				{ .string = AHCI_DEVICE_MODULE_NAME }},
-			{ B_DMA_MAX_TRANSFER_BLOCKS, B_UINT32_TYPE, { .ui32 = 255 }},
+
+			// DMA properties — originally on the device node
+			// (ahci_register_device), merged here after collapsing
+			// the two-phase registration into a single attach.
+			// data must be word-aligned (AHCI PRD DBA bit 0 must be 0)
+			{ KOSM_DMA_ALIGNMENT, B_UINT32_TYPE, { .ui32 = 1 }},
+			// one S/G block must not cross 64K boundary
+			{ KOSM_DMA_BOUNDARY, B_UINT32_TYPE, { .ui32 = 0xffff }},
+			// max size of S/G block is 16 bits with zero being 64K
+			{ KOSM_DMA_MAX_SEGMENT_BLOCKS, B_UINT32_TYPE,
+				{ .ui32 = 0x10000 }},
+			{ KOSM_DMA_MAX_SEGMENT_COUNT, B_UINT32_TYPE, { .ui32 = 32 }},
+			{ KOSM_DMA_HIGH_ADDRESS, B_UINT64_TYPE,
+				{ .ui64 = 0x100000000LL }},
+			// max 255 sectors per ATA READ/WRITE DMA command
+			{ KOSM_DMA_MAX_TRANSFER_BLOCKS, B_UINT32_TYPE, { .ui32 = 255 }},
+			{ KOSM_DMA_BLOCK_SIZE, B_UINT32_TYPE, { .ui32 = 512 }},
+
+			{ SCSI_DEVICE_MAX_TARGET_COUNT, B_UINT32_TYPE, { .ui32 = 33 }},
 			{ AHCI_ID_ITEM, B_UINT32_TYPE, { .ui32 = (uint32)id }},
-//			{ PNP_MANAGER_ID_GENERATOR, B_STRING_TYPE,
-//				{ .string = AHCI_ID_GENERATOR }},
-//			{ PNP_MANAGER_AUTO_ID, B_UINT32_TYPE, { .ui32 = id }},
 
 			{ NULL }
 		};
 
-		status_t status = gDeviceManager->register_node(parent,
+		status_t status = gDeviceKeeper->register_node(parent,
 			AHCI_SIM_MODULE_NAME, attrs, NULL, NULL);
 		if (status < B_OK)
-			gDeviceManager->free_id(AHCI_ID_GENERATOR, id);
+			gDeviceKeeper->free_id(AHCI_ID_GENERATOR, id);
 
 		return status;
 	}
@@ -217,53 +237,52 @@ register_sim(device_node *parent)
 //	#pragma mark -
 
 
+static const dk_match_rule sAhciPciMatchRules[] = {
+	{ KOSM_DEVICE_BUS,        B_STRING_TYPE, { .string = "pci" } },
+	{ KOSM_DEVICE_TYPE,       B_UINT16_TYPE, { .ui16 = PCI_mass_storage } },
+	{ KOSM_DEVICE_SUB_TYPE,   B_UINT16_TYPE, { .ui16 = PCI_sata } },
+	{ KOSM_DEVICE_INTERFACE,  B_UINT16_TYPE, { .ui16 = PCI_sata_ahci } },
+	{ 0 }
+};
+
+static const dk_match_dict sAhciPciMatchDict = {
+	sAhciPciMatchRules, 0
+};
+
+
 static float
-ahci_supports_device(device_node *parent)
+ahci_supports_device(dk_node *parent)
 {
-	uint16 baseClass, subClass, classAPI;
 	uint16 vendorID;
 	uint16 deviceID;
 	const char *name;
-	const char *bus;
 
 	FLOW("ahci_supports_device\n");
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-			< B_OK)
-		return 0.0f;
-
-	if (strcmp(bus, "pci"))
-		return 0.0f;
-
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_TYPE, &baseClass,
-				false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_SUB_TYPE, &subClass,
-				false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_INTERFACE,
-				&classAPI, false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_VENDOR_ID,
 				&vendorID, false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID, &deviceID,
+		|| gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID, &deviceID,
 				false) < B_OK)
 		return 0.0f;
 
 	if (get_device_info(vendorID, deviceID, &name, NULL) < B_OK) {
-		if (baseClass != PCI_mass_storage || subClass != PCI_sata
-			|| classAPI != PCI_sata_ahci)
-			return 0.0f;
+		/* Match dict already verified PCI class/subclass/interface,
+		 * so this is a generic AHCI controller not in our table. */
 		TRACE("generic AHCI controller found! vendor 0x%04x, device 0x%04x\n", vendorID, deviceID);
 		return 0.8f;
 	}
 
 	if (vendorID == PCI_VENDOR_JMICRON) {
-		// JMicron uses the same device ID for SATA and PATA controllers,
-		// check if BAR5 exists to determine if it's a AHCI controller
-		pci_device_module_info *pci;
+		/* JMicron uses the same device ID for SATA and PATA controllers,
+		 * check if BAR5 exists to determine if it's an AHCI controller */
+		pci_device_ops *pci;
 		pci_device *device;
 		pci_info info;
 
-		gDeviceManager->get_driver(parent, (driver_module_info **)&pci,
-			(void **)&device);
+		if (gDeviceKeeper->get_interface(parent, PCI_DEVICE_INTERFACE_NAME,
+				KOSM_INTERFACE_SELF,
+				(const void **)&pci, (void **)&device) != B_OK)
+			return 0.0f;
 		pci->get_pci_info(device, &info);
 
 		if (info.u.h0.base_register_sizes[5] == 0)
@@ -276,43 +295,14 @@ ahci_supports_device(device_node *parent)
 
 
 static status_t
-ahci_register_device(device_node *parent)
-{
-	device_attr attrs[] = {
-		{ SCSI_DEVICE_MAX_TARGET_COUNT, B_UINT32_TYPE,
-			{ .ui32 = 33 }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = AHCI_BRIDGE_PRETTY_NAME }},
-
-		// DMA properties
-		// data must be word-aligned;
-		{ B_DMA_ALIGNMENT, B_UINT32_TYPE, { .ui32 = 1 }},
-		// one S/G block must not cross 64K boundary
-		{ B_DMA_BOUNDARY, B_UINT32_TYPE, { .ui32 = 0xffff }},
-		// max size of S/G block is 16 bits with zero being 64K
-		{ B_DMA_MAX_SEGMENT_BLOCKS, B_UINT32_TYPE, { .ui32 = 0x10000 }},
-		{ B_DMA_MAX_SEGMENT_COUNT, B_UINT32_TYPE,
-			{ .ui32 = 32 /* whatever... */ }},
-		{ B_DMA_HIGH_ADDRESS, B_UINT64_TYPE, { .ui64 = 0x100000000LL }},
-			// TODO: We don't know at this point whether 64 bit addressing is
-			// supported. That's indicated by a capability flag. Play it safe
-			// for now.
-		{ NULL }
-	};
-
-	TRACE("ahci_register_device\n");
-
-	return gDeviceManager->register_node(parent, AHCI_DEVICE_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-ahci_init_driver(device_node *node, void **_cookie)
+ahci_init_driver(dk_node *node, void **_cookie)
 {
 	TRACE("ahci_init_driver\n");
+
 	*_cookie = node;
-	return B_OK;
+
+	// Register SIM for every controller we find
+	return register_sim(node);
 }
 
 
@@ -324,42 +314,44 @@ ahci_uninit_driver(void *cookie)
 
 
 static status_t
-ahci_register_child_devices(void *cookie)
+ahci_std_ops(int32 op, ...)
 {
-	device_node *node = (device_node *)cookie;
-
-	// TODO: register SIM for every controller we find!
-	return register_sim(node);
+	switch (op) {
+		case B_MODULE_INIT:
+		{
+			status_t s = get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info **)&gDeviceKeeper);
+			if (s != B_OK)
+				return s;
+			s = get_module(SCSI_FOR_SIM_MODULE_NAME,
+				(module_info **)&gSCSI);
+			if (s != B_OK) {
+				put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+				return s;
+			}
+			return B_OK;
+		}
+		case B_MODULE_UNINIT:
+			put_module(SCSI_FOR_SIM_MODULE_NAME);
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+			return B_OK;
+		default:
+			return B_ERROR;
+	}
 }
 
 
-static void
-ahci_device_removed(void *cookie)
-{
-	TRACE("ahci_device_removed, cookie %p\n", cookie);
-}
-
-
-driver_module_info sAHCIDevice = {
+dk_driver_info sAHCIDevice = {
 	{
 		AHCI_DEVICE_MODULE_NAME,
 		0,
-		NULL
+		ahci_std_ops
 	},
-	ahci_supports_device,
-	ahci_register_device,
-	ahci_init_driver,
-	ahci_uninit_driver,
-	ahci_register_child_devices,
-	NULL,	// rescan
-	ahci_device_removed
-};
 
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
-	{ SCSI_FOR_SIM_MODULE_NAME, (module_info **)&gSCSI },
-	{}
+	.match  = &sAhciPciMatchDict,
+	.probe  = ahci_supports_device,
+	.attach = ahci_init_driver,
+	.detach = ahci_uninit_driver,
 };
 
 

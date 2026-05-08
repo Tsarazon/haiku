@@ -17,8 +17,8 @@
 #define FLOW(a...)	dprintf("ahci: " a)
 
 
-AHCIController::AHCIController(device_node *node,
-		pci_device_module_info *pciModule, pci_device *device)
+AHCIController::AHCIController(dk_node *node,
+		pci_device_ops *pciModule, pci_device *device)
 	:
 	fNode(node),
 	fPCI(pciModule),
@@ -385,7 +385,8 @@ AHCIController::Interrupt(void *data)
 void
 AHCIController::ExecuteRequest(scsi_ccb *request)
 {
-	if (request->target_lun || !fPort[request->target_id]) {
+	if (request->target_id >= fPortCount || request->target_lun
+		|| !fPort[request->target_id]) {
 		request->subsys_status = SCSI_DEV_NOT_THERE;
 		gSCSI->finished(request, 1);
 		return;
