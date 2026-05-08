@@ -7,7 +7,7 @@
 #define _SCSI_CD_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <scsi_periph.h>
 #include <scsi.h>
 
@@ -19,12 +19,11 @@ struct IOCache;
 struct IOScheduler;
 
 
-#define SCSI_CD_DRIVER_MODULE_NAME "drivers/disk/scsi/scsi_cd/driver_v1"
-#define SCSI_CD_DEVICE_MODULE_NAME "drivers/disk/scsi/scsi_cd/device_v1"
+#define SCSI_CD_DRIVER_MODULE_NAME "drivers/disk/scsi/scsi_cd/dk_driver_v1"
 
 
 struct cd_driver_info {
-	device_node*			node;
+	dk_node*				node;
 	::scsi_periph_device	scsi_periph_device;
 	::scsi_device			scsi_device;
 	scsi_device_interface*	scsi;
