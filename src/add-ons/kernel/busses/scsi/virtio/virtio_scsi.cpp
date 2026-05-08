@@ -16,11 +16,11 @@
 #define VIRTIO_SCSI_BRIDGE_PRETTY_NAME "Virtio SCSI Bridge"
 #define VIRTIO_SCSI_CONTROLLER_PRETTY_NAME "Virtio SCSI Controller"
 
-#define VIRTIO_SCSI_DEVICE_MODULE_NAME "busses/scsi/virtio_scsi/driver_v1"
-#define VIRTIO_SCSI_SIM_MODULE_NAME "busses/scsi/virtio_scsi/sim/driver_v1"
+#define VIRTIO_SCSI_DEVICE_MODULE_NAME "busses/scsi/virtio_scsi/dk_driver_v1"
+#define VIRTIO_SCSI_SIM_MODULE_NAME "busses/scsi/virtio_scsi/sim/dk_driver_v1"
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 scsi_for_sim_interface *gSCSI;
 
 
@@ -131,8 +131,22 @@ ioctl(scsi_sim_cookie cookie, uint8 targetID, uint32 op, void *buffer,
 //	#pragma mark -
 
 
+static scsi_sim_interface sVirtioSCSISimOps = {
+	set_scsi_bus,
+	scsi_io,
+	abort_io,
+	reset_device,
+	terminate_io,
+	path_inquiry,
+	scan_bus,
+	reset_bus,
+	get_restrictions,
+	ioctl
+};
+
+
 static status_t
-sim_init_bus(device_node *node, void **_cookie)
+sim_init_bus(dk_node *node, void **_cookie)
 {
 	CALLED();
 
@@ -142,6 +156,15 @@ sim_init_bus(device_node *node, void **_cookie)
 		return B_NO_MEMORY;
 	status_t status = controller->InitCheck();
 	if (status < B_OK) {
+		delete controller;
+		return status;
+	}
+
+	// Publish the SCSI SIM interface on this node so gSCSIBusDriver
+	// can retrieve it via get_interface walk-up.
+	status = gDeviceKeeper->publish_interface(node, SCSI_SIM_INTERFACE_NAME,
+		&sVirtioSCSISimOps);
+	if (status != B_OK) {
 		delete controller;
 		return status;
 	}
@@ -164,21 +187,24 @@ sim_uninit_bus(void *cookie)
 //	#pragma mark -
 
 
+static const dk_match_rule kVirtioSCSIMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "virtio" } },
+	{}
+};
+
+static const dk_match_dict kVirtioSCSIMatch = {
+	kVirtioSCSIMatchRules,
+	0
+};
+
+
 static float
-virtio_scsi_supports_device(device_node *parent)
+virtio_scsi_supports_device(dk_node *parent)
 {
-	const char *bus;
 	uint16 deviceType;
 
-	// make sure parent is really the Virtio bus manager
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "virtio"))
-		return 0.0;
-
-	// check whether it's really a Virtio SCSI Device
-	if (gDeviceManager->get_attr_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
+	// bus already filtered by match rules
+	if (gDeviceKeeper->get_property_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != VIRTIO_DEVICE_ID_SCSI)
 		return 0.0;
 
@@ -189,82 +215,30 @@ virtio_scsi_supports_device(device_node *parent)
 
 
 static status_t
-virtio_scsi_register_device(device_node *parent)
-{
-	CALLED();
-	virtio_device_interface* virtio = NULL;
-	virtio_device* virtioDevice = NULL;
-	struct virtio_scsi_config config;
-
-	gDeviceManager->get_driver(parent, (driver_module_info **)&virtio,
-		(void **)&virtioDevice);
-
-	status_t status = virtio->read_device_config(virtioDevice, 0, &config,
-		sizeof(struct virtio_scsi_config));
-	if (status != B_OK)
-		return status;
-
-	uint32 max_targets = config.max_target + 1;
-	uint32 max_luns = config.max_lun + 1;
-	uint32 max_blocks = 0x10000;
-	if (config.max_sectors != 0)
-		max_blocks = config.max_sectors;
-
-	device_attr attrs[] = {
-		{ SCSI_DEVICE_MAX_TARGET_COUNT, B_UINT32_TYPE,
-			{ .ui32 = max_targets }},
-		{ SCSI_DEVICE_MAX_LUN_COUNT, B_UINT32_TYPE,
-			{ .ui32 = max_luns }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = VIRTIO_SCSI_BRIDGE_PRETTY_NAME }},
-
-		// DMA properties
-		{ B_DMA_MAX_SEGMENT_BLOCKS, B_UINT32_TYPE, { .ui32 = max_blocks }},
-		{ B_DMA_MAX_SEGMENT_COUNT, B_UINT32_TYPE,
-			{ .ui32 = config.seg_max }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, VIRTIO_SCSI_DEVICE_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-virtio_scsi_init_driver(device_node *node, void **_cookie)
+virtio_scsi_init_driver(dk_node *node, void **_cookie)
 {
 	CALLED();
 	*_cookie = node;
-	return B_OK;
-}
 
-
-static status_t
-virtio_scsi_register_child_devices(void *cookie)
-{
-	CALLED();
-	device_node *node = (device_node *)cookie;
-
-	int32 id = gDeviceManager->create_id(VIRTIO_SCSI_ID_GENERATOR);
+	int32 id = gDeviceKeeper->create_id(VIRTIO_SCSI_ID_GENERATOR);
 	if (id < 0)
 		return id;
 
-	device_attr attrs[] = {
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{ .string = SCSI_FOR_SIM_MODULE_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = VIRTIO_SCSI_CONTROLLER_PRETTY_NAME }},
-		{ SCSI_DESCRIPTION_CONTROLLER_NAME, B_STRING_TYPE,
-			{ .string = VIRTIO_SCSI_DEVICE_MODULE_NAME }},
-		{ B_DMA_MAX_TRANSFER_BLOCKS, B_UINT32_TYPE, { .ui32 = 255 }},
-		{ VIRTIO_SCSI_ID_ITEM, B_UINT32_TYPE, { .ui32 = (uint32)id }},
-			{ NULL }
+	dk_property attrs[] = {
+		// gSCSIBusDriver matches bus="scsi-host" and attaches as child.
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "scsi-host"),
+		DK_PROP_STRING(KOSM_LABEL, VIRTIO_SCSI_CONTROLLER_PRETTY_NAME),
+		DK_PROP_STRING(SCSI_DESCRIPTION_CONTROLLER_NAME,
+			VIRTIO_SCSI_DEVICE_MODULE_NAME),
+		DK_PROP_UINT32(KOSM_DMA_MAX_TRANSFER_BLOCKS, 255),
+		DK_PROP_UINT32(VIRTIO_SCSI_ID_ITEM, (uint32)id),
+		DK_PROP_END
 	};
 
-	status_t status = gDeviceManager->register_node(node,
+	status_t status = gDeviceKeeper->register_node(node,
 		VIRTIO_SCSI_SIM_MODULE_NAME, attrs, NULL, NULL);
 	if (status < B_OK)
-		gDeviceManager->free_id(VIRTIO_SCSI_ID_GENERATOR, id);
+		gDeviceKeeper->free_id(VIRTIO_SCSI_ID_GENERATOR, id);
 
 	return status;
 }
@@ -284,52 +258,29 @@ std_ops(int32 op, ...)
 }
 
 
-static scsi_sim_interface sVirtioSCSISimInterface = {
-	{
-		{
-			VIRTIO_SCSI_SIM_MODULE_NAME,
-			0,
-			std_ops
-		},
-		NULL,	// supported devices
-		NULL,	// register node
-		sim_init_bus,
-		sim_uninit_bus,
-		NULL,	// register child devices
-		NULL,	// rescan
-		NULL	// bus_removed
-	},
-	set_scsi_bus,
-	scsi_io,
-	abort_io,
-	reset_device,
-	terminate_io,
-	path_inquiry,
-	scan_bus,
-	reset_bus,
-	get_restrictions,
-	ioctl
+static dk_driver_info sVirtioSCSISimInterface = {
+	.info		= { VIRTIO_SCSI_SIM_MODULE_NAME, 0, std_ops },
+	.attach		= sim_init_bus,
+	.detach		= sim_uninit_bus,
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 
-static driver_module_info sVirtioSCSIDevice = {
+static dk_driver_info sVirtioSCSIDevice = {
 	{
 		VIRTIO_SCSI_DEVICE_MODULE_NAME,
 		0,
 		std_ops
 	},
-	virtio_scsi_supports_device,
-	virtio_scsi_register_device,
-	virtio_scsi_init_driver,
-	NULL,	// uninit_driver,
-	virtio_scsi_register_child_devices,
-	NULL,	// rescan
-	NULL,	// device_removed
+
+	.match = &kVirtioSCSIMatch,
+	.probe = virtio_scsi_supports_device,
+	.attach = virtio_scsi_init_driver,
 };
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ SCSI_FOR_SIM_MODULE_NAME, (module_info **)&gSCSI },
 	{}
 };

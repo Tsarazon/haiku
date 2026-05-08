@@ -30,7 +30,7 @@ get_feature_name(uint64 feature)
 }
 
 
-VirtioSCSIController::VirtioSCSIController(device_node *node)
+VirtioSCSIController::VirtioSCSIController(dk_node *node)
 	:
 	fNode(node),
 	fVirtio(NULL),
@@ -47,14 +47,10 @@ VirtioSCSIController::VirtioSCSIController(device_node *node)
 	if (gSCSI->alloc_dpc(&fEventDPC) != B_OK)
 		return;
 
-	// get the Virtio device from our parent's parent
-	device_node *parent = gDeviceManager->get_parent_node(node);
-	device_node *virtioParent = gDeviceManager->get_parent_node(parent);
-	gDeviceManager->put_node(parent);
-
-	gDeviceManager->get_driver(virtioParent, (driver_module_info **)&fVirtio,
-		(void **)&fVirtioDevice);
-	gDeviceManager->put_node(virtioParent);
+	// get the Virtio device interface via walk-up
+	gDeviceKeeper->get_interface(node, VIRTIO_DEVICE_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void **)&fVirtio, (void **)&fVirtioDevice);
 
 	fVirtio->negotiate_features(fVirtioDevice,
 		VIRTIO_SCSI_F_CHANGE /*VIRTIO_SCSI_F_HOTPLUG*/,
@@ -370,15 +366,15 @@ VirtioSCSIController::_RescanChildBus(void *cookie)
 {
 	CALLED();
 	VirtioSCSIController* controller = (VirtioSCSIController*)cookie;
-	device_node *childNode = NULL;
-	const device_attr attrs[] = { { NULL } };
-	if (gDeviceManager->get_next_child_node(controller->fNode, attrs,
+	dk_node *childNode = NULL;
+	const dk_match_rule attrs[] = { {} };
+	if (gDeviceKeeper->get_next_child_node(controller->fNode, attrs,
 		&childNode) != B_OK) {
 		ERROR("couldn't find the child node for %p\n", controller->fNode);
 		return;
 	}
 
-	gDeviceManager->rescan_node(childNode);
+	gDeviceKeeper->rescan_node(childNode);
 	TRACE("rescan done %p\n", childNode);
-	gDeviceManager->put_node(childNode);
+	gDeviceKeeper->put_node(childNode);
 }

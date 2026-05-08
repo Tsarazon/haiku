@@ -24,7 +24,7 @@
 #define ERROR(x...)			dprintf("\33[33mvirtio_scsi:\33[0m " x)
 #define CALLED()			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 extern scsi_for_sim_interface *gSCSI;
 
 bool copy_sg_data(scsi_ccb *ccb, uint offset, uint allocationLength,
@@ -43,7 +43,7 @@ class VirtioSCSIRequest;
 
 class VirtioSCSIController {
 public:
-								VirtioSCSIController(device_node* node);
+								VirtioSCSIController(dk_node* node);
 								~VirtioSCSIController();
 
 			status_t			InitCheck();
@@ -73,7 +73,7 @@ private:
 
 			void				_SubmitEvent(uint32 event);
 
-			device_node*		fNode;
+			dk_node*		fNode;
 			scsi_bus			fBus;
 
 			virtio_device_interface* fVirtio;
