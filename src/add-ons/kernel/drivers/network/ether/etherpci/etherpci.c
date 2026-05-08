@@ -8,7 +8,7 @@
 #include "etherpci_private.h"
 #include <ether_driver.h>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <OS.h>
 #include <KernelExport.h>
 #include <Drivers.h>
@@ -24,11 +24,10 @@
 #define DEVNAME_LENGTH		64
 #define MAX_CARDS 			 4			/* maximum number of driver instances */
 
-#define ETHERPCI_DRIVER_MODULE_NAME "drivers/network/etherpci/driver_v1"
-#define ETHERPCI_DEVICE_MODULE_NAME "drivers/network/etherpci/device_v1"
+#define ETHERPCI_DRIVER_MODULE_NAME "drivers/network/etherpci/dk_driver_v1"
 #define ETHERPCI_DEVICE_ID_GENERATOR "etherpci/device_id"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 
 /* debug flags */
 #define ERR       0x0001
@@ -54,7 +53,7 @@ static device_manager_info *sDeviceManager;
 #endif
 
 
-static pci_device_module_info	*gPCI;
+static pci_device_ops	*gPCI;
 static pci_device			*gPCIDev;
 static char 				*gDevNameList[MAX_CARDS+1];
 static pci_info 			*gDevList[MAX_CARDS+1];
@@ -279,7 +278,7 @@ static status_t write_hook(void *data, off_t pos, const void *buf, size_t *len);
 //static status_t enable_addressing(etherpci_private_t  *data);             /* enable pci io address space for device */
 //static int domulti(etherpci_private_t *data,char *addr);
 
-/* device_hooks replaced by device_module_info at end of file */
+/* device_hooks provided via dk_device_ops at end of file */
 
 
 /* get_pci_list removed — device_manager handles device discovery */
@@ -1310,20 +1309,21 @@ etherpci_is_supported_device(uint16 vendor_id, uint16 device_id)
 
 
 static float
-etherpci_supports_device(device_node *parent)
+etherpci_supports_device(dk_node *parent)
 {
-	const char *bus;
+	char bus[64];
 	uint16 vendorId, deviceId;
 
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 	if (strcmp(bus, "pci"))
 		return 0.0;
 
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	if (sDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, false) != B_OK)
 		return 0.0;
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+	if (sDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID,
 			&deviceId, false) != B_OK)
 		return 0.0;
 
@@ -1334,29 +1334,42 @@ etherpci_supports_device(device_node *parent)
 }
 
 
+/* Forward declarations for device ops */
+static status_t open_hook(void*, const char*, int, void**);
+static status_t close_hook(void*);
+static status_t free_hook(void*);
+static status_t read_hook(void*, off_t, void*, size_t*);
+static status_t write_hook(void*, off_t, const void*, size_t*);
+static status_t control_hook(void*, uint32, void*, size_t);
+
+static dk_device_ops sDeviceOps = {
+	open_hook,
+	close_hook,
+	free_hook,
+	read_hook,
+	write_hook,
+	NULL,	/* io */
+	control_hook,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
 static status_t
-etherpci_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "PCI NE2000 Ethernet" } },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, ETHERPCI_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-etherpci_init_driver(device_node *node, void **cookie)
+etherpci_attach(dk_node *node, void **cookie)
 {
 	dprintf(kDevName ": init_driver\n");
 
-	/* Get pci_device_module_info from parent node */
-	device_node *parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
-		(void **)&gPCIDev);
-	sDeviceManager->put_node(parent);
+	/* Get PCI interface from ancestor PCI device node */
+	status_t pciStatus = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&gPCI, (void **)&gPCIDev);
+	if (pciStatus != B_OK) {
+		dprintf(kDevName ": get_interface(pci) failed: %s\n",
+			strerror(pciStatus));
+		return pciStatus;
+	}
 
 	/* Get pci_info for this device */
 	pci_info *item = (pci_info *)malloc(sizeof(pci_info));
@@ -1380,13 +1393,23 @@ etherpci_init_driver(device_node *node, void **cookie)
 	gDevNameList[0] = strdup(devName);
 	gDevNameList[1] = NULL;
 
+	// Publish device
+	status_t result = sDeviceKeeper->publish_device(node, gDevNameList[0],
+		&sDeviceOps);
+	if (result != B_OK) {
+		free(gDevNameList[0]);
+		gDevNameList[0] = NULL;
+		free_pci_list(gDevList);
+		return result;
+	}
+
 	*cookie = node;
 	return B_OK;
 }
 
 
 static void
-etherpci_uninit_driver(void *_cookie)
+etherpci_detach(void *_cookie)
 {
 	int32 i;
 
@@ -1396,19 +1419,6 @@ etherpci_uninit_driver(void *_cookie)
 	}
 
 	free_pci_list(gDevList);
-}
-
-
-static status_t
-etherpci_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-
-	if (gDevNameList[0] == NULL)
-		return B_ERROR;
-
-	return sDeviceManager->publish_device(node, gDevNameList[0],
-		ETHERPCI_DEVICE_MODULE_NAME);
 }
 
 
@@ -1707,73 +1717,28 @@ control_hook(void *_data, uint32 msg, void *buf, size_t len)
 }
 
 
-//	#pragma mark - device init/uninit
-
-
-static status_t
-etherpci_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-etherpci_uninit_device(void *_cookie)
-{
-}
-
-
 //	#pragma mark - module exports
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sEtherpciDevice = {
-	{
-		ETHERPCI_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	etherpci_init_device,
-	etherpci_uninit_device,
-	NULL,	/* device_removed */
-
-	open_hook,
-	close_hook,
-	free_hook,
-	read_hook,
-	write_hook,
-	NULL,	/* io */
-	control_hook,
-
-	NULL,	/* select */
-	NULL,	/* deselect */
-};
-
-struct driver_module_info sEtherpciDriver = {
-	{
+static dk_driver_info sEtherpciDriver = {
+	.info = {
 		ETHERPCI_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	etherpci_supports_device,
-	etherpci_register_device,
-	etherpci_init_driver,
-	etherpci_uninit_driver,
-	etherpci_register_child_devices,
-	NULL,	/* rescan */
-	NULL,	/* removed */
+	.probe		= etherpci_supports_device,
+	.attach		= etherpci_attach,
+	.detach		= etherpci_detach,
+	.ops		= &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sEtherpciDriver,
-	(module_info *)&sEtherpciDevice,
 	NULL
 };
 
