@@ -660,18 +660,17 @@ const struct supported_device {
 };
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 
-#define RADEON_DRIVER_MODULE_NAME "drivers/graphics/radeon_hd/driver_v1"
-#define RADEON_DEVICE_MODULE_NAME "drivers/graphics/radeon_hd/device_v1"
+#define RADEON_DRIVER_MODULE_NAME "drivers/graphics/radeon_hd/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sInitialized = false;
 
 
 char* gDeviceNames[MAX_CARDS + 1];
 radeon_info* gDeviceInfo[MAX_CARDS];
-pci_device_module_info* gPCI;
+pci_device_ops* gPCI;
 pci_device* gPCIDev;
 mutex gLock;
 
@@ -680,15 +679,17 @@ static int32 sNumFound = 0;
 
 
 static status_t
-add_radeon_device_from_node(device_node *node)
+add_radeon_device_from_node(dk_node *node)
 {
 	if (sNumFound >= MAX_CARDS)
 		return B_NO_MORE_FDS;
 
-	device_node *parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
-		(void **)&gPCIDev);
-	sDeviceManager->put_node(parent);
+	// Get PCI ops from parent bus manager
+	status_t status = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&gPCI, (void **)&gPCIDev);
+	if (status != B_OK)
+		return status;
 
 	if (!sInitialized) {
 		mutex_init(&gLock, "radeon hd ksync");
@@ -756,19 +757,84 @@ add_radeon_device_from_node(device_node *node)
 }
 
 
-static float
-radeon_supports_device(device_node *parent)
-{
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if (strcmp(bus, "pci"))
-		return 0.0;
+//	#pragma mark - dk_device_ops
 
+
+static status_t
+radeon_open(void *driverCookie, const char *path, int openMode, void **_cookie)
+{
+	return gDeviceHooks.open(path, openMode, _cookie);
+}
+
+static status_t
+radeon_close(void *cookie)
+{
+	return gDeviceHooks.close(cookie);
+}
+
+static status_t
+radeon_free(void *cookie)
+{
+	return gDeviceHooks.free(cookie);
+}
+
+static status_t
+radeon_read(void *cookie, off_t position, void *buffer, size_t *numBytes)
+{
+	return gDeviceHooks.read(cookie, position, buffer, numBytes);
+}
+
+static status_t
+radeon_write(void *cookie, off_t position, const void *buffer,
+	size_t *numBytes)
+{
+	return gDeviceHooks.write(cookie, position, buffer, numBytes);
+}
+
+static status_t
+radeon_control(void *cookie, uint32 op, void *buffer, size_t length)
+{
+	return gDeviceHooks.control(cookie, op, buffer, length);
+}
+
+
+static dk_device_ops sDeviceOps = {
+	radeon_open,
+	radeon_close,
+	radeon_free,
+	radeon_read,
+	radeon_write,
+	NULL,	// io
+	radeon_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sRadeonMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sRadeonMatchDict = {
+	sRadeonMatchRules,
+	0
+};
+
+
+static float
+radeon_probe(dk_node *node)
+{
 	uint16 vendorId = 0;
 	uint8 classBase = 0;
-	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorId, false);
-	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
+	sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
+		&vendorId, false);
+	sDeviceKeeper->get_property_uint8(node, KOSM_DEVICE_TYPE,
+		&classBase, false);
 
 	if (vendorId == VENDOR_ID_ATI && classBase == PCI_display)
 		return 0.6;
@@ -778,78 +844,72 @@ radeon_supports_device(device_node *parent)
 
 
 static status_t
-radeon_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Radeon HD Graphics"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, RADEON_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-radeon_init_driver(device_node *node, void **cookie)
+radeon_attach(dk_node *node, void **cookie)
 {
 	status_t status = add_radeon_device_from_node(node);
 	if (status != B_OK)
 		return status;
+
+	// Publish device for the card we just added
+	int32 idx = sNumFound - 1;
+	status = sDeviceKeeper->publish_device(node, gDeviceNames[idx],
+		&sDeviceOps);
+	if (status != B_OK) {
+		ERROR("%s: publish_device(%s) failed: %s\n", __func__,
+			gDeviceNames[idx], strerror(status));
+		free(gDeviceInfo[idx]->pci);
+		free(gDeviceInfo[idx]);
+		gDeviceInfo[idx] = NULL;
+		free(gDeviceNames[idx]);
+		gDeviceNames[idx] = NULL;
+		sNumFound--;
+		gDeviceNames[sNumFound] = NULL;
+		return status;
+	}
+
 	*cookie = node;
 	return B_OK;
 }
 
-static void radeon_uninit_driver(void *_cookie) {}
 
-static status_t
-radeon_register_child_devices(void *_cookie)
+static void
+radeon_detach(void *_cookie)
 {
-	device_node *node = (device_node *)_cookie;
-	for (int i = 0; gDeviceNames[i] != NULL; i++)
-		sDeviceManager->publish_device(node, gDeviceNames[i],
-			RADEON_DEVICE_MODULE_NAME);
-	return B_OK;
+	dk_node* node = (dk_node*)_cookie;
+
+	for (int32 i = 0; gDeviceNames[i] != NULL; i++) {
+		sDeviceKeeper->unpublish_device(node, gDeviceNames[i]);
+		free(gDeviceInfo[i]->pci);
+		free(gDeviceInfo[i]);
+		gDeviceInfo[i] = NULL;
+		free(gDeviceNames[i]);
+		gDeviceNames[i] = NULL;
+	}
+	sNumFound = 0;
+
+	if (sInitialized) {
+		mutex_destroy(&gLock);
+		sInitialized = false;
+	}
 }
-
-static status_t radeon_init_device(void *i, void **c) { *c = i; return B_OK; }
-static void radeon_uninit_device(void *c) {}
-
-static status_t radeon_dm_open(void *i, const char *p, int m, void **c)
-{ return gDeviceHooks.open(p, m, c); }
-static status_t radeon_dm_close(void *c) { return gDeviceHooks.close(c); }
-static status_t radeon_dm_free(void *c) { return gDeviceHooks.free(c); }
-static status_t radeon_dm_read(void *c, off_t p, void *b, size_t *l)
-{ return gDeviceHooks.read(c, p, b, l); }
-static status_t radeon_dm_write(void *c, off_t p, const void *b, size_t *l)
-{ return gDeviceHooks.write(c, p, b, l); }
-static status_t radeon_dm_control(void *c, uint32 o, void *b, size_t l)
-{ return gDeviceHooks.control(c, o, b, l); }
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sRadeonDevice = {
-	{ RADEON_DEVICE_MODULE_NAME, 0, NULL },
-	radeon_init_device, radeon_uninit_device, NULL,
-	radeon_dm_open, radeon_dm_close, radeon_dm_free,
-	radeon_dm_read, radeon_dm_write, NULL, radeon_dm_control,
-	NULL, NULL
-};
-
-struct driver_module_info sRadeonDriver = {
-	{ RADEON_DRIVER_MODULE_NAME, 0, NULL },
-	radeon_supports_device, radeon_register_device,
-	radeon_init_driver, radeon_uninit_driver,
-	radeon_register_child_devices, NULL, NULL
+struct dk_driver_info sRadeonDriver = {
+	.info   = { RADEON_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sRadeonMatchDict,
+	.probe  = radeon_probe,
+	.attach = radeon_attach,
+	.detach = radeon_detach,
+	.ops    = &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sRadeonDriver,
-	(module_info *)&sRadeonDevice,
 	NULL
 };
 

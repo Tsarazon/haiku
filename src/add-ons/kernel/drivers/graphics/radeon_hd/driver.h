@@ -32,7 +32,7 @@
 
 extern char* gDeviceNames[];
 extern radeon_info* gDeviceInfo[];
-extern pci_device_module_info* gPCI;
+extern pci_device_ops* gPCI;
 extern pci_device* gPCIDev;
 extern mutex gLock;
 
