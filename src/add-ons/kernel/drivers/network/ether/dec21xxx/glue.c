@@ -34,6 +34,19 @@ extern void reenable_interrupts_de(device_t dev);
 extern driver_t *DRIVER_MODULE_NAME(dc, pci);
 extern driver_t *DRIVER_MODULE_NAME(de, pci);
 
+
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	driver_t *drivers[] = {
+		DRIVER_MODULE_NAME(dc, pci),
+		DRIVER_MODULE_NAME(de, pci),
+		NULL
+	};
+	return __haiku_probe_drivers(dev, drivers);
+}
+
+
 void
 __haiku_init_hardware()
 {
