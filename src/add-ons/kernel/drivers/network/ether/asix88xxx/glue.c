@@ -32,6 +32,15 @@ __haiku_select_miibus_driver(device_t dev)
 }
 
 
+// USB-only driver: no PCI probe candidates.
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	(void)dev;
+	return NULL;
+}
+
+
 void
 __haiku_init_hardware()
 {
