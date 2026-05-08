@@ -45,6 +45,18 @@ extern driver_t *DRIVER_MODULE_NAME(le, pci);
 extern driver_t *DRIVER_MODULE_NAME(pcn, pci);
 
 
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	driver_t *drivers[] = {
+		DRIVER_MODULE_NAME(le, pci),
+		DRIVER_MODULE_NAME(pcn, pci),
+		NULL
+	};
+	return __haiku_probe_drivers(dev, drivers);
+}
+
+
 void
 __haiku_init_hardware()
 {
