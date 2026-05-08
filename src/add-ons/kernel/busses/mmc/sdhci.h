@@ -12,7 +12,7 @@
 
 
 #include <condition_variable.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 
 #include <KernelExport.h>
 
@@ -53,7 +53,7 @@ class SdhciBus {
 
 class SdhciDevice {
 	public:
-		device_node*	fNode;
+		dk_node*	fNode;
 		uint8_t			fRicohOriginalMode;
 };
 
@@ -494,17 +494,17 @@ struct sdhci_crs {
 	uint32	addr_len;
 };
 
-extern float supports_device_acpi(device_node* parent);
-extern float supports_device_pci(device_node* parent);
+extern float supports_device_acpi(dk_node* parent);
+extern float supports_device_pci(dk_node* parent);
 
 extern status_t register_child_devices_acpi(void* cookie);
 extern status_t register_child_devices_pci(void* cookie);
 
-extern status_t init_device_pci(device_node* node, SdhciDevice* context);
-extern void uninit_device_pci(SdhciDevice* context, device_node* pciParent);
+extern status_t init_device_pci(dk_node* node, SdhciDevice* context);
+extern void uninit_device_pci(SdhciDevice* context, dk_node* pciParent);
 
-extern status_t init_bus_acpi(device_node* node, void** bus_cookie);
-extern status_t init_bus_pci(device_node* node, void** bus_cookie);
+extern status_t init_bus_acpi(dk_node* node, void** bus_cookie);
+extern status_t init_bus_pci(dk_node* node, void** bus_cookie);
 
 extern void uninit_bus(void* bus_cookie);
 extern void bus_removed(void* bus_cookie);
@@ -517,9 +517,9 @@ status_t do_io(void* controller, uint8_t command,
 void set_scan_semaphore(void* controller, sem_id sem);
 void set_bus_width(void* controller, int width);
 
-extern mmc_bus_interface gSDHCIACPIDeviceModule;
-extern mmc_bus_interface gSDHCIPCIDeviceModule;
+extern dk_driver_info gSDHCIACPIDeviceModule;
+extern dk_driver_info gSDHCIPCIDeviceModule;
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
 #endif /*_SDHCI_H*/

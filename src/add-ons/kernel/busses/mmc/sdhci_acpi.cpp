@@ -34,8 +34,8 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/driver_v1"
-#define SDHCI_ACPI_MMC_BUS_MODULE_NAME "busses/mmc/sdhci/acpi/device/v1"
+#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/dk_driver_v1"
+#define SDHCI_ACPI_MMC_BUS_MODULE_NAME "busses/mmc/sdhci/acpi/device/dk_driver_v1"
 
 static acpi_status
 sdhci_acpi_scan_parse_callback(ACPI_RESOURCE *res, void *context)
@@ -60,21 +60,26 @@ sdhci_acpi_scan_parse_callback(ACPI_RESOURCE *res, void *context)
 	return B_OK;
 }
 
+// Forward decl: defined later in this file.
+extern mmc_bus_interface sSDHCIACPIBusOps;
+
+
 status_t
-init_bus_acpi(device_node* node, void** bus_cookie)
+init_bus_acpi(dk_node* node, void** bus_cookie)
 {
 	CALLED();
 
-	// Get the ACPI driver and device
+	// Walk up to retrieve the ACPI device interface published by the
+	// ACPI bus manager on the parent ACPI device node.
 	acpi_device_module_info* acpi;
 	acpi_device device;
 
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	device_node* acpiParent = gDeviceManager->get_parent_node(parent);
-	gDeviceManager->get_driver(acpiParent, (driver_module_info**)&acpi,
-			(void**)&device);
-	gDeviceManager->put_node(acpiParent);
-	gDeviceManager->put_node(parent);
+	if (gDeviceKeeper->get_interface(node, ACPI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&acpi, (void**)&device) != B_OK) {
+		ERROR("Could not get ACPI device interface\n");
+		return B_ERROR;
+	}
 
 	// Ignore invalid bars
 	TRACE("Register SD bus\n");
@@ -130,6 +135,19 @@ init_bus_acpi(device_node* node, void** bus_cookie)
 	// locate it.
 	*bus_cookie = bus;
 
+	// Publish the MMC bus interface on this slot node so the MMC bus
+	// manager can retrieve it via get_interface walk-up.
+	gDeviceKeeper->publish_interface(node, MMC_BUS_INTERFACE_NAME,
+		&sSDHCIACPIBusOps);
+
+	// Register the MMC bus manager as a child node of this slot.
+	dk_property mmcAttrs[] = {
+		DK_PROP_STRING(KOSM_LABEL, "MMC Bus"),
+		DK_PROP_END
+	};
+	gDeviceKeeper->register_node(node, MMC_BUS_MODULE_NAME, mmcAttrs, NULL,
+		NULL);
+
 	return status;
 }
 
@@ -138,40 +156,30 @@ register_child_devices_acpi(void* cookie)
 {
 	CALLED();
 	SdhciDevice* context = (SdhciDevice*)cookie;
-	device_node* parent = gDeviceManager->get_parent_node(context->fNode);
-	acpi_device_module_info* acpi;
-	acpi_device* device;
-
-	gDeviceManager->get_driver(parent, (driver_module_info**)&acpi,
-		(void**)&device);
 
 	TRACE("register_child_devices\n");
 
 	char prettyName[25];
 
 	sprintf(prettyName, "SDHC bus");
-	device_attr attrs[] = {
+	dk_property attrs[] = {
 		// properties of this controller for mmc bus manager
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = prettyName } },
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{.string = MMC_BUS_MODULE_NAME} },
-		{ B_DEVICE_BUS, B_STRING_TYPE, {.string = "mmc"} },
+		DK_PROP_STRING(KOSM_LABEL, prettyName),
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "mmc"),
 
 		// DMA properties
 		// The high alignment is to force access only to complete sectors
 		// These constraints could be removed by using ADMA which allows
 		// use of the full 64bit address space and can do scatter-gather.
-		{ B_DMA_ALIGNMENT, B_UINT32_TYPE, { .ui32 = 511 }},
-		{ B_DMA_HIGH_ADDRESS, B_UINT64_TYPE, { .ui64 = 0x100000000LL }},
-		{ B_DMA_BOUNDARY, B_UINT32_TYPE, { .ui32 = (1 << 19) - 1 }},
-		{ B_DMA_MAX_SEGMENT_COUNT, B_UINT32_TYPE, { .ui32 = 1 }},
-		{ B_DMA_MAX_SEGMENT_BLOCKS, B_UINT32_TYPE, { .ui32 = (1 << 10) - 1 }},
-
-		// private data to identify device
-		{ NULL }
+		DK_PROP_UINT32(KOSM_DMA_ALIGNMENT, 511),
+		DK_PROP_UINT64(KOSM_DMA_HIGH_ADDRESS, 0x100000000LL),
+		DK_PROP_UINT32(KOSM_DMA_BOUNDARY, (1 << 19) - 1),
+		DK_PROP_UINT32(KOSM_DMA_MAX_SEGMENT_COUNT, 1),
+		DK_PROP_UINT32(KOSM_DMA_MAX_SEGMENT_BLOCKS, (1 << 10) - 1),
+		DK_PROP_END
 	};
-	device_node* node;
-	if (gDeviceManager->register_node(context->fNode,
+	dk_node* node;
+	if (gDeviceKeeper->register_node(context->fNode,
 			SDHCI_ACPI_MMC_BUS_MODULE_NAME, attrs, NULL,
 			&node) != B_OK)
 		return B_BAD_VALUE;
@@ -179,64 +187,89 @@ register_child_devices_acpi(void* cookie)
 }
 
 float
-supports_device_acpi(device_node* parent)
+supports_device_acpi(dk_node* parent)
 {
-	const char* hid;
-	const char* uid;
-	const char* cid;
+	char hid[64];
+	char uid[64];
 	uint32 type;
 
-	if (gDeviceManager->get_attr_uint32(parent, ACPI_DEVICE_TYPE_ITEM, &type, false)
+	if (gDeviceKeeper->get_property_uint32(parent, KOSM_ACPI_DEVICE_TYPE, &type, false)
 		|| type != ACPI_TYPE_DEVICE) {
 		return 0.0f;
 	}
 
-	if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &hid, false)) {
+	if (gDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_HID,
+			hid, sizeof(hid), NULL, false)) {
 		TRACE("No hid attribute\n");
 		return 0.0f;
 	}
 
-	if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_UID_ITEM, &uid, false)) {
+	if (gDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_UID,
+			uid, sizeof(uid), NULL, false)) {
 		TRACE("No uid attribute\n");
 		return 0.0f;
 	}
 
-	if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_CID_ITEM, &cid, false)) {
-		TRACE("No cid attribute\n");
-		return 0.0f;
+	// CID is stored as KOSM_DEVICE_COMPATIBLE stringlist.
+	// Check if it contains "PNP0D40" (standard ACPI CID for SD host).
+	bool cidMatch = false;
+	{
+		dk_property* prop = NULL;
+		uint64 version = 0;
+		while (true) {
+			status_t s = gDeviceKeeper->get_next_property(parent, &prop,
+				&version);
+			if (s == B_INTERRUPTED) {
+				// store mutated mid-iteration — restart
+				prop = NULL;
+				continue;
+			}
+			if (s != B_OK)
+				break;
+			if (strcmp(prop->name, KOSM_DEVICE_COMPATIBLE) == 0
+				&& prop->type == KOSM_STRINGLIST_TYPE) {
+				for (uint32 i = 0; i < prop->value.stringlist.count; i++) {
+					if (strcmp(prop->value.stringlist.items[i],
+							"PNP0D40") == 0) {
+						cidMatch = true;
+						break;
+					}
+				}
+				break;
+			}
+		}
 	}
 
-	// The HID and UID determine whether a given host controller is SD, SDIO, or eMMC.
-	// The CID determines whether an ACPI device is a host controller at all.
-	if (strcmp(cid, "PNP0D40") != 0) {
+	if (!cidMatch) {
+		TRACE("No matching CID\n");
 		return 0.0f;
 	}
 
 	acpi_device_module_info* acpi;
 	acpi_device* device;
-	gDeviceManager->get_driver(parent, (driver_module_info**)&acpi,
-		(void**)&device);
+	gDeviceKeeper->get_interface(parent, ACPI_DEVICE_INTERFACE_NAME,
+		KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS,
+		(const void**)&acpi, (void**)&device);
 	TRACE("SDHCI Device found! hid: %s, uid: %s\n", hid, uid);
 
 	return 0.8f;
 }
 
-// Device node registered for each SD slot. It implements the MMC operations so
-// the bus manager can use it to communicate with SD cards.
-mmc_bus_interface gSDHCIACPIDeviceModule = {
-	.info = {
-		.info = {
-			.name = SDHCI_ACPI_MMC_BUS_MODULE_NAME,
-		},
-
-		.init_driver = init_bus_acpi,
-		.uninit_driver = uninit_bus,
-		.device_removed = bus_removed,
-	},
-
+// MMC bus ops for the ACPI SD slot
+mmc_bus_interface sSDHCIACPIBusOps = {
 	.set_clock = set_clock,
 	.execute_command = execute_command,
 	.do_io = do_io,
 	.set_scan_semaphore = set_scan_semaphore,
 	.set_bus_width = set_bus_width,
+};
+
+// Device node registered for each SD slot. Publishes the MMC bus
+// interface in init_bus_acpi for the MMC bus manager to retrieve via
+// get_interface walk-up.
+dk_driver_info gSDHCIACPIDeviceModule = {
+	.info       = { SDHCI_ACPI_MMC_BUS_MODULE_NAME, 0, NULL },
+	.attach     = init_bus_acpi,
+	.detach     = uninit_bus,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };

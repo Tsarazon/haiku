@@ -14,7 +14,6 @@
 
 #include <bus/PCI.h>
 #include <ACPI.h>
-#include "acpi.h"
 
 #include <KernelExport.h>
 
@@ -34,8 +33,8 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/driver_v1"
-#define SDHCI_PCI_MMC_BUS_MODULE_NAME "busses/mmc/sdhci/pci/device/v1"
+#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/dk_driver_v1"
+#define SDHCI_PCI_MMC_BUS_MODULE_NAME "busses/mmc/sdhci/pci/device/dk_driver_v1"
 
 #define SLOT_NUMBER				"device/slot"
 #define BAR_INDEX				"device/bar"
@@ -52,25 +51,30 @@
 #define SDHCI_PCI_RICOH_MODE_SD20						0x10
 
 
+// Forward decl: defined later in this file.
+extern mmc_bus_interface sSDHCIPCIBusOps;
+
+
 status_t
-init_bus_pci(device_node* node, void** bus_cookie)
+init_bus_pci(dk_node* node, void** bus_cookie)
 {
 	CALLED();
 
-	// Get the PCI driver and device
-	pci_device_module_info* pci;
+	// Walk up to retrieve the PCI device interface (published by the
+	// PCI bus manager on the parent PCI device node).
+	pci_device_ops* pci;
 	pci_device* device;
 
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	device_node* pciParent = gDeviceManager->get_parent_node(parent);
-	gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-	        (void**)&device);
-	gDeviceManager->put_node(pciParent);
-	gDeviceManager->put_node(parent);
+	if (gDeviceKeeper->get_interface(node, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&device) != B_OK) {
+		ERROR("Could not get PCI device interface\n");
+		return B_ERROR;
+	}
 
 	uint8_t bar, slot;
-	if (gDeviceManager->get_attr_uint8(node, SLOT_NUMBER, &slot, false) < B_OK
-		|| gDeviceManager->get_attr_uint8(node, BAR_INDEX, &bar, false) < B_OK)
+	if (gDeviceKeeper->get_property_uint8(node, SLOT_NUMBER, &slot, false) < B_OK
+		|| gDeviceKeeper->get_property_uint8(node, BAR_INDEX, &bar, false) < B_OK)
 		return B_BAD_TYPE;
 
 	// Ignore invalid bars
@@ -142,6 +146,19 @@ init_bus_pci(device_node* node, void** bus_cookie)
 	// locate it.
 	*bus_cookie = bus;
 
+	// Publish the MMC bus interface on this slot node so the MMC bus
+	// manager can retrieve it via get_interface walk-up.
+	gDeviceKeeper->publish_interface(node, MMC_BUS_INTERFACE_NAME,
+		&sSDHCIPCIBusOps);
+
+	// Register the MMC bus manager as a child node of this slot.
+	dk_property mmcAttrs[] = {
+		DK_PROP_STRING(KOSM_LABEL, "MMC Bus"),
+		DK_PROP_END
+	};
+	gDeviceKeeper->register_node(node, MMC_BUS_MODULE_NAME, mmcAttrs, NULL,
+		NULL);
+
 	return status;
 }
 
@@ -150,12 +167,14 @@ register_child_devices_pci(void* cookie)
 {
 	CALLED();
 	SdhciDevice* context = (SdhciDevice*)cookie;
-	device_node* parent = gDeviceManager->get_parent_node(context->fNode);
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
 
-	gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-		(void**)&device);
+	if (gDeviceKeeper->get_interface(context->fNode, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&device) != B_OK) {
+		return B_ERROR;
+	}
 	uint8 slotsInfo = pci->read_pci_config(device, SDHCI_PCI_SLOT_INFO, 1);
 	uint8 bar = SDHCI_PCI_SLOT_INFO_FIRST_BASE_INDEX(slotsInfo);
 	uint8 slotsCount = SDHCI_PCI_SLOTS(slotsInfo);
@@ -171,30 +190,28 @@ register_child_devices_pci(void* cookie)
 
 	for (uint8_t slot = 0; slot < slotsCount; slot++) {
 		sprintf(prettyName, "SDHC bus %" B_PRIu8, slot);
-		device_attr attrs[] = {
+		dk_property attrs[] = {
 			// properties of this controller for mmc bus manager
-			{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = prettyName } },
-			{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-				{.string = MMC_BUS_MODULE_NAME} },
-			{ B_DEVICE_BUS, B_STRING_TYPE, {.string = "mmc"} },
+			DK_PROP_STRING(KOSM_LABEL, prettyName),
+			DK_PROP_STRING(KOSM_DEVICE_BUS, "mmc"),
 
 			// DMA properties
 			// The high alignment is to force access only to complete sectors
 			// These constraints could be removed by using ADMA which allows
 			// use of the full 64bit address space and can do scatter-gather.
-			{ B_DMA_ALIGNMENT, B_UINT32_TYPE, { .ui32 = 511 }},
-			{ B_DMA_HIGH_ADDRESS, B_UINT64_TYPE, { .ui64 = 0x100000000LL }},
-			{ B_DMA_BOUNDARY, B_UINT32_TYPE, { .ui32 = (1 << 19) - 1 }},
-			{ B_DMA_MAX_SEGMENT_COUNT, B_UINT32_TYPE, { .ui32 = 1 }},
-			{ B_DMA_MAX_SEGMENT_BLOCKS, B_UINT32_TYPE, { .ui32 = (1 << 10) - 1 }},
+			DK_PROP_UINT32(KOSM_DMA_ALIGNMENT, 511),
+			DK_PROP_UINT64(KOSM_DMA_HIGH_ADDRESS, 0x100000000LL),
+			DK_PROP_UINT32(KOSM_DMA_BOUNDARY, (1 << 19) - 1),
+			DK_PROP_UINT32(KOSM_DMA_MAX_SEGMENT_COUNT, 1),
+			DK_PROP_UINT32(KOSM_DMA_MAX_SEGMENT_BLOCKS, (1 << 10) - 1),
 
 			// private data to identify device
-			{ SLOT_NUMBER, B_UINT8_TYPE, { .ui8 = slot} },
-			{ BAR_INDEX, B_UINT8_TYPE, { .ui8 = bar} },
-			{ NULL }
+			DK_PROP_UINT8(SLOT_NUMBER, slot),
+			DK_PROP_UINT8(BAR_INDEX, bar),
+			DK_PROP_END
 		};
-		device_node* node;
-		if (gDeviceManager->register_node(context->fNode,
+		dk_node* node;
+		if (gDeviceKeeper->register_node(context->fNode,
 				SDHCI_PCI_MMC_BUS_MODULE_NAME, attrs, NULL,
 				&node) != B_OK)
 			return B_BAD_VALUE;
@@ -203,21 +220,22 @@ register_child_devices_pci(void* cookie)
 }
 
 status_t
-init_device_pci(device_node* node, SdhciDevice* context)
+init_device_pci(dk_node* node, SdhciDevice* context)
 {
-	// Get the PCI driver and device
-	pci_device_module_info* pci;
+	// Walk up to retrieve the PCI device interface.
+	pci_device_ops* pci;
 	pci_device* device;
 	uint16 vendorId, deviceId;
 
-	device_node* pciParent = gDeviceManager->get_parent_node(context->fNode);
-	gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-	        (void**)&device);
-	gDeviceManager->put_node(pciParent);
+	if (gDeviceKeeper->get_interface(context->fNode, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&device) != B_OK) {
+		return B_ERROR;
+	}
 
-	if (gDeviceManager->get_attr_uint16(node, B_DEVICE_VENDOR_ID,
+	if (gDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, true) != B_OK
-		|| gDeviceManager->get_attr_uint16(node, B_DEVICE_ID, &deviceId,
+		|| gDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID, &deviceId,
 			true) != B_OK) {
 		panic("No vendor or device id attribute\n");
 		return B_OK; // Let's hope it didn't need the quirk?
@@ -242,20 +260,23 @@ init_device_pci(device_node* node, SdhciDevice* context)
 }
 
 void
-uninit_device_pci(SdhciDevice* context, device_node* pciParent)
+uninit_device_pci(SdhciDevice* context, dk_node* pciParent)
 {
-	// Get the PCI driver and device
-	pci_device_module_info* pci;
+	// Walk up to retrieve the PCI device interface.
+	pci_device_ops* pci;
 	pci_device* device;
 	uint16 vendorId, deviceId;
 
-	gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-	        (void**)&device);
+	if (gDeviceKeeper->get_interface(context->fNode, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&device) != B_OK) {
+		return;
+	}
 
-	if (gDeviceManager->get_attr_uint16(context->fNode, B_DEVICE_VENDOR_ID,
+	if (gDeviceKeeper->get_property_uint16(context->fNode, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, true) != B_OK
-		|| gDeviceManager->get_attr_uint16(context->fNode, B_DEVICE_ID,
-			&deviceId, false) != B_OK) {
+		|| gDeviceKeeper->get_property_uint16(context->fNode, KOSM_DEVICE_ID,
+			&deviceId, true) != B_OK) {
 		ERROR("No vendor or device id attribute\n");
 	} else if (vendorId == 0x1180 && deviceId == 0xe823) {
 		pci->write_pci_config(device, SDHCI_PCI_RICOH_MODE_KEY, 1, 0xfc);
@@ -266,14 +287,14 @@ uninit_device_pci(SdhciDevice* context, device_node* pciParent)
 }
 
 float
-supports_device_pci(device_node* parent)
+supports_device_pci(dk_node* parent)
 {
 	uint16 type, subType;
 	uint16 vendorId, deviceId;
 
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorId,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_VENDOR_ID, &vendorId,
 			false) != B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID, &deviceId,
+		|| gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID, &deviceId,
 			false) != B_OK) {
 		TRACE("No vendor or device id attribute\n");
 		return 0.0f;
@@ -281,9 +302,9 @@ supports_device_pci(device_node* parent)
 
 	TRACE("supports_device(vid:%04x pid:%04x)\n", vendorId, deviceId);
 
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_SUB_TYPE, &subType,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_SUB_TYPE, &subType,
 			false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_TYPE, &type,
+		|| gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_TYPE, &type,
 			false) < B_OK) {
 		TRACE("Could not find type/subtype attributes\n");
 		return -1;
@@ -300,10 +321,11 @@ supports_device_pci(device_node* parent)
 			}
 		}
 
-		pci_device_module_info* pci;
+		pci_device_ops* pci;
 		pci_device* device;
-		gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-			(void**)&device);
+		gDeviceKeeper->get_interface(parent, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&device);
 		TRACE("SDHCI Device found! Subtype: 0x%04x, type: 0x%04x\n",
 			subType, type);
 
@@ -313,22 +335,21 @@ supports_device_pci(device_node* parent)
 	return 0.0f;
 }
 
-// Device node registered for each SD slot. It implements the MMC operations so
-// the bus manager can use it to communicate with SD cards.
-mmc_bus_interface gSDHCIPCIDeviceModule = {
-	.info = {
-		.info = {
-			.name = SDHCI_PCI_MMC_BUS_MODULE_NAME,
-		},
-
-		.init_driver = init_bus_pci,
-		.uninit_driver = uninit_bus,
-		.device_removed = bus_removed,
-	},
-
+// MMC bus ops for the PCI SD slot
+mmc_bus_interface sSDHCIPCIBusOps = {
 	.set_clock = set_clock,
 	.execute_command = execute_command,
 	.do_io = do_io,
 	.set_scan_semaphore = set_scan_semaphore,
 	.set_bus_width = set_bus_width,
+};
+
+// Device node registered for each SD slot. It implements the MMC bus
+// interface, retrieved by the MMC bus manager (mmc_bus.cpp) via
+// get_interface walk-up.
+dk_driver_info gSDHCIPCIDeviceModule = {
+	.info       = { SDHCI_PCI_MMC_BUS_MODULE_NAME, 0, NULL },
+	.attach     = init_bus_pci,
+	.detach     = uninit_bus,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };

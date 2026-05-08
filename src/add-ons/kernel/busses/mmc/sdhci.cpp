@@ -14,7 +14,6 @@
 
 #include <bus/PCI.h>
 #include <ACPI.h>
-#include "acpi.h"
 
 #include <KernelExport.h>
 
@@ -34,11 +33,10 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/driver_v1"
+#define SDHCI_DEVICE_MODULE_NAME "busses/mmc/sdhci/dk_driver_v1"
 
 
-device_manager_info* gDeviceManager;
-device_module_info* gMMCBusController;
+dk_keeper_info* gDeviceKeeper;
 
 
 static int32
@@ -632,7 +630,7 @@ SdhciBus::HandleInterrupt()
 		return B_UNHANDLED_INTERRUPT;
 	}
 #endif
-	
+
 	uint32_t intmask = fRegisters->interrupt_status;
 
 	// Shortcut: exit early if there is no interrupt or if the register is
@@ -754,9 +752,11 @@ register_child_devices(void* cookie)
 	CALLED();
 	SdhciDevice* context = (SdhciDevice*)cookie;
 	status_t status = B_OK;
-	const char* bus;
-	device_node* parent = gDeviceManager->get_parent_node(context->fNode);
-	status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
+	char bus[64];
+	dk_node* parent = gDeviceKeeper->get_parent_node(context->fNode);
+	status = gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS,
+		bus, sizeof(bus), NULL, false);
+	gDeviceKeeper->put_node(parent);
 	if (status != B_OK) {
 		TRACE("Could not find required attribute device/bus\n");
 		return status;
@@ -774,7 +774,7 @@ register_child_devices(void* cookie)
 
 
 static status_t
-init_device(device_node* node, void** device_cookie)
+init_device(dk_node* node, void** device_cookie)
 {
 	CALLED();
 
@@ -785,9 +785,11 @@ init_device(device_node* node, void** device_cookie)
 	*device_cookie = context;
 
 	status_t status = B_OK;
-	const char* bus;
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
+	char bus[64];
+	dk_node* parent = gDeviceKeeper->get_parent_node(node);
+	status = gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS,
+		bus, sizeof(bus), NULL, false);
+	gDeviceKeeper->put_node(parent);
 	if (status != B_OK) {
 		TRACE("Could not find required attribute device/bus\n");
 		return status;
@@ -804,44 +806,33 @@ static void
 uninit_device(void* device_cookie)
 {
 	SdhciDevice* context = (SdhciDevice*)device_cookie;
-	device_node* parent = gDeviceManager->get_parent_node(context->fNode);
+	dk_node* parent = gDeviceKeeper->get_parent_node(context->fNode);
 
-	const char* bus;
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK) {
+	char bus[64];
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS,
+			bus, sizeof(bus), NULL, false) != B_OK) {
 		TRACE("Could not find required attribute device/bus\n");
 	}
 
 	if (strcmp(bus, "pci") == 0)
 		uninit_device_pci(context, parent);
 
-	gDeviceManager->put_node(parent);
+	gDeviceKeeper->put_node(parent);
 
 	delete context;
 }
 
 
-static status_t
-register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "SD Host Controller"}},
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, SDHCI_DEVICE_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
 static float
-supports_device(device_node* parent)
+supports_device(dk_node* parent)
 {
-	const char* bus;
+	char bus[64];
 
 	// make sure parent is either an ACPI or PCI SDHCI device node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-		!= B_OK) {
-		TRACE("Could not find required attribute device/bus\n");
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS,
+			bus, sizeof(bus), NULL, false) != B_OK) {
+		// Routine non-match: probe is called on every node;
+		// DeviceKeeper already logs "probe rejected".
 		return -1;
 	}
 
@@ -854,11 +845,20 @@ supports_device(device_node* parent)
 }
 
 
-module_dependency module_dependencies[] = {
-	{ MMC_BUS_MODULE_NAME, (module_info**)&gMMCBusController},
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
-	{}
-};
+static status_t
+sdhci_std_ops(int32 op, ...)
+{
+	switch (op) {
+		case B_MODULE_INIT:
+			return get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info**)&gDeviceKeeper);
+		case B_MODULE_UNINIT:
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+			return B_OK;
+		default:
+			return B_ERROR;
+	}
+}
 
 status_t
 set_clock(void* controller, uint32_t kilohertz)
@@ -904,21 +904,16 @@ set_bus_width(void* controller, int width)
 }
 
 
-// Root device that binds to the ACPI or PCI bus. It will register an mmc_bus_interface
-// node for each SD slot in the device.
-static driver_module_info sSDHCIDevice = {
-	{
-		SDHCI_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-	supports_device,
-	register_device,
-	init_device,
-	uninit_device,
-	register_child_devices,
-	NULL,	// rescan
-	NULL,	// device removed
+// Root device that binds to the ACPI or PCI bus. It will register an
+// SD slot child node for each detected SDHC slot, with the
+// SDHCI_PCI/ACPI_MMC_BUS_MODULE_NAME driver attaching to drive each slot.
+static dk_driver_info sSDHCIDevice = {
+	.info            = { SDHCI_DEVICE_MODULE_NAME, 0, sdhci_std_ops },
+	.probe           = supports_device,
+	.attach          = init_device,
+	.detach          = uninit_device,
+	.rescan_children = register_child_devices,
+	.node_flags      = KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 
