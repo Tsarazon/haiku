@@ -12,7 +12,7 @@
 #include <errno.h>
 
 #include <util/AutoLock.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 
 #include <team.h>
@@ -34,50 +34,50 @@ extern "C" {
 #define DRIVER_NAME "pty"
 
 
-#define PTY_DRIVER_MODULE_NAME "drivers/pty/driver_v1"
-#define PTY_DEVICE_MODULE_NAME "drivers/pty/device_v1"
+#define PTY_DRIVER_MODULE_NAME "drivers/pty/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
-static bool sPublished = false;
-static bool sPtyInitialized = false;
+static dk_keeper_info* sDeviceKeeper;
+
+// Singleton guard: the pty driver is a single-instance driver (it owns
+// a fixed-size table of master/slave TTY slots and a global lock),
+// so pty_probe must refuse to match more than one node at a time.
+// Set true by a successful pty_attach, cleared by pty_detach.
+static bool sPtyAttached = false;
 
 tty_module_info *gTTYModule = NULL;
 
 struct mutex gGlobalTTYLock;
 
 static const uint32 kNumTTYs = 64;
+// Index layout (2 * kNumTTYs + 3 slots):
+//   [0, kNumTTYs)              — "pt/XY" master names (strdup'ed)
+//   [kNumTTYs, 2 * kNumTTYs)   — "tt/XY" slave names (strdup'ed)
+//   [2 * kNumTTYs]             — "ptmx" (string literal)
+//   [2 * kNumTTYs + 1]         — "tty"  (string literal)
+//   [2 * kNumTTYs + 2]         — NULL terminator
 char *gDeviceNames[kNumTTYs * 2 + 3];
-	// reserve space for "pt/" and "tt/" entries, "ptmx", "tty",
-	// and the terminating NULL
 
 struct tty* gMasterTTYs[kNumTTYs];
 struct tty* gSlaveTTYs[kNumTTYs];
 
-extern device_hooks gMasterPTYHooks, gSlavePTYHooks;
 
-// Forward declarations for hooks used in device_module_info wrappers
-static status_t master_open(const char *name, uint32 flags, void **_cookie);
-static status_t slave_open(const char *name, uint32 flags, void **_cookie);
-static status_t pty_close(void *_cookie);
-static status_t pty_free_cookie(void *_cookie);
-static status_t pty_ioctl(void *_cookie, uint32 op, void *buffer, size_t length);
-static status_t pty_read(void *_cookie, off_t offset, void *buffer, size_t *_length);
-static status_t pty_write(void *_cookie, off_t offset, const void *buffer, size_t *_length);
-static status_t pty_select(void *_cookie, uint8 event, uint32 ref, selectsync *sync);
-static status_t pty_deselect(void *_cookie, uint8 event, selectsync *sync);
+static void
+pty_free_device_names()
+{
+	// Only entries [0, 2 * kNumTTYs) were strdup'ed; the "ptmx"/"tty"
+	// slots point at string literals and must not be freed.
+	for (uint32 i = 0; i < 2 * kNumTTYs; i++) {
+		free(gDeviceNames[i]);
+		gDeviceNames[i] = NULL;
+	}
+	gDeviceNames[2 * kNumTTYs] = NULL;
+	gDeviceNames[2 * kNumTTYs + 1] = NULL;
+}
 
 
 static status_t
-ensure_pty_initialized()
+pty_initialize()
 {
-	if (sPtyInitialized)
-		return B_OK;
-
-	status_t status = get_module(B_TTY_MODULE_NAME,
-		(module_info **)&gTTYModule);
-	if (status < B_OK)
-		return status;
-
 	TRACE((DRIVER_NAME ": init pty\n"));
 
 	mutex_init(&gGlobalTTYLock, "tty global");
@@ -100,11 +100,9 @@ ensure_pty_initialized()
 		if (++digit > 15)
 			digit = 0, letter++;
 
-		if (!gDeviceNames[i] || !gDeviceNames[i + kNumTTYs]) {
-			for (int32 j = 0; j < (int32)kNumTTYs * 2; j++)
-				free(gDeviceNames[j]);
+		if (gDeviceNames[i] == NULL || gDeviceNames[i + kNumTTYs] == NULL) {
+			pty_free_device_names();
 			mutex_destroy(&gGlobalTTYLock);
-			put_module(B_TTY_MODULE_NAME);
 			return B_NO_MEMORY;
 		}
 	}
@@ -112,8 +110,46 @@ ensure_pty_initialized()
 	gDeviceNames[2 * kNumTTYs] = (char *)"ptmx";
 	gDeviceNames[2 * kNumTTYs + 1] = (char *)"tty";
 
-	sPtyInitialized = true;
 	return B_OK;
+}
+
+
+static void
+pty_uninitialize()
+{
+	TRACE((DRIVER_NAME ": uninit pty\n"));
+
+	// Tear down any TTY pairs that are still allocated. TTYs are created
+	// lazily in master_open, so slots may be NULL — that's fine. Pairs
+	// must be destroyed together and in order (slave before master) to
+	// match the construction order in master_open.
+	//
+	// NOTE: we skip pairs that still have live references (ref_count > 0).
+	// In normal operation, the devfs layer closes all open cookies before
+	// detach is called, so this should never happen; but on a surprise
+	// unregister_node without device_removed unblocking I/O, a pty pair
+	// could still be held by userspace. Leaking the pair is strictly
+	// better than destroying it under a live reader/writer.
+	mutex_lock(&gGlobalTTYLock);
+	for (uint32 i = 0; i < kNumTTYs; i++) {
+		if (gMasterTTYs[i] != NULL && gMasterTTYs[i]->ref_count != 0)
+			continue;
+		if (gSlaveTTYs[i] != NULL && gSlaveTTYs[i]->ref_count != 0)
+			continue;
+
+		if (gSlaveTTYs[i] != NULL) {
+			gTTYModule->tty_destroy(gSlaveTTYs[i]);
+			gSlaveTTYs[i] = NULL;
+		}
+		if (gMasterTTYs[i] != NULL) {
+			gTTYModule->tty_destroy(gMasterTTYs[i]);
+			gMasterTTYs[i] = NULL;
+		}
+	}
+	mutex_unlock(&gGlobalTTYLock);
+
+	pty_free_device_names();
+	mutex_destroy(&gGlobalTTYLock);
 }
 
 
@@ -125,115 +161,7 @@ is_master_device(const char* name)
 }
 
 
-//	#pragma mark - device_manager API
-
-
-static float
-pty_supports_device(device_node* parent)
-{
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
-}
-
-
-static status_t
-pty_register_device(device_node* node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Pseudo Terminals"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, PTY_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-pty_init_driver(device_node* node, void** cookie)
-{
-	status_t status = ensure_pty_initialized();
-	if (status != B_OK)
-		return status;
-	*cookie = node;
-	return B_OK;
-}
-
-static void pty_uninit_driver(void* c) { sPublished = false; }
-
-static status_t
-pty_register_child_devices(void* _cookie)
-{
-	device_node* node = (device_node*)_cookie;
-	if (sPublished) return B_OK;
-	sPublished = true;
-
-	for (uint32 i = 0; gDeviceNames[i] != NULL; i++) {
-		sDeviceManager->publish_device(node, gDeviceNames[i],
-			PTY_DEVICE_MODULE_NAME);
-	}
-	return B_OK;
-}
-
-
-static status_t
-pty_dm_open(void* _info, const char* path, int openMode, void** _cookie)
-{
-	if (is_master_device(path))
-		return master_open(path, openMode, _cookie);
-	return slave_open(path, openMode, _cookie);
-}
-
-static status_t pty_dm_close(void* c)
-{ return pty_close(c); }
-static status_t pty_dm_free(void* c)
-{ return pty_free_cookie(c); }
-static status_t pty_dm_read(void* c, off_t p, void* b, size_t* l)
-{ return pty_read(c, p, b, l); }
-static status_t pty_dm_write(void* c, off_t p, const void* b, size_t* l)
-{ return pty_write(c, p, b, l); }
-static status_t pty_dm_ioctl(void* c, uint32 o, void* b, size_t l)
-{ return pty_ioctl(c, o, b, l); }
-static status_t pty_dm_select(void* c, uint8 e, selectsync* s)
-{ return pty_select(c, e, 0, s); }
-static status_t pty_dm_deselect(void* c, uint8 e, selectsync* s)
-{ return pty_deselect(c, e, s); }
-
-static status_t pty_init_device(void* i, void** c)
-{ *c = i; return B_OK; }
-static void pty_uninit_device(void* c) {}
-
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
-	{ NULL }
-};
-
-struct device_module_info sPtyDevice = {
-	{ PTY_DEVICE_MODULE_NAME, 0, NULL },
-	pty_init_device, pty_uninit_device, NULL,
-	pty_dm_open, pty_dm_close, pty_dm_free,
-	pty_dm_read, pty_dm_write, NULL, pty_dm_ioctl,
-	pty_dm_select, pty_dm_deselect
-};
-
-struct driver_module_info sPtyDriver = {
-	{ PTY_DRIVER_MODULE_NAME, 0, NULL },
-	pty_supports_device, pty_register_device,
-	pty_init_driver, pty_uninit_driver,
-	pty_register_child_devices, NULL, NULL
-};
-
-module_info* modules[] = {
-	(module_info*)&sPtyDriver,
-	(module_info*)&sPtyDevice,
-	NULL
-};
+//	#pragma mark - helpers
 
 
 static int32
@@ -557,11 +485,11 @@ pty_write(void *_cookie, off_t offset, const void *buffer, size_t *_length)
 
 
 static status_t
-pty_select(void *_cookie, uint8 event, uint32 ref, selectsync *sync)
+pty_select(void *_cookie, uint8 event, selectsync *sync)
 {
 	tty_cookie *cookie = (tty_cookie *)_cookie;
 
-	return gTTYModule->tty_select(cookie, event, ref, sync);
+	return gTTYModule->tty_select(cookie, event, 0, sync);
 }
 
 
@@ -574,28 +502,119 @@ pty_deselect(void *_cookie, uint8 event, selectsync *sync)
 }
 
 
-device_hooks gMasterPTYHooks = {
-	&master_open,
-	&pty_close,
-	&pty_free_cookie,
-	&pty_ioctl,
-	&pty_read,
-	&pty_write,
-	&pty_select,
-	&pty_deselect,
-	NULL,	// read_pages()
-	NULL	// write_pages()
+//	#pragma mark - dk_device_ops / dk_driver_info
+
+
+static status_t
+pty_dk_open(void *driverCookie, const char *path, int openMode, void **_cookie)
+{
+	if (is_master_device(path))
+		return master_open(path, openMode, _cookie);
+	return slave_open(path, openMode, _cookie);
+}
+
+
+static dk_device_ops sDeviceOps = {
+	pty_dk_open,
+	pty_close,
+	pty_free_cookie,
+	pty_read,
+	pty_write,
+	NULL,	// io
+	pty_ioctl,
+	pty_select,
+	pty_deselect,
+	NULL,	// device_removed
 };
 
-device_hooks gSlavePTYHooks = {
-	&slave_open,
-	&pty_close,
-	&pty_free_cookie,
-	&pty_ioctl,
-	&pty_read,
-	&pty_write,
-	&pty_select,
-	&pty_deselect,
-	NULL,	// read_pages()
-	NULL	// write_pages()
+
+static const dk_match_rule sPtyMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sPtyMatchDict = {
+	sPtyMatchRules,
+	0
+};
+
+
+static float
+pty_probe(dk_node* node)
+{
+	if (sPtyAttached)
+		return 0.0;
+	return 0.01;
+}
+
+
+static status_t
+pty_attach(dk_node* node, void** cookie)
+{
+	TRACE((DRIVER_NAME ": attach\n"));
+
+	status_t status = pty_initialize();
+	if (status != B_OK)
+		return status;
+
+	// Publish all PTY device paths into devfs. On any failure, roll back
+	// devices already published so detach is not called with a partial
+	// state (detach would happen anyway, but rollback keeps devfs clean
+	// in case the framework does not call detach on attach failure).
+	uint32 published = 0;
+	for (uint32 i = 0; gDeviceNames[i] != NULL; i++) {
+		status = sDeviceKeeper->publish_device(node, gDeviceNames[i],
+			&sDeviceOps);
+		if (status != B_OK) {
+			for (uint32 j = 0; j < published; j++)
+				sDeviceKeeper->unpublish_device(node, gDeviceNames[j]);
+			pty_uninitialize();
+			return status;
+		}
+		published++;
+	}
+
+	sPtyAttached = true;
+	*cookie = node;
+	return B_OK;
+}
+
+
+static void
+pty_detach(void* _cookie)
+{
+	TRACE((DRIVER_NAME ": detach\n"));
+
+	dk_node* node = (dk_node*)_cookie;
+
+	// Unpublish all device paths so that no new opens can find the
+	// devfs entries pointing at sDeviceOps after we tear down the TTY
+	// tables below. Existing opens must already have been closed by the
+	// devfs layer before detach is called.
+	for (uint32 i = 0; gDeviceNames[i] != NULL; i++)
+		sDeviceKeeper->unpublish_device(node, gDeviceNames[i]);
+
+	pty_uninitialize();
+	sPtyAttached = false;
+}
+
+
+module_dependency module_dependencies[] = {
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
+	{ B_TTY_MODULE_NAME, (module_info**)&gTTYModule },
+	{}
+};
+
+static dk_driver_info sPtyDriver = {
+	.info	= { PTY_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sPtyMatchDict,
+	.probe	= pty_probe,
+	.attach	= pty_attach,
+	.detach	= pty_detach,
+	.ops	= &sDeviceOps,
+};
+
+module_info* modules[] = {
+	(module_info*)&sPtyDriver,
+	NULL
 };
