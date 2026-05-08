@@ -7,21 +7,20 @@
  */
 #include "driver.h"
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <string.h>
 
 
-#define NULL_AUDIO_DRIVER_MODULE_NAME "drivers/audio/null_audio/driver_v1"
-#define NULL_AUDIO_DEVICE_MODULE_NAME "drivers/audio/null_audio/device_v1"
+#define NULL_AUDIO_DRIVER_MODULE_NAME "drivers/audio/null_audio/dk_driver_v1"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 static bool sPublished = false;
 
 device_t device;
 
 
 static status_t
-null_audio_open(void* _info, const char* name, int flags, void** cookie)
+null_audio_open(void* driverCookie, const char* name, int flags, void** cookie)
 {
 	dprintf("null_audio: %s\n", __func__);
 	*cookie = &device;
@@ -71,84 +70,81 @@ null_audio_free(void* cookie)
 }
 
 
-/*	#pragma mark - driver module API */
+static dk_device_ops sDeviceOps = {
+	null_audio_open,
+	null_audio_close,
+	null_audio_free,
+	null_audio_read,
+	null_audio_write,
+	NULL,	/* io */
+	null_audio_control,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
+/*	#pragma mark - dk_driver_info */
+
+
+static const dk_match_rule sNullMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sNullMatchDict = {
+	sNullMatchRules,
+	0
+};
 
 
 static float
-null_audio_supports_device(device_node *parent)
+null_audio_probe(dk_node *node)
 {
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-null_audio_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Null Audio"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node,
-		NULL_AUDIO_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-static status_t
-null_audio_init_driver(device_node *node, void **cookie)
+null_audio_attach(dk_node *node, void **cookie)
 {
 	device.running = false;
+
+	if (!sPublished) {
+		sPublished = true;
+		sDeviceKeeper->publish_device(node,
+			MULTI_AUDIO_DEV_PATH "/null/0", &sDeviceOps);
+	}
+
 	*cookie = node;
 	return B_OK;
 }
 
-static void null_audio_uninit_driver(void *c) { sPublished = false; }
 
-static status_t
-null_audio_register_child_devices(void *_cookie)
+static void
+null_audio_detach(void *_cookie)
 {
-	device_node *node = (device_node *)_cookie;
-	if (sPublished)
-		return B_OK;
-	sPublished = true;
-	return sDeviceManager->publish_device(node,
-		MULTI_AUDIO_DEV_PATH "/null/0",
-		NULL_AUDIO_DEVICE_MODULE_NAME);
+	sPublished = false;
 }
-
-static status_t null_audio_init_device(void *i, void **c)
-{ *c = i; return B_OK; }
-static void null_audio_uninit_device(void *c) {}
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sNullAudioDevice = {
-	{ NULL_AUDIO_DEVICE_MODULE_NAME, 0, NULL },
-	null_audio_init_device, null_audio_uninit_device, NULL,
-	null_audio_open, null_audio_close, null_audio_free,
-	null_audio_read, null_audio_write, NULL, null_audio_control,
-	NULL, NULL
-};
-
-struct driver_module_info sNullAudioDriver = {
-	{ NULL_AUDIO_DRIVER_MODULE_NAME, 0, NULL },
-	null_audio_supports_device, null_audio_register_device,
-	null_audio_init_driver, null_audio_uninit_driver,
-	null_audio_register_child_devices, NULL, NULL
+struct dk_driver_info sNullAudioDriver = {
+	.info	= { NULL_AUDIO_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sNullMatchDict,
+	.probe	= null_audio_probe,
+	.attach	= null_audio_attach,
+	.detach	= null_audio_detach,
+	.ops	= &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sNullAudioDriver,
-	(module_info *)&sNullAudioDevice,
 	NULL
 };
