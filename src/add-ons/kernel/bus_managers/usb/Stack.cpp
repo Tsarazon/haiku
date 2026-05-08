@@ -17,7 +17,6 @@
 #include "PhysicalMemoryAllocator.h"
 
 #include <fs/devfs.h>
-#include <kdevice_manager.h>
 
 
 Stack::Stack()
@@ -216,26 +215,10 @@ Stack::ExploreThread(void *data)
 void
 Stack::Explore()
 {
-	recursive_lock* dmLock = device_manager_get_lock();
-	if (find_thread(NULL) != fExploreThread
-			&& RECURSIVE_LOCK_HOLDER(dmLock) == find_thread(NULL)) {
-		// This should only happen during the initial device scan, during which
-		// we should be able to acquire the explore lock immediately (since the
-		// explore thread will be waiting on the device manager lock as below),
-		// but in case we aren't, use a timeout to avoid lock-order-inversion deadlocks.
-		if (mutex_lock_with_timeout(&fExploreLock, B_RELATIVE_TIMEOUT, 1000) != B_OK) {
-			release_sem(fExploreSem);
-			return;
-		}
-	} else {
-		// Temporarily acquire the device manager lock, to ensure it isn't scanning.
-		RecursiveLocker dmLocker(dmLock);
-
-		if (mutex_lock(&fExploreLock) != B_OK)
-			return;
-
-		dmLocker.Unlock();
-	}
+	// DeviceKeeper handles its own locking internally for
+	// register_node/unregister_node, so we only need the explore lock here.
+	if (mutex_lock(&fExploreLock) != B_OK)
+		return;
 
 	int32 semCount = 0;
 	get_sem_count(fExploreSem, &semCount);

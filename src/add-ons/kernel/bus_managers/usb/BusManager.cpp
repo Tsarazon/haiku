@@ -10,7 +10,7 @@
 #include "usb_private.h"
 
 
-BusManager::BusManager(Stack *stack, device_node* node)
+BusManager::BusManager(Stack *stack, dk_node* node)
 	:	fInitOK(false),
 		fStack(stack),
 		fRootHub(NULL),

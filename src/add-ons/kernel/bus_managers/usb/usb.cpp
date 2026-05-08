@@ -15,7 +15,7 @@
 #define USB_MODULE_NAME "module"
 
 Stack *gUSBStack = NULL;
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 
 
 /*!	The function is an evil hack to allow <tt> <kdebug>usb_keyboard </tt> to
@@ -670,14 +670,7 @@ struct usb_module_info gModuleInfoV3 = {
 //
 
 
-status_t
-usb_added_device(device_node *parent)
-{
-	return B_OK;
-}
-
-
-status_t
+static status_t
 usb_get_stack(void** stack)
 {
 	*stack = gUSBStack;
@@ -687,17 +680,9 @@ usb_get_stack(void** stack)
 
 usb_for_controller_interface gForControllerModule = {
 	{
-		{
-			USB_FOR_CONTROLLER_MODULE_NAME,
-			B_KEEP_LOADED,
-			&bus_std_ops
-		},
-
-		NULL, // supported devices
-		usb_added_device,
-		NULL,
-		NULL,
-		NULL
+		USB_FOR_CONTROLLER_MODULE_NAME,
+		B_KEEP_LOADED,
+		&bus_std_ops
 	},
 
 	usb_get_stack,
@@ -726,27 +711,14 @@ device_std_ops(int32 op, ...)
 }
 
 
-usb_device_interface gUSBDeviceModule = {
-	{
-		{
-			USB_DEVICE_MODULE_NAME,
-			0,
-			device_std_ops
-		},
-
-		NULL,	// supported devices
-		NULL,	// register node
-	NULL, //usb_init_device,
-	NULL, //	(void (*)(void *)) usb_uninit_device,
-		NULL,	// register child devices
-		NULL,	// rescan
-	NULL//	(void (*)(void *)) usb_device_removed
-	},
+static dk_driver_info gUSBDeviceModule = {
+	.info		= { USB_DEVICE_MODULE_NAME, 0, device_std_ops },
+	.node_flags	= KOSM_FIND_MULTIPLE_CHILDREN,
 };
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{}
 };
 

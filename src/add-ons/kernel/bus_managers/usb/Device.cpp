@@ -330,7 +330,7 @@ Device::Device(Object* parent, int8 hubAddress, uint8 hubPort,
 Device::~Device()
 {
 	if (fNode != NULL) {
-		status_t error = gDeviceManager->unregister_node(fNode);
+		status_t error = gDeviceKeeper->unregister_node(fNode);
 		if (error != B_OK && error != B_BUSY)
 			TRACE_ERROR("failed to unregister device node\n");
 		fNode = NULL;
@@ -844,62 +844,48 @@ Device::GetStatus(uint16* status)
 }
 
 
-device_node*
-Device::RegisterNode(device_node *parent)
+dk_node*
+Device::RegisterNode(dk_node *parent)
 {
 	usb_id id = USBID();
 	if (parent == NULL)
 		parent = ((Device*)Parent())->Node();
 
-	// determine how many attributes we will need
-	uint32 deviceAttrTotal = 1;
+	// determine how many properties we will need
+	uint32 devicePropTotal = 1;
 	for (uint32 j = 0; j < fDeviceDescriptor.num_configurations; j++) {
 		for (uint32 k = 0; k < fConfigurations[j].interface_count; k++) {
 			for (uint32 l = 0; l < fConfigurations[j].interface[k].alt_count; l++) {
-				deviceAttrTotal += 3;
+				devicePropTotal += 3;
 			}
 		}
 	}
 
-	BStackOrHeapArray<device_attr, 16> attrs(deviceAttrTotal + 4 + 5);
-	attrs[0] = { B_DEVICE_BUS, B_STRING_TYPE, { .string = "usb" } };
+	BStackOrHeapArray<dk_property, 16> props(devicePropTotal + 4 + 5);
+	props[0] = DK_PROP_STRING(KOSM_DEVICE_BUS, "usb");
 
 	// location
-	attrs[1] = { USB_DEVICE_ID_ITEM, B_UINT32_TYPE, { .ui32 = id } };
-	attrs[2] = { B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_FIND_MULTIPLE_CHILDREN } };
-	attrs[3] = { B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "USB device" } };
+	props[1] = { USB_DEVICE_ID_ITEM, B_UINT32_TYPE, { .ui32 = id } };
+	props[2] = DK_PROP_STRING(KOSM_LABEL, "USB device");
 
-	uint32 attrCount = 4;
+	uint32 propCount = 3;
 
 	if (fDeviceDescriptor.vendor_id != 0) {
-		attrs[attrCount].name = B_DEVICE_VENDOR_ID;
-		attrs[attrCount].type = B_UINT16_TYPE;
-		attrs[attrCount].value.ui16 = fDeviceDescriptor.vendor_id;
-		attrCount++;
-
-		attrs[attrCount].name = B_DEVICE_ID;
-		attrs[attrCount].type = B_UINT16_TYPE;
-		attrs[attrCount].value.ui16 = fDeviceDescriptor.product_id;
-		attrCount++;
+		props[propCount++] = DK_PROP_UINT16(KOSM_USB_VENDOR_ID,
+			fDeviceDescriptor.vendor_id);
+		props[propCount++] = DK_PROP_UINT16(KOSM_USB_PRODUCT_ID,
+			fDeviceDescriptor.product_id);
 	}
 
-	uint32 attrClassesIndex = attrCount;
+	uint32 propClassesIndex = propCount;
 
 	if (fDeviceDescriptor.device_class != 0) {
-		attrs[attrCount].name = USB_DEVICE_CLASS;
-		attrs[attrCount].type = B_UINT8_TYPE;
-		attrs[attrCount].value.ui8 = fDeviceDescriptor.device_class;
-		attrCount++;
-
-		attrs[attrCount].name = USB_DEVICE_SUBCLASS;
-		attrs[attrCount].type = B_UINT8_TYPE;
-		attrs[attrCount].value.ui8 = fDeviceDescriptor.device_subclass;
-		attrCount++;
-
-		attrs[attrCount].name = USB_DEVICE_PROTOCOL;
-		attrs[attrCount].type = B_UINT8_TYPE;
-		attrs[attrCount].value.ui8 = fDeviceDescriptor.device_protocol;
-		attrCount++;
+		props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_CLASS,
+			fDeviceDescriptor.device_class);
+		props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_SUBCLASS,
+			fDeviceDescriptor.device_subclass);
+		props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_PROTOCOL,
+			fDeviceDescriptor.device_protocol);
 	}
 
 	for (uint32 j = 0; j < fDeviceDescriptor.num_configurations; j++) {
@@ -908,12 +894,12 @@ Device::RegisterNode(device_node *parent)
 				usb_interface_descriptor* descriptor
 					= fConfigurations[j].interface[k].alt[l].descr;
 				bool found = false;
-				for (uint32 i = attrClassesIndex; i < attrCount;) {
-					if (attrs[i++].value.ui8 != descriptor->interface_class)
+				for (uint32 i = propClassesIndex; i < propCount;) {
+					if (props[i++].value.ui8 != descriptor->interface_class)
 						continue;
-					if (attrs[i++].value.ui8 != descriptor->interface_subclass)
+					if (props[i++].value.ui8 != descriptor->interface_subclass)
 						continue;
-					if (attrs[i++].value.ui8 != descriptor->interface_protocol)
+					if (props[i++].value.ui8 != descriptor->interface_protocol)
 						continue;
 					found = true;
 					break;
@@ -921,31 +907,20 @@ Device::RegisterNode(device_node *parent)
 				if (found)
 					continue;
 
-				attrs[attrCount].name = USB_DEVICE_CLASS;
-				attrs[attrCount].type = B_UINT8_TYPE;
-				attrs[attrCount].value.ui8 = descriptor->interface_class;
-				attrCount++;
-
-				attrs[attrCount].name = USB_DEVICE_SUBCLASS;
-				attrs[attrCount].type = B_UINT8_TYPE;
-				attrs[attrCount].value.ui8 = descriptor->interface_subclass;
-				attrCount++;
-
-				attrs[attrCount].name = USB_DEVICE_PROTOCOL;
-				attrs[attrCount].type = B_UINT8_TYPE;
-				attrs[attrCount].value.ui8 = descriptor->interface_protocol;
-				attrCount++;
+				props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_CLASS,
+					descriptor->interface_class);
+				props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_SUBCLASS,
+					descriptor->interface_subclass);
+				props[propCount++] = DK_PROP_UINT8(KOSM_USB_DEVICE_PROTOCOL,
+					descriptor->interface_protocol);
 			}
 		}
 	}
 
-	attrs[attrCount].name = NULL;
-	attrs[attrCount].type = 0;
-	attrs[attrCount].value.string = NULL;
-	attrCount++;
+	props[propCount++] = DK_PROP_END;
 
-	device_node* node = NULL;
-	if (gDeviceManager->register_node(parent, USB_DEVICE_MODULE_NAME, attrs,
+	dk_node* node = NULL;
+	if (gDeviceKeeper->register_node(parent, USB_DEVICE_MODULE_NAME, props,
 			NULL, &node) != B_OK) {
 		TRACE_ERROR("failed to register device node\n");
 	} else
