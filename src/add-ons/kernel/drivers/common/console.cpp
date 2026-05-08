@@ -7,7 +7,7 @@
  */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 
@@ -77,11 +77,9 @@ static struct console_desc {
 	console_module_info *module;
 } sConsole;
 
-#define CONSOLE_DRIVER_MODULE_NAME "drivers/common/console/driver_v1"
-#define CONSOLE_DEVICE_MODULE_NAME "drivers/common/console/device_v1"
+#define CONSOLE_DRIVER_MODULE_NAME "drivers/common/console/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
-static bool sPublished = false;
+static dk_keeper_info* sDeviceKeeper;
 static bool sConsoleInitialized = false;
 static int32 sOpenMask;
 
@@ -857,80 +855,67 @@ console_dm_ioctl(void* cookie, uint32 op, void* buf, size_t len)
 
 
 static float
-console_supports_device(device_node* parent)
+console_supports_device(dk_node* parent)
 {
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
+	if (strcmp(bus, "generic") == 0)
+		return 0.01f;
+	return -1.0f;
 }
 
 
-static status_t
-console_register_device(device_node* node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Console"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, CONSOLE_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
+static dk_device_ops sConsoleDeviceOps = {
+	console_dm_open, console_dm_close, console_dm_free,
+	console_dm_read, console_dm_write, NULL, console_dm_ioctl,
+	NULL, NULL,
+	NULL	// device_removed
+};
 
 
 static status_t
-console_init_driver(device_node* node, void** cookie)
+console_init_driver(dk_node* node, void** cookie)
 {
 	status_t status = ensure_console_initialized();
 	if (status != B_OK)
 		return status;
+	sDeviceKeeper->publish_device(node, DEVICE_NAME, &sConsoleDeviceOps);
 	*cookie = node;
 	return B_OK;
 }
 
-static void console_uninit_driver(void* c) { sPublished = false; }
+static void console_uninit_driver(void* c) { }
 
-static status_t
-console_register_child_devices(void* _cookie)
-{
-	device_node* node = (device_node*)_cookie;
-	if (sPublished) return B_OK;
-	sPublished = true;
-	return sDeviceManager->publish_device(node, DEVICE_NAME,
-		CONSOLE_DEVICE_MODULE_NAME);
-}
 
-static status_t console_init_device(void* i, void** c)
-{ *c = i; return B_OK; }
-static void console_uninit_device(void* c) {}
+static const dk_match_rule sConsoleMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sConsoleMatchDict = {
+	sConsoleMatchRules,
+	0
+};
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sConsoleDevice = {
-	{ CONSOLE_DEVICE_MODULE_NAME, 0, NULL },
-	console_init_device, console_uninit_device, NULL,
-	console_dm_open, console_dm_close, console_dm_free,
-	console_dm_read, console_dm_write, NULL, console_dm_ioctl,
-	NULL, NULL
-};
-
-struct driver_module_info sConsoleDriver = {
-	{ CONSOLE_DRIVER_MODULE_NAME, 0, NULL },
-	console_supports_device, console_register_device,
-	console_init_driver, console_uninit_driver,
-	console_register_child_devices, NULL, NULL
+static dk_driver_info sConsoleDriver = {
+	.info	= { CONSOLE_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sConsoleMatchDict,
+	.probe	= console_supports_device,
+	.attach	= console_init_driver,
+	.detach	= console_uninit_driver,
+	.ops	= &sConsoleDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sConsoleDriver,
-	(module_info*)&sConsoleDevice,
 	NULL
 };
 
