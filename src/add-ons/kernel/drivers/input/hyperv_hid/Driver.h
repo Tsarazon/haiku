@@ -24,8 +24,7 @@
 #define ERROR(x...)			dprintf("\33[94mhyperv_hid:\33[0m " x)
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-#define HYPERV_HID_DRIVER_MODULE_NAME		"drivers/input/hyperv_hid/driver_v1"
-#define HYPERV_HID_DEVICE_MODULE_NAME		"drivers/input/hyperv_hid/device_v1"
+#define HYPERV_HID_DRIVER_MODULE_NAME		"drivers/input/hyperv_hid/dk_driver_v1"
 
 
 #endif // _HYPERV_HID_DRIVER_H_

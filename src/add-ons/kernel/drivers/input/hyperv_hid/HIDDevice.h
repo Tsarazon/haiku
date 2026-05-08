@@ -11,7 +11,7 @@
 #include <string.h>
 
 #include <condition_variable.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <kernel.h>
 #include <lock.h>
 #include <fs/devfs.h>

@@ -16,7 +16,7 @@
 
 
 typedef struct {
-	device_node*				node;
+	dk_node*					node;
 	hyperv_device_interface*	hyperv;
 	hyperv_device				hyperv_cookie;
 	HIDDevice*					hid_device;
@@ -30,25 +30,9 @@ typedef struct {
 } device_cookie;
 
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 DeviceList* gDeviceList = NULL;
 static mutex sDriverLock;
-
-
-static status_t
-hyperv_hid_init_device(void* driverCookie, void** _deviceCookie)
-{
-	CALLED();
-	*_deviceCookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-hyperv_hid_uninit_device(void* deviceCookie)
-{
-	CALLED();
-}
 
 
 static status_t
@@ -144,22 +128,23 @@ hyperv_hid_control(void* cookie, uint32 op, void* buffer, size_t length)
 
 
 static float
-hyperv_hid_supports_device(device_node* parent)
+hyperv_hid_supports_device(dk_node* parent)
 {
 	CALLED();
 
 	// Check if parent is the Hyper-V bus manager
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK)
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
 		return -1;
 
 	if (strcmp(bus, HYPERV_BUS_NAME) != 0)
 		return 0.0f;
 
 	// Check if parent is a Hyper-V Input device
-	const char* type;
-	if (sDeviceManager->get_attr_string(parent, HYPERV_DEVICE_TYPE_STRING_ITEM, &type, false)
-			!= B_OK)
+	char type[64];
+	if (sDeviceKeeper->get_property_string(parent, HYPERV_DEVICE_TYPE_STRING_ITEM,
+			type, sizeof(type), NULL, false) != B_OK)
 		return 0.0f;
 
 	if (strcmp(type, VMBUS_TYPE_INPUT) != 0)
@@ -170,24 +155,24 @@ hyperv_hid_supports_device(device_node* parent)
 }
 
 
+static dk_device_ops sDeviceOps = {
+	hyperv_hid_open,
+	hyperv_hid_close,
+	hyperv_hid_free,
+	hyperv_hid_read,
+	hyperv_hid_write,
+	NULL,	// io
+	hyperv_hid_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+static status_t hyperv_hid_publish_devices(hid_driver_cookie* hidCookie);
+
 static status_t
-hyperv_hid_register_device(device_node* parent)
-{
-	CALLED();
-
-	device_attr attributes[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = HYPERV_PRETTYNAME_INPUT }},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(parent, HYPERV_HID_DRIVER_MODULE_NAME, attributes, NULL,
-		NULL);
-}
-
-
-static status_t
-hyperv_hid_init_driver(device_node* node, void** _driverCookie)
+hyperv_hid_attach(dk_node* node, void** _driverCookie)
 {
 	CALLED();
 
@@ -198,10 +183,14 @@ hyperv_hid_init_driver(device_node* node, void** _driverCookie)
 
 	hidCookie->node = node;
 
-	device_node* parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info**)&hidCookie->hyperv,
-		(void**)&hidCookie->hyperv_cookie);
-	sDeviceManager->put_node(parent);
+	status_t status = sDeviceKeeper->get_interface(node,
+		HYPERV_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&hidCookie->hyperv, (void**)&hidCookie->hyperv_cookie);
+	if (status != B_OK) {
+		ERROR("failed to get Hyper-V device interface\n");
+		delete hidCookie;
+		return status;
+	}
 
 	mutex_lock(&sDriverLock);
 	HIDDevice* hidDevice = new(std::nothrow) HIDDevice(hidCookie->hyperv,
@@ -212,7 +201,7 @@ hyperv_hid_init_driver(device_node* node, void** _driverCookie)
 		return B_NO_MEMORY;
 	}
 
-	status_t status = hidDevice->InitCheck();
+	status = hidDevice->InitCheck();
 	if (status != B_OK) {
 		mutex_unlock(&sDriverLock);
 		delete hidDevice;
@@ -224,25 +213,51 @@ hyperv_hid_init_driver(device_node* node, void** _driverCookie)
 
 	mutex_unlock(&sDriverLock);
 
+	// Publish child devices in devfs
+	hyperv_hid_publish_devices(hidCookie);
+
 	*_driverCookie = hidCookie;
 	return B_OK;
 }
 
 
 static void
-hyperv_hid_uninit_driver(void* driverCookie)
+hyperv_hid_detach(void* driverCookie)
 {
 	CALLED();
 	hid_driver_cookie* hidCookie = reinterpret_cast<hid_driver_cookie*>(driverCookie);
+	if (hidCookie == NULL)
+		return;
+
+	MutexLocker locker(sDriverLock);
+
+	HIDDevice* hidDevice = hidCookie->hid_device;
+	if (hidDevice != NULL) {
+		for (uint32 i = 0;; i++) {
+			ProtocolHandler* handler = hidDevice->ProtocolHandlerAt(i);
+			if (handler == NULL)
+				break;
+			if (handler->PublishPath() != NULL) {
+				sDeviceKeeper->unpublish_device(hidCookie->node,
+					handler->PublishPath());
+				gDeviceList->RemoveDevice(NULL, handler);
+			}
+		}
+
+		if (!hidDevice->IsOpen())
+			delete hidDevice;
+		else
+			hidDevice->Removed();
+	}
+
+	locker.Unlock();
 	delete hidCookie;
 }
 
 
 static status_t
-hyperv_hid_register_child_devices(void* driverCookie)
+hyperv_hid_publish_devices(hid_driver_cookie* hidCookie)
 {
-	CALLED();
-	hid_driver_cookie* hidCookie = reinterpret_cast<hid_driver_cookie*>(driverCookie);
 	HIDDevice* hidDevice = hidCookie->hid_device;
 
 	for (uint32 i = 0;; i++) {
@@ -269,8 +284,8 @@ hyperv_hid_register_child_devices(void* driverCookie)
 		}
 
 		gDeviceList->AddDevice(handler->PublishPath(), handler);
-		sDeviceManager->publish_device(hidCookie->node, pathBuffer,
-			HYPERV_HID_DEVICE_MODULE_NAME);
+		sDeviceKeeper->publish_device(hidCookie->node, pathBuffer,
+			&sDeviceOps);
 	}
 
 	return B_OK;
@@ -302,55 +317,33 @@ std_ops(int32 op, ...)
 }
 
 
-static device_module_info sHyperVHIDDeviceModule = {
-	{
-		HYPERV_HID_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	hyperv_hid_init_device,
-	hyperv_hid_uninit_device,
-	NULL,	// remove
-
-	hyperv_hid_open,
-	hyperv_hid_close,
-	hyperv_hid_free,
-	hyperv_hid_read,
-	hyperv_hid_write,
-	NULL,	// io
-	hyperv_hid_control,
-
-	NULL,	// select
-	NULL	// deselect
+static const dk_match_rule sHyperVHIDMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, HYPERV_BUS_NAME),
+	DK_MATCH_END
 };
 
+static const dk_match_dict sHyperVHIDMatchDict = {
+	sHyperVHIDMatchRules,
+	0
+};
 
-static driver_module_info sHyperVHIDDriverModule = {
-	{
-		HYPERV_HID_DRIVER_MODULE_NAME,
-		0,
-		&std_ops
-	},
-
-	hyperv_hid_supports_device,
-	hyperv_hid_register_device,
-	hyperv_hid_init_driver,
-	hyperv_hid_uninit_driver,
-	hyperv_hid_register_child_devices,
-	NULL,	// rescan
-	NULL	// removed
+static dk_driver_info sHyperVHIDDriverModule = {
+	.info   = { HYPERV_HID_DRIVER_MODULE_NAME, 0, &std_ops },
+	.match  = &sHyperVHIDMatchDict,
+	.probe  = hyperv_hid_supports_device,
+	.attach = hyperv_hid_attach,
+	.detach = hyperv_hid_detach,
+	.ops    = &sDeviceOps,
 };
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
 
 module_info* modules[] = {
 	(module_info*)&sHyperVHIDDriverModule,
-	(module_info*)&sHyperVHIDDeviceModule,
 	NULL
 };

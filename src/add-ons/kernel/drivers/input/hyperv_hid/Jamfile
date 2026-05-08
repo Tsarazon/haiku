@@ -20,8 +20,7 @@ KernelAddon hyperv_hid :
 
 	ProtocolHandler.cpp
 
-	JoystickProtocolHandler.cpp
-	KeyboardProtocolHandler.cpp
+KeyboardProtocolHandler.cpp
 	MouseProtocolHandler.cpp
 	TabletProtocolHandler.cpp
 ;
