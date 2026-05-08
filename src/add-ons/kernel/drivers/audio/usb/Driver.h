@@ -8,7 +8,7 @@
 #define _USB_AUDIO_DRIVER_H_
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <USB3.h>
 
@@ -24,20 +24,15 @@ const uint32 kSamplesBufferCount = 2;
 
 
 extern usb_module_info* gUSBModule;
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
 class Device;
 
-// bus manager device interface for peripheral driver
 typedef struct {
-	driver_module_info info;
-} usb_device_interface;
-
-typedef struct {
-	device_node*			node;
-	::usb_device			usb_device;
-	usb_device_interface*	usb;
-	Device*					device;
+	dk_node*	node;
+	int32		id;
+	char		publishedPath[64];
+	Device*		device;
 } usb_audio_driver_info;
 
 
