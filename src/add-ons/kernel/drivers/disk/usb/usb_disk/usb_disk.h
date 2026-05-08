@@ -13,7 +13,7 @@
 
 #include <lock.h>
 #include <USB3.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <usb/USB_massbulk.h>
 
 
@@ -33,7 +33,7 @@ typedef struct disk_device_s {
 	~disk_device_s();
 
 	int32		number;
-	device_node	*node;
+	dk_node		*node;
 
 	usb_device	device;
 	bool		removed;

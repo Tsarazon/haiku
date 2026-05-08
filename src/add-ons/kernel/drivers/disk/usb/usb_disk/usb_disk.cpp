@@ -33,8 +33,7 @@
 
 #define MAX_IO_BLOCKS					(256)
 
-#define USB_DISK_DEVICE_MODULE_NAME		"drivers/disk/usb_disk/device_v1"
-#define USB_DISK_DRIVER_MODULE_NAME		"drivers/disk/usb_disk/driver_v1"
+#define USB_DISK_DRIVER_MODULE_NAME		"drivers/disk/usb_disk/dk_driver_v1"
 #define USB_DISK_DEVICE_ID_GENERATOR	"usb_disk/device_id"
 
 #define DRIVER_NAME			"usb_disk"
@@ -54,7 +53,7 @@
 #endif
 
 
-device_manager_info *gDeviceManager;
+dk_keeper_info *gDeviceKeeper;
 static usb_module_info *gUSBModule = NULL;
 
 struct {
@@ -1040,7 +1039,7 @@ usb_disk_callback(void *cookie, status_t status, void *data,
 
 
 static status_t
-usb_disk_attach(device_node *node, usb_device newDevice, void **cookie)
+usb_disk_attach(dk_node *node, usb_device newDevice, void **cookie)
 {
 	TRACE("device_added(0x%08" B_PRIx32 ")\n", newDevice);
 	disk_device *device = new(std::nothrow) disk_device;
@@ -1254,7 +1253,7 @@ usb_disk_device_removed(void *cookie)
 	for (uint8 i = 0; i < device->lun_count; i++) {
 		// unpublish_device() can call close().
 		mutex_unlock(&device->lock);
-		gDeviceManager->unpublish_device(device->node, device->luns[i]->name);
+		gDeviceKeeper->unpublish_device(device->node, device->luns[i]->name);
 		mutex_lock(&device->lock);
 	}
 
@@ -1415,22 +1414,6 @@ usb_disk_block_write(device_lun *lun, uint64 blockPosition, size_t blockCount,
 //
 //#pragma mark - Driver Hooks
 //
-
-
-static status_t
-usb_disk_init_device(void* _info, void** _cookie)
-{
-	CALLED();
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-usb_disk_uninit_device(void* _cookie)
-{
-	// Nothing to do.
-}
 
 
 static status_t
@@ -1867,26 +1850,46 @@ usb_disk_io(void *cookie, io_request *request)
 }
 
 
-//	#pragma mark - driver module API
+//	#pragma mark - dk_device_ops / dk_driver_info
+
+
+static dk_device_ops sUsbDiskDeviceOps = {
+	usb_disk_open,
+	usb_disk_close,
+	usb_disk_free,
+	NULL,	// read
+	NULL,	// write
+	usb_disk_io,
+	usb_disk_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	usb_disk_device_removed,
+};
+
+
+static const dk_match_rule sUsbDiskMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sUsbDiskMatchDict = {
+	sUsbDiskMatchRules,
+	0
+};
 
 
 static float
-usb_disk_supports_device(device_node *parent)
+usb_disk_probe(dk_node *node)
 {
 	CALLED();
-	const char *bus;
-
-	// make sure parent is really the usb bus manager
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if (strcmp(bus, "usb") != 0)
-		return 0.0;
 
 	usb_device device;
-	if (gDeviceManager->get_attr_uint32(parent, USB_DEVICE_ID_ITEM, &device, true) != B_OK)
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
+			&device, true) != B_OK)
 		return -1;
 
-	const usb_configuration_info *configuration = gUSBModule->get_configuration(device);
+	const usb_configuration_info *configuration
+		= gUSBModule->get_configuration(device);
 	if (configuration == NULL)
 		return -1;
 
@@ -1902,12 +1905,12 @@ usb_disk_supports_device(device_node *parent)
 		if (interface == NULL)
 			continue;
 
-		for (size_t i = 0; i < B_COUNT_OF(supportedDevices); i++) {
-			if (interface->descr->interface_class != supportedDevices[i].dev_class)
+		for (size_t j = 0; j < B_COUNT_OF(supportedDevices); j++) {
+			if (interface->descr->interface_class != supportedDevices[j].dev_class)
 				continue;
-			if (interface->descr->interface_subclass != supportedDevices[i].dev_subclass)
+			if (interface->descr->interface_subclass != supportedDevices[j].dev_subclass)
 				continue;
-			if (interface->descr->interface_protocol != supportedDevices[i].dev_protocol)
+			if (interface->descr->interface_protocol != supportedDevices[j].dev_protocol)
 				continue;
 
 			TRACE("USB disk device found!\n");
@@ -1920,59 +1923,40 @@ usb_disk_supports_device(device_node *parent)
 
 
 static status_t
-usb_disk_register_device(device_node *node)
+usb_disk_driver_attach(dk_node *node, void **cookie)
 {
 	CALLED();
 
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "USB Disk"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, USB_DISK_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_disk_init_driver(device_node *node, void **cookie)
-{
-	CALLED();
-
-	usb_device usb_device;
-	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM, &usb_device, true) != B_OK)
+	usb_device usb_device_id;
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
+			&usb_device_id, true) != B_OK)
 		return B_BAD_VALUE;
 
-	return usb_disk_attach(node, usb_device, cookie);
+	status_t status = usb_disk_attach(node, usb_device_id, cookie);
+	if (status != B_OK)
+		return status;
+
+	disk_device *device = (disk_device *)*cookie;
+
+	device->number = gDeviceKeeper->create_id(USB_DISK_DEVICE_ID_GENERATOR);
+	if (device->number < 0)
+		return device->number;
+
+	for (uint8 i = 0; i < device->lun_count; i++) {
+		sprintf(device->luns[i]->name, DEVICE_NAME, device->number, i);
+		gDeviceKeeper->publish_device(device->node, device->luns[i]->name,
+			&sUsbDiskDeviceOps);
+	}
+
+	return B_OK;
 }
 
 
 static void
-usb_disk_uninit_driver(void *_cookie)
+usb_disk_driver_detach(void *_cookie)
 {
 	CALLED();
-	// Nothing to do.
-}
-
-
-static status_t
-usb_disk_register_child_devices(void* _cookie)
-{
-	CALLED();
-	disk_device *device = (disk_device *)_cookie;
-
-	device->number = gDeviceManager->create_id(USB_DISK_DEVICE_ID_GENERATOR);
-	if (device->number < 0)
-		return device->number;
-
-	status_t status = B_OK;
-	for (uint8 i = 0; i < device->lun_count; i++) {
-		sprintf(device->luns[i]->name, DEVICE_NAME, device->number, i);
-		status = gDeviceManager->publish_device(device->node, device->luns[i]->name,
-			USB_DISK_DEVICE_MODULE_NAME);
-	}
-
-	return status;
+	// Nothing to do — cleanup handled by device_removed/free.
 }
 
 
@@ -1980,52 +1964,25 @@ usb_disk_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info**)&gUSBModule},
 	{ NULL }
 };
 
-struct device_module_info sUsbDiskDevice = {
-	{
-		USB_DISK_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	usb_disk_init_device,
-	usb_disk_uninit_device,
-	usb_disk_device_removed,
-
-	usb_disk_open,
-	usb_disk_close,
-	usb_disk_free,
-	NULL,	// read
-	NULL,	// write
-	usb_disk_io,
-	usb_disk_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sUsbDiskDriver = {
-	{
+struct dk_driver_info sUsbDiskDriver = {
+	.info = {
 		USB_DISK_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_disk_supports_device,
-	usb_disk_register_device,
-	usb_disk_init_driver,
-	usb_disk_uninit_driver,
-	usb_disk_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sUsbDiskMatchDict,
+	.probe   = usb_disk_probe,
+	.attach  = usb_disk_driver_attach,
+	.detach  = usb_disk_driver_detach,
+	.ops     = &sUsbDiskDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sUsbDiskDriver,
-	(module_info*)&sUsbDiskDevice,
 	NULL
 };
