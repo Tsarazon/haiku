@@ -52,7 +52,7 @@ virtio_get_device_type_name(uint16 type)
 }
 
 
-VirtioDevice::VirtioDevice(device_node *node)
+VirtioDevice::VirtioDevice(dk_node* node)
 	:
 	fNode(node),
 	fID(0),
@@ -60,6 +60,7 @@ VirtioDevice::VirtioDevice(device_node *node)
 	fCookie(NULL),
 	fStatus(B_NO_INIT),
 	fQueues(NULL),
+	fQueueCount(0),
 	fFeatures(0),
 	fAlignment(0),
 	fVirtio1(false),
@@ -67,26 +68,36 @@ VirtioDevice::VirtioDevice(device_node *node)
 	fDriverCookie(NULL)
 {
 	CALLED();
-	device_node *parent = gDeviceManager->get_parent_node(node);
-	fStatus = gDeviceManager->get_driver(parent,
-		(driver_module_info **)&fController, &fCookie);
-	gDeviceManager->put_node(parent);
 
-	if (fStatus != B_OK)
+	// Walk up to the host transport (virtio_pci/virtio_mmio) to get
+	// the virtio_sim_interface it publishes via
+	// publish_interface(VIRTIO_HOST_INTERFACE_NAME).
+	fStatus = gDeviceKeeper->get_interface(node, VIRTIO_HOST_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fController, &fCookie);
+	if (fStatus != B_OK) {
+		ERROR("no virtio host transport found: %s\n", strerror(fStatus));
 		return;
+	}
+	if (fController == NULL || fCookie == NULL) {
+		ERROR("virtio host transport returned NULL ops/cookie\n");
+		fStatus = B_ERROR;
+		return;
+	}
 
-	fStatus = gDeviceManager->get_attr_uint16(fNode,
+	fStatus = gDeviceKeeper->get_property_uint16(fNode,
 		VIRTIO_VRING_ALIGNMENT_ITEM, &fAlignment, true);
 	if (fStatus != B_OK) {
 		ERROR("alignment missing\n");
 		return;
 	}
 	uint8 version = 0;
-	if (gDeviceManager->get_attr_uint8(fNode, VIRTIO_VERSION_ITEM, &version, true) == B_OK)
+	if (gDeviceKeeper->get_property_uint8(fNode, VIRTIO_VERSION_ITEM,
+			&version, true) == B_OK) {
 		fVirtio1 = version == 1;
+	}
 
 	fController->set_sim(fCookie, this);
-
 	fController->set_status(fCookie, VIRTIO_CONFIG_STATUS_DRIVER);
 }
 
@@ -96,7 +107,8 @@ VirtioDevice::~VirtioDevice()
 	if (fQueues != NULL) {
 		_DestroyQueues(fQueueCount);
 	}
-	fController->set_status(fCookie, VIRTIO_CONFIG_STATUS_RESET);
+	if (fController != NULL && fCookie != NULL)
+		fController->set_status(fCookie, VIRTIO_CONFIG_STATUS_RESET);
 }
 
 

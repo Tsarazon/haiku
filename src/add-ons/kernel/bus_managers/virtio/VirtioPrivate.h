@@ -28,18 +28,15 @@
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define VIRTIO_SIM_MODULE_NAME		"bus_managers/virtio/sim/driver_v1"
-
-
 class VirtioDevice;
 class VirtioQueue;
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
 
 class VirtioDevice {
 public:
-								VirtioDevice(device_node *node);
+								VirtioDevice(dk_node* node);
 								~VirtioDevice();
 
 			status_t			InitCheck();
@@ -84,7 +81,7 @@ private:
 
 
 
-			device_node *		fNode;
+			dk_node*			fNode;
 			uint32				fID;
 			virtio_sim_interface *fController;
 			void *				fCookie;

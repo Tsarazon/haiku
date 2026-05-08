@@ -22,7 +22,7 @@
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
 
 #define PAGES_COUNT	256
@@ -39,7 +39,7 @@ typedef DoublyLinkedList<PageInfo> PageInfoList;
 
 class VirtioBalloonDevice {
 public:
-								VirtioBalloonDevice(device_node* node);
+								VirtioBalloonDevice(dk_node* node);
 								~VirtioBalloonDevice();
 
 			status_t			InitCheck();
@@ -55,10 +55,10 @@ private:
 			uint32				_DesiredSize();
 			status_t			_UpdateSize();
 
-			device_node*		fNode;
+			dk_node*			fNode;
 
 			virtio_device_interface* fVirtio;
-			virtio_device*		fVirtioDevice;
+			virtio_device		fVirtioDevice;
 
 			status_t			fStatus;
 			uint64				fFeatures;

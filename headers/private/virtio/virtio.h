@@ -6,7 +6,7 @@
 #define _VIRTIO_H_
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 
@@ -46,15 +46,15 @@
 #define VIRTIO_CONFIG_STATUS_DEVICE_NEEDS_RESET	0x40
 #define VIRTIO_CONFIG_STATUS_FAILED	0x80
 
-// attributes:
+// DeviceKeeper property names for virtio nodes.
+// The virtio bus manager publishes these when it creates a virtio device
+// node as a fixed-child of a transport (virtio_pci/virtio_mmio).
 
-// node type
-#define VIRTIO_BUS_TYPE_NAME "bus/virtio/v1"
-// device type (uint16)
+// device type (uint16, VIRTIO_DEVICE_ID_*)
 #define VIRTIO_DEVICE_TYPE_ITEM "virtio/type"
-// alignment (uint16)
+// vring alignment (uint16)
 #define VIRTIO_VRING_ALIGNMENT_ITEM "virtio/vring_alignment"
-// version (uint8)
+// virtio spec version (uint8, 0 for legacy, 1 for 1.0+)
 #define VIRTIO_VERSION_ITEM "virtio/version"
 
 // sim cookie, issued by virtio bus manager
@@ -68,21 +68,29 @@ typedef void (*virtio_callback_func)(void* driverCookie, void* cookie);
 // callback function for interrupts
 typedef void (*virtio_intr_func)(void* cookie);
 
-#define	VIRTIO_DEVICE_MODULE_NAME "bus_managers/virtio/device/v1"
+
+// Controller callback module: host transport drivers (virtio_pci,
+// virtio_mmio) obtain this via get_module() and call into the virtio
+// bus manager when hardware interrupts fire.
+// Plain kernel module (not a dk_driver), hence module_info prefix.
+#define VIRTIO_FOR_CONTROLLER_MODULE_NAME \
+	"bus_managers/virtio/controller/v1"
 
 typedef struct {
-	driver_module_info info;
+	module_info	info;
 
 	status_t	(*queue_interrupt_handler)(virtio_sim sim, uint16 queue);
 	status_t	(*config_interrupt_handler)(virtio_sim sim);
 } virtio_for_controller_interface;
 
-#define VIRTIO_FOR_CONTROLLER_MODULE_NAME "bus_managers/virtio/controller/driver_v1"
 
-// Bus manager interface used by Virtio controller drivers.
+// Host transport interface: virtio_pci/virtio_mmio publish this on
+// their node via publish_interface(VIRTIO_HOST_INTERFACE_NAME).
+// The virtio bus manager walks up to the transport node and retrieves
+// the interface via get_interface.
+#define VIRTIO_HOST_INTERFACE_NAME	"interface/virtio/host/v1"
+
 typedef struct {
-	driver_module_info info;
-
 	void (*set_sim)(void* cookie, virtio_sim sim);
 	status_t (*read_host_features)(void* cookie, uint64* features);
 	status_t (*write_guest_features)(void* cookie, uint64 features);
@@ -94,18 +102,23 @@ typedef struct {
 		const void* buffer, size_t bufferSize);
 
 	uint16	(*get_queue_ring_size)(void* cookie, uint16 queue);
-	status_t (*setup_queue)(void* cookie, uint16 queue, phys_addr_t phy, phys_addr_t phyAvail,
-		phys_addr_t phyUsed);
+	status_t (*setup_queue)(void* cookie, uint16 queue, phys_addr_t phy,
+		phys_addr_t phyAvail, phys_addr_t phyUsed);
 	status_t (*setup_interrupt)(void* cookie, uint16 queueCount);
 	status_t (*free_interrupt)(void* cookie);
 	void	(*notify_queue)(void* cookie, uint16 queue);
 } virtio_sim_interface;
 
 
-// bus manager device interface for peripheral driver
-typedef struct {
-	driver_module_info info;
+// Peripheral driver interface: bus_managers/virtio/device publishes
+// this on each virtio device node via publish_interface. Peripheral
+// drivers (virtio_input, virtio_gpu, ...) retrieve it by walk-up via
+// get_interface(node, VIRTIO_DEVICE_INTERFACE_NAME, ...).
+#define VIRTIO_DEVICE_MODULE_NAME \
+	"bus_managers/virtio/device/dk_driver_v1"
+#define VIRTIO_DEVICE_INTERFACE_NAME	"interface/virtio/device/v1"
 
+typedef struct {
 	status_t (*negotiate_features)(virtio_device cookie, uint64 supported,
 		uint64* negotiated, const char* (*get_feature_name)(uint64));
 

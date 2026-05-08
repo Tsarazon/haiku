@@ -29,14 +29,17 @@ get_feature_name(uint64 feature)
 }
 
 
-VirtioBalloonDevice::VirtioBalloonDevice(device_node* node)
+VirtioBalloonDevice::VirtioBalloonDevice(dk_node* node)
 	:
 	fNode(node),
 	fVirtio(NULL),
 	fVirtioDevice(NULL),
 	fStatus(B_NO_INIT),
+	fFeatures(0),
+	fThread(-1),
 	fDesiredSize(0),
-	fActualSize(0)
+	fActualSize(0),
+	fRunning(true)
 {
 	CALLED();
 
@@ -46,14 +49,20 @@ VirtioBalloonDevice::VirtioBalloonDevice(device_node* node)
 
 	get_memory_map(fBuffer, sizeof(fBuffer), &fEntry, 1);
 
-	// get the Virtio device from our parent's parent
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	device_node* virtioParent = gDeviceManager->get_parent_node(parent);
-	gDeviceManager->put_node(parent);
-
-	gDeviceManager->get_driver(virtioParent, (driver_module_info**)&fVirtio,
-		(void**)&fVirtioDevice);
-	gDeviceManager->put_node(virtioParent);
+	// Walk up to the virtio bus manager to get the peripheral-facing
+	// interface and our VirtioDevice cookie.
+	fStatus = gDeviceKeeper->get_interface(node, VIRTIO_DEVICE_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fVirtio, &fVirtioDevice);
+	if (fStatus != B_OK) {
+		ERROR("no virtio bus manager found: %s\n", strerror(fStatus));
+		return;
+	}
+	if (fVirtio == NULL || fVirtioDevice == NULL) {
+		ERROR("virtio bus manager returned NULL ops/cookie\n");
+		fStatus = B_ERROR;
+		return;
+	}
 
 	fVirtio->negotiate_features(fVirtioDevice,
 		0, &fFeatures, &get_feature_name);
