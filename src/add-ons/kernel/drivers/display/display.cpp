@@ -2,13 +2,10 @@
 
 
 typedef struct acpi_ns_device_info {
-	device_node *node;
+	dk_node *node;
 	acpi_handle acpi_device;
 } display_device_info;
 	
-
-extern "C" {
-
 
 /*
 
@@ -24,6 +21,9 @@ _DSS Set hardware active \ inactive state
 Brightness notifications
 
 */
+
+
+//	#pragma mark - dk_device_ops
 
 	
 static status_t
@@ -69,18 +69,40 @@ static status_t
 display_free(void* cookie)
 {
 	display_device_info *device = (display_device_info *)cookie;
+	(void)device;
 	return B_OK;
 }
 
 
-//	#pragma mark - device module API
+static dk_device_ops sDisplayDeviceOps = {
+	display_open,
+	display_close,
+	display_free,
+	display_read,
+	display_write,
+	NULL,	// io
+	display_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+//	#pragma mark - driver module API
+
+
+static float
+display_probe(dk_node *node)
+{
+	// Display child devices are registered by the parent display_adapter
+	// driver, so this probe always succeeds when called on a matching node.
+	return 0.6;
+}
 
 
 static status_t
-display_init(void *_cookie, void **cookie)
+display_attach(dk_node *node, void **_cookie)
 {
-	device_node *node = (device_node *)_cookie;
-
 	display_device_info *device = 
 		(display_device_info *)calloc(1, sizeof(*device));
 
@@ -89,52 +111,36 @@ display_init(void *_cookie, void **cookie)
 
 	device->node = node;
 
-	const char *path;
-	if (gDeviceManager->get_attr_string(node, ACPI_DEVICE_PATH_ITEM, &path,
-			false) != B_OK
+	char path[256];
+	if (gDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_PATH,
+			path, sizeof(path), NULL, false) != B_OK
 		|| gAcpi->get_handle(NULL, path, &device->acpi_device) != B_OK) {
 		dprintf("%s: failed to get acpi node.\n", __func__);
 		free(device);
 		return B_ERROR;
 	}
 
-	*cookie = device;
+	*_cookie = device;
 	return B_OK;
 }
 
 
 static void
-display_uninit(void *_cookie)
+display_detach(void *_cookie)
 {
 	display_device_info *device = (display_device_info *)_cookie;
 	free(device);
 }
 
-} //extern c
 
-device_module_info display_device_module = {
-	{
+dk_driver_info display_device_driver = {
+	.info = {
 		DISPLAY_DEVICE_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	display_init,
-	display_uninit,
-	NULL,
-
-	display_open,
-	display_close,
-	display_free,
-	display_read,
-	display_write,
-	NULL,
-	display_control,
-
-	NULL,
-	NULL
+	.probe	= display_probe,
+	.attach	= display_attach,
+	.detach	= display_detach,
+	.ops	= &sDisplayDeviceOps,
 };
-
-
-
-

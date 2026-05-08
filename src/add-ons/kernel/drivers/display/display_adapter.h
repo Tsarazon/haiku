@@ -4,7 +4,7 @@
 
 #include <sys/cdefs.h>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 //#include <Drivers.h>
 //#include <Errors.h>
@@ -15,9 +15,9 @@
 
 #include <ACPI.h>
 
-#define DISPLAYADAPTER_MODULE_NAME "drivers/display_adapter/display_adapter/driver_v1"
-#define DISPLAY_DEVICE_MODULE_NAME "drivers/display_adapter/display_adapter/display/device_v1"
-#define DISPLAYADAPTER_DEVICE_MODULE_NAME "drivers/display_adapter/display_adapter/device_v1"
+#define DISPLAYADAPTER_MODULE_NAME "drivers/display_adapter/display_adapter/dk_driver_v1"
+#define DISPLAY_DEVICE_MODULE_NAME "drivers/display_adapter/display_adapter/display/dk_driver_v1"
+#define DISPLAYADAPTER_DEVICE_MODULE_NAME "drivers/display_adapter/display_adapter/dk_driver_v1"
 
 #define DISPLAYADAPTER_BASENAME "display_adapter/%d"
 #define DISPLAYADAPTER_PATHID_GENERATOR "display_adapter/path_id"
@@ -34,10 +34,10 @@
 
 __BEGIN_DECLS
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern acpi_module_info *gAcpi;
 
-extern struct device_module_info display_device_module;
+extern struct dk_driver_info display_device_driver;
 
 __END_DECLS
 
