@@ -174,17 +174,16 @@ const struct supported_device {
 
 };
 
-#include <device_manager.h>
+#include <device_keeper.h>
 
-#define INTEL_DRIVER_MODULE_NAME "drivers/graphics/intel_extreme/driver_v1"
-#define INTEL_DEVICE_MODULE_NAME "drivers/graphics/intel_extreme/device_v1"
+#define INTEL_DRIVER_MODULE_NAME "drivers/graphics/intel_extreme/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sInitialized = false;
 
 char* gDeviceNames[MAX_CARDS + 1];
 intel_info* gDeviceInfo[MAX_CARDS];
-pci_device_module_info* gPCI;
+pci_device_ops* gPCI;
 pci_device* gPCIDev;
 agp_gart_module_info* gGART;
 mutex gLock;
@@ -232,23 +231,27 @@ static const struct {
 static enum pch_info
 detect_intel_pch()
 {
-	// PCH detection scans all PCI devices for the ISA bridge.
-	// This is a cross-device query requiring the legacy PCI module.
-	pci_module_info* pciLegacy;
-	if (get_module(B_PCI_MODULE_NAME, (module_info**)&pciLegacy) != B_OK)
-		return INTEL_PCH_NONE;
-
+	// PCH detection: find the ISA bridge in the device tree using
+	// DeviceKeeper's global find_node query instead of legacy PCI scan.
 	enum pch_info result = INTEL_PCH_NONE;
-	pci_info info;
 
-	for (int32 i = 0; pciLegacy->get_nth_pci_info(i, &info) == B_OK; i++) {
-		if (info.vendor_id != VENDOR_ID_INTEL
-			|| info.class_base != PCI_bridge
-			|| info.class_sub != PCI_isa)
-			continue;
+	// Search for PCI nodes with Intel vendor + bridge/ISA class
+	dk_match_rule rules[] = {
+		DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+		DK_MATCH_UINT16(KOSM_DEVICE_VENDOR_ID, VENDOR_ID_INTEL),
+		DK_MATCH_UINT8(KOSM_DEVICE_TYPE, PCI_bridge),
+		DK_MATCH_UINT8(KOSM_DEVICE_SUB_TYPE, PCI_isa),
+		DK_MATCH_END
+	};
 
-		unsigned short id = info.device_id & INTEL_PCH_DEVICE_ID_MASK;
-		ERROR("%s: Intel PCH deviceID: 0x%04x\n", __func__, info.device_id);
+	dk_node* node = NULL;
+	while (sDeviceKeeper->find_node_global(rules, &node) == B_OK) {
+		uint16 deviceId = 0;
+		sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID,
+			&deviceId, false);
+
+		unsigned short id = deviceId & INTEL_PCH_DEVICE_ID_MASK;
+		ERROR("%s: Intel PCH deviceID: 0x%04x\n", __func__, deviceId);
 
 		for (size_t j = 0; j < B_COUNT_OF(kPCHDevices); j++) {
 			if (id == kPCHDevices[j].id) {
@@ -258,14 +261,15 @@ detect_intel_pch()
 			}
 		}
 
-		if (result != INTEL_PCH_NONE)
+		if (result != INTEL_PCH_NONE) {
+			sDeviceKeeper->put_node(node);
 			break;
+		}
 	}
 
 	if (result == INTEL_PCH_NONE)
 		ERROR("%s: No PCH detected.\n", __func__);
 
-	put_module(B_PCI_MODULE_NAME);
 	return result;
 }
 
@@ -273,19 +277,20 @@ detect_intel_pch()
 static int32 sNumFound = 0;
 
 static status_t
-add_intel_device_from_node(device_node *node)
+add_intel_device_from_node(dk_node *node)
 {
 	if (sNumFound >= MAX_CARDS)
 		return B_NO_MORE_FDS;
 
-	// Get pci_device_module_info from parent node
-	device_node *parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&gPCI,
-		(void **)&gPCIDev);
-	sDeviceManager->put_node(parent);
+	// Get PCI ops from parent bus manager
+	status_t status = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&gPCI, (void **)&gPCIDev);
+	if (status != B_OK)
+		return status;
 
 	if (!sInitialized) {
-		status_t status = get_module(B_AGP_GART_MODULE_NAME,
+		status = get_module(B_AGP_GART_MODULE_NAME,
 			(module_info**)&gGART);
 		if (status != B_OK)
 			return status;
@@ -352,19 +357,83 @@ add_intel_device_from_node(device_node *node)
 }
 
 
-static float
-intel_supports_device(device_node *parent)
-{
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if (strcmp(bus, "pci"))
-		return 0.0;
+//	#pragma mark - dk_device_ops
 
+
+static status_t
+intel_open(void *driverCookie, const char *path, int openMode, void **_cookie)
+{
+	return gDeviceHooks.open(path, openMode, _cookie);
+}
+
+static status_t
+intel_close(void *cookie)
+{
+	return gDeviceHooks.close(cookie);
+}
+
+static status_t
+intel_free(void *cookie)
+{
+	return gDeviceHooks.free(cookie);
+}
+
+static status_t
+intel_read(void *cookie, off_t position, void *buffer, size_t *numBytes)
+{
+	return gDeviceHooks.read(cookie, position, buffer, numBytes);
+}
+
+static status_t
+intel_write(void *cookie, off_t position, const void *buffer, size_t *numBytes)
+{
+	return gDeviceHooks.write(cookie, position, buffer, numBytes);
+}
+
+static status_t
+intel_control(void *cookie, uint32 op, void *buffer, size_t length)
+{
+	return gDeviceHooks.control(cookie, op, buffer, length);
+}
+
+
+static dk_device_ops sDeviceOps = {
+	intel_open,
+	intel_close,
+	intel_free,
+	intel_read,
+	intel_write,
+	NULL,	// io
+	intel_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sIntelMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sIntelMatchDict = {
+	sIntelMatchRules,
+	0
+};
+
+
+static float
+intel_probe(dk_node *node)
+{
 	uint16 vendorId = 0;
 	uint8 classBase = 0;
-	sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID, &vendorId, false);
-	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
+	sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
+		&vendorId, false);
+	sDeviceKeeper->get_property_uint8(node, KOSM_DEVICE_TYPE,
+		&classBase, false);
 
 	if (vendorId == VENDOR_ID_INTEL && classBase == PCI_display)
 		return 0.6;
@@ -374,74 +443,72 @@ intel_supports_device(device_node *parent)
 
 
 static status_t
-intel_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Intel Extreme Graphics"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, INTEL_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
-static status_t
-intel_init_driver(device_node *node, void **cookie)
+intel_attach(dk_node *node, void **cookie)
 {
 	status_t status = add_intel_device_from_node(node);
 	if (status != B_OK)
 		return status;
+
+	// Publish device for the card we just added (last entry)
+	int32 idx = sNumFound - 1;
+	status = sDeviceKeeper->publish_device(node, gDeviceNames[idx],
+		&sDeviceOps);
+	if (status != B_OK) {
+		dprintf(DEVICE_NAME ": publish_device(%s) failed: %s\n",
+			gDeviceNames[idx], strerror(status));
+		free(gDeviceInfo[idx]->pci);
+		free(gDeviceInfo[idx]);
+		gDeviceInfo[idx] = NULL;
+		free(gDeviceNames[idx]);
+		gDeviceNames[idx] = NULL;
+		sNumFound--;
+		gDeviceNames[sNumFound] = NULL;
+		return status;
+	}
+
 	*cookie = node;
 	return B_OK;
 }
 
-static void intel_uninit_driver(void *_cookie) {}
 
-static status_t
-intel_register_child_devices(void *_cookie)
+static void
+intel_detach(void *_cookie)
 {
-	device_node *node = (device_node *)_cookie;
-	for (int i = 0; gDeviceNames[i] != NULL; i++)
-		sDeviceManager->publish_device(node, gDeviceNames[i], INTEL_DEVICE_MODULE_NAME);
-	return B_OK;
+	dk_node* node = (dk_node*)_cookie;
+
+	for (int32 i = 0; gDeviceNames[i] != NULL; i++) {
+		sDeviceKeeper->unpublish_device(node, gDeviceNames[i]);
+		free(gDeviceInfo[i]->pci);
+		free(gDeviceInfo[i]);
+		gDeviceInfo[i] = NULL;
+		free(gDeviceNames[i]);
+		gDeviceNames[i] = NULL;
+	}
+	sNumFound = 0;
+
+	if (sInitialized) {
+		put_module(B_AGP_GART_MODULE_NAME);
+		mutex_destroy(&gLock);
+		sInitialized = false;
+	}
 }
-
-static status_t intel_init_device(void *i, void **c) { *c = i; return B_OK; }
-static void intel_uninit_device(void *c) {}
-
-static status_t intel_dm_open(void *i, const char *p, int m, void **c)
-{ return gDeviceHooks.open(p, m, c); }
-static status_t intel_dm_close(void *c) { return gDeviceHooks.close(c); }
-static status_t intel_dm_free(void *c) { return gDeviceHooks.free(c); }
-static status_t intel_dm_read(void *c, off_t p, void *b, size_t *l)
-{ return gDeviceHooks.read(c, p, b, l); }
-static status_t intel_dm_write(void *c, off_t p, const void *b, size_t *l)
-{ return gDeviceHooks.write(c, p, b, l); }
-static status_t intel_dm_control(void *c, uint32 o, void *b, size_t l)
-{ return gDeviceHooks.control(c, o, b, l); }
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sIntelDevice = {
-	{ INTEL_DEVICE_MODULE_NAME, 0, NULL },
-	intel_init_device, intel_uninit_device, NULL,
-	intel_dm_open, intel_dm_close, intel_dm_free,
-	intel_dm_read, intel_dm_write, NULL, intel_dm_control,
-	NULL, NULL
-};
-
-struct driver_module_info sIntelDriver = {
-	{ INTEL_DRIVER_MODULE_NAME, 0, NULL },
-	intel_supports_device, intel_register_device,
-	intel_init_driver, intel_uninit_driver,
-	intel_register_child_devices, NULL, NULL
+struct dk_driver_info sIntelDriver = {
+	.info   = { INTEL_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sIntelMatchDict,
+	.probe  = intel_probe,
+	.attach = intel_attach,
+	.detach = intel_detach,
+	.ops    = &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sIntelDriver,
-	(module_info *)&sIntelDevice,
 	NULL
 };
