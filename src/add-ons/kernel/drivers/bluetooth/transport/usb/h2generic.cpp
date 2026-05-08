@@ -25,13 +25,12 @@
 #include "h2util.h"
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <bus/USB.h>
 
-#define H2_DRIVER_MODULE_NAME "drivers/bluetooth/h2generic/driver_v1"
-#define H2_DEVICE_MODULE_NAME "drivers/bluetooth/h2generic/device_v1"
+#define H2_DRIVER_MODULE_NAME "drivers/bluetooth/h2generic/dk_driver_v1"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 static bool sInitialized = false;
 
 // Modules
@@ -854,60 +853,16 @@ ensure_h2_initialized()
 
 
 static float
-h2_supports_device(device_node *parent)
+h2_supports_device(dk_node *parent)
 {
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus, sizeof(bus), NULL, false))
 		return -1;
 	if (strcmp(bus, "usb") == 0 && !sInitialized)
 		return 0.01;
 	return 0.0;
 }
 
-
-static status_t
-h2_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Bluetooth H2 USB Transport"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, H2_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-h2_init_driver(device_node *node, void **cookie)
-{
-	status_t status = ensure_h2_initialized();
-	if (status != B_OK)
-		return status;
-	*cookie = node;
-	return B_OK;
-}
-
-static void h2_uninit_driver(void *_cookie) {}
-
-static status_t
-h2_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-
-	for (int32 j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
-		if (bt_usb_devices[j] != NULL && bt_usb_devices[j]->connected) {
-			sDeviceManager->publish_device(node,
-				bt_usb_devices[j]->name, H2_DEVICE_MODULE_NAME);
-		}
-	}
-	return B_OK;
-}
-
-
-static status_t h2_init_device(void *i, void **c)
-{ *c = i; return B_OK; }
-static void h2_uninit_device(void *c) {}
 
 static status_t h2_dm_open(void *i, const char *p, int m, void **c)
 { return device_open(p, m, c); }
@@ -922,29 +877,55 @@ static status_t h2_dm_write(void *c, off_t p, const void *b, size_t *l)
 static status_t h2_dm_control(void *c, uint32 o, void *b, size_t l)
 { return device_control(c, o, b, l); }
 
+static dk_device_ops sDeviceOps = {
+	h2_dm_open, h2_dm_close, h2_dm_free,
+	h2_dm_read, h2_dm_write, NULL, h2_dm_control,
+	NULL, NULL, NULL
+};
+
+
+static status_t
+h2_init_driver(dk_node *node, void **cookie)
+{
+	status_t status = ensure_h2_initialized();
+	if (status != B_OK)
+		return status;
+	*cookie = node;
+	return B_OK;
+}
+
+static void h2_uninit_driver(void *_cookie) {}
+
+static status_t
+h2_register_child_devices(void *_cookie)
+{
+	dk_node *node = (dk_node *)_cookie;
+
+	for (int32 j = 0; j < MAX_BT_GENERIC_USB_DEVICES; j++) {
+		if (bt_usb_devices[j] != NULL && bt_usb_devices[j]->connected) {
+			sDeviceKeeper->publish_device(node,
+				bt_usb_devices[j]->name, &sDeviceOps);
+		}
+	}
+	return B_OK;
+}
+
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sH2Device = {
-	{ H2_DEVICE_MODULE_NAME, 0, NULL },
-	h2_init_device, h2_uninit_device, NULL,
-	h2_dm_open, h2_dm_close, h2_dm_free,
-	h2_dm_read, h2_dm_write, NULL, h2_dm_control,
-	NULL, NULL
-};
-
-struct driver_module_info sH2Driver = {
-	{ H2_DRIVER_MODULE_NAME, 0, NULL },
-	h2_supports_device, h2_register_device,
-	h2_init_driver, h2_uninit_driver,
-	h2_register_child_devices, NULL, NULL
+struct dk_driver_info sH2Driver = {
+	.info             = { H2_DRIVER_MODULE_NAME, 0, NULL },
+	.probe            = h2_supports_device,
+	.attach           = h2_init_driver,
+	.detach           = h2_uninit_driver,
+	.rescan_children  = h2_register_child_devices,
+	.ops              = &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sH2Driver,
-	(module_info *)&sH2Device,
 	NULL
 };
