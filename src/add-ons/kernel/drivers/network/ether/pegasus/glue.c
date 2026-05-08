@@ -16,6 +16,15 @@ NO_HAIKU_CHECK_DISABLE_INTERRUPTS();
 NO_HAIKU_REENABLE_INTERRUPTS();
 
 
+// USB-only driver: no PCI probe candidates.
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	(void)dev;
+	return NULL;
+}
+
+
 void
 __haiku_init_hardware()
 {
