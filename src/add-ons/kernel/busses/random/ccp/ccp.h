@@ -1,5 +1,6 @@
 /*
  * Copyright 2022, Jérôme Duval, jerome.duval@gmail.com.
+ * Copyright 2025, KosmOS Project.
  *
  * Distributed under the terms of the MIT License.
  */
@@ -10,6 +11,7 @@
 #include <stdlib.h>
 
 #include <KernelExport.h>
+#include <device_keeper.h>
 
 
 //#define TRACE_CCP_RNG
@@ -26,33 +28,29 @@
 #define CALLED(x...)		TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define CCP_ACPI_DEVICE_MODULE_NAME "busses/random/ccp_rng/acpi/driver_v1"
-#define CCP_PCI_DEVICE_MODULE_NAME "busses/random/ccp_rng/pci/driver_v1"
-#define CCP_DEVICE_MODULE_NAME "busses/random/ccp_rng/device/v1"
+#define CCP_ACPI_DEVICE_MODULE_NAME "busses/random/ccp_rng/acpi/dk_driver_v1"
+#define CCP_PCI_DEVICE_MODULE_NAME  "busses/random/ccp_rng/pci/dk_driver_v1"
+#define CCP_DEVICE_MODULE_NAME      "busses/random/ccp_rng/device/dk_driver_v1"
 
 
 #define read32(address) \
 	(*((volatile uint32*)(address)))
 
 
-
-extern device_manager_info* gDeviceManager;
-extern driver_module_info gCcpAcpiDevice;
-extern driver_module_info gCcpPciDevice;
+extern dk_keeper_info* gDeviceKeeper;
+extern dk_driver_info gCcpAcpiDevice;
+extern dk_driver_info gCcpPciDevice;
 
 
 typedef struct {
-	phys_addr_t base_addr;
-	uint64 map_size;
+	phys_addr_t		base_addr;
+	uint64			map_size;
 
-	device_node* node;
-	device_node* driver_node;
+	area_id			registersArea;
+	addr_t			registers;
 
-	area_id registersArea;
-	addr_t registers;
-
-	timer extractTimer;
-	void* dpcHandle;
+	timer			extractTimer;
+	void*			dpcHandle;
 } ccp_device_info;
 
 
