@@ -32,13 +32,12 @@
 const char* midi_base_name = "midi/usb/";
 
 
-#define USB_MIDI_DRIVER_MODULE_NAME "drivers/midi/usb_midi/driver_v1"
-#define USB_MIDI_DEVICE_MODULE_NAME "drivers/midi/usb_midi/device_v1"
+#define USB_MIDI_DRIVER_MODULE_NAME "drivers/midi/usb_midi/dk_driver_v1"
 #define USB_MIDI_DEVICE_ID_GENERATOR "usb_midi/device_id"
 
 
 usb_module_info* gUSBModule = NULL;
-device_manager_info* gDeviceManager = NULL;
+dk_keeper_info* gDeviceKeeper = NULL;
 
 
 usbmidi_port_info*
@@ -617,12 +616,13 @@ usb_midi_free(void* _cookie)
 
 
 static float
-usb_midi_supports_device(device_node *parent)
+usb_midi_supports_device(dk_node *parent)
 {
 	DPRINTF_INFO((MY_ID "supports_device()\n"));
-	const char *bus;
+	char bus[64];
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false))
 		return -1;
 
 	if (strcmp(bus, "usb"))
@@ -631,8 +631,19 @@ usb_midi_supports_device(device_node *parent)
 	// USB MIDI devices have class USB_AUDIO_DEVICE_CLASS (1)
 	// and subclass USB_AUDIO_INTERFACE_MIDISTREAMING_SUBCLASS (3)
 	uint8 deviceClass = 0, deviceSubclass = 0;
-	device_attr *attr = NULL;
-	while (gDeviceManager->get_next_attr(parent, &attr) == B_OK) {
+	dk_property *attr = NULL;
+	uint64 version = 0;
+	while (true) {
+		status_t s = gDeviceKeeper->get_next_property(parent, &attr, &version);
+		if (s == B_INTERRUPTED) {
+			// store mutated mid-iteration — restart from scratch
+			attr = NULL;
+			deviceClass = 0;
+			deviceSubclass = 0;
+			continue;
+		}
+		if (s != B_OK)
+			break;
 		if (attr->type != B_UINT8_TYPE)
 			continue;
 
@@ -651,30 +662,30 @@ usb_midi_supports_device(device_node *parent)
 }
 
 
+static void usb_midi_device_removed(void*);
+
+static dk_device_ops sUsbMidiDeviceOps = {
+	usb_midi_open,
+	usb_midi_close,
+	usb_midi_free,
+	usb_midi_read,
+	usb_midi_write,
+	NULL,	// io
+	usb_midi_control,
+	NULL,	// select
+	NULL,	// deselect
+	usb_midi_device_removed,
+};
+
+
 static status_t
-usb_midi_register_device(device_node *node)
-{
-	DPRINTF_INFO((MY_ID "register_device()\n"));
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "USB MIDI"} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, USB_MIDI_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-usb_midi_init_driver(device_node *node, void **cookie)
+usb_midi_init_driver(dk_node *node, void **cookie)
 {
 	DPRINTF_INFO((MY_ID "init_driver()\n"));
 
 	// get USB device ID
 	usb_device usbDevice;
-	if (gDeviceManager->get_attr_uint32(node, USB_DEVICE_ID_ITEM,
+	if (gDeviceKeeper->get_property_uint32(node, USB_DEVICE_ID_ITEM,
 			&usbDevice, true) != B_OK) {
 		DPRINTF_ERR((MY_ID "cannot get USB device ID\n"));
 		return B_ERROR;
@@ -817,6 +828,15 @@ got_one:
 			}
 		}
 
+		// Publish port devices
+		for (int cable = 0; cable < 16; cable++) {
+			usbmidi_port_info* port = midiDevice->ports[cable];
+			if (port == NULL)
+				break;
+			gDeviceKeeper->publish_device(node, port->name,
+				&sUsbMidiDeviceOps);
+		}
+
 		*cookie = midiDevice;
 		DPRINTF_INFO((MY_ID "init_driver: %s\n", midiDevice->name));
 		return B_OK;
@@ -861,29 +881,6 @@ usb_midi_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-usb_midi_register_child_devices(void *_cookie)
-{
-	DPRINTF_INFO((MY_ID "register_child_devices()\n"));
-	usbmidi_device_info* midiDevice = (usbmidi_device_info*)_cookie;
-
-	for (int cable = 0; cable < 16; cable++) {
-		usbmidi_port_info* port = midiDevice->ports[cable];
-		if (port == NULL)
-			break;
-
-		status_t status = gDeviceManager->publish_device(midiDevice->node,
-			port->name, USB_MIDI_DEVICE_MODULE_NAME);
-		if (status != B_OK) {
-			DPRINTF_ERR((MY_ID "publish_device(%s) failed: %" B_PRIx32 "\n",
-				port->name, status));
-		}
-	}
-
-	return B_OK;
-}
-
-
 static void
 usb_midi_device_removed(void *_cookie)
 {
@@ -893,76 +890,40 @@ usb_midi_device_removed(void *_cookie)
 }
 
 
-//	#pragma mark - device module (init/uninit for devfs)
-
-
-static status_t
-usb_midi_init_device(void* _info, void** _cookie)
-{
-	DPRINTF_INFO((MY_ID "init_device()\n"));
-	// The driver info is the device info
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-usb_midi_uninit_device(void* _cookie)
-{
-	DPRINTF_INFO((MY_ID "uninit_device()\n"));
-}
-
-
 //	#pragma mark -
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_USB_MODULE_NAME, (module_info**)&gUSBModule },
 	{ NULL }
 };
 
-struct device_module_info sUsbMidiDevice = {
-	{
-		USB_MIDI_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	usb_midi_init_device,
-	usb_midi_uninit_device,
-	NULL,	// device_removed
-
-	usb_midi_open,
-	usb_midi_close,
-	usb_midi_free,
-	usb_midi_read,
-	usb_midi_write,
-	NULL,	// io
-	usb_midi_control,
-
-	NULL,	// select
-	NULL,	// deselect
+static const dk_match_rule sUsbMidiMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "usb"),
+	DK_MATCH_END
 };
 
-struct driver_module_info sUsbMidiDriver = {
-	{
+static const dk_match_dict sUsbMidiMatchDict = {
+	sUsbMidiMatchRules,
+	0
+};
+
+
+static dk_driver_info sUsbMidiDriver = {
+	.info = {
 		USB_MIDI_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	usb_midi_supports_device,
-	usb_midi_register_device,
-	usb_midi_init_driver,
-	usb_midi_uninit_driver,
-	usb_midi_register_child_devices,
-	NULL,	// rescan
-	usb_midi_device_removed,
+	.match   = &sUsbMidiMatchDict,
+	.probe   = usb_midi_supports_device,
+	.attach  = usb_midi_init_driver,
+	.detach  = usb_midi_uninit_driver,
+	.ops     = &sUsbMidiDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sUsbMidiDriver,
-	(module_info*)&sUsbMidiDevice,
 	NULL
 };

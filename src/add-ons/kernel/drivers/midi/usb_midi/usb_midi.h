@@ -19,7 +19,7 @@
 #define _USB_MIDI_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <USB3.h>
 #include <usb/USB_midi.h>
@@ -82,8 +82,8 @@ struct driver_cookie;
 
 typedef struct usbmidi_device_info
 {
-	/* device_manager node */
-	device_node* node;
+	/* device_keeper node */
+	dk_node* node;
 
 	/* Set of actual ports ("cables" -- one or more) */
 	struct usbmidi_port_info* ports[16];
@@ -145,7 +145,7 @@ typedef struct usbmidi_port_info
 */
 
 extern usb_module_info* gUSBModule;
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 extern const char* usb_midi_base_name;
 
 extern usbmidi_port_info* create_usbmidi_port(usbmidi_device_info* devinfo,
