@@ -9,6 +9,15 @@
 #include <interrupts.h>
 
 
+// msi_set_interface lives in the kernel's arch/generic/generic_msi.cpp,
+// which is only built on arm/arm64/riscv64 (DesignWare PCIe targets).
+// On x86_64 it does not exist; mark the reference as weak so the module
+// still links there. The driver only attaches on FDT-based systems
+// anyway, so the symbol will never be invoked on x86.
+extern "C" void msi_set_interface(MSIInterface* interface)
+	__attribute__((weak));
+
+
 status_t
 MsiInterruptCtrlDW::Init(PciDbiRegs volatile* dbiRegs, int32 msiIrq)
 {

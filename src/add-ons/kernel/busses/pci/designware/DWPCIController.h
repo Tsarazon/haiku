@@ -17,7 +17,7 @@
 
 #define CHECK_RET(err) {status_t _err = (err); if (_err < B_OK) return _err;}
 
-#define DESIGNWARE_PCI_DRIVER_MODULE_NAME "busses/pci/designware/driver_v1"
+#define DESIGNWARE_PCI_DRIVER_MODULE_NAME "busses/pci/designware/dk_driver_v1"
 
 
 enum {
@@ -186,9 +186,8 @@ private:
 
 class DWPCIController {
 public:
-	static float SupportsDevice(device_node* parent);
-	static status_t RegisterDevice(device_node* parent);
-	static status_t InitDriver(device_node* node, DWPCIController*& outDriver);
+	static float SupportsDevice(dk_node* parent);
+	static status_t InitDriver(dk_node* node, DWPCIController*& outDriver);
 	void UninitDriver();
 
 	status_t ReadConfig(
@@ -213,7 +212,7 @@ public:
 
 private:
 	status_t ReadResourceInfo();
-	inline status_t InitDriverInt(device_node* node);
+	inline status_t InitDriverInt(dk_node* node);
 
 	inline addr_t ConfigAddress(uint8 bus, uint8 device, uint8 function, uint16 offset);
 
@@ -225,7 +224,7 @@ private:
 private:
 	spinlock fLock = B_SPINLOCK_INITIALIZER;
 
-	device_node* fNode {};
+	dk_node* fNode {};
 
 	AreaDeleter fConfigArea;
 	addr_t fConfigPhysBase {};
@@ -246,6 +245,6 @@ private:
 };
 
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 
 #endif	// _PCICONTROLLERDW_H_

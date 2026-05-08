@@ -72,18 +72,20 @@ WriteReg16(addr_t adr, uint32 value)
 
 
 float
-DWPCIController::SupportsDevice(device_node* parent)
+DWPCIController::SupportsDevice(dk_node* parent)
 {
-	const char* bus;
-	status_t status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
+	char bus[64];
+	status_t status = gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+		sizeof(bus), NULL, false);
 	if (status < B_OK)
 		return -1.0f;
 
 	if (strcmp(bus, "fdt") != 0)
 		return 0.0f;
 
-	const char* compatible;
-	status = gDeviceManager->get_attr_string(parent, "fdt/compatible", &compatible, false);
+	char compatible[256];
+	status = gDeviceKeeper->get_property_string(parent, "fdt/compatible", compatible,
+		sizeof(compatible), NULL, false);
 	if (status < B_OK)
 		return -1.0f;
 
@@ -97,21 +99,7 @@ DWPCIController::SupportsDevice(device_node* parent)
 
 
 status_t
-DWPCIController::RegisterDevice(device_node* parent)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Designware PCI Host Controller"} },
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE, {.string = "bus_managers/pci/root/driver_v1"} },
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, DESIGNWARE_PCI_DRIVER_MODULE_NAME, attrs, NULL,
-		NULL);
-}
-
-
-status_t
-DWPCIController::InitDriver(device_node* node, DWPCIController*& outDriver)
+DWPCIController::InitDriver(dk_node* node, DWPCIController*& outDriver)
 {
 	ObjectDeleter<DWPCIController> driver(new(std::nothrow) DWPCIController());
 	if (!driver.IsSet())
@@ -126,17 +114,19 @@ DWPCIController::InitDriver(device_node* node, DWPCIController*& outDriver)
 status_t
 DWPCIController::ReadResourceInfo()
 {
-	DeviceNodePutter<&gDeviceManager> fdtNode(gDeviceManager->get_parent_node(fNode));
+	DkNodePutter<&gDeviceKeeper> fdtNode(gDeviceKeeper->get_parent_node(fNode));
 
-	const char* bus;
-	CHECK_RET(gDeviceManager->get_attr_string(fdtNode.Get(), B_DEVICE_BUS, &bus, false));
+	char bus[64];
+	CHECK_RET(gDeviceKeeper->get_property_string(fdtNode.Get(), KOSM_DEVICE_BUS, bus,
+		sizeof(bus), NULL, false));
 	if (strcmp(bus, "fdt") != 0)
 		return B_ERROR;
 
-	fdt_device_module_info *fdtModule;
+	fdt_device_module_info* fdtModule;
 	fdt_device* fdtDev;
-	CHECK_RET(gDeviceManager->get_driver(fdtNode.Get(),
-		(driver_module_info**)&fdtModule, (void**)&fdtDev));
+	CHECK_RET(gDeviceKeeper->get_interface(fdtNode.Get(),
+		FDT_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fdtModule, (void**)&fdtDev));
 
 	const void* prop;
 	int propLen;
@@ -211,16 +201,16 @@ DWPCIController::ReadResourceInfo()
 
 		switch (type & fdtPciRangeTypeMask) {
 		case fdtPciRangeIoPort:
-			range.type = B_IO_PORT;
+			range.type = KOSM_RESOURCE_IO_PORT;
 			fResourceRanges.Add(range);
 			break;
 		case fdtPciRangeMmio32Bit:
-			range.type = B_IO_MEMORY;
+			range.type = KOSM_RESOURCE_IO_MEMORY;
 			range.address_type |= PCI_address_type_32;
 			fResourceRanges.Add(range);
 			break;
 		case fdtPciRangeMmio64Bit:
-			range.type = B_IO_MEMORY;
+			range.type = KOSM_RESOURCE_IO_MEMORY;
 			range.address_type |= PCI_address_type_64;
 			fResourceRanges.Add(range);
 			break;
@@ -243,19 +233,20 @@ DWPCIController::ReadResourceInfo()
 
 
 status_t
-DWPCIController::InitDriverInt(device_node* node)
+DWPCIController::InitDriverInt(dk_node* node)
 {
 	fNode = node;
 	dprintf("+DWPCIController::InitDriver()\n");
 
 	CHECK_RET(ReadResourceInfo());
 
-	DeviceNodePutter<&gDeviceManager> fdtNode(gDeviceManager->get_parent_node(node));
+	DkNodePutter<&gDeviceKeeper> fdtNode(gDeviceKeeper->get_parent_node(node));
 
-	fdt_device_module_info *fdtModule;
+	fdt_device_module_info* fdtModule;
 	fdt_device* fdtDev;
-	CHECK_RET(gDeviceManager->get_driver(fdtNode.Get(),
-		(driver_module_info**)&fdtModule, (void**)&fdtDev));
+	CHECK_RET(gDeviceKeeper->get_interface(fdtNode.Get(),
+		FDT_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fdtModule, (void**)&fdtDev));
 
 	if (!fdtModule->get_reg(fdtDev, 0, &fDbiPhysBase, &fDbiSize))
 		return B_ERROR;
