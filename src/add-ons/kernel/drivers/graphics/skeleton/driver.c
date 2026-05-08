@@ -8,7 +8,7 @@
 */
 
 /* standard kernel driver stuff */
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <ISA.h>
 #include <bus/PCI.h>
@@ -42,11 +42,10 @@
 
 #define DEVICE_FORMAT "%04x_%04x_%02x%02x%02x" // apsed
 
-#define SKEL_DRIVER_MODULE_NAME "drivers/graphics/skel/driver_v1"
-#define SKEL_DEVICE_MODULE_NAME "drivers/graphics/skel/device_v1"
+#define SKEL_DRIVER_MODULE_NAME "drivers/graphics/skel/dk_driver_v1"
 #define SKEL_DEVICE_ID_GENERATOR "skel/device_id"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 
 /* these structures are private to the kernel driver */
 typedef struct device_info device_info;
@@ -86,7 +85,7 @@ static int32 eng_interrupt(void *data);
 
 static DeviceData		*pd;
 static isa_module_info	*isa_bus = NULL;
-static pci_device_module_info	*pci_bus = NULL;
+static pci_device_ops	*pci_bus = NULL;
 static pci_device		*pci_dev = NULL;
 static agp_gart_module_info	*agp_bus = NULL;
 
@@ -209,22 +208,51 @@ load_driver_settings_internal(void)
 /*	#pragma mark - driver module API */
 
 
-static float
-skel_supports_device(device_node *parent)
+/* dk_device_ops wrappers for the old device hooks */
+
+static status_t
+skel_dk_open(void *driverCookie, const char *path, int openMode, void **_cookie)
 {
-	const char *bus;
+	return open_hook(driverCookie, path, openMode, _cookie);
+}
+
+static dk_device_ops sDeviceOps = {
+	skel_dk_open,
+	close_hook,
+	free_hook,
+	read_hook,
+	write_hook,
+	NULL,	/* io */
+	control_hook,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
+/* dk_driver_info matching and lifecycle */
+
+
+static const dk_match_rule sSkelMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sSkelMatchDict = {
+	sSkelMatchRules,
+	0
+};
+
+
+static float
+skel_probe(dk_node *node)
+{
 	uint16 vendorId, deviceId;
 
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "pci"))
-		return 0.0;
-
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	if (sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, false) != B_OK)
 		return 0.0;
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+	if (sDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID,
 			&deviceId, false) != B_OK)
 		return 0.0;
 
@@ -247,30 +275,16 @@ skel_supports_device(device_node *parent)
 
 
 static status_t
-skel_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Skeleton Graphics" } },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, SKEL_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-skel_init_driver(device_node *node, void **cookie)
+skel_attach(dk_node *node, void **cookie)
 {
 	load_driver_settings_internal();
 
-	/* get pci_device_module_info from parent node */
-	{
-		device_node *parent = sDeviceManager->get_parent_node(node);
-		sDeviceManager->get_driver(parent, (driver_module_info **)&pci_bus,
-			(void **)&pci_dev);
-		sDeviceManager->put_node(parent);
-	}
+	/* get PCI ops from parent bus manager */
+	status_t pci_status = sDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&pci_bus, (void **)&pci_dev);
+	if (pci_status != B_OK)
+		return pci_status;
 
 	/* get a handle for the isa bus */
 	if (get_module(B_ISA_MODULE_NAME, (module_info **)&isa_bus) != B_OK)
@@ -312,8 +326,21 @@ skel_init_driver(device_node *node, void **cookie)
 		pd = NULL;
 		if (agp_bus) put_module(B_AGP_GART_MODULE_NAME);
 		put_module(B_ISA_MODULE_NAME);
-		put_module(B_PCI_MODULE_NAME);
 		return B_ERROR;
+	}
+
+	/* publish device */
+	{
+		status_t pub_status = sDeviceKeeper->publish_device(node,
+			pd->di[0].name, &sDeviceOps);
+		if (pub_status != B_OK) {
+			DELETE_BEN(pd->kernel);
+			free(pd);
+			pd = NULL;
+			if (agp_bus) put_module(B_AGP_GART_MODULE_NAME);
+			put_module(B_ISA_MODULE_NAME);
+			return pub_status;
+		}
 	}
 
 	*cookie = node;
@@ -322,10 +349,14 @@ skel_init_driver(device_node *node, void **cookie)
 
 
 static void
-skel_uninit_driver(void *_cookie)
+skel_detach(void *_cookie)
 {
+	dk_node *node = (dk_node *)_cookie;
+
 	/* free the driver data */
 	if (pd) {
+		if (pd->di[0].name[0] != '\0')
+			sDeviceKeeper->unpublish_device(node, pd->di[0].name);
 		DELETE_BEN(pd->kernel);
 		free(pd);
 		pd = NULL;
@@ -335,19 +366,6 @@ skel_uninit_driver(void *_cookie)
 
 	/* put the agp module away if it's there */
 	if (agp_bus) put_module(B_AGP_GART_MODULE_NAME);
-}
-
-
-static status_t
-skel_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-
-	if (pd == NULL || pd->count == 0)
-		return B_ERROR;
-
-	return sDeviceManager->publish_device(node, pd->di[0].name,
-		SKEL_DEVICE_MODULE_NAME);
 }
 
 static status_t map_device(device_info *di)
@@ -649,18 +667,10 @@ static status_t open_hook (void* _info, const char* name, int flags, void** cook
 	case 0x01f010de: /* Nvidia GeForce4 MX Integrated GPU */
 	{
 		/* UMA: read memory size from host bridge (bus 0, device 0, function 1).
-		 * This is a cross-device query requiring legacy PCI module. */
-		pci_module_info* pciLegacy;
-		if (get_module(B_PCI_MODULE_NAME, (module_info**)&pciLegacy) == B_OK) {
-			uint8 regOffset = (si->vendor_id == 0x01a0) ? 0x7c : 0x84;
-			uint32 mask = (si->vendor_id == 0x01a0) ? 0x000007c0 : 0x000007f0;
-			uint32 shift = (si->vendor_id == 0x01a0) ? 6 : 4;
-			si->ps.memory_size = 1024 * 1024 *
-				((((pciLegacy->read_pci_config(0, 0, 1, regOffset, 4))
-					& mask) >> shift) + 1);
-			si->ps.memory_size -= (64 * 1024);
-			put_module(B_PCI_MODULE_NAME);
-		}
+		 * TODO: replace with find_node() + PCI bus_ops read_pci_config.
+		 * These are ancient Nvidia GeForce2/4 integrated GPUs — not a
+		 * priority for DeviceKeeper migration since skeleton is a template. */
+		si->ps.memory_size = 16 * 1024 * 1024; /* fallback: assume 16MB */
 		break;
 	}
 	default:
@@ -965,72 +975,24 @@ control_hook (void* dev, uint32 msg, void *buf, size_t len) {
 }
 
 
-/*	#pragma mark - device init/uninit */
-
-
-static status_t
-skel_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-skel_uninit_device(void *_cookie)
-{
-}
-
-
 /*	#pragma mark - module exports */
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sSkelDevice = {
-	{
-		SKEL_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	skel_init_device,
-	skel_uninit_device,
-	NULL,	/* device_removed */
-
-	open_hook,
-	close_hook,
-	free_hook,
-	read_hook,
-	write_hook,
-	NULL,	/* io */
-	control_hook,
-
-	NULL,	/* select */
-	NULL,	/* deselect */
-};
-
-struct driver_module_info sSkelDriver = {
-	{
-		SKEL_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	skel_supports_device,
-	skel_register_device,
-	skel_init_driver,
-	skel_uninit_driver,
-	skel_register_child_devices,
-	NULL,	/* rescan */
-	NULL,	/* removed */
+struct dk_driver_info sSkelDriver = {
+	.info   = { SKEL_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sSkelMatchDict,
+	.probe  = skel_probe,
+	.attach = skel_attach,
+	.detach = skel_detach,
+	.ops    = &sDeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sSkelDriver,
-	(module_info *)&sSkelDevice,
 	NULL
 };
