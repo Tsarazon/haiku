@@ -11,7 +11,7 @@
 
 #include <stdio.h>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <generic_syscall.h>
 #include <kernel.h>
@@ -32,17 +32,16 @@
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-#define	RANDOM_DRIVER_MODULE_NAME "bus_managers/random/driver_v1"
-#define RANDOM_DEVICE_MODULE_NAME "bus_managers/random/device_v1"
+#define	RANDOM_DRIVER_MODULE_NAME "bus_managers/random/dk_driver_v1"
 
 
 static mutex sRandomLock;
 static void *sRandomCookie;
-device_manager_info* gDeviceManager;
+static dk_keeper_info* gDeviceKeeper;
 
 
 typedef struct {
-	device_node*			node;
+	dk_node*	node;
 } random_driver_info;
 
 
@@ -55,20 +54,7 @@ random_queue_randomness(uint64 value)
 }
 
 
-//	#pragma mark - device module API
-
-
-static status_t
-random_init_device(void* _info, void** _cookie)
-{
-	return B_OK;
-}
-
-
-static void
-random_uninit_device(void* _cookie)
-{
-}
+//	#pragma mark - dk_device_ops
 
 
 static status_t
@@ -155,10 +141,8 @@ random_select(void *cookie, uint8 event, selectsync *sync)
 	TRACE("select()\n");
 
 	if (event == B_SELECT_READ) {
-		/* tell there is already data to read */
 		notify_select_event(sync, event);
 	} else if (event == B_SELECT_WRITE) {
-		/* we're now writable */
 		notify_select_event(sync, event);
 	}
 	return B_OK;
@@ -173,50 +157,41 @@ random_deselect(void *cookie, uint8 event, selectsync *sync)
 }
 
 
-//	#pragma mark - driver module API
+static dk_device_ops sRandomDeviceOps = {
+	random_open,
+	random_close,
+	random_free,
+	random_read,
+	random_write,
+	NULL,	// io
+	random_control,
+	random_select,
+	random_deselect,
+	NULL,	// device_removed
+};
 
 
-static float
-random_supports_device(device_node *parent)
-{
-	CALLED();
-	const char *bus;
-
-	// make sure parent is really device root
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "root"))
-		return 0.0;
-
-	return 1.0;
-}
+//	#pragma mark - dk_driver_info
 
 
-static status_t
-random_register_device(device_node *node)
-{
-	CALLED();
+static const dk_match_rule sRandomMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "root"),
+	DK_MATCH_END
+};
 
-	// ready to register
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "Random" }},
-		{ B_DEVICE_FLAGS, B_UINT32_TYPE, { .ui32 = B_KEEP_DRIVER_LOADED }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, RANDOM_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
+static const dk_match_dict sRandomMatchDict = {
+	sRandomMatchRules,
+	0
+};
 
 
 static status_t
-random_init_driver(device_node *node, void **cookie)
+random_attach(dk_node* node, void** cookie)
 {
 	CALLED();
 
-	random_driver_info* info = (random_driver_info*)malloc(
-		sizeof(random_driver_info));
+	random_driver_info* info
+		= (random_driver_info*)malloc(sizeof(random_driver_info));
 	if (info == NULL)
 		return B_NO_MEMORY;
 
@@ -224,10 +199,15 @@ random_init_driver(device_node *node, void **cookie)
 	RANDOM_INIT();
 
 	memset(info, 0, sizeof(*info));
-
 	info->node = node;
 
 	register_generic_syscall(RANDOM_SYSCALLS, random_generic_syscall, 1, 0);
+
+	status_t status = gDeviceKeeper->publish_device(node, "random",
+		&sRandomDeviceOps);
+	if (status == B_OK) {
+		gDeviceKeeper->publish_device(node, "urandom", &sRandomDeviceOps);
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -235,7 +215,7 @@ random_init_driver(device_node *node, void **cookie)
 
 
 static void
-random_uninit_driver(void *_cookie)
+random_detach(void* _cookie)
 {
 	CALLED();
 
@@ -250,93 +230,52 @@ random_uninit_driver(void *_cookie)
 }
 
 
+//	#pragma mark - callback module
+
+
 static status_t
-random_register_child_devices(void* _cookie)
+random_controller_std_ops(int32 op, ...)
 {
-	CALLED();
-	random_driver_info* info = (random_driver_info*)_cookie;
-	status_t status = gDeviceManager->publish_device(info->node, "random",
-		RANDOM_DEVICE_MODULE_NAME);
-	if (status == B_OK) {
-		gDeviceManager->publish_device(info->node, "urandom",
-			RANDOM_DEVICE_MODULE_NAME);
+	switch (op) {
+		case B_MODULE_INIT:
+		case B_MODULE_UNINIT:
+			return B_OK;
 	}
-	return status;
+	return B_ERROR;
 }
 
 
-//	#pragma mark -
+// Plain kernel module retrieved by RNG controller drivers via
+// get_module(RANDOM_FOR_CONTROLLER_MODULE_NAME). Controllers call
+// queue_randomness() to push entropy into the pool.
+static random_for_controller_interface sRandomForControllerModule = {
+	{
+		RANDOM_FOR_CONTROLLER_MODULE_NAME,
+		0,
+		random_controller_std_ops
+	},
+	random_queue_randomness,
+};
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager},
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{}
 };
 
 
-struct device_module_info sRandomDevice = {
-	{
-		RANDOM_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	random_init_device,
-	random_uninit_device,
-	NULL, // remove,
-
-	random_open,
-	random_close,
-	random_free,
-	random_read,
-	random_write,
-	NULL,
-	random_control,
-
-	random_select,
-	random_deselect,
-};
-
-
-struct driver_module_info sRandomDriver = {
-	{
-		RANDOM_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	random_supports_device,
-	random_register_device,
-	random_init_driver,
-	random_uninit_driver,
-	random_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
-
-
-random_for_controller_interface sRandomForControllerModule = {
-	{
-		{
-			RANDOM_FOR_CONTROLLER_MODULE_NAME,
-			0,
-			NULL
-		},
-
-		NULL, // supported devices
-		NULL,
-		NULL,
-		NULL,
-		NULL
-	},
-
-	random_queue_randomness,
+static dk_driver_info sRandomDriver = {
+	.info		= { RANDOM_DRIVER_MODULE_NAME, 0, NULL },
+	.match		= &sRandomMatchDict,
+	.attach		= random_attach,
+	.detach		= random_detach,
+	.ops		= &sRandomDeviceOps,
+	.node_flags	= KOSM_KEEP_DRIVER_LOADED,
 };
 
 
 module_info* modules[] = {
 	(module_info*)&sRandomDriver,
-	(module_info*)&sRandomDevice,
 	(module_info*)&sRandomForControllerModule,
 	NULL
 };
