@@ -19,7 +19,7 @@
 #include "mmc_icon.h"
 #include "mmc.h"
 
-#include <drivers/device_manager.h>
+#include <device_keeper.h>
 #include <drivers/KernelExport.h>
 #include <drivers/Drivers.h>
 #include <kernel/OS.h>
@@ -37,14 +37,13 @@
 #define ERROR(x...)			dprintf("\33[33mmmc_disk:\33[0m " x)
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
-#define MMC_DISK_DRIVER_MODULE_NAME "drivers/disk/mmc/mmc_disk/driver_v1"
-#define MMC_DISK_DEVICE_MODULE_NAME "drivers/disk/mmc/mmc_disk/device_v1"
+#define MMC_DISK_DRIVER_MODULE_NAME "drivers/disk/mmc/mmc_disk/dk_driver_v1"
 #define MMC_DEVICE_ID_GENERATOR "mmc/device_id"
 
 
 static const uint32 kBlockSize = 512; // FIXME get it from the CSD
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 
 
 struct mmc_disk_csd {
@@ -74,53 +73,7 @@ struct mmc_disk_csd {
 };
 
 
-static float
-mmc_disk_supports_device(device_node* parent)
-{
-	// Filter all devices that are not on an MMC bus
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus,
-			true) != B_OK)
-		return -1;
-
-	if (strcmp(bus, "mmc") != 0)
-		return 0.0;
-
-	CALLED();
-
-	// Filter all devices that are not of the known types
-	uint8_t deviceType;
-	if (sDeviceManager->get_attr_uint8(parent, kMmcTypeAttribute,
-			&deviceType, true) != B_OK)
-	{
-		ERROR("Could not get device type\n");
-		return -1;
-	}
-
-	if (deviceType == CARD_TYPE_SD)
-		TRACE("SD card found, parent: %p\n", parent);
-	else if (deviceType == CARD_TYPE_SDHC)
-		TRACE("SDHC card found, parent: %p\n", parent);
-	else
-		return 0.0;
-
-	return 0.8;
-}
-
-
-static status_t
-mmc_disk_register_device(device_node* node)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "SD Card" }},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, MMC_DISK_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
+//	#pragma mark - internal helpers
 
 
 static status_t
@@ -193,162 +146,98 @@ mmc_block_get_geometry(mmc_disk_driver_info* info, device_geometry* geometry)
 
 
 static status_t
-mmc_disk_init_driver(device_node* node, void** cookie)
+mmc_block_trim(mmc_disk_driver_info* info, fs_trim_data* trimData)
 {
-	CALLED();
-	mmc_disk_driver_info* info = (mmc_disk_driver_info*)malloc(
-		sizeof(mmc_disk_driver_info));
+	enum {
+		kEraseModeErase = 0, // force to actually erase the data
+		kEraseModeDiscard = 1,
+			// just mark the data as unused for internal wear leveling
+			// algorithms
+		kEraseModeFullErase = 2, // erase the whole card
+	};
+	TRACE("trim_device()\n");
 
-	if (info == NULL)
-		return B_NO_MEMORY;
+	trimData->trimmed_size = 0;
 
-	memset(info, 0, sizeof(*info));
+	const off_t deviceSize = info->DeviceSize(); // in bytes
+	if (deviceSize < 0)
+		return B_BAD_VALUE;
 
-	void* unused2;
-	info->node = node;
-	info->parent = sDeviceManager->get_parent_node(info->node);
-	sDeviceManager->get_driver(info->parent, (driver_module_info **)&info->mmc,
-		&unused2);
+	STATIC_ASSERT(sizeof(deviceSize) <= sizeof(uint64));
+	ASSERT(deviceSize >= 0);
 
-	// We need to grab the bus cookie as well
-	// FIXME it would be easier if that was available from the get_driver call
-	// above directly, but currently it isn't.
-	device_node* busNode = sDeviceManager->get_parent_node(info->parent);
-	driver_module_info* unused;
-	sDeviceManager->get_driver(busNode, &unused, &info->parentCookie);
-	sDeviceManager->put_node(busNode);
+	// Do not trim past device end
+	for (uint32 i = 0; i < trimData->range_count; i++) {
+		uint64 offset = trimData->ranges[i].offset;
+		uint64& size = trimData->ranges[i].size;
 
-	TRACE("MMC bus handle: %p %s\n", info->mmc, info->mmc->info.info.name);
-
-	if (sDeviceManager->get_attr_uint16(node, kMmcRcaAttribute, &info->rca,
-			true) != B_OK) {
-		TRACE("MMC card node has no RCA attribute\n");
-		free(info);
-		return B_BAD_DATA;
+		if (offset >= (uint64)deviceSize)
+			return B_BAD_VALUE;
+		size = min_c(size, (uint64)deviceSize - offset);
 	}
 
-	uint8_t deviceType;
-	if (sDeviceManager->get_attr_uint8(info->parent, kMmcTypeAttribute,
-			&deviceType, true) != B_OK) {
-		ERROR("Could not get device type\n");
-		free(info);
-		return B_BAD_DATA;
+	uint64 trimmedSize = 0;
+	status_t result = B_OK;
+	for (uint32 i = 0; i < trimData->range_count; i++) {
+		uint64 offset = trimData->ranges[i].offset;
+		uint64 length = trimData->ranges[i].size;
+
+		// Round up offset and length to multiple of the sector size
+		// The offset is rounded up, so some space may be left
+		// (not trimmed) at the start of the range.
+		offset = ROUNDUP(offset, kBlockSize);
+		// Adjust the length for the possibly skipped range
+		length -= offset - trimData->ranges[i].offset;
+		// The length is rounded down, so some space at the end may also
+		// be left (not trimmed).
+		length &= ~(kBlockSize - 1);
+
+		if (length == 0)
+			continue;
+
+		TRACE("trim %" B_PRIu64 " bytes from %" B_PRIu64 "\n",
+			length, offset);
+
+		ASSERT(offset % kBlockSize == 0);
+		ASSERT(length % kBlockSize == 0);
+
+		if ((info->flags & kIoCommandOffsetAsSectors) != 0) {
+			offset /= kBlockSize;
+			length /= kBlockSize;
+		}
+
+		// Parameter of execute_command is uint32_t
+		if (offset > UINT32_MAX
+			|| length > UINT32_MAX - offset) {
+			result = B_BAD_VALUE;
+			break;
+		}
+
+		uint32_t response;
+		result = info->mmc->execute_command(info->parent, info->parentCookie,
+			info->rca, SD_ERASE_WR_BLK_START, offset, &response);
+		if (result != B_OK)
+			break;
+		result = info->mmc->execute_command(info->parent, info->parentCookie,
+			info->rca, SD_ERASE_WR_BLK_END, offset + length, &response);
+		if (result != B_OK)
+			break;
+		result = info->mmc->execute_command(info->parent, info->parentCookie,
+			info->rca, SD_ERASE, kEraseModeDiscard, &response);
+		if (result != B_OK)
+			break;
+
+		trimmedSize += (info->flags & kIoCommandOffsetAsSectors) != 0
+			? length * kBlockSize : length;
 	}
 
-	// SD and MMC cards use byte offsets for IO commands, later ones (SDHC,
-	// SDXC, ...) use sectors.
-	if (deviceType == CARD_TYPE_SD || deviceType == CARD_TYPE_MMC)
-		info->flags = 0;
-	else
-		info->flags = kIoCommandOffsetAsSectors;
+	trimData->trimmed_size = trimmedSize;
 
-	status_t error;
-
-	static const uint32 kDMAResourceBufferCount			= 16;
-	static const uint32 kDMAResourceBounceBufferCount	= 16;
-
-	info->dmaResource = new(std::nothrow) DMAResource;
-	if (info->dmaResource == NULL) {
-		TRACE("Failed to allocate DMA resource");
-		free(info);
-		return B_NO_MEMORY;
-	}
-
-	error = info->dmaResource->Init(info->node, kBlockSize,
-		kDMAResourceBufferCount, kDMAResourceBounceBufferCount);
-	if (error != B_OK) {
-		TRACE("Failed to init DMA resource");
-		delete info->dmaResource;
-		free(info);
-		return error;
-	}
-
-	info->scheduler = new(std::nothrow) IOSchedulerSimple(info->dmaResource);
-	if (info->scheduler == NULL) {
-		TRACE("Failed to allocate scheduler");
-		delete info->dmaResource;
-		free(info);
-		return B_NO_MEMORY;
-	}
-
-	error = info->scheduler->Init("mmc storage");
-	if (error != B_OK) {
-		TRACE("Failed to init scheduler");
-		delete info->scheduler;
-		delete info->dmaResource;
-		free(info);
-		return error;
-	}
-	info->scheduler->SetCallback(&mmc_disk_execute_iorequest, info);
-
-	memset(&info->geometry, 0, sizeof(info->geometry));
-
-	TRACE("MMC card device initialized for RCA %x\n", info->rca);
-	*cookie = info;
-	return B_OK;
+	return result;
 }
 
 
-static void
-mmc_disk_uninit_driver(void* _cookie)
-{
-	CALLED();
-	mmc_disk_driver_info* info = (mmc_disk_driver_info*)_cookie;
-	delete info->scheduler;
-	delete info->dmaResource;
-	sDeviceManager->put_node(info->parent);
-	free(info);
-}
-
-
-static status_t
-mmc_disk_register_child_devices(void* _cookie)
-{
-	CALLED();
-	mmc_disk_driver_info* info = (mmc_disk_driver_info*)_cookie;
-	status_t status;
-
-	int32 id = sDeviceManager->create_id(MMC_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), "disk/mmc/%" B_PRId32 "/raw", id);
-
-	status = sDeviceManager->publish_device(info->node, name,
-		MMC_DISK_DEVICE_MODULE_NAME);
-
-	return status;
-}
-
-
-//	#pragma mark - device module API
-
-
-static status_t
-mmc_block_init_device(void* _info, void** _cookie)
-{
-	CALLED();
-
-	// No additional context, so just reuse the same data as the disk device
-	mmc_disk_driver_info* info = (mmc_disk_driver_info*)_info;
-	*_cookie = info;
-
-	// Note: it is not possible to execute commands here, because this is called
-	// with the mmc_bus locked for enumeration (and still using slow clock).
-
-	return B_OK;
-}
-
-
-static void
-mmc_block_uninit_device(void* _cookie)
-{
-	CALLED();
-	//mmc_disk_driver_info* info = (mmc_disk_driver_info*)_cookie;
-
-	// TODO cleanup whatever is relevant
-}
+//	#pragma mark - dk_device_ops
 
 
 static status_t
@@ -470,98 +359,6 @@ mmc_block_io(void* cookie, io_request* request)
 
 
 static status_t
-mmc_block_trim(mmc_disk_driver_info* info, fs_trim_data* trimData)
-{
-	enum {
-		kEraseModeErase = 0, // force to actually erase the data
-		kEraseModeDiscard = 1,
-			// just mark the data as unused for internal wear leveling
-			// algorithms
-		kEraseModeFullErase = 2, // erase the whole card
-	};
-	TRACE("trim_device()\n");
-
-	trimData->trimmed_size = 0;
-
-	const off_t deviceSize = info->DeviceSize(); // in bytes
-	if (deviceSize < 0)
-		return B_BAD_VALUE;
-
-	STATIC_ASSERT(sizeof(deviceSize) <= sizeof(uint64));
-	ASSERT(deviceSize >= 0);
-
-	// Do not trim past device end
-	for (uint32 i = 0; i < trimData->range_count; i++) {
-		uint64 offset = trimData->ranges[i].offset;
-		uint64& size = trimData->ranges[i].size;
-
-		if (offset >= (uint64)deviceSize)
-			return B_BAD_VALUE;
-		size = min_c(size, (uint64)deviceSize - offset);
-	}
-
-	uint64 trimmedSize = 0;
-	status_t result = B_OK;
-	for (uint32 i = 0; i < trimData->range_count; i++) {
-		uint64 offset = trimData->ranges[i].offset;
-		uint64 length = trimData->ranges[i].size;
-
-		// Round up offset and length to multiple of the sector size
-		// The offset is rounded up, so some space may be left
-		// (not trimmed) at the start of the range.
-		offset = ROUNDUP(offset, kBlockSize);
-		// Adjust the length for the possibly skipped range
-		length -= offset - trimData->ranges[i].offset;
-		// The length is rounded down, so some space at the end may also
-		// be left (not trimmed).
-		length &= ~(kBlockSize - 1);
-
-		if (length == 0)
-			continue;
-
-		TRACE("trim %" B_PRIu64 " bytes from %" B_PRIu64 "\n",
-			length, offset);
-
-		ASSERT(offset % kBlockSize == 0);
-		ASSERT(length % kBlockSize == 0);
-
-		if ((info->flags & kIoCommandOffsetAsSectors) != 0) {
-			offset /= kBlockSize;
-			length /= kBlockSize;
-		}
-
-		// Parameter of execute_command is uint32_t
-		if (offset > UINT32_MAX
-			|| length > UINT32_MAX - offset) {
-			result = B_BAD_VALUE;
-			break;
-		}
-
-		uint32_t response;
-		result = info->mmc->execute_command(info->parent, info->parentCookie,
-			info->rca, SD_ERASE_WR_BLK_START, offset, &response);
-		if (result != B_OK)
-			break;
-		result = info->mmc->execute_command(info->parent, info->parentCookie,
-			info->rca, SD_ERASE_WR_BLK_END, offset + length, &response);
-		if (result != B_OK)
-			break;
-		result = info->mmc->execute_command(info->parent, info->parentCookie,
-			info->rca, SD_ERASE, kEraseModeDiscard, &response);
-		if (result != B_OK)
-			break;
-
-		trimmedSize += (info->flags & kIoCommandOffsetAsSectors) != 0
-			? length * kBlockSize : length;
-	}
-
-	trimData->trimmed_size = trimmedSize;
-
-	return result;
-}
-
-
-static status_t
 mmc_block_ioctl(void* cookie, uint32 op, void* buffer, size_t length)
 {
 	mmc_disk_handle* handle = (mmc_disk_handle*)cookie;
@@ -634,27 +431,7 @@ mmc_block_ioctl(void* cookie, uint32 op, void* buffer, size_t length)
 }
 
 
-module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
-	{}
-};
-
-
-// The "block device" associated with the device file. It can be open()
-// multiple times, each allocating an mmc_disk_handle. It does not interact
-// with the hardware directly, instead it forwards all IO requests to the
-// disk driver through the IO scheduler.
-struct device_module_info sMMCBlockDevice = {
-	{
-		MMC_DISK_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	mmc_block_init_device,
-	mmc_block_uninit_device,
-	NULL, // remove,
-
+static dk_device_ops sMMCBlockDeviceOps = {
 	mmc_block_open,
 	mmc_block_close,
 	mmc_block_free,
@@ -662,33 +439,217 @@ struct device_module_info sMMCBlockDevice = {
 	mmc_block_write,
 	mmc_block_io,
 	mmc_block_ioctl,
-
 	NULL,	// select
 	NULL,	// deselect
+	NULL,	// device_removed
 };
 
 
-// Driver for the disk devices itself. This is paired with an
-// mmc_disk_driver_info instanciated once per device. Handles the actual disk
-// I/O operations
-struct driver_module_info sMMCDiskDriver = {
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sMMCDiskMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "mmc"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sMMCDiskMatchDict = {
+	sMMCDiskMatchRules,
+	0
+};
+
+
+static float
+mmc_disk_probe(dk_node* node)
+{
+	CALLED();
+
+	// Filter all devices that are not of the known types
+	uint8_t deviceType;
+	if (sDeviceKeeper->get_property_uint8(node, kMmcTypeAttribute,
+			&deviceType, true) != B_OK)
 	{
-		MMC_DISK_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-	mmc_disk_supports_device,
-	mmc_disk_register_device,
-	mmc_disk_init_driver,
-	mmc_disk_uninit_driver,
-	mmc_disk_register_child_devices,
-	NULL, // mmc_disk_rescan_child_devices,
-	NULL,
+		ERROR("Could not get device type\n");
+		return -1;
+	}
+
+	if (deviceType == CARD_TYPE_SD)
+		TRACE("SD card found, node: %p\n", node);
+	else if (deviceType == CARD_TYPE_SDHC)
+		TRACE("SDHC card found, node: %p\n", node);
+	else
+		return 0.0;
+
+	return 0.8;
+}
+
+
+static status_t
+mmc_disk_attach(dk_node* node, void** cookie)
+{
+	CALLED();
+	mmc_disk_driver_info* info = (mmc_disk_driver_info*)malloc(
+		sizeof(mmc_disk_driver_info));
+
+	if (info == NULL)
+		return B_NO_MEMORY;
+
+	memset(info, 0, sizeof(*info));
+
+	info->node = node;
+	info->pathId = -1;
+
+	// Get MMC bus ops from parent
+	status_t status = sDeviceKeeper->get_interface(node,
+		MMC_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&info->mmc, &info->parentCookie);
+	if (status != B_OK) {
+		ERROR("failed to get MMC device interface: %s\n", strerror(status));
+		free(info);
+		return status;
+	}
+
+	// Keep a reference to the parent node for put_node in detach
+	info->parent = sDeviceKeeper->get_parent_node(node);
+
+	TRACE("MMC bus handle: %p\n", info->mmc);
+
+	if (sDeviceKeeper->get_property_uint16(node, kMmcRcaAttribute, &info->rca,
+			true) != B_OK) {
+		TRACE("MMC card node has no RCA attribute\n");
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return B_BAD_DATA;
+	}
+
+	uint8_t deviceType;
+	if (sDeviceKeeper->get_property_uint8(node, kMmcTypeAttribute,
+			&deviceType, true) != B_OK) {
+		ERROR("Could not get device type\n");
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return B_BAD_DATA;
+	}
+
+	// SD and MMC cards use byte offsets for IO commands, later ones (SDHC,
+	// SDXC, ...) use sectors.
+	if (deviceType == CARD_TYPE_SD || deviceType == CARD_TYPE_MMC)
+		info->flags = 0;
+	else
+		info->flags = kIoCommandOffsetAsSectors;
+
+	status_t error;
+
+	static const uint32 kDMAResourceBufferCount			= 16;
+	static const uint32 kDMAResourceBounceBufferCount	= 16;
+
+	info->dmaResource = new(std::nothrow) DMAResource;
+	if (info->dmaResource == NULL) {
+		TRACE("Failed to allocate DMA resource");
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	error = info->dmaResource->Init(info->node, kBlockSize,
+		kDMAResourceBufferCount, kDMAResourceBounceBufferCount);
+	if (error != B_OK) {
+		TRACE("Failed to init DMA resource");
+		delete info->dmaResource;
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return error;
+	}
+
+	info->scheduler = new(std::nothrow) IOSchedulerSimple(info->dmaResource);
+	if (info->scheduler == NULL) {
+		TRACE("Failed to allocate scheduler");
+		delete info->dmaResource;
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return B_NO_MEMORY;
+	}
+
+	error = info->scheduler->Init("mmc storage");
+	if (error != B_OK) {
+		TRACE("Failed to init scheduler");
+		delete info->scheduler;
+		delete info->dmaResource;
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return error;
+	}
+	info->scheduler->SetCallback(&mmc_disk_execute_iorequest, info);
+
+	memset(&info->geometry, 0, sizeof(info->geometry));
+
+	// Publish device
+	info->pathId = sDeviceKeeper->create_id(MMC_DEVICE_ID_GENERATOR);
+	if (info->pathId < 0) {
+		delete info->scheduler;
+		delete info->dmaResource;
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return info->pathId;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		"disk/mmc/%" B_PRId32 "/raw", info->pathId);
+	status = sDeviceKeeper->publish_device(node, info->publishedPath,
+		&sMMCBlockDeviceOps);
+	if (status != B_OK) {
+		sDeviceKeeper->free_id(MMC_DEVICE_ID_GENERATOR, info->pathId);
+		delete info->scheduler;
+		delete info->dmaResource;
+		sDeviceKeeper->put_node(info->parent);
+		free(info);
+		return status;
+	}
+
+	TRACE("MMC card device initialized for RCA %x\n", info->rca);
+	*cookie = info;
+	return B_OK;
+}
+
+
+static void
+mmc_disk_detach(void* _cookie)
+{
+	CALLED();
+	mmc_disk_driver_info* info = (mmc_disk_driver_info*)_cookie;
+
+	if (info->publishedPath[0] != '\0')
+		sDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->pathId >= 0)
+		sDeviceKeeper->free_id(MMC_DEVICE_ID_GENERATOR, info->pathId);
+
+	delete info->scheduler;
+	delete info->dmaResource;
+	sDeviceKeeper->put_node(info->parent);
+	free(info);
+}
+
+
+//	#pragma mark - module exports
+
+
+module_dependency module_dependencies[] = {
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
+	{}
+};
+
+
+struct dk_driver_info sMMCDiskDriver = {
+	.info   = { MMC_DISK_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sMMCDiskMatchDict,
+	.probe  = mmc_disk_probe,
+	.attach = mmc_disk_attach,
+	.detach = mmc_disk_detach,
+	.ops    = &sMMCBlockDeviceOps,
 };
 
 
 module_info* modules[] = {
 	(module_info*)&sMMCDiskDriver,
-	(module_info*)&sMMCBlockDevice,
 	NULL
 };

@@ -10,7 +10,7 @@
 #define _MMC_DISK_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 #include <stdint.h>
@@ -28,8 +28,8 @@ enum MMCDiskFlags {
 
 // This is the device info structure, allocated once per device
 typedef struct {
-	device_node* node;
-	device_node* parent;
+	dk_node* node;
+	dk_node* parent;
 	void* parentCookie;
 	mmc_device_interface* mmc;
 	uint16_t rca;
@@ -39,6 +39,8 @@ typedef struct {
 
 	DMAResource* dmaResource;
 	IOScheduler* scheduler;
+	int32 pathId;
+	char publishedPath[64];
 
 	off_t DeviceSize() const {
 		return (off_t)geometry.bytes_per_sector * geometry.sectors_per_track
