@@ -7,15 +7,14 @@
  */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <new>
 #include <string.h>
 
 
-#define NULL_DRIVER_MODULE_NAME "drivers/common/null/driver_v1"
-#define NULL_DEVICE_MODULE_NAME "drivers/common/null/device_v1"
+#define NULL_DRIVER_MODULE_NAME "drivers/common/null/dk_driver_v1"
 
 #define DEVICE_NAME_FULL "full"
 #define DEVICE_NAME_NULL "null"
@@ -32,8 +31,7 @@ struct null_cookie {
 };
 
 
-static device_manager_info* sDeviceManager;
-static bool sPublished = false;
+static dk_keeper_info* sDeviceKeeper;
 
 
 static status_t
@@ -111,34 +109,38 @@ null_write(void* _cookie, off_t pos, const void* buffer, size_t* _length)
 
 
 static float
-null_supports_device(device_node* parent)
+null_supports_device(dk_node* parent)
 {
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
+	if (strcmp(bus, "generic") == 0)
+		return 0.01f;
+	return -1.0f;
 }
 
 
-static status_t
-null_register_device(device_node* node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Null devices"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, NULL_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
+static dk_device_ops sNullDeviceOps = {
+	null_open,
+	null_close,
+	null_free,
+	null_read,
+	null_write,
+	NULL,	// io
+	null_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	NULL	// device_removed
+};
 
 
 static status_t
-null_init_driver(device_node* node, void** cookie)
+null_init_driver(dk_node* node, void** cookie)
 {
+	sDeviceKeeper->publish_device(node, DEVICE_NAME_NULL, &sNullDeviceOps);
+	sDeviceKeeper->publish_device(node, DEVICE_NAME_ZERO, &sNullDeviceOps);
+	sDeviceKeeper->publish_device(node, DEVICE_NAME_FULL, &sNullDeviceOps);
 	*cookie = node;
 	return B_OK;
 }
@@ -147,92 +149,38 @@ null_init_driver(device_node* node, void** cookie)
 static void
 null_uninit_driver(void* _cookie)
 {
-	sPublished = false;
-}
-
-
-static status_t
-null_register_child_devices(void* _cookie)
-{
-	device_node* node = (device_node*)_cookie;
-
-	if (sPublished)
-		return B_OK;
-
-	sPublished = true;
-	sDeviceManager->publish_device(node, DEVICE_NAME_NULL,
-		NULL_DEVICE_MODULE_NAME);
-	sDeviceManager->publish_device(node, DEVICE_NAME_ZERO,
-		NULL_DEVICE_MODULE_NAME);
-	sDeviceManager->publish_device(node, DEVICE_NAME_FULL,
-		NULL_DEVICE_MODULE_NAME);
-	return B_OK;
-}
-
-
-static status_t
-null_init_device(void* _info, void** _cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-null_uninit_device(void* _cookie)
-{
 }
 
 
 //	#pragma mark -
 
 
+static const dk_match_rule sNullMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sNullMatchDict = {
+	sNullMatchRules,
+	0
+};
+
+
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sNullDevice = {
-	{
-		NULL_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	null_init_device,
-	null_uninit_device,
-	NULL,	// device_removed
-
-	null_open,
-	null_close,
-	null_free,
-	null_read,
-	null_write,
-	NULL,	// io
-	null_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sNullDriver = {
-	{
-		NULL_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	null_supports_device,
-	null_register_device,
-	null_init_driver,
-	null_uninit_driver,
-	null_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+static dk_driver_info sNullDriver = {
+	.info	= { NULL_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sNullMatchDict,
+	.probe	= null_supports_device,
+	.attach	= null_init_driver,
+	.detach	= null_uninit_driver,
+	.ops	= &sNullDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sNullDriver,
-	(module_info*)&sNullDevice,
 	NULL
 };
