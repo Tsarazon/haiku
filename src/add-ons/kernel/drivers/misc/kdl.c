@@ -3,16 +3,15 @@
  * Permission is hereby granted under the terms of the MIT license.
  */
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <Drivers.h>
 #include <Errors.h>
 #include <string.h>
 
-#define KDL_DRIVER_MODULE_NAME "drivers/misc/kdl/driver_v1"
-#define KDL_DEVICE_MODULE_NAME "drivers/misc/kdl/device_v1"
+#define KDL_DRIVER_MODULE_NAME "drivers/misc/kdl/dk_driver_v1"
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sPublished = false;
 static int32 sOpenMask;
 
@@ -78,80 +77,75 @@ driver_control(void* cookie, uint32 op, void* arg, size_t len)
 }
 
 
-/*	#pragma mark - driver module API */
+/*	#pragma mark - dk_device_ops / dk_driver_info */
+
+
+static dk_device_ops sDeviceOps = {
+	driver_open,
+	driver_close,
+	driver_free,
+	driver_read,
+	driver_write,
+	NULL,	/* io */
+	driver_control,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
+static const dk_match_rule sKdlMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sKdlMatchDict = {
+	sKdlMatchRules,
+	0
+};
 
 
 static float
-kdl_supports_device(device_node* parent)
+kdl_probe(dk_node* node)
 {
-	const char* bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-	if ((strcmp(bus, "root") == 0 || strcmp(bus, "pci") == 0)
-		&& !sPublished)
-		return 0.01;
-	return 0.0;
+	if (sPublished)
+		return 0.0;
+	return 0.01;
 }
 
 
 static status_t
-kdl_register_device(device_node* node)
+kdl_attach(dk_node* node, void** cookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "KDL Entry"} },
-		{ NULL }
-	};
-	return sDeviceManager->register_node(node, KDL_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-kdl_init_driver(device_node* node, void** cookie)
-{
+	sPublished = true;
+	sDeviceKeeper->publish_device(node, "misc/kdl", &sDeviceOps);
 	*cookie = node;
 	return B_OK;
 }
 
-static void kdl_uninit_driver(void* c) { sPublished = false; }
 
-static status_t
-kdl_register_child_devices(void* _cookie)
+static void
+kdl_detach(void* _cookie)
 {
-	device_node* node = (device_node*)_cookie;
-	if (sPublished) return B_OK;
-	sPublished = true;
-	return sDeviceManager->publish_device(node, "misc/kdl",
-		KDL_DEVICE_MODULE_NAME);
+	sPublished = false;
 }
-
-static status_t kdl_init_device(void* i, void** c)
-{ *c = i; return B_OK; }
-static void kdl_uninit_device(void* c) {}
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sKdlDevice = {
-	{ KDL_DEVICE_MODULE_NAME, 0, NULL },
-	kdl_init_device, kdl_uninit_device, NULL,
-	driver_open, driver_close, driver_free,
-	driver_read, driver_write, NULL, driver_control,
-	NULL, NULL
-};
-
-struct driver_module_info sKdlDriver = {
-	{ KDL_DRIVER_MODULE_NAME, 0, NULL },
-	kdl_supports_device, kdl_register_device,
-	kdl_init_driver, kdl_uninit_driver,
-	kdl_register_child_devices, NULL, NULL
+struct dk_driver_info sKdlDriver = {
+	.info	= { KDL_DRIVER_MODULE_NAME, 0, NULL },
+	.match	= &sKdlMatchDict,
+	.probe	= kdl_probe,
+	.attach	= kdl_attach,
+	.detach	= kdl_detach,
+	.ops	= &sDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sKdlDriver,
-	(module_info*)&sKdlDevice,
 	NULL
 };
