@@ -15,7 +15,7 @@
 
 #include <algorithm>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 
 #include <AutoDeleter.h>
@@ -32,7 +32,6 @@
 
 #include "cache_support.h"
 #include "dma_resources.h"
-#include "io_requests.h"
 #include "IORequest.h"
 
 
@@ -129,11 +128,51 @@ static const uint32 kDMAResourceBufferCount			= 16;
 static const uint32 kDMAResourceBounceBufferCount	= 16;
 
 static const char* const kDriverModuleName
-	= "drivers/disk/virtual/ram_disk/driver_v1";
-static const char* const kControlDeviceModuleName
-	= "drivers/disk/virtual/ram_disk/control/device_v1";
-static const char* const kRawDeviceModuleName
-	= "drivers/disk/virtual/ram_disk/raw/device_v1";
+	= "drivers/disk/virtual/ram_disk/dk_driver_v1";
+
+// Forward declarations: device hook functions (defined below)
+static status_t ram_disk_control_device_open(void*, const char*, int, void**);
+static status_t ram_disk_control_device_close(void*);
+static status_t ram_disk_control_device_free(void*);
+static status_t ram_disk_control_device_read(void*, off_t, void*, size_t*);
+static status_t ram_disk_control_device_write(void*, off_t, const void*, size_t*);
+static status_t ram_disk_control_device_control(void*, uint32, void*, size_t);
+
+static status_t ram_disk_raw_device_open(void*, const char*, int, void**);
+static status_t ram_disk_raw_device_close(void*);
+static status_t ram_disk_raw_device_free(void*);
+static status_t ram_disk_raw_device_read(void*, off_t, void*, size_t*);
+static status_t ram_disk_raw_device_write(void*, off_t, const void*, size_t*);
+static status_t ram_disk_raw_device_io(void*, io_request*);
+static status_t ram_disk_raw_device_control(void*, uint32, void*, size_t);
+
+
+static dk_device_ops sControlDeviceOps = {
+	ram_disk_control_device_open,
+	ram_disk_control_device_close,
+	ram_disk_control_device_free,
+	ram_disk_control_device_read,
+	ram_disk_control_device_write,
+	NULL,	// io
+	ram_disk_control_device_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+static dk_device_ops sRawDeviceOps = {
+	ram_disk_raw_device_open,
+	ram_disk_raw_device_close,
+	ram_disk_raw_device_free,
+	ram_disk_raw_device_read,
+	ram_disk_raw_device_write,
+	ram_disk_raw_device_io,
+	ram_disk_raw_device_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
 
 static const char* const kControlDeviceName = RAM_DISK_CONTROL_DEVICE_NAME;
 static const char* const kRawDeviceBaseName = RAM_DISK_RAW_DEVICE_BASE_NAME;
@@ -146,7 +185,7 @@ static const char* const kDeviceIDItem = "ram_disk/id";
 struct RawDevice;
 typedef DoublyLinkedList<RawDevice> RawDeviceList;
 
-struct device_manager_info* sDeviceManager;
+struct dk_keeper_info* sDeviceKeeper;
 
 static RawDeviceList sDeviceList;
 static mutex sDeviceListLock = MUTEX_INITIALIZER("ram disk device list");
@@ -158,7 +197,7 @@ static void		free_raw_device_id(int32 id);
 
 
 struct Device {
-	Device(device_node* node)
+	Device(dk_node* node)
 		:
 		fNode(node)
 	{
@@ -173,18 +212,18 @@ struct Device {
 	bool Lock()		{ mutex_lock(&fLock); return true; }
 	void Unlock()	{ mutex_unlock(&fLock); }
 
-	device_node* Node() const	{ return fNode; }
+	dk_node* Node() const	{ return fNode; }
 
 	virtual status_t PublishDevice() = 0;
 
 protected:
 	mutex			fLock;
-	device_node*	fNode;
+	dk_node*	fNode;
 };
 
 
 struct ControlDevice : Device {
-	ControlDevice(device_node* node)
+	ControlDevice(dk_node* node)
 		:
 		Device(node)
 	{
@@ -196,8 +235,8 @@ struct ControlDevice : Device {
 		if (id < 0)
 			return B_BUSY;
 
-		device_attr attrs[] = {
-			{B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+		dk_property attrs[] = {
+			{KOSM_LABEL, B_STRING_TYPE,
 				{.string = "RAM Disk Raw Device"}},
 			{kDeviceSizeItem, B_UINT64_TYPE, {.ui64 = deviceSize}},
 			{kDeviceIDItem, B_UINT32_TYPE, {.ui32 = (uint32)id}},
@@ -211,9 +250,19 @@ struct ControlDevice : Device {
 			memset(attrs + count - 2, 0, sizeof(attrs[0]));
 		}
 
-		status_t error = sDeviceManager->register_node(
-			sDeviceManager->get_parent_node(Node()), kDriverModuleName, attrs,
-			NULL, NULL);
+		// get_parent_node acquires a reference — we must release it
+		// after register_node returns, regardless of success/failure.
+		dk_node* parent = sDeviceKeeper->get_parent_node(Node());
+		if (parent == NULL) {
+			free_raw_device_id(id);
+			return B_ERROR;
+		}
+
+		status_t error = sDeviceKeeper->register_node(parent,
+			kDriverModuleName, attrs, NULL, NULL);
+
+		sDeviceKeeper->put_node(parent);
+
 		if (error != B_OK) {
 			free_raw_device_id(id);
 			return error;
@@ -225,14 +274,14 @@ struct ControlDevice : Device {
 
 	virtual status_t PublishDevice()
 	{
-		return sDeviceManager->publish_device(Node(), kControlDeviceName,
-			kControlDeviceModuleName);
+		return sDeviceKeeper->publish_device(Node(), kControlDeviceName,
+			&sControlDeviceOps);
 	}
 };
 
 
 struct RawDevice : Device, DoublyLinkedListLinkImpl<RawDevice> {
-	RawDevice(device_node* node)
+	RawDevice(dk_node* node)
 		:
 		Device(node),
 		fID(-1),
@@ -260,6 +309,7 @@ struct RawDevice : Device, DoublyLinkedListLinkImpl<RawDevice> {
 	int32 ID() const				{ return fID; }
 	off_t DeviceSize() const		{ return fDeviceSize; }
 	const char* DeviceName() const	{ return fDeviceName; }
+	bool HasCache() const			{ return fCache != NULL; }
 
 	bool IsUnregistered() const		{ return fUnregistered; }
 
@@ -636,8 +686,8 @@ struct RawDevice : Device, DoublyLinkedListLinkImpl<RawDevice> {
 
 	virtual status_t PublishDevice()
 	{
-		return sDeviceManager->publish_device(Node(), fDeviceName,
-			kRawDeviceModuleName);
+		return sDeviceKeeper->publish_device(Node(), fDeviceName,
+			&sRawDeviceOps);
 	}
 
 private:
@@ -992,8 +1042,8 @@ ioctl_unregister(ControlDevice* controlDevice,
 	device->SetUnregistered(true);
 	locker.Unlock();
 
-	device_node* node = device->Node();
-	status_t error = sDeviceManager->unpublish_device(node,
+	dk_node* node = device->Node();
+	status_t error = sDeviceKeeper->unpublish_device(node,
 		device->DeviceName());
 	if (error != B_OK) {
 		dprintf("ramdisk: unregister: Failed to unpublish device \"%s\": %s\n",
@@ -1001,7 +1051,7 @@ ioctl_unregister(ControlDevice* controlDevice,
 		return error;
 	}
 
-	error = sDeviceManager->unregister_node(node);
+	error = sDeviceKeeper->unregister_node(node);
 	// Note: B_BUSY is OK. The node will removed as soon as possible.
 	if (error != B_OK && error != B_BUSY) {
 		dprintf("ramdisk: unregister: Failed to unregister node for device %"
@@ -1051,51 +1101,47 @@ handle_ioctl(DeviceType* device,
 }
 
 
-//	#pragma mark - driver
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sRamDiskMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "generic" } },
+	{}
+};
+
+static const dk_match_dict sRamDiskMatchDict = {
+	sRamDiskMatchRules,
+	0
+};
 
 
 static float
-ram_disk_driver_supports_device(device_node* parent)
+ram_disk_driver_probe(dk_node* node)
 {
-	const char* bus = NULL;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-			== B_OK
-		&& strcmp(bus, "generic") == 0) {
-		return 0.8;
-	}
-
-	return -1;
+	// ram_disk attaches to the generic bus
+	return 0.8;
 }
 
 
 static status_t
-ram_disk_driver_register_device(device_node* parent)
-{
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "RAM Disk Control Device"}},
-		{NULL}
-	};
-
-	return sDeviceManager->register_node(parent, kDriverModuleName, attrs, NULL,
-		NULL);
-}
-
-
-static status_t
-ram_disk_driver_init_driver(device_node* node, void** _driverCookie)
+ram_disk_driver_attach(dk_node* node, void** _driverCookie)
 {
 	uint64 deviceSize;
-	if (sDeviceManager->get_attr_uint64(node, kDeviceSizeItem, &deviceSize,
+	if (sDeviceKeeper->get_property_uint64(node, kDeviceSizeItem, &deviceSize,
 			false) == B_OK) {
 		int32 id = -1;
-		sDeviceManager->get_attr_uint32(node, kDeviceIDItem, (uint32*)&id,
+		sDeviceKeeper->get_property_uint32(node, kDeviceIDItem, (uint32*)&id,
 			false);
 		if (id < 0)
 			return B_ERROR;
 
+		char filePathBuf[B_PATH_NAME_LENGTH] = {};
 		const char* filePath = NULL;
-		sDeviceManager->get_attr_string(node, kFilePathItem, &filePath, false);
+		if (sDeviceKeeper->get_property_string(node, kFilePathItem,
+				filePathBuf, sizeof(filePathBuf), NULL, false) == B_OK
+			&& filePathBuf[0] != '\0') {
+			filePath = filePathBuf;
+		}
 
 		RawDevice* device = new(std::nothrow) RawDevice(node);
 		if (device == NULL)
@@ -1116,12 +1162,14 @@ ram_disk_driver_init_driver(device_node* node, void** _driverCookie)
 		*_driverCookie = (Device*)device;
 	}
 
-	return B_OK;
+	// Publish devices
+	Device* device = (Device*)*_driverCookie;
+	return device->PublishDevice();
 }
 
 
 static void
-ram_disk_driver_uninit_driver(void* driverCookie)
+ram_disk_driver_detach(void* driverCookie)
 {
 	Device* device = (Device*)driverCookie;
 	if (RawDevice* rawDevice = dynamic_cast<RawDevice*>(device))
@@ -1130,29 +1178,7 @@ ram_disk_driver_uninit_driver(void* driverCookie)
 }
 
 
-static status_t
-ram_disk_driver_register_child_devices(void* driverCookie)
-{
-	Device* device = (Device*)driverCookie;
-	return device->PublishDevice();
-}
-
-
 //	#pragma mark - control device
-
-
-static status_t
-ram_disk_control_device_init_device(void* driverCookie, void** _deviceCookie)
-{
-	*_deviceCookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-ram_disk_control_device_uninit_device(void* deviceCookie)
-{
-}
 
 
 static status_t
@@ -1216,32 +1242,17 @@ ram_disk_control_device_control(void* cookie, uint32 op, void* buffer,
 
 
 static status_t
-ram_disk_raw_device_init_device(void* driverCookie, void** _deviceCookie)
+ram_disk_raw_device_open(void* driverCookie, const char* path, int openMode,
+	void** _cookie)
 {
 	RawDevice* device = static_cast<RawDevice*>((Device*)driverCookie);
 
-	status_t error = device->Prepare();
-	if (error != B_OK)
-		return error;
-
-	*_deviceCookie = device;
-	return B_OK;
-}
-
-
-static void
-ram_disk_raw_device_uninit_device(void* deviceCookie)
-{
-	RawDevice* device = (RawDevice*)deviceCookie;
-	device->Unprepare();
-}
-
-
-static status_t
-ram_disk_raw_device_open(void* deviceCookie, const char* path, int openMode,
-	void** _cookie)
-{
-	RawDevice* device = (RawDevice*)deviceCookie;
+	// Lazy prepare (was in init_device in old API)
+	if (!device->HasCache()) {
+		status_t error = device->Prepare();
+		if (error != B_OK)
+			return error;
+	}
 
 	RawDeviceCookie* cookie = new(std::nothrow) RawDeviceCookie(device,
 		openMode);
@@ -1448,82 +1459,29 @@ ram_disk_raw_device_control(void* _cookie, uint32 op, void* buffer,
 }
 
 
-// #pragma mark -
+// #pragma mark - module exports
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
 	{}
 };
 
 
-static const struct driver_module_info sChecksumDeviceDriverModule = {
-	{
+static const struct dk_driver_info sRamDiskDriverModule = {
+	.info = {
 		kDriverModuleName,
 		0,
 		NULL
 	},
-
-	ram_disk_driver_supports_device,
-	ram_disk_driver_register_device,
-	ram_disk_driver_init_driver,
-	ram_disk_driver_uninit_driver,
-	ram_disk_driver_register_child_devices
-};
-
-static const struct device_module_info sChecksumControlDeviceModule = {
-	{
-		kControlDeviceModuleName,
-		0,
-		NULL
-	},
-
-	ram_disk_control_device_init_device,
-	ram_disk_control_device_uninit_device,
-	NULL,
-
-	ram_disk_control_device_open,
-	ram_disk_control_device_close,
-	ram_disk_control_device_free,
-
-	ram_disk_control_device_read,
-	ram_disk_control_device_write,
-	NULL,	// io
-
-	ram_disk_control_device_control,
-
-	NULL,	// select
-	NULL	// deselect
-};
-
-static const struct device_module_info sChecksumRawDeviceModule = {
-	{
-		kRawDeviceModuleName,
-		0,
-		NULL
-	},
-
-	ram_disk_raw_device_init_device,
-	ram_disk_raw_device_uninit_device,
-	NULL,
-
-	ram_disk_raw_device_open,
-	ram_disk_raw_device_close,
-	ram_disk_raw_device_free,
-
-	ram_disk_raw_device_read,
-	ram_disk_raw_device_write,
-	ram_disk_raw_device_io,
-
-	ram_disk_raw_device_control,
-
-	NULL,	// select
-	NULL	// deselect
+	.match	= &sRamDiskMatchDict,
+	.probe	= ram_disk_driver_probe,
+	.attach	= ram_disk_driver_attach,
+	.detach	= ram_disk_driver_detach,
+	.ops	= &sControlDeviceOps,
 };
 
 const module_info* modules[] = {
-	(module_info*)&sChecksumDeviceDriverModule,
-	(module_info*)&sChecksumControlDeviceModule,
-	(module_info*)&sChecksumRawDeviceModule,
+	(module_info*)&sRamDiskDriverModule,
 	NULL
 };
