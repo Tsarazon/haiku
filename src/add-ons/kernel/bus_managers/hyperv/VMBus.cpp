@@ -7,7 +7,7 @@
 #include "VMBusPrivate.h"
 
 
-VMBus::VMBus(device_node* node)
+VMBus::VMBus(dk_node* node)
 	:
 	fNode(node),
 	fStatus(B_NO_INIT),
@@ -1094,10 +1094,10 @@ VMBus::_RegisterChannel(VMBusChannel* channel)
 	snprintf(prettyName, sizeof(prettyName), HYPERV_PRETTYNAME_VMBUS_DEVICE_FMT,
 		channel->channel_id);
 
-	device_attr attributes[10] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE,
+	dk_property attributes[10] = {
+		{ KOSM_DEVICE_BUS, B_STRING_TYPE,
 			{ .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
+		{ KOSM_LABEL, B_STRING_TYPE,
 			{ .string = prettyName }},
 		{ HYPERV_CHANNEL_ID_ITEM, B_UINT32_TYPE,
 			{ .ui32 = channel->channel_id }},
@@ -1126,7 +1126,7 @@ VMBus::_RegisterChannel(VMBusChannel* channel)
 	fChannels[channel->channel_id] = channel;
 	spinLocker.Unlock();
 
-	return gDeviceManager->register_node(fNode, HYPERV_DEVICE_MODULE_NAME, attributes, NULL,
+	return gDeviceKeeper->register_node(fNode, HYPERV_DEVICE_MODULE_NAME, attributes, NULL,
 		&channel->node);
 }
 
@@ -1137,7 +1137,7 @@ VMBus::_UnregisterChannel(VMBusChannel* channel)
 	uint32 channelID = channel->channel_id;
 	TRACE("Unregistering channel %u\n", channelID);
 	if (channel->node != NULL) {
-		gDeviceManager->unregister_node(channel->node);
+		gDeviceKeeper->unregister_node(channel->node);
 		channel->node = NULL;
 	}
 

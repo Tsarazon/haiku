@@ -98,7 +98,7 @@ struct VMBusChannel : DoublyLinkedListLinkImpl<VMBusChannel> {
 	uint32				mmio_size;
 
 	mutex				lock;
-	device_node*		node;
+	dk_node*		node;
 	VMBusGPADLList		gpadls;
 	hyperv_bus_callback	callback;
 	void*				callback_data;
@@ -111,7 +111,7 @@ typedef void (VMBus::*VMBusEventFlagsHandler)(int32 cpu);
 
 class VMBus {
 public:
-									VMBus(device_node* node);
+									VMBus(dk_node* node);
 									~VMBus();
 			status_t				InitCheck() const { return fStatus; }
 
@@ -170,7 +170,7 @@ private:
 	inline	uint32					_GetGPADLHandle();
 
 private:
-			device_node*			fNode;
+			dk_node*			fNode;
 			status_t				fStatus;
 			void*					fMessageDPCHandle;
 			VMBusEventFlagsHandler	fEventFlagsHandler;

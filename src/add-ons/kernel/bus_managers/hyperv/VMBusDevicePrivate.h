@@ -42,7 +42,7 @@
 
 class VMBusDevice {
 public:
-									VMBusDevice(device_node* node);
+									VMBusDevice(dk_node* node);
 									~VMBusDevice();
 			status_t				InitCheck() const { return fStatus; }
 
@@ -77,7 +77,7 @@ private:
 	inline  uint32					_ReadRX(uint32 readIndex, void* buffer, uint32 length);
 
 private:
-			device_node*			fNode;
+			dk_node*			fNode;
 			status_t				fStatus;
 			uint32					fChannelID;
 			bool					fReferenceCounterSupported;
@@ -99,7 +99,7 @@ private:
 			hyperv_device_callback	fCallback;
 			void*					fCallbackData;
 
-			hyperv_bus_interface*	fVMBus;
+			hyperv_bus_ops*			fVMBus;
 			hyperv_bus				fVMBusCookie;
 };
 

@@ -7,7 +7,7 @@
 #include "VMBusDevicePrivate.h"
 
 
-VMBusDevice::VMBusDevice(device_node* node)
+VMBusDevice::VMBusDevice(dk_node* node)
 	:
 	fNode(node),
 	fStatus(B_NO_INIT),
@@ -29,15 +29,15 @@ VMBusDevice::VMBusDevice(device_node* node)
 {
 	CALLED();
 
-	fStatus = gDeviceManager->get_attr_uint32(fNode, HYPERV_CHANNEL_ID_ITEM, &fChannelID, false);
+	fStatus = gDeviceKeeper->get_property_uint32(fNode, HYPERV_CHANNEL_ID_ITEM, &fChannelID, false);
 	if (fStatus != B_OK) {
 		ERROR("Failed to get channel ID\n");
 		return;
 	}
 
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, (driver_module_info**)&fVMBus, (void**)&fVMBusCookie);
-	gDeviceManager->put_node(parent);
+	gDeviceKeeper->get_interface(node, HYPERV_VMBUS_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fVMBus, (void**)&fVMBusCookie);
 
 	mutex_init(&fLock, "vmbus device lock");
 	B_INITIALIZE_SPINLOCK(&fTXLock);

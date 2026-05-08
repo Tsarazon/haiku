@@ -8,7 +8,7 @@
 
 
 static status_t
-vmbus_device_init(device_node* node, void** _driverCookie)
+vmbus_device_init(dk_node* node, void** _driverCookie)
 {
 	CALLED();
 
@@ -26,6 +26,17 @@ vmbus_device_init(device_node* node, void** _driverCookie)
 	}
 	TRACE("VMBus device object created\n");
 
+	// Publish the per-device interface on this node so Hyper-V peripheral
+	// drivers (heartbeat, time sync, KVP, ...) can retrieve it via
+	// get_interface walk-up.
+	status = gDeviceKeeper->publish_interface(node,
+		HYPERV_DEVICE_INTERFACE_NAME, &gVMBusDeviceOps);
+	if (status != B_OK) {
+		ERROR("Failed to publish VMBus device interface\n");
+		delete device;
+		return status;
+	}
+
 	*_driverCookie = device;
 	return B_OK;
 }
@@ -37,13 +48,6 @@ vmbus_device_uninit(void* driverCookie)
 	CALLED();
 	VMBusDevice* device = reinterpret_cast<VMBusDevice*>(driverCookie);
 	delete device;
-}
-
-
-static void
-vmbus_device_removed(void* _device)
-{
-	CALLED();
 }
 
 
@@ -145,22 +149,7 @@ std_ops(int32 op, ...)
 }
 
 
-hyperv_device_interface gVMBusDeviceModule = {
-	{
-		{
-			HYPERV_DEVICE_MODULE_NAME,
-			0,
-			std_ops
-		},
-		NULL,	// supported devices
-		NULL,	// register node
-		vmbus_device_init,
-		vmbus_device_uninit,
-		NULL,	// register child devices
-		NULL,	// rescan
-		vmbus_device_removed
-	},
-
+hyperv_device_interface gVMBusDeviceOps = {
 	vmbus_device_get_bus_version,
 	vmbus_device_get_reference_counter,
 	vmbus_device_open,
@@ -170,4 +159,11 @@ hyperv_device_interface gVMBusDeviceModule = {
 	vmbus_device_write_gpa_packet,
 	vmbus_device_allocate_gpadl,
 	vmbus_device_free_gpadl
+};
+
+dk_driver_info gVMBusDeviceDriver = {
+	.info       = { HYPERV_DEVICE_MODULE_NAME, 0, std_ops },
+	.attach     = vmbus_device_init,
+	.detach     = vmbus_device_uninit,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };

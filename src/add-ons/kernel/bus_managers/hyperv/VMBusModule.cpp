@@ -8,13 +8,13 @@
 
 
 static float
-vmbus_supports_device(device_node* parent)
+vmbus_supports_device(dk_node* parent)
 {
 	CALLED();
-	const char* bus;
+	char bus[64];
 
-	// Check if the parent is the root node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK) {
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK) {
 		TRACE("Could not find required attribute device/bus\n");
 		return -1;
 	}
@@ -31,23 +31,7 @@ vmbus_supports_device(device_node* parent)
 
 
 static status_t
-vmbus_register_device(device_node* parent)
-{
-	CALLED();
-	device_attr attributes[] = {
-		{ B_DEVICE_BUS, B_STRING_TYPE,
-			{ .string = HYPERV_BUS_NAME }},
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = HYPERV_PRETTYNAME_VMBUS }},
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, HYPERV_VMBUS_MODULE_NAME, attributes, NULL, NULL);
-}
-
-
-static status_t
-vmbus_init_driver(device_node* node, void** _driverCookie)
+vmbus_init_driver(dk_node* node, void** _driverCookie)
 {
 	CALLED();
 
@@ -65,6 +49,20 @@ vmbus_init_driver(device_node* node, void** _driverCookie)
 	}
 	TRACE("VMBus object created\n");
 
+	// Publish the VMBus root interface on this node so per-channel
+	// VMBusDevices can retrieve it via get_interface walk-up. The cookie
+	// passed back to callers is the VMBus* itself (driver cookie).
+	status = gDeviceKeeper->publish_interface(node,
+		HYPERV_VMBUS_INTERFACE_NAME, &gVMBusOps);
+	if (status != B_OK) {
+		ERROR("Failed to publish VMBus interface\n");
+		delete vmbus;
+		return status;
+	}
+
+	// Request channels during attach
+	vmbus->RequestChannels();
+
 	*_driverCookie = vmbus;
 	return B_OK;
 }
@@ -76,15 +74,6 @@ vmbus_uninit_driver(void* driverCookie)
 	CALLED();
 	VMBus* vmbus = reinterpret_cast<VMBus*>(driverCookie);
 	delete vmbus;
-}
-
-
-static status_t
-vmbus_register_child_devices(void* driverCookie)
-{
-	CALLED();
-	VMBus* vmbus = reinterpret_cast<VMBus*>(driverCookie);
-	return vmbus->RequestChannels();
 }
 
 
@@ -159,26 +148,32 @@ std_ops(int32 op, ...)
 }
 
 
-hyperv_bus_interface gVMBusModule = {
-	{
-		{
-			HYPERV_VMBUS_MODULE_NAME,
-			0,
-			std_ops
-		},
-		vmbus_supports_device,
-		vmbus_register_device,
-		vmbus_init_driver,
-		vmbus_uninit_driver,
-		vmbus_register_child_devices,
-		NULL,	// rescan bus
-		NULL	// device removed
-	},
-
+hyperv_bus_ops gVMBusOps = {
 	vmbus_get_version,
 	vmbus_open_channel,
 	vmbus_close_channel,
 	vmbus_allocate_gpadl,
 	vmbus_free_gpadl,
 	vmbus_signal_channel
+};
+
+
+static const dk_match_rule sVMBusMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "root"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sVMBusMatchDict = {
+	sVMBusMatchRules,
+	0
+};
+
+
+dk_driver_info gVMBusDriver = {
+	.info       = { HYPERV_VMBUS_MODULE_NAME, 0, std_ops },
+	.match      = &sVMBusMatchDict,
+	.probe      = vmbus_supports_device,
+	.attach     = vmbus_init_driver,
+	.detach     = vmbus_uninit_driver,
+	.node_flags = KOSM_FIND_MULTIPLE_CHILDREN,
 };
