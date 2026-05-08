@@ -9,7 +9,7 @@
 
 
 #include <ACPI.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <i2c.h>
 
 #include "DeviceList.h"
@@ -26,8 +26,12 @@
 
 
 
+struct hid_driver_cookie;
+static status_t i2c_hid_publish_devices(hid_driver_cookie *device);
+
+
 struct hid_driver_cookie {
-	device_node*			node;
+	dk_node*				node;
 	i2c_device_interface*	i2c;
 	i2c_device				i2c_cookie;
 	uint32					descriptorAddress;
@@ -41,8 +45,7 @@ struct device_cookie {
 };
 
 
-#define I2C_HID_DRIVER_NAME "drivers/input/i2c_hid/driver_v1"
-#define I2C_HID_DEVICE_NAME "drivers/input/i2c_hid/device_v1"
+#define I2C_HID_DRIVER_NAME "drivers/input/i2c_hid/dk_driver_v1"
 
 /* Base Namespace devices are published to */
 #define I2C_HID_BASENAME "input/i2c_hid/%d"
@@ -52,7 +55,7 @@ struct device_cookie {
 
 #define ACPI_NAME_HID_DEVICE "PNP0C50"
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 static acpi_module_info* gACPI;
 
 DeviceList *gDeviceList = NULL;
@@ -136,21 +139,6 @@ i2c_hid_device_removed(void *cookie)
 
 
 // #pragma mark - driver hooks
-
-
-static status_t
-i2c_hid_init_device(void *driverCookie, void **cookie)
-{
-	*cookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-i2c_hid_uninit_device(void *_cookie)
-{
-
-}
 
 
 static status_t
@@ -257,61 +245,65 @@ i2c_hid_free(void *_cookie)
 
 
 static float
-i2c_hid_support(device_node *parent)
+i2c_hid_support(dk_node *parent)
 {
 	CALLED();
 
 	// make sure parent is really the I2C bus manager
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "i2c"))
-		return 0.0;
+	if (strcmp(bus, "i2c") != 0)
+		return -1.0f;
 	TRACE("i2c_hid_support found an i2c device %p\n", parent);
 
-	// check whether it's an HID device
-	uint64 handlePointer;
-	if (sDeviceManager->get_attr_uint64(parent, ACPI_DEVICE_HANDLE_ITEM,
-			&handlePointer, false) != B_OK) {
-		TRACE("i2c_hid_support found an i2c device without acpi handle\n");
-		return B_ERROR;
-	}
-
-	const char *name;
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &name,
-		false) == B_OK && strcmp(name, ACPI_NAME_HID_DEVICE) == 0) {
+	// check whether it's an HID device via ACPI
+	char name[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_HID, name,
+		sizeof(name), NULL, false) == B_OK && strcmp(name, ACPI_NAME_HID_DEVICE) == 0) {
 		TRACE("i2c_hid_support found an hid i2c device\n");
-		return 0.6;
+		return 0.6f;
 	}
 
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_CID_ITEM, &name,
-		false) == B_OK && strcmp(name, ACPI_NAME_HID_DEVICE) == 0) {
+	if (sDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_CID, name,
+		sizeof(name), NULL, false) == B_OK && strcmp(name, ACPI_NAME_HID_DEVICE) == 0) {
 		TRACE("i2c_hid_support found a compatible hid i2c device\n");
-		return 0.6;
-	}
-
-	uint16 slaveAddress;
-	if (sDeviceManager->get_attr_uint16(parent, I2C_DEVICE_SLAVE_ADDR_ITEM,
-		&slaveAddress, false) != B_OK) {
-		TRACE("i2c_hid_support found a non hid without addr i2c device\n");
-		return B_ERROR;
+		return 0.6f;
 	}
 
 	TRACE("i2c_hid_support found a non hid i2c device\n");
 
-	return 0.0;
+	return -1.0f;
 }
 
 
+static dk_device_ops sDeviceOps = {
+	i2c_hid_open,
+	i2c_hid_close,
+	i2c_hid_free,
+	i2c_hid_read,
+	i2c_hid_write,
+	NULL,	// io
+	i2c_hid_control,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
 static status_t
-i2c_hid_register_device(device_node *node)
+i2c_hid_attach(dk_node *node, void **driverCookie)
 {
 	CALLED();
 
+	// Evaluate ACPI _DSM to get descriptor address
 	acpi_handle handle;
-	if (sDeviceManager->get_attr_uint64(node, ACPI_DEVICE_HANDLE_ITEM,
-		(uint64*)&handle, false) != B_OK) {
+	char acpiPath[256];
+	if (sDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_PATH,
+		acpiPath, sizeof(acpiPath), NULL, false) != B_OK
+		|| gACPI->get_handle(NULL, acpiPath, &handle) != B_OK) {
 		return B_DEVICE_NOT_FOUND;
 	}
 
@@ -327,27 +319,6 @@ i2c_hid_register_device(device_node *node)
 
 	uint32 descriptorAddress = object->integer.integer;
 	free(object);
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "I2C HID Device" }},
-		{ "descriptorAddress", B_UINT32_TYPE, { .ui32 = descriptorAddress }},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, I2C_HID_DRIVER_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-i2c_hid_init_driver(device_node *node, void **driverCookie)
-{
-	CALLED();
-
-	uint32 descriptorAddress;
-	if (sDeviceManager->get_attr_uint32(node, "descriptorAddress",
-		&descriptorAddress, false) != B_OK) {
-		return B_DEVICE_NOT_FOUND;
-	}
 
 	hid_driver_cookie *device
 		= (hid_driver_cookie *)calloc(1, sizeof(hid_driver_cookie));
@@ -359,11 +330,15 @@ i2c_hid_init_driver(device_node *node, void **driverCookie)
 	device->node = node;
 	device->descriptorAddress = descriptorAddress;
 
-	device_node *parent;
-	parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&device->i2c,
-		(void **)&device->i2c_cookie);
-	sDeviceManager->put_node(parent);
+	status_t i2cStatus = sDeviceKeeper->get_interface(node,
+		I2C_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&device->i2c, (void **)&device->i2c_cookie);
+	if (i2cStatus != B_OK) {
+		ERROR("get_interface(i2c device) failed: %s\n", strerror(i2cStatus));
+		free(device);
+		*driverCookie = NULL;
+		return i2cStatus;
+	}
 
 	mutex_lock(&sDriverLock);
 	HIDDevice *hidDevice
@@ -377,25 +352,63 @@ i2c_hid_init_driver(device_node *node, void **driverCookie)
 
 	mutex_unlock(&sDriverLock);
 
-	return device->hidDevice != NULL ? B_OK : B_IO_ERROR;
+	if (device->hidDevice == NULL)
+		return B_IO_ERROR;
+
+	// Publish child devices in devfs
+	i2c_hid_publish_devices(device);
+
+	return B_OK;
 }
 
 
 static void
-i2c_hid_uninit_driver(void *driverCookie)
+i2c_hid_detach(void *driverCookie)
 {
 	CALLED();
 	hid_driver_cookie *device = (hid_driver_cookie*)driverCookie;
+	if (device == NULL)
+		return;
+
+	HIDDevice *hidDevice = device->hidDevice;
+
+	mutex_lock(&sDriverLock);
+
+	if (hidDevice != NULL) {
+		// Unpublish all devfs entries and remove handlers from gDeviceList
+		// before destroying the HIDDevice. ProtocolHandlerAt walks
+		// HIDDevice's internal list, which is stable across
+		// gDeviceList->RemoveDevice calls.
+		for (uint32 i = 0;; i++) {
+			ProtocolHandler *handler = hidDevice->ProtocolHandlerAt(i);
+			if (handler == NULL)
+				break;
+
+			const char *publishPath = handler->PublishPath();
+			if (publishPath != NULL)
+				sDeviceKeeper->unpublish_device(device->node, publishPath);
+			gDeviceList->RemoveDevice(NULL, handler);
+		}
+
+		if (hidDevice->IsOpen()) {
+			// Still open from userland — mark removed to unblock pending I/O;
+			// the device will be deleted in i2c_hid_free when the last
+			// handle is closed.
+			hidDevice->Removed();
+		} else {
+			delete hidDevice;
+		}
+	}
+
+	mutex_unlock(&sDriverLock);
 
 	free(device);
 }
 
 
 static status_t
-i2c_hid_register_child_devices(void *cookie)
+i2c_hid_publish_devices(hid_driver_cookie *device)
 {
-	CALLED();
-	hid_driver_cookie *device = (hid_driver_cookie*)cookie;
 	HIDDevice* hidDevice = device->hidDevice;
 	if (hidDevice == NULL)
 		return B_OK;
@@ -423,17 +436,11 @@ i2c_hid_register_child_devices(void *cookie)
 		}
 
 		gDeviceList->AddDevice(handler->PublishPath(), handler);
-	
-		sDeviceManager->publish_device(device->node, pathBuffer,
-			I2C_HID_DEVICE_NAME);
+
+		sDeviceKeeper->publish_device(device->node, pathBuffer,
+			&sDeviceOps);
 	}
 
-
-/*	int pathID = sDeviceManager->create_id(I2C_HID_PATHID_GENERATOR);
-	if (pathID < 0) {
-		ERROR("register_child_devices: couldn't create a path_id\n");
-		return B_ERROR;
-	}*/
 	return B_OK;
 }
 
@@ -467,49 +474,33 @@ std_ops(int32 op, ...)
 //	#pragma mark -
 
 
-driver_module_info i2c_hid_driver_module = {
-	{
+static const dk_match_rule sI2cHidMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "i2c"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sI2cHidMatchDict = {
+	sI2cHidMatchRules,
+	0
+};
+
+
+static dk_driver_info i2c_hid_driver_module = {
+	.info = {
 		I2C_HID_DRIVER_NAME,
 		0,
 		&std_ops
 	},
-
-	i2c_hid_support,
-	i2c_hid_register_device,
-	i2c_hid_init_driver,
-	i2c_hid_uninit_driver,
-	i2c_hid_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
-
-
-struct device_module_info i2c_hid_device_module = {
-	{
-		I2C_HID_DEVICE_NAME,
-		0,
-		NULL
-	},
-
-	i2c_hid_init_device,
-	i2c_hid_uninit_device,
-	NULL,
-
-	i2c_hid_open,
-	i2c_hid_close,
-	i2c_hid_free,
-	i2c_hid_read,
-	i2c_hid_write,
-	NULL,
-	i2c_hid_control,
-
-	NULL,
-	NULL
+	.match	= &sI2cHidMatchDict,
+	.probe	= i2c_hid_support,
+	.attach	= i2c_hid_attach,
+	.detach	= i2c_hid_detach,
+	.ops	= &sDeviceOps,
 };
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ B_ACPI_MODULE_NAME, (module_info**)&gACPI },
 	{}
 };
@@ -517,6 +508,5 @@ module_dependency module_dependencies[] = {
 
 module_info *modules[] = {
 	(module_info *)&i2c_hid_driver_module,
-	(module_info *)&i2c_hid_device_module,
 	NULL
 };

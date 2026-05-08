@@ -22,8 +22,7 @@ KernelAddon i2c_hid :
 
 	ProtocolHandler.cpp
 
-	JoystickProtocolHandler.cpp
-	KeyboardProtocolHandler.cpp
+KeyboardProtocolHandler.cpp
 	MouseProtocolHandler.cpp
 	TabletProtocolHandler.cpp
 ;
