@@ -17,13 +17,12 @@
 #include "viogpu.h"
 
 
-#define VIRTIO_GPU_DRIVER_MODULE_NAME "drivers/graphics/virtio_gpu/driver_v1"
-#define VIRTIO_GPU_DEVICE_MODULE_NAME "drivers/graphics/virtio_gpu/device_v1"
+#define VIRTIO_GPU_DRIVER_MODULE_NAME "drivers/graphics/virtio_gpu/dk_driver_v1"
 #define VIRTIO_GPU_DEVICE_ID_GENERATOR	"virtio_gpu/device_id"
 
 
 typedef struct {
-	device_node*			node;
+	dk_node*			node;
 	::virtio_device			virtio_device;
 	virtio_device_interface*	virtio;
 
@@ -53,6 +52,9 @@ typedef struct {
 
 	area_id					sharedArea;
 	virtio_gpu_shared_info* sharedInfo;
+
+	int32					id;
+	char					publishedPath[64];
 } virtio_gpu_driver_info;
 
 
@@ -82,7 +84,7 @@ typedef struct {
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 
 
 static void virtio_gpu_vqwait(void* driverCookie, void* cookie);
@@ -467,15 +469,21 @@ virtio_gpu_set_display_mode(virtio_gpu_driver_info* info, display_mode *mode)
 
 
 static status_t
-virtio_gpu_init_device(void* _info, void** _cookie)
+virtio_gpu_init_hardware(virtio_gpu_driver_info* info)
 {
 	CALLED();
-	virtio_gpu_driver_info* info = (virtio_gpu_driver_info*)_info;
 
-	device_node* parent = sDeviceManager->get_parent_node(info->node);
-	sDeviceManager->get_driver(parent, (driver_module_info**)&info->virtio,
-		(void**)&info->virtio_device);
-	sDeviceManager->put_node(parent);
+	status_t gs = sDeviceKeeper->get_interface(info->node,
+		VIRTIO_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&info->virtio, (void**)&info->virtio_device);
+	if (gs != B_OK) {
+		ERROR("get_interface(virtio device) failed: %s\n", strerror(gs));
+		return gs;
+	}
+	if (info->virtio == NULL || info->virtio_device == NULL) {
+		ERROR("virtio bus manager returned NULL ops/cookie\n");
+		return B_ERROR;
+	}
 
 	info->virtio->negotiate_features(info->virtio_device, VIRTIO_GPU_F_EDID,
 		 &info->features, &get_feature_name);
@@ -525,7 +533,6 @@ virtio_gpu_init_device(void* _info, void** _cookie)
 		goto err3;
 	}
 
-	*_cookie = info;
 	return B_OK;
 
 err3:
@@ -537,10 +544,9 @@ err1:
 
 
 static void
-virtio_gpu_uninit_device(void* _cookie)
+virtio_gpu_uninit_hardware(virtio_gpu_driver_info* info)
 {
 	CALLED();
-	virtio_gpu_driver_info* info = (virtio_gpu_driver_info*)_cookie;
 
 	info->virtio->free_interrupts(info->virtio_device);
 
@@ -754,47 +760,47 @@ virtio_gpu_ioctl(void* cookie, uint32 op, void* buffer, size_t length)
 
 
 static float
-virtio_gpu_supports_device(device_node* parent)
+virtio_gpu_supports_device(dk_node* parent)
 {
 	CALLED();
-	const char* bus;
+	char bus[64];
 	uint16 deviceType;
 
 	// make sure parent is really the Virtio bus manager
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) != B_OK)
+		return -1.0f;
 
-	if (strcmp(bus, "virtio"))
-		return 0.0;
+	if (strcmp(bus, "virtio") != 0)
+		return -1.0f;
 
 	// check whether it's really a Virtio GPU device
-	if (sDeviceManager->get_attr_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
+	if (sDeviceKeeper->get_property_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != VIRTIO_DEVICE_ID_GPU)
-		return 0.0;
+		return -1.0f;
 
 	TRACE("Virtio gpu device found!\n");
 
-	return 0.6;
+	return 0.6f;
 }
 
 
+static dk_device_ops sVirtioGpuDeviceOps = {
+	virtio_gpu_open,
+	virtio_gpu_close,
+	virtio_gpu_free,
+	virtio_gpu_read,
+	virtio_gpu_write,
+	NULL,	// io
+	virtio_gpu_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	NULL	// device_removed
+};
+
+
 static status_t
-virtio_gpu_register_device(device_node* node)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Virtio GPU"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, VIRTIO_GPU_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-virtio_gpu_init_driver(device_node* node, void** cookie)
+virtio_gpu_init_driver(dk_node* node, void** cookie)
 {
 	CALLED();
 
@@ -804,8 +810,40 @@ virtio_gpu_init_driver(device_node* node, void** cookie)
 		return B_NO_MEMORY;
 
 	memset(info, 0, sizeof(*info));
-
 	info->node = node;
+	info->id = -1;
+	info->updateThread = -1;
+	info->framebufferArea = -1;
+	info->sharedArea = -1;
+	info->commandArea = -1;
+	info->commandDone = -1;
+
+	status_t status = virtio_gpu_init_hardware(info);
+	if (status != B_OK) {
+		free(info);
+		return status;
+	}
+
+	info->id = sDeviceKeeper->create_id(VIRTIO_GPU_DEVICE_ID_GENERATOR);
+	if (info->id < 0) {
+		status = info->id;
+		virtio_gpu_uninit_hardware(info);
+		free(info);
+		return status;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		"graphics/virtio/%" B_PRId32, info->id);
+	status = sDeviceKeeper->publish_device(node, info->publishedPath,
+		&sVirtioGpuDeviceOps);
+	if (status != B_OK) {
+		ERROR("publish_device(%s) failed: %s\n", info->publishedPath,
+			strerror(status));
+		sDeviceKeeper->free_id(VIRTIO_GPU_DEVICE_ID_GENERATOR, info->id);
+		virtio_gpu_uninit_hardware(info);
+		free(info);
+		return status;
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -817,81 +855,52 @@ virtio_gpu_uninit_driver(void* _cookie)
 {
 	CALLED();
 	virtio_gpu_driver_info* info = (virtio_gpu_driver_info*)_cookie;
+	if (info == NULL)
+		return;
+
+	if (info->publishedPath[0] != '\0')
+		sDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->id >= 0)
+		sDeviceKeeper->free_id(VIRTIO_GPU_DEVICE_ID_GENERATOR, info->id);
+
+	virtio_gpu_uninit_hardware(info);
 	free(info);
-}
-
-
-static status_t
-virtio_gpu_register_child_devices(void* _cookie)
-{
-	CALLED();
-	virtio_gpu_driver_info* info = (virtio_gpu_driver_info*)_cookie;
-	status_t status;
-
-	int32 id = sDeviceManager->create_id(VIRTIO_GPU_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), "graphics/virtio/%" B_PRId32,
-		id);
-
-	status = sDeviceManager->publish_device(info->node, name,
-		VIRTIO_GPU_DEVICE_MODULE_NAME);
-
-	return status;
 }
 
 
 //	#pragma mark -
 
 
+static const dk_match_rule sVirtioGpuMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "virtio"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sVirtioGpuMatchDict = {
+	sVirtioGpuMatchRules,
+	0
+};
+
+
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
 	{}
 };
 
-struct device_module_info sVirtioGpuDevice = {
-	{
-		VIRTIO_GPU_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	virtio_gpu_init_device,
-	virtio_gpu_uninit_device,
-	NULL, // remove,
-
-	virtio_gpu_open,
-	virtio_gpu_close,
-	virtio_gpu_free,
-	virtio_gpu_read,
-	virtio_gpu_write,
-	NULL,	// io
-	virtio_gpu_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sVirtioGpuDriver = {
-	{
+static dk_driver_info sVirtioGpuDriver = {
+	.info = {
 		VIRTIO_GPU_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	virtio_gpu_supports_device,
-	virtio_gpu_register_device,
-	virtio_gpu_init_driver,
-	virtio_gpu_uninit_driver,
-	virtio_gpu_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &sVirtioGpuMatchDict,
+	.probe   = virtio_gpu_supports_device,
+	.attach  = virtio_gpu_init_driver,
+	.detach  = virtio_gpu_uninit_driver,
+	.ops     = &sVirtioGpuDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sVirtioGpuDriver,
-	(module_info*)&sVirtioGpuDevice,
 	NULL
 };
