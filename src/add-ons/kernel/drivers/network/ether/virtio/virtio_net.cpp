@@ -24,8 +24,7 @@
 #include "virtio_net.h"
 
 
-#define VIRTIO_NET_DRIVER_MODULE_NAME "drivers/network/virtio_net/driver_v1"
-#define VIRTIO_NET_DEVICE_MODULE_NAME "drivers/network/virtio_net/device_v1"
+#define VIRTIO_NET_DRIVER_MODULE_NAME "drivers/network/virtio_net/dk_driver_v1"
 #define VIRTIO_NET_DEVICE_ID_GENERATOR	"virtio_net/device_id"
 
 #define BUFFER_SIZE	2048
@@ -59,7 +58,7 @@ typedef DoublyLinkedList<BufInfo> BufInfoList;
 
 
 typedef struct {
-	device_node*			node;
+	dk_node*			node;
 	::virtio_device			virtio_device;
 	virtio_device_interface*	virtio;
 
@@ -96,6 +95,8 @@ typedef struct {
 	uint32					multiCount;
 	ether_address_t			multi[MAX_MULTI];
 
+	int32					id;
+	char					publishedPath[64];
 } virtio_net_driver_info;
 
 
@@ -121,7 +122,7 @@ typedef struct {
 #define CALLED() 			TRACE("CALLED %s\n", __PRETTY_FUNCTION__)
 
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static net_buffer_module_info* sBufferModule;
 
 
@@ -284,15 +285,21 @@ vtnet_set_allmulti(virtio_net_driver_info* info, bool on)
 
 
 static status_t
-virtio_net_init_device(void* _info, void** _cookie)
+virtio_net_init_hardware(virtio_net_driver_info* info)
 {
 	CALLED();
-	virtio_net_driver_info* info = (virtio_net_driver_info*)_info;
 
-	device_node* parent = sDeviceManager->get_parent_node(info->node);
-	sDeviceManager->get_driver(parent, (driver_module_info**)&info->virtio,
-		(void**)&info->virtio_device);
-	sDeviceManager->put_node(parent);
+	status_t gs = sDeviceKeeper->get_interface(info->node,
+		VIRTIO_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&info->virtio, (void**)&info->virtio_device);
+	if (gs != B_OK) {
+		ERROR("get_interface(virtio device) failed: %s\n", strerror(gs));
+		return gs;
+	}
+	if (info->virtio == NULL || info->virtio_device == NULL) {
+		ERROR("virtio bus manager returned NULL ops/cookie\n");
+		return B_ERROR;
+	}
 
 	info->virtio->negotiate_features(info->virtio_device,
 		VIRTIO_NET_F_STATUS | VIRTIO_NET_F_MAC | VIRTIO_NET_F_MTU
@@ -460,7 +467,6 @@ virtio_net_init_device(void* _info, void** _cookie)
 		}
 	}
 
-	*_cookie = info;
 	return B_OK;
 
 err6:
@@ -486,10 +492,9 @@ err1:
 
 
 static void
-virtio_net_uninit_device(void* _cookie)
+virtio_net_uninit_hardware(virtio_net_driver_info* info)
 {
 	CALLED();
-	virtio_net_driver_info* info = (virtio_net_driver_info*)_cookie;
 
 	info->virtio->free_interrupts(info->virtio_device);
 
@@ -942,22 +947,40 @@ virtio_net_ioctl(void* cookie, uint32 op, void* buffer, size_t length)
 //	#pragma mark - driver module API
 
 
+
+static dk_device_ops sVirtioNetDeviceOps = {
+	virtio_net_open,
+	virtio_net_close,
+	virtio_net_free,
+	NULL,	// read
+	NULL,	// write
+	NULL,	// io
+	virtio_net_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+	NULL,	// device_removed
+};
+
+
+static const dk_match_rule kVirtioNetMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "virtio"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict kVirtioNetMatch = {
+	kVirtioNetMatchRules,
+	0
+};
+
+
 static float
-virtio_net_supports_device(device_node* parent)
+virtio_net_supports_device(dk_node* parent)
 {
 	CALLED();
-	const char* bus;
 	uint16 deviceType;
 
-	// make sure parent is really the Virtio bus manager
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "virtio"))
-		return 0.0;
-
-	// check whether it's really a Direct Access Device
-	if (sDeviceManager->get_attr_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
+	// bus already filtered by match rules
+	if (sDeviceKeeper->get_property_uint16(parent, VIRTIO_DEVICE_TYPE_ITEM,
 			&deviceType, true) != B_OK || deviceType != VIRTIO_DEVICE_ID_NETWORK)
 		return 0.0;
 
@@ -968,22 +991,7 @@ virtio_net_supports_device(device_node* parent)
 
 
 static status_t
-virtio_net_register_device(device_node* node)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Virtio Network"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, VIRTIO_NET_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-virtio_net_init_driver(device_node* node, void** cookie)
+virtio_net_attach(dk_node* node, void** cookie)
 {
 	CALLED();
 
@@ -993,8 +1001,35 @@ virtio_net_init_driver(device_node* node, void** cookie)
 		return B_NO_MEMORY;
 
 	memset((void*)info, 0, sizeof(*info));
-
 	info->node = node;
+	info->id = -1;
+
+	status_t status = virtio_net_init_hardware(info);
+	if (status != B_OK) {
+		free(info);
+		return status;
+	}
+
+	info->id = sDeviceKeeper->create_id(VIRTIO_NET_DEVICE_ID_GENERATOR);
+	if (info->id < 0) {
+		status = info->id;
+		virtio_net_uninit_hardware(info);
+		free(info);
+		return status;
+	}
+
+	snprintf(info->publishedPath, sizeof(info->publishedPath),
+		"net/virtio/%" B_PRId32, info->id);
+	status = sDeviceKeeper->publish_device(node, info->publishedPath,
+		&sVirtioNetDeviceOps);
+	if (status != B_OK) {
+		ERROR("publish_device(%s) failed: %s\n", info->publishedPath,
+			strerror(status));
+		sDeviceKeeper->free_id(VIRTIO_NET_DEVICE_ID_GENERATOR, info->id);
+		virtio_net_uninit_hardware(info);
+		free(info);
+		return status;
+	}
 
 	*cookie = info;
 	return B_OK;
@@ -1002,33 +1037,20 @@ virtio_net_init_driver(device_node* node, void** cookie)
 
 
 static void
-virtio_net_uninit_driver(void* _cookie)
+virtio_net_detach(void* _cookie)
 {
 	CALLED();
 	virtio_net_driver_info* info = (virtio_net_driver_info*)_cookie;
+	if (info == NULL)
+		return;
+
+	if (info->publishedPath[0] != '\0')
+		sDeviceKeeper->unpublish_device(info->node, info->publishedPath);
+	if (info->id >= 0)
+		sDeviceKeeper->free_id(VIRTIO_NET_DEVICE_ID_GENERATOR, info->id);
+
+	virtio_net_uninit_hardware(info);
 	free(info);
-}
-
-
-static status_t
-virtio_net_register_child_devices(void* _cookie)
-{
-	CALLED();
-	virtio_net_driver_info* info = (virtio_net_driver_info*)_cookie;
-	status_t status;
-
-	int32 id = sDeviceManager->create_id(VIRTIO_NET_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), "net/virtio/%" B_PRId32,
-		id);
-
-	status = sDeviceManager->publish_device(info->node, name,
-		VIRTIO_NET_DEVICE_MODULE_NAME);
-
-	return status;
 }
 
 
@@ -1036,52 +1058,26 @@ virtio_net_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
 	{NET_BUFFER_MODULE_NAME, (module_info**)&sBufferModule},
 	{}
 };
 
-struct device_module_info sVirtioNetDevice = {
-	{
-		VIRTIO_NET_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
 
-	virtio_net_init_device,
-	virtio_net_uninit_device,
-	NULL, // remove,
-
-	virtio_net_open,
-	virtio_net_close,
-	virtio_net_free,
-	NULL,	// read
-	NULL,	// write
-	NULL,	// io
-	virtio_net_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sVirtioNetDriver = {
-	{
+static dk_driver_info sVirtioNetDriver = {
+	.info = {
 		VIRTIO_NET_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
-
-	virtio_net_supports_device,
-	virtio_net_register_device,
-	virtio_net_init_driver,
-	virtio_net_uninit_driver,
-	virtio_net_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match   = &kVirtioNetMatch,
+	.probe   = virtio_net_supports_device,
+	.attach  = virtio_net_attach,
+	.detach  = virtio_net_detach,
+	.ops     = &sVirtioNetDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sVirtioNetDriver,
-	(module_info*)&sVirtioNetDevice,
 	NULL
 };
