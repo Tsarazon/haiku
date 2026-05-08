@@ -7,24 +7,11 @@
 #include "ECAMPCIController.h"
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 pci_module_info* gPCI;
 
 
-pci_controller_module_info gPciControllerDriver = {
-	.info = {
-		.info = {
-			.name = ECAM_PCI_DRIVER_MODULE_NAME,
-		},
-		.supports_device = ECAMPCIController::SupportsDevice,
-		.register_device = ECAMPCIController::RegisterDevice,
-		.init_driver = [](device_node* node, void** driverCookie) {
-			return ECAMPCIController::InitDriver(node, *(ECAMPCIController**)driverCookie);
-		},
-		.uninit_driver = [](void* driverCookie) {
-			return static_cast<ECAMPCIController*>(driverCookie)->UninitDriver();
-		},
-	},
+static pci_controller_ops sPciControllerOps = {
 	.read_pci_config = [](void* cookie,
 		uint8 bus, uint8 device, uint8 function,
 		uint16 offset, uint8 size, uint32* value) {
@@ -59,8 +46,38 @@ pci_controller_module_info gPciControllerDriver = {
 };
 
 
+static dk_driver_info gPciControllerDriver = {
+	.info  = { ECAM_PCI_DRIVER_MODULE_NAME, 0, NULL },
+	.probe = ECAMPCIController::SupportsDevice,
+	.attach = [](dk_node* node, void** driverCookie) {
+		status_t status = ECAMPCIController::InitDriver(node,
+			*(ECAMPCIController**)driverCookie);
+		if (status != B_OK)
+			return status;
+
+		// Publish PCI controller interface so the PCI root bus manager
+		// can retrieve it via get_interface walk-up.
+		gDeviceKeeper->publish_interface(node,
+			PCI_CONTROLLER_INTERFACE_NAME, &sPciControllerOps);
+
+		// Register PCI root bus manager as child.
+		dk_property attrs[] = {
+			DK_PROP_STRING(KOSM_LABEL, "PCI Root Bus"),
+			DK_PROP_END
+		};
+		gDeviceKeeper->register_node(node,
+			"bus_managers/pci/root/dk_driver_v1", attrs, NULL, NULL);
+
+		return B_OK;
+	},
+	.detach = [](void* driverCookie) {
+		static_cast<ECAMPCIController*>(driverCookie)->UninitDriver();
+	},
+};
+
+
 _EXPORT module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ B_PCI_MODULE_NAME, (module_info**)&gPCI },
 	{}
 };

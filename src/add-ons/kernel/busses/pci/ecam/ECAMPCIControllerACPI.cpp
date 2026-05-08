@@ -5,6 +5,7 @@
 
 
 #include "ECAMPCIController.h"
+#include <ACPI.h>
 #include <acpi.h>
 
 #include <AutoDeleterDrivers.h>
@@ -17,13 +18,13 @@
 status_t
 ECAMPCIControllerACPI::ReadResourceInfo()
 {
-	DeviceNodePutter<&gDeviceManager> parent(gDeviceManager->get_parent_node(fNode));
+	DkNodePutter<&gDeviceKeeper> parent(gDeviceKeeper->get_parent_node(fNode));
 	return ReadResourceInfo(parent.Get());
 }
 
 
 status_t
-ECAMPCIControllerACPI::ReadResourceInfo(device_node* parent)
+ECAMPCIControllerACPI::ReadResourceInfo(dk_node* parent)
 {
 	dprintf("initialize PCI controller from ACPI\n");
 
@@ -36,8 +37,9 @@ ECAMPCIControllerACPI::ReadResourceInfo(device_node* parent)
 	acpi_mcfg *mcfg;
 	CHECK_RET(acpiModule->get_table(ACPI_MCFG_SIGNATURE, 0, (void**)&mcfg));
 
-	CHECK_RET(gDeviceManager->get_driver(parent, (driver_module_info**)&acpiDeviceModule,
-		(void**)&acpiDevice));
+	CHECK_RET(gDeviceKeeper->get_interface(parent, ACPI_DEVICE_INTERFACE_NAME,
+		KOSM_INTERFACE_ANCESTORS,
+		(const void**)&acpiDeviceModule, (void**)&acpiDevice));
 
 	acpi_status acpi_res = acpiDeviceModule->walk_resources(acpiDevice, (char *)"_CRS",
 		AcpiCrsScanCallback, this);
@@ -159,12 +161,12 @@ ECAMPCIControllerACPI::AcpiCrsScanCallbackInt(acpi_resource *res)
 
 	switch (res->data.address.resource_type) {
 		case 0: // ACPI_MEMORY_RANGE
-			range.type = B_IO_MEMORY;
+			range.type = KOSM_RESOURCE_IO_MEMORY;
 			if (res->data.address.info.mem.caching == 3 /*ACPI_PREFETCHABLE_MEMORY*/)
 				range.address_type |= PCI_address_prefetchable;
 			break;
 		case 1: // ACPI_IO_RANGE
-			range.type = B_IO_PORT;
+			range.type = KOSM_RESOURCE_IO_PORT;
 			break;
 
 		default:

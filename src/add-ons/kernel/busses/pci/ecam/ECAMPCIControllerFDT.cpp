@@ -14,12 +14,13 @@
 status_t
 ECAMPCIControllerFDT::ReadResourceInfo()
 {
-	DeviceNodePutter<&gDeviceManager> fdtNode(gDeviceManager->get_parent_node(fNode));
+	DkNodePutter<&gDeviceKeeper> fdtNode(gDeviceKeeper->get_parent_node(fNode));
 
-	fdt_device_module_info *fdtModule;
+	fdt_device_module_info* fdtModule;
 	fdt_device* fdtDev;
-	CHECK_RET(gDeviceManager->get_driver(fdtNode.Get(),
-		(driver_module_info**)&fdtModule, (void**)&fdtDev));
+	CHECK_RET(gDeviceKeeper->get_interface(fdtNode.Get(),
+		FDT_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&fdtModule, (void**)&fdtDev));
 
 	const void* prop;
 	int propLen;
@@ -54,16 +55,16 @@ ECAMPCIControllerFDT::ReadResourceInfo()
 
 		switch (type & fdtPciRangeTypeMask) {
 		case fdtPciRangeIoPort:
-			range.type = B_IO_PORT;
+			range.type = KOSM_RESOURCE_IO_PORT;
 			fResourceRanges.Add(range);
 			break;
 		case fdtPciRangeMmio32Bit:
-			range.type = B_IO_MEMORY;
+			range.type = KOSM_RESOURCE_IO_MEMORY;
 			range.address_type |= PCI_address_type_32;
 			fResourceRanges.Add(range);
 			break;
 		case fdtPciRangeMmio64Bit:
-			range.type = B_IO_MEMORY;
+			range.type = KOSM_RESOURCE_IO_MEMORY;
 			range.address_type |= PCI_address_type_64;
 			fResourceRanges.Add(range);
 			break;
@@ -99,13 +100,14 @@ ECAMPCIControllerFDT::Finalize()
 {
 	dprintf("finalize PCI controller from FDT\n");
 
-	DeviceNodePutter<&gDeviceManager> parent(gDeviceManager->get_parent_node(fNode));
+	DkNodePutter<&gDeviceKeeper> parent(gDeviceKeeper->get_parent_node(fNode));
 
 	fdt_device_module_info* parentModule;
 	fdt_device* parentDev;
 
-	CHECK_RET(gDeviceManager->get_driver(parent.Get(), (driver_module_info**)&parentModule,
-		(void**)&parentDev));
+	CHECK_RET(gDeviceKeeper->get_interface(parent.Get(),
+		FDT_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&parentModule, (void**)&parentDev));
 
 	struct fdt_interrupt_map* interruptMap = parentModule->get_interrupt_map(parentDev);
 	parentModule->print_interrupt_map(interruptMap);

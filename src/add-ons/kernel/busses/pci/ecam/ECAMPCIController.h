@@ -18,7 +18,7 @@
 
 #define CHECK_RET(err) {status_t _err = (err); if (_err < B_OK) return _err;}
 
-#define ECAM_PCI_DRIVER_MODULE_NAME "busses/pci/ecam/driver_v1"
+#define ECAM_PCI_DRIVER_MODULE_NAME "busses/pci/ecam/dk_driver_v1"
 
 
 enum {
@@ -87,9 +87,8 @@ class ECAMPCIController {
 public:
 	virtual ~ECAMPCIController() = default;
 
-	static float SupportsDevice(device_node* parent);
-	static status_t RegisterDevice(device_node* parent);
-	static status_t InitDriver(device_node* node, ECAMPCIController*& outDriver);
+	static float SupportsDevice(dk_node* parent);
+	static status_t InitDriver(dk_node* node, ECAMPCIController*& outDriver);
 	void UninitDriver();
 
 	status_t ReadConfig(
@@ -123,7 +122,7 @@ protected:
 protected:
 	struct mutex fLock = MUTEX_INITIALIZER("ECAM PCI");
 
-	device_node* fNode{};
+	dk_node* fNode{};
 
 	AreaDeleter fRegsArea;
 	uint8 volatile* fRegs{};
@@ -141,7 +140,7 @@ public:
 
 protected:
 	status_t ReadResourceInfo() final;
-	status_t ReadResourceInfo(device_node* parent);
+	status_t ReadResourceInfo(dk_node* parent);
 
 	uint8 fStartBusNumber{};
 	uint8 fEndBusNumber{};
@@ -169,7 +168,7 @@ private:
 };
 
 
-extern device_manager_info* gDeviceManager;
+extern dk_keeper_info* gDeviceKeeper;
 extern pci_module_info* gPCI;
 
 #endif	// _ECAM_PCI_CONTROLLER_H_

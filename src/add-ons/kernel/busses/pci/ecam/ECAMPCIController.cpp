@@ -19,16 +19,18 @@
 
 
 float
-ECAMPCIController::SupportsDevice(device_node* parent)
+ECAMPCIController::SupportsDevice(dk_node* parent)
 {
-	const char* bus;
-	status_t status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
+	char bus[64];
+	status_t status = gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+		sizeof(bus), NULL, false);
 	if (status < B_OK)
 		return -1.0f;
 
 	if (strcmp(bus, "fdt") == 0) {
-		const char* compatible;
-		status = gDeviceManager->get_attr_string(parent, "fdt/compatible", &compatible, false);
+		char compatible[128];
+		status = gDeviceKeeper->get_property_string(parent, "fdt/compatible", compatible,
+			sizeof(compatible), NULL, false);
 		if (status < B_OK)
 			return -1.0f;
 
@@ -39,8 +41,9 @@ ECAMPCIController::SupportsDevice(device_node* parent)
 	}
 
 	if (strcmp(bus, "acpi") == 0) {
-		const char* hid;
-		if (gDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &hid, false) < B_OK)
+		char hid[64];
+		if (gDeviceKeeper->get_property_string(parent, KOSM_ACPI_DEVICE_HID, hid,
+				sizeof(hid), NULL, false) < B_OK)
 			return -1.0f;
 
 		if (strcmp(hid, "PNP0A03") != 0 && strcmp(hid, "PNP0A08") != 0)
@@ -53,30 +56,18 @@ ECAMPCIController::SupportsDevice(device_node* parent)
 }
 
 
-status_t
-ECAMPCIController::RegisterDevice(device_node* parent)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "ECAM PCI Host Controller"} },
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE, {.string = "bus_managers/pci/root/driver_v1"} },
-		{}
-	};
-
-	return gDeviceManager->register_node(parent, ECAM_PCI_DRIVER_MODULE_NAME, attrs, NULL, NULL);
-}
-
-
 #if !defined(ECAM_PCI_CONTROLLER_NO_INIT)
 status_t
-ECAMPCIController::InitDriver(device_node* node, ECAMPCIController*& outDriver)
+ECAMPCIController::InitDriver(dk_node* node, ECAMPCIController*& outDriver)
 {
 	dprintf("+ECAMPCIController::InitDriver()\n");
-	DeviceNodePutter<&gDeviceManager> parentNode(gDeviceManager->get_parent_node(node));
+	DkNodePutter<&gDeviceKeeper> parentNode(gDeviceKeeper->get_parent_node(node));
 
 	ObjectDeleter<ECAMPCIController> driver;
 
-	const char* bus;
-	CHECK_RET(gDeviceManager->get_attr_string(parentNode.Get(), B_DEVICE_BUS, &bus, false));
+	char bus[64];
+	CHECK_RET(gDeviceKeeper->get_property_string(parentNode.Get(), KOSM_DEVICE_BUS, bus,
+		sizeof(bus), NULL, false));
 	if (strcmp(bus, "fdt") == 0)
 		driver.SetTo(new(std::nothrow) ECAMPCIControllerFDT());
 	else if (strcmp(bus, "acpi") == 0)
