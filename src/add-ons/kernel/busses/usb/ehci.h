@@ -13,8 +13,9 @@
 
 
 struct pci_info;
-struct pci_device_module_info;
+struct pci_device_ops;
 struct pci_device;
+struct dk_node;
 
 class EHCIRootHub;
 
@@ -51,8 +52,8 @@ typedef struct isochronous_transfer_data {
 
 class EHCI : public BusManager {
 public:
-									EHCI(pci_info *info, pci_device_module_info* pci,
-										pci_device* device, Stack *stack, device_node *node);
+									EHCI(pci_info *info, pci_device_ops* pci,
+										pci_device* device, Stack *stack, dk_node *node);
 									~EHCI();
 
 		status_t					Start();
@@ -208,8 +209,8 @@ inline	uint32						ReadCapReg32(uint32 reg);
 		uint8 *						fOperationalRegisters;
 		area_id						fRegisterArea;
 		pci_info *					fPCIInfo;
-		pci_device_module_info*		fPci;
-		pci_device*					fDevice;
+		pci_device_ops*		fPci;
+		pci_device*				fDevice;
 		Stack *						fStack;
 		uint32						fEnabledInterrupts;
 		uint32						fThreshold;

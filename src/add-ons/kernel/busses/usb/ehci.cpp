@@ -23,23 +23,23 @@
 #define USB_MODULE_NAME	"ehci"
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 static usb_for_controller_interface* gUSB;
 
 
-#define EHCI_PCI_DEVICE_MODULE_NAME "busses/usb/ehci/pci/driver_v1"
+#define EHCI_PCI_DEVICE_MODULE_NAME "busses/usb/ehci/pci/dk_driver_v1"
 #define EHCI_PCI_USB_BUS_MODULE_NAME "busses/usb/ehci/device_v1"
 
 
 typedef struct {
 	EHCI* ehci;
-	pci_device_module_info* pci;
+	pci_device_ops* pci;
 	pci_device* device;
 
 	pci_info pciinfo;
 
-	device_node* node;
-	device_node* driver_node;
+	dk_node* node;
+	dk_node* driver_node;
 } ehci_pci_sim_info;
 
 
@@ -47,79 +47,7 @@ typedef struct {
 
 
 static status_t
-init_bus(device_node* node, void** bus_cookie)
-{
-	CALLED();
-
-	driver_module_info* driver;
-	ehci_pci_sim_info* bus;
-	device_node* parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, &driver, (void**)&bus);
-	gDeviceManager->put_node(parent);
-
-	Stack *stack;
-	if (gUSB->get_stack((void**)&stack) != B_OK)
-		return B_ERROR;
-
-	EHCI *ehci = new(std::nothrow) EHCI(&bus->pciinfo, bus->pci, bus->device, stack, node);
-	if (ehci == NULL) {
-		return B_NO_MEMORY;
-	}
-
-	if (ehci->InitCheck() < B_OK) {
-		TRACE_MODULE_ERROR("bus failed init check\n");
-		delete ehci;
-		return B_ERROR;
-	}
-
-	if (ehci->Start() != B_OK) {
-		delete ehci;
-		return B_ERROR;
-	}
-
-	*bus_cookie = ehci;
-
-	return B_OK;
-}
-
-
-static void
-uninit_bus(void* bus_cookie)
-{
-	CALLED();
-	EHCI* ehci = (EHCI*)bus_cookie;
-	delete ehci;
-}
-
-
-static status_t
-register_child_devices(void* cookie)
-{
-	CALLED();
-	ehci_pci_sim_info* bus = (ehci_pci_sim_info*)cookie;
-	device_node* node = bus->driver_node;
-
-	char prettyName[25];
-	sprintf(prettyName, "EHCI Controller %" B_PRIu16, 0);
-
-	device_attr attrs[] = {
-		// properties of this controller for the usb bus manager
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = prettyName }},
-		{ B_DEVICE_FIXED_CHILD, B_STRING_TYPE,
-			{ .string = USB_FOR_CONTROLLER_MODULE_NAME }},
-
-		// private data to identify the device
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, EHCI_PCI_USB_BUS_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-init_device(device_node* node, void** device_cookie)
+ehci_attach(dk_node* node, void** device_cookie)
 {
 	CALLED();
 	ehci_pci_sim_info* bus = (ehci_pci_sim_info*)calloc(1,
@@ -127,21 +55,47 @@ init_device(device_node* node, void** device_cookie)
 	if (bus == NULL)
 		return B_NO_MEMORY;
 
-	pci_device_module_info* pci;
-	pci_device* device;
-	{
-		device_node* pciParent = gDeviceManager->get_parent_node(node);
-		gDeviceManager->get_driver(pciParent, (driver_module_info**)&pci,
-			(void**)&device);
-		gDeviceManager->put_node(pciParent);
+	pci_device_ops* pci;
+	void* pciCookie;
+	status_t s = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pci, &pciCookie);
+	if (s != B_OK) {
+		free(bus);
+		return s;
 	}
 
 	bus->pci = pci;
-	bus->device = device;
+	bus->device = (pci_device*)pciCookie;
 	bus->driver_node = node;
 
-	pci_info *pciInfo = &bus->pciinfo;
-	pci->get_pci_info(device, pciInfo);
+	pci->get_pci_info(bus->device, &bus->pciinfo);
+
+	Stack* stack;
+	if (gUSB->get_stack((void**)&stack) != B_OK) {
+		free(bus);
+		return B_ERROR;
+	}
+
+	bus->ehci = new(std::nothrow) EHCI(&bus->pciinfo, bus->pci, bus->device,
+		stack, node);
+	if (bus->ehci == NULL) {
+		free(bus);
+		return B_NO_MEMORY;
+	}
+
+	if (bus->ehci->InitCheck() < B_OK) {
+		TRACE_MODULE_ERROR("bus failed init check\n");
+		delete bus->ehci;
+		free(bus);
+		return B_ERROR;
+	}
+
+	if (bus->ehci->Start() != B_OK) {
+		delete bus->ehci;
+		free(bus);
+		return B_ERROR;
+	}
 
 	*device_cookie = bus;
 	return B_OK;
@@ -149,113 +103,81 @@ init_device(device_node* node, void** device_cookie)
 
 
 static void
-uninit_device(void* device_cookie)
+ehci_detach(void* device_cookie)
 {
 	CALLED();
 	ehci_pci_sim_info* bus = (ehci_pci_sim_info*)device_cookie;
+	delete bus->ehci;
 	free(bus);
-
-}
-
-
-static status_t
-register_device(device_node* parent)
-{
-	CALLED();
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "EHCI PCI"}},
-		{}
-	};
-
-	return gDeviceManager->register_node(parent,
-		EHCI_PCI_DEVICE_MODULE_NAME, attrs, NULL, NULL);
 }
 
 
 static float
-supports_device(device_node* parent)
+supports_device(dk_node* parent)
 {
 	CALLED();
-	const char* bus;
-	uint16 type, subType, api;
-
-	// make sure parent is a EHCI PCI device node
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-		< B_OK) {
-		return -1;
-	}
-
-	if (strcmp(bus, "pci") != 0)
-		return 0.0f;
-
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_SUB_TYPE, &subType,
-			false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_TYPE, &type,
-			false) < B_OK
-		|| gDeviceManager->get_attr_uint16(parent, B_DEVICE_INTERFACE, &api,
-			false) < B_OK) {
-		TRACE_MODULE("Could not find type/subtype/interface attributes\n");
-		return -1;
-	}
-
-	if (type == PCI_serial_bus && subType == PCI_usb && api == PCI_usb_ehci) {
-		pci_device_module_info* pci;
-		pci_device* device;
-		gDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-			(void**)&device);
-		TRACE_MODULE("EHCI Device found!\n");
-
-		return 0.8f;
-	}
-
-	return 0.0f;
+	TRACE_MODULE("EHCI Device found!\n");
+	return 0.8f;
 }
 
 
-module_dependency module_dependencies[] = {
-	{ USB_FOR_CONTROLLER_MODULE_NAME, (module_info**)&gUSB },
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+static status_t
+ehci_std_ops(int32 op, ...)
+{
+	switch (op) {
+		case B_MODULE_INIT:
+		{
+			status_t s = get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info**)&gDeviceKeeper);
+			if (s != B_OK)
+				return s;
+			s = get_module(USB_FOR_CONTROLLER_MODULE_NAME,
+				(module_info**)&gUSB);
+			if (s != B_OK) {
+				put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+				return s;
+			}
+			return B_OK;
+		}
+		case B_MODULE_UNINIT:
+			put_module(USB_FOR_CONTROLLER_MODULE_NAME);
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+			return B_OK;
+		default:
+			return B_ERROR;
+	}
+}
+
+
+static const dk_match_rule sEhciPciMatchRules[] = {
+	{ KOSM_DEVICE_BUS,        B_STRING_TYPE, { .string = "pci" } },
+	{ KOSM_DEVICE_TYPE,       B_UINT16_TYPE, { .ui16 = PCI_serial_bus } },
+	{ KOSM_DEVICE_SUB_TYPE,   B_UINT16_TYPE, { .ui16 = PCI_usb } },
+	{ KOSM_DEVICE_INTERFACE,  B_UINT16_TYPE, { .ui16 = PCI_usb_ehci } },
 	{}
 };
 
-
-static usb_bus_interface gEHCIPCIDeviceModule = {
-	{
-		{
-			EHCI_PCI_USB_BUS_MODULE_NAME,
-			0,
-			NULL
-		},
-		NULL,  // supports device
-		NULL,  // register device
-		init_bus,
-		uninit_bus,
-		NULL,  // register child devices
-		NULL,  // rescan
-		NULL,  // device removed
-	},
+static const dk_match_dict sEhciPciMatchDict = {
+	sEhciPciMatchRules, 0
 };
 
-// Root device that binds to the PCI bus. It will register an usb_bus_interface
-// node for each device.
-static driver_module_info sEHCIDevice = {
+
+// Root device that binds to the PCI bus.
+static dk_driver_info sEHCIDevice = {
 	{
 		EHCI_PCI_DEVICE_MODULE_NAME,
 		0,
-		NULL
+		ehci_std_ops
 	},
-	supports_device,
-	register_device,
-	init_device,
-	uninit_device,
-	register_child_devices,
-	NULL, // rescan
-	NULL, // device removed
+
+	.match              = &sEhciPciMatchDict,
+	.probe              = supports_device,
+	.attach             = ehci_attach,
+	.detach             = ehci_detach,
 };
 
 module_info* modules[] = {
 	(module_info* )&sEHCIDevice,
-	(module_info* )&gEHCIPCIDeviceModule,
 	NULL
 };
 
@@ -314,8 +236,8 @@ print_queue(ehci_qh *queueHead)
 //
 
 
-EHCI::EHCI(pci_info *info, pci_device_module_info* pci, pci_device* device, Stack *stack,
-	device_node* node)
+EHCI::EHCI(pci_info *info, pci_device_ops* pci, pci_device* device, Stack *stack,
+	dk_node* node)
 	:	BusManager(stack, node),
 		fCapabilityRegisters(NULL),
 		fOperationalRegisters(NULL),
@@ -378,23 +300,25 @@ EHCI::EHCI(pci_info *info, pci_device_module_info* pci, pci_device* device, Stac
 			applyWorkaround = true;
 		} else if (fPCIInfo->device_id == AMD_SB700_SB800_EHCI_CONTROLLER) {
 			// only apply on certain chipsets, determined by SMBus revision
-			device_node *pciNode = NULL;
-			device_node* deviceRoot = gDeviceManager->get_root_node();
-			device_attr acpiAttrs[] = {
-				{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "pci" }},
-				{ B_DEVICE_VENDOR_ID, B_UINT16_TYPE, { .ui16 = AMD_SBX00_VENDOR }},
-				{ B_DEVICE_ID, B_UINT16_TYPE, { .ui16 = AMD_SBX00_SMBUS_CONTROLLER }},
+			dk_node *pciNode = NULL;
+			dk_node* deviceRoot = gDeviceKeeper->get_root_node();
+			dk_match_rule acpiAttrs[] = {
+				{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "pci" }},
+				{ KOSM_DEVICE_VENDOR_ID, B_UINT16_TYPE, { .ui16 = AMD_SBX00_VENDOR }},
+				{ KOSM_DEVICE_ID, B_UINT16_TYPE, { .ui16 = AMD_SBX00_SMBUS_CONTROLLER }},
 				{ NULL }
 			};
-			if (gDeviceManager->find_child_node(deviceRoot, acpiAttrs,
+			if (gDeviceKeeper->find_child_node(deviceRoot, acpiAttrs,
 					&pciNode) == B_OK) {
-				pci_device_module_info *pci;
-				pci_device *pciDevice;
-				if (gDeviceManager->get_driver(pciNode, (driver_module_info **)&pci,
-					(void **)&pciDevice) == B_OK) {
+				pci_device_ops *pci;
+				void *pciDevice;
+				if (gDeviceKeeper->get_interface(pciNode,
+						PCI_DEVICE_INTERFACE_NAME,
+						KOSM_INTERFACE_SELF | KOSM_INTERFACE_ANCESTORS,
+						(const void **)&pci, &pciDevice) == B_OK) {
 
 					pci_info smbus;
-					pci->get_pci_info(pciDevice, &smbus);
+					pci->get_pci_info((pci_device*)pciDevice, &smbus);
 					// Only applies to chipsets < SB710 (rev A14)
 					if (smbus.revision == 0x3a || smbus.revision == 0x3b)
 						applyWorkaround = true;
