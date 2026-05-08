@@ -1,15 +1,13 @@
 /*
  * Copyright 2009, Haiku, Inc. All Rights Reserved.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
- *
- * Authors:
- *		Clemens Zeidler, haiku@clemens-zeidler.de
- *		Alexander von Gluck, kallisti5@unixzen.com
  */
 
 
 #include <ACPI.h>
 #include <condition_variable.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <Errors.h>
 
@@ -23,7 +21,6 @@
 
 
 struct battery_driver_cookie {
-	device_node*				node;
 	acpi_device_module_info*	acpi;
 	acpi_device					acpi_cookie;
 };
@@ -35,13 +32,9 @@ struct battery_device_cookie {
 };
 
 
-#define ACPI_BATTERY_DRIVER_NAME "drivers/power/acpi_battery/driver_v1"
-#define ACPI_BATTERY_DEVICE_NAME "drivers/power/acpi_battery/device_v1"
+#define ACPI_BATTERY_DRIVER_NAME "drivers/power/acpi_battery/dk_driver_v1"
 
-/* Base Namespace devices are published to */
 #define ACPI_BATTERY_BASENAME "power/acpi_battery/%d"
-
-// name of pnp generator of path ids
 #define ACPI_BATTERY_PATHID_GENERATOR "acpi_battery/path_id"
 
 #define ACPI_NAME_BATTERY "PNP0C0A"
@@ -55,7 +48,7 @@ struct battery_device_cookie {
 #define ERROR(x...) dprintf("acpi_battery: " x)
 
 
-static device_manager_info *sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static ConditionVariable sBatteryCondition;
 
 
@@ -80,46 +73,42 @@ ReadBatteryStatus(battery_driver_cookie* cookie,
 	acpi_battery_info* batteryStatus)
 {
 	TRACE("ReadBatteryStatus\n");
-	status_t status = B_ERROR;
 
 	acpi_data buffer;
 	buffer.pointer = NULL;
 	buffer.length = ACPI_ALLOCATE_BUFFER;
 
-	acpi_object_type* object;
-	acpi_object_type* pointer;
-
-	status = cookie->acpi->evaluate_method(cookie->acpi_cookie, "_BST", NULL,
-		&buffer);
+	status_t status = cookie->acpi->evaluate_method(cookie->acpi_cookie,
+		"_BST", NULL, &buffer);
 	if (status != B_OK)
 		goto exit;
 
-	object = (acpi_object_type*)buffer.pointer;
-	if (object->object_type != ACPI_TYPE_PACKAGE
-		|| object->package.count < 4) {
-		status = B_ERROR;
-		goto exit;
+	{
+		acpi_object_type* object = (acpi_object_type*)buffer.pointer;
+		if (object->object_type != ACPI_TYPE_PACKAGE
+			|| object->package.count < 4) {
+			status = B_ERROR;
+			goto exit;
+		}
+
+		acpi_object_type* pointer = object->package.objects;
+		batteryStatus->state = GetUint32(pointer++);
+		if (batteryStatus->state == UINT32_MAX)
+			batteryStatus->state = BATTERY_CRITICAL_STATE;
+		batteryStatus->current_rate = GetUint32(pointer++);
+		if (batteryStatus->state == BATTERY_DISCHARGING
+			&& batteryStatus->current_rate == 0) {
+			batteryStatus->state = BATTERY_NOT_CHARGING;
+		}
+		batteryStatus->capacity = GetUint32(pointer++);
+		batteryStatus->voltage = GetUint32(pointer++);
+
+		if (batteryStatus->voltage == UINT32_MAX
+			&& batteryStatus->current_rate == UINT32_MAX
+			&& batteryStatus->capacity == UINT32_MAX) {
+			batteryStatus->state = BATTERY_CRITICAL_STATE;
+		}
 	}
-
-	pointer = object->package.objects;
-	batteryStatus->state = GetUint32(pointer++);
-	if (batteryStatus->state == UINT32_MAX)
-		batteryStatus->state = BATTERY_CRITICAL_STATE;
-	batteryStatus->current_rate = GetUint32(pointer++);
-	if (batteryStatus->state == BATTERY_DISCHARGING && batteryStatus->current_rate == 0)
-		batteryStatus->state = BATTERY_NOT_CHARGING;
-	batteryStatus->capacity = GetUint32(pointer++);
-	batteryStatus->voltage = GetUint32(pointer++);
-
-	/* If key values are all < 0, it is likely that the battery slot is empty
-	 * or the battery is damaged.  Set BATTERY_CRITICAL_STATE
-	 */
-	if (batteryStatus->voltage == UINT32_MAX
-		&& batteryStatus->current_rate == UINT32_MAX
-		&& batteryStatus->capacity == UINT32_MAX) {
-		batteryStatus->state = BATTERY_CRITICAL_STATE;
-	}
-
 
 exit:
 	free(buffer.pointer);
@@ -132,12 +121,10 @@ ReadBatteryInfo(battery_driver_cookie* cookie,
 	acpi_extended_battery_info* batteryInfo)
 {
 	TRACE("ReadBatteryInfo\n");
+
 	acpi_data buffer;
 	buffer.pointer = NULL;
 	buffer.length = ACPI_ALLOCATE_BUFFER;
-
-	acpi_object_type* object;
-	acpi_object_type* pointer;
 
 	bool isBIF = false;
 	status_t status = cookie->acpi->evaluate_method(cookie->acpi_cookie,
@@ -157,60 +144,64 @@ ReadBatteryInfo(battery_driver_cookie* cookie,
 		status = B_ERROR;
 		goto exit;
 	}
-	object = (acpi_object_type*)buffer.pointer;
 
-	TRACE("ReadBatteryInfo %d %u\n", object->object_type,
-		object->package.count);
-	if (object->object_type != ACPI_TYPE_PACKAGE
-		|| (isBIF && object->package.count < 13)) {
-		status = B_ERROR;
-		goto exit;
-	}
+	{
+		acpi_object_type* object = (acpi_object_type*)buffer.pointer;
 
-	pointer = object->package.objects;
-	if (isBIF) {
-		batteryInfo->revision = ACPI_BATTERY_REVISION_BIF;
-	} else {
-		batteryInfo->revision = GetUint32(pointer++);
-		TRACE("ReadBatteryInfo revision %u\n", batteryInfo->revision);
-
-		if (object->package.count < 20) {
+		TRACE("ReadBatteryInfo %d %u\n", object->object_type,
+			object->package.count);
+		if (object->object_type != ACPI_TYPE_PACKAGE
+			|| (isBIF && object->package.count < 13)) {
 			status = B_ERROR;
 			goto exit;
 		}
+
+		acpi_object_type* pointer = object->package.objects;
+		if (isBIF) {
+			batteryInfo->revision = ACPI_BATTERY_REVISION_BIF;
+		} else {
+			batteryInfo->revision = GetUint32(pointer++);
+			TRACE("ReadBatteryInfo revision %u\n", batteryInfo->revision);
+			if (object->package.count < 20) {
+				status = B_ERROR;
+				goto exit;
+			}
+		}
+
+		batteryInfo->power_unit = GetUint32(pointer++);
+		batteryInfo->design_capacity = GetUint32(pointer++);
+		batteryInfo->last_full_charge = GetUint32(pointer++);
+		batteryInfo->technology = GetUint32(pointer++);
+		batteryInfo->design_voltage = GetUint32(pointer++);
+		batteryInfo->design_capacity_warning = GetUint32(pointer++);
+		batteryInfo->design_capacity_low = GetUint32(pointer++);
+
+		if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF) {
+			batteryInfo->cycles = GetUint32(pointer++);
+			batteryInfo->accuracy = GetUint32(pointer++);
+			batteryInfo->max_sampling_time = GetUint32(pointer++);
+			batteryInfo->min_sampling_time = GetUint32(pointer++);
+			batteryInfo->max_average_interval = GetUint32(pointer++);
+			batteryInfo->min_average_interval = GetUint32(pointer++);
+		}
+
+		batteryInfo->capacity_granularity_1 = GetUint32(pointer++);
+		batteryInfo->capacity_granularity_2 = GetUint32(pointer++);
+		GetString(batteryInfo->model_number,
+			sizeof(batteryInfo->model_number), pointer++);
+		GetString(batteryInfo->serial_number,
+			sizeof(batteryInfo->serial_number), pointer++);
+		GetString(batteryInfo->type, sizeof(batteryInfo->type), pointer++);
+		GetString(batteryInfo->oem_info, sizeof(batteryInfo->oem_info),
+			pointer++);
+
+		if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF
+			&& batteryInfo->revision >= ACPI_BATTERY_REVISION_1
+			&& object->package.count > 20) {
+			batteryInfo->swapping_capability = GetUint32(pointer++);
+		}
 	}
 
-	batteryInfo->power_unit = GetUint32(pointer++);
-	batteryInfo->design_capacity = GetUint32(pointer++);
-	batteryInfo->last_full_charge = GetUint32(pointer++);
-	batteryInfo->technology = GetUint32(pointer++);
-	batteryInfo->design_voltage = GetUint32(pointer++);
-	batteryInfo->design_capacity_warning = GetUint32(pointer++);
-	batteryInfo->design_capacity_low = GetUint32(pointer++);
-
-	if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF) {
-		batteryInfo->cycles = GetUint32(pointer++);
-		batteryInfo->accuracy = GetUint32(pointer++);
-		batteryInfo->max_sampling_time = GetUint32(pointer++);
-		batteryInfo->min_sampling_time = GetUint32(pointer++);
-		batteryInfo->max_average_interval = GetUint32(pointer++);
-		batteryInfo->min_average_interval = GetUint32(pointer++);
-	}
-
-	batteryInfo->capacity_granularity_1 = GetUint32(pointer++);
-	batteryInfo->capacity_granularity_2 = GetUint32(pointer++);
-	GetString(batteryInfo->model_number, sizeof(batteryInfo->model_number),
-		pointer++);
-	GetString(batteryInfo->serial_number, sizeof(batteryInfo->serial_number),
-		pointer++);
-	GetString(batteryInfo->type, sizeof(batteryInfo->type), pointer++);
-	GetString(batteryInfo->oem_info, sizeof(batteryInfo->oem_info), pointer++);
-
-	if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF
-		&& batteryInfo->revision >= ACPI_BATTERY_REVISION_1
-		&& object->package.count > 20) {
-		batteryInfo->swapping_capability = GetUint32(pointer++);
-	}
 exit:
 	free(buffer.pointer);
 	return status;
@@ -220,8 +211,6 @@ exit:
 int
 EstimatedRuntime(battery_driver_cookie* cookie, acpi_battery_info* info)
 {
-	status_t status = B_ERROR;
-
 	acpi_object_type argument;
 	argument.object_type = ACPI_TYPE_INTEGER;
 	argument.integer.integer = info->current_rate;
@@ -236,91 +225,34 @@ EstimatedRuntime(battery_driver_cookie* cookie, acpi_battery_info* info)
 	buffer.pointer = &object;
 	buffer.length = sizeof(object);
 
-	acpi_object_type* returnObject;
-
-	status = cookie->acpi->evaluate_method(cookie->acpi_cookie, "_BTM",
-		&arguments,	&buffer);
+	status_t status = cookie->acpi->evaluate_method(cookie->acpi_cookie,
+		"_BTM", &arguments, &buffer);
 	if (status != B_OK)
 		return -1;
 
-	returnObject = (acpi_object_type*)buffer.pointer;
-
+	acpi_object_type* returnObject = (acpi_object_type*)buffer.pointer;
 	if (returnObject->object_type != ACPI_TYPE_INTEGER)
 		return -1;
 
-	int result = returnObject->integer.integer;
-
-	return result;
+	return returnObject->integer.integer;
 }
 
 
 void
-battery_notify_handler(acpi_handle device, uint32 value, void *context)
+battery_notify_handler(acpi_handle device, uint32 value, void* context)
 {
 	TRACE("battery_notify_handler event 0x%x\n", int(value));
 	sBatteryCondition.NotifyAll();
 }
 
 
-void
-TraceBatteryInfo(acpi_extended_battery_info* batteryInfo)
-{
-	TRACE("BIF power unit %i\n", batteryInfo->power_unit);
-	TRACE("BIF design capacity %i\n", batteryInfo->design_capacity);
-	TRACE("BIF last full charge %i\n", batteryInfo->last_full_charge);
-	TRACE("BIF technology %i\n", batteryInfo->technology);
-	TRACE("BIF design voltage %i\n", batteryInfo->design_voltage);
-	TRACE("BIF design capacity warning %i\n",
-		batteryInfo->design_capacity_warning);
-	TRACE("BIF design capacity low %i\n", batteryInfo->design_capacity_low);
-	TRACE("BIF capacity granularity 1 %i\n",
-		batteryInfo->capacity_granularity_1);
-	TRACE("BIF capacity granularity 2 %i\n",
-		batteryInfo->capacity_granularity_2);
-	if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF) {
-		TRACE("BIX cycles %i\n", batteryInfo->cycles);
-		TRACE("BIX accuracy %i\n", batteryInfo->accuracy);
-		TRACE("BIX max_sampling_time %i\n", batteryInfo->max_sampling_time);
-		TRACE("BIX min_sampling_time %i\n", batteryInfo->min_sampling_time);
-		TRACE("BIX max_average_interval %i\n",
-			batteryInfo->max_average_interval);
-		TRACE("BIX min_average_interval %i\n",
-			batteryInfo->min_average_interval);
-	}
-	TRACE("BIF model number %s\n", batteryInfo->model_number);
-	TRACE("BIF serial number %s\n", batteryInfo->serial_number);
-	TRACE("BIF type %s\n", batteryInfo->type);
-	TRACE("BIF oem info %s\n", batteryInfo->oem_info);
-	if (batteryInfo->revision != ACPI_BATTERY_REVISION_BIF
-		&& batteryInfo->revision >= ACPI_BATTERY_REVISION_1) {
-		TRACE("BIX swapping_capability %i\n",
-			batteryInfo->swapping_capability);
-	}
-}
-
-
-//	#pragma mark - device module API
+//	#pragma mark - device ops
 
 
 static status_t
-acpi_battery_init_device(void *driverCookie, void **cookie)
+acpi_battery_open(void* initCookie, const char* path, int flags, void** cookie)
 {
-	*cookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-acpi_battery_uninit_device(void *_cookie)
-{
-
-}
-
-
-static status_t
-acpi_battery_open(void *initCookie, const char *path, int flags, void** cookie)
-{
-	battery_device_cookie *device;
+	battery_device_cookie* device;
 	device = (battery_device_cookie*)calloc(1, sizeof(battery_device_cookie));
 	if (device == NULL)
 		return B_NO_MEMORY;
@@ -329,7 +261,6 @@ acpi_battery_open(void *initCookie, const char *path, int flags, void** cookie)
 	device->stop_watching = 0;
 
 	*cookie = device;
-
 	return B_OK;
 }
 
@@ -342,12 +273,13 @@ acpi_battery_close(void* cookie)
 
 
 static status_t
-acpi_battery_read(void* _cookie, off_t position, void *buffer, size_t* numBytes)
+acpi_battery_read(void* _cookie, off_t position, void* buffer,
+	size_t* numBytes)
 {
 	if (*numBytes < 1)
 		return B_IO_ERROR;
 
-	battery_device_cookie *device = (battery_device_cookie*)_cookie;
+	battery_device_cookie* device = (battery_device_cookie*)_cookie;
 
 	acpi_battery_info batteryStatus;
 	ReadBatteryStatus(device->driver_cookie, &batteryStatus);
@@ -357,16 +289,17 @@ acpi_battery_read(void* _cookie, off_t position, void *buffer, size_t* numBytes)
 
 	if (position == 0) {
 		char string[512];
-		char *str = string;
+		char* str = string;
 		ssize_t max_len = sizeof(string);
+
 		snprintf(str, max_len, "Battery Status:\n");
 		max_len -= strlen(str);
 		str += strlen(str);
 
-		snprintf(str, max_len, " State %" B_PRIu32 ", Current Rate %" B_PRIu32
-			", Capacity %" B_PRIu32 ", Voltage %" B_PRIu32 "\n",
+		snprintf(str, max_len, " State %" B_PRIu32 ", Current Rate %"
+			B_PRIu32 ", Capacity %" B_PRIu32 ", Voltage %" B_PRIu32 "\n",
 			batteryStatus.state, batteryStatus.current_rate,
-			batteryStatus.capacity,	batteryStatus.voltage);
+			batteryStatus.capacity, batteryStatus.voltage);
 		max_len -= strlen(str);
 		str += strlen(str);
 
@@ -374,34 +307,39 @@ acpi_battery_read(void* _cookie, off_t position, void *buffer, size_t* numBytes)
 		max_len -= strlen(str);
 		str += strlen(str);
 
-		snprintf(str, max_len, " Power Unit %" B_PRIu32 ", Design Capacity %"
-			B_PRIu32 ", Last Full Charge %" B_PRIu32 ", Technology %" B_PRIu32
-			"\n", batteryInfo.power_unit, batteryInfo.design_capacity,
+		snprintf(str, max_len, " Power Unit %" B_PRIu32
+			", Design Capacity %" B_PRIu32 ", Last Full Charge %"
+			B_PRIu32 ", Technology %" B_PRIu32 "\n",
+			batteryInfo.power_unit, batteryInfo.design_capacity,
 			batteryInfo.last_full_charge, batteryInfo.technology);
 		max_len -= strlen(str);
 		str += strlen(str);
-		snprintf(str, max_len, " Design Voltage %" B_PRIu32 ", Design Capacity"
-			" Warning %" B_PRIu32 ", Design Capacity Low %" B_PRIu32 ", "
-			"Capacity Granularity1 %" B_PRIu32 ", Capacity Granularity2 %"
-			B_PRIu32 "\n", batteryInfo.design_voltage,
+
+		snprintf(str, max_len, " Design Voltage %" B_PRIu32
+			", Design Capacity Warning %" B_PRIu32
+			", Design Capacity Low %" B_PRIu32
+			", Capacity Granularity1 %" B_PRIu32
+			", Capacity Granularity2 %" B_PRIu32 "\n",
+			batteryInfo.design_voltage,
 			batteryInfo.design_capacity_warning,
 			batteryInfo.design_capacity_low,
 			batteryInfo.capacity_granularity_1,
 			batteryInfo.capacity_granularity_2);
 		max_len -= strlen(str);
 		str += strlen(str);
+
 		snprintf(str, max_len, " Model Number %s, Serial Number %s, "
 			"Type %s, OEM Info %s\n", batteryInfo.model_number,
-			batteryInfo.serial_number, batteryInfo.type, batteryInfo.oem_info);
-		max_len -= strlen(str);
-		str += strlen(str);
+			batteryInfo.serial_number, batteryInfo.type,
+			batteryInfo.oem_info);
 
 		max_len = user_strlcpy((char*)buffer, string, *numBytes);
 		if (max_len < B_OK)
 			return B_BAD_ADDRESS;
 		*numBytes = max_len;
-	} else
+	} else {
 		*numBytes = 0;
+	}
 
 	return B_OK;
 }
@@ -422,10 +360,10 @@ acpi_battery_control(void* _cookie, uint32 op, void* arg, size_t len)
 	status_t err;
 
 	switch (op) {
-		case IDENTIFY_DEVICE: {
+		case IDENTIFY_DEVICE:
+		{
 			if (len < sizeof(uint32))
 				return B_BAD_VALUE;
-
 			uint32 magicId = kMagicACPIBatteryID;
 			if (!IS_USER_ADDRESS(arg)
 				|| user_memcpy(arg, &magicId, sizeof(magicId)) < B_OK) {
@@ -434,10 +372,10 @@ acpi_battery_control(void* _cookie, uint32 op, void* arg, size_t len)
 			return B_OK;
 		}
 
-		case GET_BATTERY_INFO: {
+		case GET_BATTERY_INFO:
+		{
 			if (len < sizeof(acpi_battery_info))
 				return B_BAD_VALUE;
-
 			acpi_battery_info batteryInfo;
 			err = ReadBatteryStatus(device->driver_cookie, &batteryInfo);
 			if (err != B_OK)
@@ -450,17 +388,17 @@ acpi_battery_control(void* _cookie, uint32 op, void* arg, size_t len)
 			return B_OK;
 		}
 
-		case GET_EXTENDED_BATTERY_INFO: {
+		case GET_EXTENDED_BATTERY_INFO:
+		{
 			if (len < sizeof(acpi_extended_battery_info))
 				return B_BAD_VALUE;
-
 			acpi_extended_battery_info extBatteryInfo;
 			err = ReadBatteryInfo(device->driver_cookie, &extBatteryInfo);
 			if (err != B_OK)
 				return err;
 			if (!IS_USER_ADDRESS(arg)
-				|| user_memcpy(arg, &extBatteryInfo, sizeof(extBatteryInfo))
-					< B_OK) {
+				|| user_memcpy(arg, &extBatteryInfo,
+					sizeof(extBatteryInfo)) < B_OK) {
 				return B_BAD_ADDRESS;
 			}
 			return B_OK;
@@ -493,171 +431,125 @@ acpi_battery_free(void* cookie)
 }
 
 
-//	#pragma mark - driver module API
+static dk_device_ops sAcpiBatteryDeviceOps = {
+	acpi_battery_open,
+	acpi_battery_close,
+	acpi_battery_free,
+	acpi_battery_read,
+	acpi_battery_write,
+	NULL,		// io
+	acpi_battery_control,
+	NULL,		// select
+	NULL,		// deselect
+	NULL		// device_removed
+};
+
+
+//	#pragma mark - match & driver
+
+
+static const dk_match_rule sAcpiBatteryMatchRules[] = {
+	{ KOSM_DEVICE_BUS,       B_STRING_TYPE, { .string = "acpi" } },
+	{ "acpi/type",           B_UINT32_TYPE, { .ui32 = ACPI_TYPE_DEVICE } },
+	{ KOSM_ACPI_DEVICE_HID,  B_STRING_TYPE, { .string = ACPI_NAME_BATTERY } },
+	{}
+};
+
+static const dk_match_dict sAcpiBatteryMatchDict = {
+	sAcpiBatteryMatchRules, 0
+};
 
 
 static float
-acpi_battery_support(device_node *parent)
+acpi_battery_support(dk_node* parent)
 {
-	// make sure parent is really the ACPI bus manager
-	const char *bus;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "acpi"))
-		return 0.0;
-
-	// check whether it's really a device
-	uint32 device_type;
-	if (sDeviceManager->get_attr_uint32(parent, ACPI_DEVICE_TYPE_ITEM,
-			&device_type, false) != B_OK
-		|| device_type != ACPI_TYPE_DEVICE) {
-		return 0.0;
-	}
-
-	// check whether it's a battery device
-	const char *name;
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_HID_ITEM, &name,
-		false) != B_OK || strcmp(name, ACPI_NAME_BATTERY)) {
-		return 0.0;
-	}
-
-	return 0.6;
+	return 0.6f;
 }
 
 
 static status_t
-acpi_battery_register_device(device_node *node)
+acpi_battery_attach(dk_node* node, void** _driverCookie)
 {
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "ACPI Battery" }},
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, ACPI_BATTERY_DRIVER_NAME, attrs,
-		NULL, NULL);
-}
-
-
-static status_t
-acpi_battery_init_driver(device_node *node, void **driverCookie)
-{
-	battery_driver_cookie *device;
-	device = (battery_driver_cookie *)calloc(1, sizeof(battery_driver_cookie));
+	battery_driver_cookie* device;
+	device = (battery_driver_cookie*)calloc(1, sizeof(battery_driver_cookie));
 	if (device == NULL)
 		return B_NO_MEMORY;
 
-	*driverCookie = device;
-
-	device->node = node;
-
-	device_node *parent;
-	parent = sDeviceManager->get_parent_node(node);
-	sDeviceManager->get_driver(parent, (driver_module_info **)&device->acpi,
-		(void **)&device->acpi_cookie);
+	status_t status = sDeviceKeeper->get_interface(node,
+		ACPI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&device->acpi, (void**)&device->acpi_cookie);
+	if (status != B_OK) {
+		free(device);
+		return status;
+	}
 
 #ifdef TRACE_BATTERY
-	const char* device_path;
-	if (sDeviceManager->get_attr_string(parent, ACPI_DEVICE_PATH_ITEM,
-		&device_path, false) == B_OK) {
-		TRACE("acpi_battery_init_driver %s\n", device_path);
+	char device_path[256];
+	if (sDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_PATH,
+		device_path, sizeof(device_path), NULL, true) == B_OK) {
+		TRACE("acpi_battery_attach %s\n", device_path);
 	}
 #endif
 
-	sDeviceManager->put_node(parent);
-
-	// install notify handler
 	device->acpi->install_notify_handler(device->acpi_cookie,
-    	ACPI_ALL_NOTIFY, battery_notify_handler, device);
+		ACPI_ALL_NOTIFY, battery_notify_handler, device);
 
+	int pathID = sDeviceKeeper->create_id(ACPI_BATTERY_PATHID_GENERATOR);
+	if (pathID < 0) {
+		ERROR("attach: couldn't create a path_id\n");
+		free(device);
+		return B_ERROR;
+	}
+
+	char devname[B_DEV_NAME_LENGTH];
+	snprintf(devname, sizeof(devname), ACPI_BATTERY_BASENAME, pathID);
+	sDeviceKeeper->publish_device(node, devname, &sAcpiBatteryDeviceOps);
+
+	*_driverCookie = device;
 	return B_OK;
 }
 
 
 static void
-acpi_battery_uninit_driver(void *driverCookie)
+acpi_battery_detach(void* driverCookie)
 {
-	TRACE("acpi_battery_uninit_driver\n");
-	battery_driver_cookie *device = (battery_driver_cookie*)driverCookie;
+	TRACE("acpi_battery_detach\n");
+	battery_driver_cookie* device = (battery_driver_cookie*)driverCookie;
 
 	device->acpi->remove_notify_handler(device->acpi_cookie,
-    	ACPI_ALL_NOTIFY, battery_notify_handler);
+		ACPI_ALL_NOTIFY, battery_notify_handler);
 
 	free(device);
 }
 
 
 static status_t
-acpi_battery_register_child_devices(void *cookie)
+acpi_battery_std_ops(int32 op, ...)
 {
-	battery_driver_cookie *device = (battery_driver_cookie*)cookie;
-
-	int pathID = sDeviceManager->create_id(ACPI_BATTERY_PATHID_GENERATOR);
-	if (pathID < 0) {
-		ERROR("register_child_devices: couldn't create a path_id\n");
-		return B_ERROR;
+	switch (op) {
+		case B_MODULE_INIT:
+			sBatteryCondition.Init(NULL, "battery condition");
+			return get_module(KOSM_DEVICE_KEEPER_MODULE_NAME,
+				(module_info**)&sDeviceKeeper);
+		case B_MODULE_UNINIT:
+			put_module(KOSM_DEVICE_KEEPER_MODULE_NAME);
+			return B_OK;
+		default:
+			return B_ERROR;
 	}
-
-	char name[B_DEV_NAME_LENGTH];
-	snprintf(name, sizeof(name), ACPI_BATTERY_BASENAME, pathID);
-
-	return sDeviceManager->publish_device(device->node, name,
-		ACPI_BATTERY_DEVICE_NAME);
 }
 
 
-
-
-
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
-	{}
+static dk_driver_info acpi_battery_driver = {
+	.info   = { ACPI_BATTERY_DRIVER_NAME, 0, acpi_battery_std_ops },
+	.match  = &sAcpiBatteryMatchDict,
+	.probe  = acpi_battery_support,
+	.attach = acpi_battery_attach,
+	.detach = acpi_battery_detach,
+	.ops    = &sAcpiBatteryDeviceOps,
 };
 
-
-driver_module_info acpi_battery_driver_module = {
-	{
-		ACPI_BATTERY_DRIVER_NAME,
-		0,
-		NULL
-	},
-
-	acpi_battery_support,
-	acpi_battery_register_device,
-	acpi_battery_init_driver,
-	acpi_battery_uninit_driver,
-	acpi_battery_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
-};
-
-
-struct device_module_info acpi_battery_device_module = {
-	{
-		ACPI_BATTERY_DEVICE_NAME,
-		0,
-		NULL
-	},
-
-	acpi_battery_init_device,
-	acpi_battery_uninit_device,
-	NULL,
-
-	acpi_battery_open,
-	acpi_battery_close,
-	acpi_battery_free,
-	acpi_battery_read,
-	acpi_battery_write,
-	NULL,
-	acpi_battery_control,
-
-	NULL,
-	NULL
-};
-
-module_info *modules[] = {
-	(module_info *)&acpi_battery_driver_module,
-	(module_info *)&acpi_battery_device_module,
+module_info* modules[] = {
+	(module_info*)&acpi_battery_driver,
 	NULL
 };
