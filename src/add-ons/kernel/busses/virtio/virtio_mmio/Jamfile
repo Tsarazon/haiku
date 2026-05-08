@@ -7,5 +7,4 @@ UsePrivateHeaders kernel virtio ;
 
 KernelAddon virtio_mmio :
 	virtio_mmio.cpp
-	VirtioDevice.cpp
 ;

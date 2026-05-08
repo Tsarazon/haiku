@@ -1,5 +1,6 @@
 /*
  * Copyright 2013, 2018, Jérôme Duval, jerome.duval@gmail.com.
+ * Copyright 2026, KosmOS Project. DeviceKeeper migration.
  * Distributed under the terms of the MIT License.
  */
 
@@ -10,408 +11,127 @@
 
 #include <ByteOrder.h>
 #include <KernelExport.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 
 #include <drivers/ACPI.h>
 #include <drivers/bus/FDT.h>
 
 #include <debug.h>
 #include <AutoDeleterDrivers.h>
+#include <AutoDeleterOS.h>
 
 #include <acpi.h>
 
 #include <virtio.h>
 #include <virtio_defs.h>
-#include "VirtioDevice.h"
 
 
-#define VIRTIO_MMIO_DEVICE_MODULE_NAME "busses/virtio/virtio_mmio/driver_v1"
-#define VIRTIO_MMIO_CONTROLLER_TYPE_NAME "virtio MMIO controller"
+#define VIRTIO_MMIO_DEVICE_MODULE_NAME "busses/virtio/virtio_mmio/dk_driver_v1"
+
+//#define TRACE_VIRTIO_MMIO
+#ifdef TRACE_VIRTIO_MMIO
+#	define TRACE(x...) dprintf("virtio_mmio: " x)
+#else
+#	define TRACE(x...) ;
+#endif
+#define ERROR(x...)	dprintf("virtio_mmio: " x)
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
+virtio_for_controller_interface* gVirtio;
 
 
-static const char *
-virtio_get_feature_name(uint64 feature)
-{
-	switch (feature) {
-		case VIRTIO_FEATURE_NOTIFY_ON_EMPTY:
-			return "notify on empty";
-		case VIRTIO_FEATURE_ANY_LAYOUT:
-			return "any layout";
-		case VIRTIO_FEATURE_RING_INDIRECT_DESC:
-			return "ring indirect";
-		case VIRTIO_FEATURE_RING_EVENT_IDX:
-			return "ring event index";
-		case VIRTIO_FEATURE_BAD_FEATURE:
-			return "bad feature";
-	}
-	return NULL;
-}
-
-
-static void
-virtio_dump_features(const char* title, uint64 features,
-	const char* (*get_feature_name)(uint64))
-{
-	char features_string[512] = "";
-	for (uint64 i = 0; i < 32; i++) {
-		uint64 feature = features & (1 << i);
-		if (feature == 0)
-			continue;
-		const char* name = virtio_get_feature_name(feature);
-		if (name == NULL)
-			name = get_feature_name(feature);
-		if (name != NULL) {
-			strlcat(features_string, "[", sizeof(features_string));
-			strlcat(features_string, name, sizeof(features_string));
-			strlcat(features_string, "] ", sizeof(features_string));
-		}
-	}
-	TRACE("%s: %s\n", title, features_string);
-}
-
-
-//#pragma mark Device
-
-
-static float
-virtio_device_supports_device(device_node* parent)
-{
-	TRACE("supports_device(%p)\n", parent);
-
-	const char* name;
-	const char* bus;
-
-	status_t status = gDeviceManager->get_attr_string(parent,
-		B_DEVICE_PRETTY_NAME, &name, false);
-
-	if (status >= B_OK)
-		TRACE("  name: %s\n", name);
-
-	status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
-
-	if (status < B_OK)
-		return -1.0f;
-
-	// detect virtio device from FDT
-	if (strcmp(bus, "fdt") == 0) {
-		const char* compatible;
-		status = gDeviceManager->get_attr_string(parent, "fdt/compatible",
-			&compatible, false);
-
-		if (status < B_OK)
-			return -1.0f;
-
-		if (strcmp(compatible, "virtio,mmio") != 0)
-			return 0.0f;
-
-		return 1.0f;
-	}
-
-	// detect virtio device from ACPI
-	if (strcmp(bus, "acpi") == 0) {
-		const char* hid;
-		status = gDeviceManager->get_attr_string(parent, "acpi/hid",
-			&hid, false);
-
-		if (status < B_OK)
-			return -1.0f;
-
-		if (strcmp(hid, "LNRO0005") != 0)
-			return 0.0f;
-
-		return 1.0f;
-	}
-
-	return 0.0f;
-}
-
-
-struct virtio_memory_range {
-	uint64 base;
-	uint64 length;
+// Per-transport bus state. One instance per virtio-mmio controller.
+struct virtio_mmio_sim_info {
+	dk_node*			node;
+	area_id				regsArea;
+	volatile VirtioRegs*	regs;
+	uint32				irq;
+	virtio_sim			sim;
+	bool				interruptInstalled;
 };
 
-static acpi_status
-virtio_crs_find_address(acpi_resource *res, void *context)
+
+//	#pragma mark - interrupt handler
+
+
+static int32
+virtio_mmio_interrupt(void* data)
 {
-	virtio_memory_range &range = *((virtio_memory_range *)context);
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)data;
+	uint32 isr = bus->regs->interruptStatus;
+	if (isr == 0)
+		return B_UNHANDLED_INTERRUPT;
 
-	if (res->type == ACPI_RESOURCE_TYPE_FIXED_MEMORY32) {
-		range.base = res->data.fixed_memory32.address;
-		range.length = res->data.fixed_memory32.address_length;
-	}
+	if ((isr & kVirtioIntQueue) != 0)
+		gVirtio->queue_interrupt_handler(bus->sim, INT16_MAX);
 
-	return B_OK;
+	if ((isr & kVirtioIntConfig) != 0)
+		gVirtio->config_interrupt_handler(bus->sim);
+
+	bus->regs->interruptAck = isr;
+	return B_HANDLED_INTERRUPT;
 }
 
 
-static acpi_status
-virtio_crs_find_interrupt(acpi_resource *res, void *context)
+//	#pragma mark - virtio_sim_interface ops
+
+
+static void
+set_sim(void* cookie, virtio_sim sim)
 {
-	uint64 &interrupt = *((uint64 *)context);
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	bus->sim = sim;
+}
 
-	if (res->type == ACPI_RESOURCE_TYPE_EXTENDED_IRQ)
-		interrupt = res->data.extended_irq.interrupts[0];
 
+static status_t
+read_host_features(void* cookie, uint64* features)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	*features = bus->regs->deviceFeatures;
 	return B_OK;
 }
 
 
 static status_t
-virtio_device_register_device(device_node* parent)
+write_guest_features(void* cookie, uint64 features)
 {
-	TRACE("register_device(%p)\n", parent);
-
-	const char* bus;
-
-	status_t status = gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false);
-
-	if (status < B_OK)
-		return -1.0f;
-
-	uint64 regs = 0;
-	uint64 regsLen = 0;
-
-	// initialize virtio device from FDT
-	if (strcmp(bus, "fdt") == 0) {
-		fdt_device_module_info *parentModule;
-		fdt_device* parentDev;
-		if (gDeviceManager->get_driver(parent, (driver_module_info**)&parentModule,
-				(void**)&parentDev)) {
-			ERROR("can't get parent node driver");
-			return B_ERROR;
-		}
-
-		if (!parentModule->get_reg(parentDev, 0, &regs, &regsLen)) {
-			ERROR("no regs");
-			return B_ERROR;
-		}
-	}
-
-	// initialize virtio device from ACPI
-	if (strcmp(bus, "acpi") == 0) {
-		acpi_device_module_info *parentModule;
-		acpi_device parentDev;
-		if (gDeviceManager->get_driver(parent, (driver_module_info**)&parentModule,
-				(void**)&parentDev)) {
-			ERROR("can't get parent node driver");
-			return B_ERROR;
-		}
-
-		virtio_memory_range range = { 0, 0 };
-		parentModule->walk_resources(parentDev, (char *)"_CRS",
-			virtio_crs_find_address, &range);
-		regs = range.base;
-		regsLen = range.length;
-	}
-
-	VirtioRegs *volatile mappedRegs;
-	AreaDeleter fRegsArea(map_physical_memory("Virtio MMIO", regs, regsLen,
-		B_ANY_KERNEL_ADDRESS, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
-		(void **)&mappedRegs));
-
-	if (!fRegsArea.IsSet()) {
-		ERROR("cant't map regs");
-		return B_ERROR;
-	}
-
-	if (mappedRegs->signature != kVirtioSignature) {
-		ERROR("bad signature: 0x%08" B_PRIx32 ", should be 0x%08" B_PRIx32 "\n",
-			mappedRegs->signature, (uint32)kVirtioSignature);
-		return B_ERROR;
-	}
-
-	TRACE("  version: 0x%08" B_PRIx32 "\n",   mappedRegs->version);
-	TRACE("  deviceId: 0x%08" B_PRIx32 "\n",  mappedRegs->deviceId);
-	TRACE("  vendorId: 0x%08" B_PRIx32 "\n",  mappedRegs->vendorId);
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, {.string = "Virtio MMIO"} },
-		{ B_DEVICE_BUS,         B_STRING_TYPE, {.string = "virtio"} },
-		{ "virtio/version",     B_UINT32_TYPE, {.ui32 = mappedRegs->version} },
-		{ "virtio/device_id",   B_UINT32_TYPE, {.ui32 = mappedRegs->deviceId} },
-		{ "virtio/type",        B_UINT16_TYPE, {.ui16 = (uint16)mappedRegs->deviceId} },
-		{ "virtio/vendor_id",   B_UINT32_TYPE, {.ui32 = mappedRegs->vendorId} },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(parent, VIRTIO_MMIO_DEVICE_MODULE_NAME,
-		attrs, NULL, NULL);
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	bus->regs->driverFeatures = (uint32)features;
+	if (bus->regs->version == 1)
+		bus->regs->guestPageSize = B_PAGE_SIZE;
+	return B_OK;
 }
 
 
-static status_t
-virtio_device_init_device(device_node* node, void** cookie)
+static uint8
+get_status(void* cookie)
 {
-	TRACE("init_device(%p)\n", node);
-
-	DeviceNodePutter<&gDeviceManager>
-		parent(gDeviceManager->get_parent_node(node));
-
-	const char* bus;
-
-	status_t status = gDeviceManager->get_attr_string(parent.Get(), B_DEVICE_BUS, &bus, false);
-
-	if (status < B_OK)
-		return -1.0f;
-
-	uint64 regs = 0;
-	uint64 regsLen = 0;
-	uint64 interrupt = 0;
-
-	// initialize virtio device from FDT
-	if (strcmp(bus, "fdt") == 0) {
-		fdt_device_module_info *parentModule;
-		fdt_device* parentDev;
-		if (gDeviceManager->get_driver(parent.Get(),
-				(driver_module_info**)&parentModule, (void**)&parentDev))
-			panic("can't get parent node driver");
-
-		TRACE("  bus: %p\n", parentModule->get_bus(parentDev));
-		TRACE("  compatible: %s\n", (const char*)parentModule->get_prop(parentDev,
-			"compatible", NULL));
-
-		for (uint32 i = 0; parentModule->get_reg(parentDev, i, &regs, &regsLen);
-				i++) {
-			TRACE("  reg[%" B_PRIu32 "]: (0x%" B_PRIx64 ", 0x%" B_PRIx64 ")\n",
-				i, regs, regsLen);
-		}
-
-		device_node* interruptController;
-		for (uint32 i = 0; parentModule->get_interrupt(parentDev,
-				i, &interruptController, &interrupt); i++) {
-
-			const char* name;
-			if (interruptController == NULL
-				|| gDeviceManager->get_attr_string(interruptController, "fdt/name",
-					&name, false) < B_OK) {
-				name = NULL;
-			}
-
-			TRACE("  interrupt[%" B_PRIu32 "]: ('%s', 0x%" B_PRIx64 ")\n", i,
-				name, interrupt);
-		}
-
-		if (!parentModule->get_reg(parentDev, 0, &regs, &regsLen)) {
-			TRACE("  no regs\n");
-			return B_ERROR;
-		}
-
-		if (!parentModule->get_interrupt(parentDev, 0, &interruptController,
-				&interrupt)) {
-			TRACE("  no interrupts\n");
-			return B_ERROR;
-		}
-	}
-
-	// initialize virtio device from ACPI
-	if (strcmp(bus, "acpi") == 0) {
-		acpi_device_module_info *parentModule;
-		acpi_device parentDev;
-		if (gDeviceManager->get_driver(parent.Get(), (driver_module_info**)&parentModule,
-				(void**)&parentDev)) {
-			ERROR("can't get parent node driver");
-			return B_ERROR;
-		}
-
-		virtio_memory_range range = { 0, 0 };
-		parentModule->walk_resources(parentDev, (char *)"_CRS",
-			virtio_crs_find_address, &range);
-		regs = range.base;
-		regsLen = range.length;
-
-		parentModule->walk_resources(parentDev, (char *)"_CRS",
-			virtio_crs_find_interrupt, &interrupt);
-
-		TRACE("  regs: (0x%" B_PRIx64 ", 0x%" B_PRIx64 ")\n",
-			regs, regsLen);
-		TRACE("  interrupt: 0x%" B_PRIx64 "\n",
-			interrupt);
-	}
-
-	ObjectDeleter<VirtioDevice> dev(new(std::nothrow) VirtioDevice());
-	if (!dev.IsSet())
-		return B_NO_MEMORY;
-
-	status_t res = dev->Init(regs, regsLen, interrupt, 1);
-	if (res < B_OK)
-		return res;
-
-	*cookie = dev.Detach();
-	return B_OK;
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	return (uint8)bus->regs->status;
 }
 
 
 static void
-virtio_device_uninit_device(void* cookie)
+set_status(void* cookie, uint8 status)
 {
-	TRACE("uninit_device(%p)\n", cookie);
-	ObjectDeleter<VirtioDevice> dev((VirtioDevice*)cookie);
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	if (status == 0) {
+		bus->regs->status = 0;
+	} else {
+		bus->regs->status |= status;
+	}
 }
 
 
 static status_t
-virtio_device_register_child_devices(void* cookie)
+read_device_config(void* cookie, uint8 offset, void* buffer, size_t bufferSize)
 {
-	TRACE("register_child_devices(%p)\n", cookie);
-	return B_OK;
-}
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
 
-
-//#pragma mark driver API
-
-
-static status_t
-virtio_device_negotiate_features(virtio_device cookie, uint64 supported,
-	uint64* negotiated, const char* (*get_feature_name)(uint64))
-{
-	TRACE("virtio_device_negotiate_features(%p)\n", cookie);
-	VirtioDevice* dev = (VirtioDevice*)cookie;
-
-	dev->fRegs->status |= kVirtioConfigSAcknowledge;
-	dev->fRegs->status |= kVirtioConfigSDriver;
-
-	uint64 features = dev->fRegs->deviceFeatures;
-	virtio_dump_features("read features", features, get_feature_name);
-	features &= supported;
-
-	// filter our own features
-	features &= (VIRTIO_FEATURE_TRANSPORT_MASK
-		| VIRTIO_FEATURE_RING_INDIRECT_DESC | VIRTIO_FEATURE_RING_EVENT_IDX);
-	*negotiated = features;
-
-	virtio_dump_features("negotiated features", features, get_feature_name);
-
-	dev->fRegs->driverFeatures = features;
-	dev->fRegs->status |= kVirtioConfigSFeaturesOk;
-	dev->fRegs->status |= kVirtioConfigSDriverOk;
-	dev->fRegs->guestPageSize = B_PAGE_SIZE;
-
-	return B_OK;
-}
-
-
-static status_t
-virtio_device_clear_feature(virtio_device cookie, uint64 feature)
-{
-	panic("not implemented");
-	return B_ERROR;
-}
-
-
-static status_t
-virtio_device_read_device_config(virtio_device cookie, uint8 offset,
-	void* buffer, size_t bufferSize)
-{
-	TRACE("virtio_device_read_device_config(%p, %d, %" B_PRIuSIZE ")\n", cookie,
-		offset, bufferSize);
-	VirtioDevice* dev = (VirtioDevice*)cookie;
-
-	// TODO: check ARM support, ARM seems support only 32 bit aligned MMIO access.
-	vuint8* src = &dev->fRegs->config[offset];
+	// TODO: ARM seems to support only 32-bit aligned MMIO access.
+	vuint8* src = &bus->regs->config[offset];
 	uint8* dst = (uint8*)buffer;
 	while (bufferSize > 0) {
 		uint8 size = 4;
@@ -434,16 +154,13 @@ virtio_device_read_device_config(virtio_device cookie, uint8 offset,
 
 
 static status_t
-virtio_device_write_device_config(virtio_device cookie, uint8 offset,
-	const void* buffer, size_t bufferSize)
+write_device_config(void* cookie, uint8 offset, const void* buffer,
+	size_t bufferSize)
 {
-	TRACE("virtio_device_write_device_config(%p, %d, %" B_PRIuSIZE ")\n",
-		cookie, offset, bufferSize);
-	VirtioDevice* dev = (VirtioDevice*)cookie;
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
 
-	// See virtio_device_read_device_config
-	uint8* src = (uint8*)buffer;
-	vuint8* dst = &dev->fRegs->config[offset];
+	const uint8* src = (const uint8*)buffer;
+	vuint8* dst = &bus->regs->config[offset];
 	while (bufferSize > 0) {
 		uint8 size = 4;
 		if (bufferSize == 1) {
@@ -451,13 +168,224 @@ virtio_device_write_device_config(virtio_device cookie, uint8 offset,
 			*dst = *src;
 		} else if (bufferSize <= 3) {
 			size = 2;
-			*(vuint16*)dst = *(uint16*)src;
+			*(vuint16*)dst = *(const uint16*)src;
 		} else
-			*(vuint32*)dst = *(uint32*)src;
+			*(vuint32*)dst = *(const uint32*)src;
 
-		dst += size;
-		bufferSize -= size;
 		src += size;
+		bufferSize -= size;
+		dst += size;
+	}
+	return B_OK;
+}
+
+
+static uint16
+get_queue_ring_size(void* cookie, uint16 queue)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	bus->regs->queueSel = queue;
+	return (uint16)bus->regs->queueNumMax;
+}
+
+
+static status_t
+setup_queue(void* cookie, uint16 queue, phys_addr_t phy, phys_addr_t phyAvail,
+	phys_addr_t phyUsed)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	bus->regs->queueSel = queue;
+
+	uint16 queueNum = (uint16)bus->regs->queueNumMax;
+	bus->regs->queueNum = queueNum;
+
+	if (bus->regs->version >= 2) {
+		bus->regs->queueDescLow  = (uint32)phy;
+		bus->regs->queueDescHi   = (uint32)(phy >> 32);
+		bus->regs->queueAvailLow = (uint32)phyAvail;
+		bus->regs->queueAvailHi  = (uint32)(phyAvail >> 32);
+		bus->regs->queueUsedLow  = (uint32)phyUsed;
+		bus->regs->queueUsedHi   = (uint32)(phyUsed >> 32);
+		bus->regs->queueReady    = 1;
+	} else {
+		// Legacy: PFN points at the descriptor area, avail/used follow
+		// contiguously with B_PAGE_SIZE alignment (established by the
+		// virtio bus manager's VirtioQueue layout).
+		bus->regs->queueAlign = B_PAGE_SIZE;
+		bus->regs->queuePfn   = (uint32)(phy / B_PAGE_SIZE);
+	}
+	return B_OK;
+}
+
+
+static status_t
+setup_interrupt(void* cookie, uint16 queueCount)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	if (bus->interruptInstalled)
+		return B_OK;
+
+	status_t status = install_io_interrupt_handler(bus->irq,
+		virtio_mmio_interrupt, bus, 0);
+	if (status != B_OK) {
+		ERROR("install_io_interrupt_handler failed: %s\n", strerror(status));
+		return status;
+	}
+	bus->interruptInstalled = true;
+	return B_OK;
+}
+
+
+static status_t
+free_interrupt(void* cookie)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	if (!bus->interruptInstalled)
+		return B_OK;
+
+	remove_io_interrupt_handler(bus->irq, virtio_mmio_interrupt, bus);
+	bus->interruptInstalled = false;
+	return B_OK;
+}
+
+
+static void
+notify_queue(void* cookie, uint16 queue)
+{
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	bus->regs->queueNotify = queue;
+}
+
+
+// Transport ops published on the virtio-mmio controller node. Defined
+// before init_bus so publish_interface can reference it without a
+// forward declaration.
+static virtio_sim_interface gVirtioMmioSimOps = {
+	set_sim,
+	read_host_features,
+	write_guest_features,
+	get_status,
+	set_status,
+	read_device_config,
+	write_device_config,
+	get_queue_ring_size,
+	setup_queue,
+	setup_interrupt,
+	free_interrupt,
+	notify_queue,
+};
+
+
+//	#pragma mark - probe / ACPI CRS
+
+
+static float
+virtio_mmio_supports_device(dk_node* node)
+{
+	TRACE("supports_device(%p)\n", node);
+
+	// detect virtio MMIO from FDT compatible string
+	char compatible[128];
+	if (gDeviceKeeper->get_property_string(node, KOSM_DEVICE_COMPATIBLE,
+			compatible, sizeof(compatible), NULL, false) == B_OK) {
+		if (strcmp(compatible, "virtio,mmio") == 0)
+			return 1.0f;
+		return 0.0f;
+	}
+
+	// detect virtio MMIO from ACPI HID
+	char hid[64];
+	if (gDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_HID,
+			hid, sizeof(hid), NULL, false) == B_OK) {
+		if (strcmp(hid, "LNRO0005") == 0)
+			return 1.0f;
+		return 0.0f;
+	}
+
+	return -1.0f;
+}
+
+
+struct virtio_mmio_crs {
+	uint64	addr_base;
+	uint32	addr_len;
+	uint32	irq;
+};
+
+
+static acpi_status
+virtio_crs_parse_callback(acpi_resource* res, void* context)
+{
+	virtio_mmio_crs* crs = (virtio_mmio_crs*)context;
+	switch (res->type) {
+		case ACPI_RESOURCE_TYPE_FIXED_MEMORY32:
+			crs->addr_base = res->data.fixed_memory32.address;
+			crs->addr_len = res->data.fixed_memory32.address_length;
+			break;
+		case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
+			if (res->data.extended_irq.interrupt_count > 0)
+				crs->irq = res->data.extended_irq.interrupts[0];
+			break;
+	}
+	return B_OK;
+}
+
+
+//	#pragma mark - attach / detach
+
+
+static status_t
+virtio_mmio_read_resources(dk_node* node, uint64& regs, uint64& regsLen,
+	uint64& interrupt)
+{
+	regs = 0;
+	regsLen = 0;
+	interrupt = 0;
+
+	if (gDeviceKeeper->get_property_uint64(node,
+			KOSM_DEVICE_REG_BASE, &regs, false) == B_OK) {
+		// FDT path: all three properties set by the FDT bus manager.
+		gDeviceKeeper->get_property_uint64(node, KOSM_DEVICE_REG_SIZE,
+			&regsLen, false);
+		gDeviceKeeper->get_property_uint64(node, KOSM_DEVICE_IRQ,
+			&interrupt, false);
+		return B_OK;
+	}
+
+	// ACPI path (LNRO0005): resources come from _CRS, not node properties.
+	char acpiPath[256] = {};
+	if (gDeviceKeeper->get_property_string(node, KOSM_ACPI_DEVICE_PATH,
+			acpiPath, sizeof(acpiPath), NULL, false) != B_OK) {
+		ERROR("init_bus: no reg base or ACPI path\n");
+		return B_ERROR;
+	}
+
+	acpi_module_info* acpi = NULL;
+	if (get_module(B_ACPI_MODULE_NAME, (module_info**)&acpi) != B_OK) {
+		ERROR("init_bus: can't get ACPI module\n");
+		return B_ERROR;
+	}
+
+	acpi_handle handle = NULL;
+	status_t s = acpi->get_handle(NULL, acpiPath, &handle);
+	if (s != B_OK) {
+		put_module(B_ACPI_MODULE_NAME);
+		ERROR("init_bus: ACPI get_handle failed\n");
+		return B_ERROR;
+	}
+
+	virtio_mmio_crs crs = {};
+	acpi->walk_resources(handle, (char*)"_CRS",
+		virtio_crs_parse_callback, &crs);
+	put_module(B_ACPI_MODULE_NAME);
+
+	regs = crs.addr_base;
+	regsLen = crs.addr_len;
+	interrupt = crs.irq;
+
+	if (regs == 0 || regsLen == 0) {
+		ERROR("init_bus: ACPI _CRS gave no memory resource\n");
+		return B_ERROR;
 	}
 
 	return B_OK;
@@ -465,219 +393,150 @@ virtio_device_write_device_config(virtio_device cookie, uint8 offset,
 
 
 static status_t
-virtio_device_alloc_queues(virtio_device cookie, size_t count,
-	virtio_queue* queues, uint16* requestedSizes)
+virtio_mmio_init_bus(dk_node* node, void** cookie)
 {
-	TRACE("virtio_device_alloc_queues(%p, %" B_PRIuSIZE ")\n", cookie, count);
-	VirtioDevice* dev = (VirtioDevice*)cookie;
+	TRACE("init_bus(%p)\n", node);
 
-	ArrayDeleter<ObjectDeleter<VirtioQueue> > newQueues(new(std::nothrow)
-		ObjectDeleter<VirtioQueue>[count]);
+	uint64 regs = 0, regsLen = 0, interrupt = 0;
+	status_t s = virtio_mmio_read_resources(node, regs, regsLen, interrupt);
+	if (s != B_OK)
+		return s;
 
-	if (!newQueues.IsSet())
+	TRACE("  regs: (0x%" B_PRIx64 ", 0x%" B_PRIx64 ")\n", regs, regsLen);
+	TRACE("  interrupt: 0x%" B_PRIx64 "\n", interrupt);
+
+	virtio_mmio_sim_info* bus = new(std::nothrow) virtio_mmio_sim_info;
+	if (bus == NULL)
 		return B_NO_MEMORY;
+	memset(bus, 0, sizeof(*bus));
+	bus->node = node;
+	bus->irq = (uint32)interrupt;
+	bus->regsArea = -1;
 
-	for (size_t i = 0; i < count; i++) {
-		newQueues[i].SetTo(new(std::nothrow) VirtioQueue(dev, i));
+	volatile VirtioRegs* mappedRegs = NULL;
+	bus->regsArea = map_physical_memory("Virtio MMIO",
+		regs, regsLen, B_ANY_KERNEL_ADDRESS,
+		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
+		(void**)&mappedRegs);
+	if (bus->regsArea < 0) {
+		ERROR("can't map regs: %s\n", strerror(bus->regsArea));
+		status_t err = bus->regsArea;
+		delete bus;
+		return err;
+	}
+	bus->regs = mappedRegs;
 
-		if (!newQueues[i].IsSet())
-			return B_NO_MEMORY;
-
-		status_t res = newQueues[i]->Init(
-			requestedSizes != NULL ? requestedSizes[i] : 0);
-		if (res < B_OK)
-			return res;
+	if (bus->regs->signature != kVirtioSignature) {
+		ERROR("bad signature: 0x%08" B_PRIx32 ", should be 0x%08" B_PRIx32 "\n",
+			bus->regs->signature, (uint32)kVirtioSignature);
+		delete_area(bus->regsArea);
+		delete bus;
+		return B_ERROR;
 	}
 
-	dev->fQueueCnt = count;
-	dev->fQueues.SetTo(newQueues.Detach());
+	uint16 virtioType = (uint16)bus->regs->deviceId;
+	if (virtioType == 0) {
+		// No backend attached — nothing to expose.
+		TRACE("virtio_mmio: no device on this transport\n");
+		delete_area(bus->regsArea);
+		delete bus;
+		return B_ERROR;
+	}
 
-	for (size_t i = 0; i < count; i++)
-		queues[i] = dev->fQueues[i].Get();
+	uint32 version = bus->regs->version;
+	TRACE("  version: 0x%08" B_PRIx32 "\n", version);
+	TRACE("  deviceId: 0x%08" B_PRIx32 "\n", bus->regs->deviceId);
+	TRACE("  vendorId: 0x%08" B_PRIx32 "\n", bus->regs->vendorId);
+
+	// Reset the device and acknowledge. The virtio bus manager will
+	// push it to DRIVER state via set_status during attach.
+	bus->regs->status = 0;
+	bus->regs->status = kVirtioConfigSAcknowledge;
+
+	*cookie = bus;
+
+	// Publish transport interface so the virtio bus manager can find it
+	// via get_interface walk-up from the child device node we register
+	// below.
+	gDeviceKeeper->publish_interface(node, VIRTIO_HOST_INTERFACE_NAME,
+		&gVirtioMmioSimOps);
+
+	// Register a virtio device child node; the virtio bus manager
+	// (VIRTIO_DEVICE_MODULE_NAME) attaches to it, looks up our sim
+	// interface via KOSM_INTERFACE_ANCESTORS, and publishes
+	// VIRTIO_DEVICE_INTERFACE_NAME for peripheral drivers.
+	//
+	// virtio version byte: 0 for legacy spec, 1 for 1.0+. In MMIO, the
+	// register "version" field is 1 for legacy, 2+ for modern.
+	uint8 virtioVersion = (version >= 2) ? 1 : 0;
+	uint16 vringAlignment = B_PAGE_SIZE;
+
+	char prettyName[32];
+	snprintf(prettyName, sizeof(prettyName), "Virtio MMIO Device %u",
+		(unsigned)virtioType);
+
+	dk_property childAttrs[] = {
+		DK_PROP_STRING(KOSM_LABEL, prettyName),
+		DK_PROP_STRING(KOSM_DEVICE_BUS, "virtio"),
+		DK_PROP_UINT16(VIRTIO_DEVICE_TYPE_ITEM, virtioType),
+		DK_PROP_UINT16(VIRTIO_VRING_ALIGNMENT_ITEM, vringAlignment),
+		DK_PROP_UINT8(VIRTIO_VERSION_ITEM, virtioVersion),
+		DK_PROP_END
+	};
+	status_t childStatus = gDeviceKeeper->register_node(node,
+		VIRTIO_DEVICE_MODULE_NAME, childAttrs, NULL, NULL);
+	if (childStatus != B_OK) {
+		ERROR("register_node(virtio/device) failed: %s\n",
+			strerror(childStatus));
+		// non-fatal: transport is up, peripherals just won't attach
+	}
 
 	return B_OK;
 }
 
 
 static void
-virtio_device_free_queues(virtio_device cookie)
+virtio_mmio_uninit_bus(void* cookie)
 {
-	TRACE("virtio_device_free_queues(%p)\n", cookie);
-	VirtioDevice* dev = (VirtioDevice*)cookie;
+	TRACE("uninit_bus(%p)\n", cookie);
+	virtio_mmio_sim_info* bus = (virtio_mmio_sim_info*)cookie;
+	if (bus == NULL)
+		return;
 
-	dev->fQueues.Unset();
-	dev->fQueueCnt = 0;
-}
-
-
-static status_t
-virtio_device_setup_interrupt(virtio_device cookie,
-	virtio_intr_func config_handler, void* driverCookie)
-{
-	VirtioDevice* dev = (VirtioDevice*)cookie;
-	TRACE("virtio_device_setup_interrupt(%p, %#" B_PRIxADDR ")\n", dev,
-		(addr_t)config_handler);
-
-	dev->fConfigHandler = config_handler;
-	dev->fConfigHandlerCookie = driverCookie;
-	dev->fConfigHandlerRef.SetTo((config_handler == NULL)
-		? NULL : &dev->fIrqHandler);
-
-	return B_OK;
-}
-
-
-static status_t
-virtio_device_free_interrupts(virtio_device cookie)
-{
-	VirtioDevice* dev = (VirtioDevice*)cookie;
-	TRACE("virtio_device_free_interrupts(%p)\n", dev);
-
-	for (int32 i = 0; i < dev->fQueueCnt; i++) {
-		VirtioQueue* queue = dev->fQueues[i].Get();
-		queue->fQueueHandler = NULL;
-		queue->fQueueHandlerCookie = NULL;
-		queue->fQueueHandlerRef.Unset();
+	if (bus->interruptInstalled) {
+		remove_io_interrupt_handler(bus->irq, virtio_mmio_interrupt, bus);
+		bus->interruptInstalled = false;
 	}
 
-	dev->fConfigHandler = NULL;
-	dev->fConfigHandlerCookie = NULL;
-	dev->fConfigHandlerRef.Unset();
+	if (bus->regs != NULL)
+		bus->regs->status = 0;
 
-	return B_OK;
+	if (bus->regsArea >= 0)
+		delete_area(bus->regsArea);
+
+	delete bus;
 }
 
 
-static status_t
-virtio_device_queue_setup_interrupt(virtio_queue aQueue,
-	virtio_callback_func handler, void* cookie)
-{
-	TRACE("virtio_device_queue_setup_interrupt(%p, %p)\n", aQueue, handler);
-
-	VirtioQueue* queue = (VirtioQueue*)aQueue;
-	VirtioDevice* dev = queue->fDev;
-
-	queue->fQueueHandler = handler;
-	queue->fQueueHandlerCookie = cookie;
-	queue->fQueueHandlerRef.SetTo((handler == NULL) ? NULL : &dev->fIrqHandler);
-
-	return B_OK;
-}
-
-
-static status_t
-virtio_device_queue_request_v(virtio_queue aQueue,
-	const physical_entry* vector,
-	size_t readVectorCount, size_t writtenVectorCount,
-	void* cookie)
-{
-	// TRACE("virtio_device_queue_request_v(%p, %" B_PRIuSIZE ", %" B_PRIuSIZE
-	//	", %p)\n", aQueue, readVectorCount, writtenVectorCount, cookie);
-	VirtioQueue* queue = (VirtioQueue*)aQueue;
-
-	return queue->Enqueue(vector, readVectorCount, writtenVectorCount, cookie);
-}
-
-
-static status_t
-virtio_device_queue_request(virtio_queue aQueue,
-	const physical_entry* readEntry,
-	const physical_entry* writtenEntry, void* cookie)
-{
-	VirtioQueue* queue = (VirtioQueue*)aQueue;
-
-	physical_entry vector[2];
-	physical_entry* vectorEnd = vector;
-
-	if (readEntry != NULL)
-		*vectorEnd++ = *readEntry;
-
-	if (writtenEntry != NULL)
-		*vectorEnd++ = *writtenEntry;
-
-	return queue->Enqueue(vector, (readEntry != NULL) ? 1 : 0,
-		(writtenEntry != NULL) ? 1 : 0, cookie);
-}
-
-
-static bool
-virtio_device_queue_is_full(virtio_queue queue)
-{
-	panic("not implemented");
-	return false;
-}
-
-
-static bool
-virtio_device_queue_is_empty(virtio_queue aQueue)
-{
-	VirtioQueue *queue = (VirtioQueue *)aQueue;
-	return queue->fUsed->idx == queue->fLastUsed;
-}
-
-
-static uint16
-virtio_device_queue_size(virtio_queue aQueue)
-{
-	VirtioQueue *queue = (VirtioQueue *)aQueue;
-	return (uint16)queue->fQueueLen;
-}
-
-
-static bool
-virtio_device_queue_dequeue(virtio_queue aQueue, void** _cookie,
-	uint32* _usedLength)
-{
-	// TRACE("virtio_device_queue_dequeue(%p)\n", aQueue);
-	VirtioQueue* queue = (VirtioQueue*)aQueue;
-	return queue->Dequeue(_cookie, _usedLength);
-}
-
-
-//#pragma mark -
+//	#pragma mark - module boilerplate
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager },
+	{ VIRTIO_FOR_CONTROLLER_MODULE_NAME, (module_info**)&gVirtio },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{ NULL }
 };
 
 
-static virtio_device_interface sVirtioDevice = {
-	{
-		{
-			VIRTIO_MMIO_DEVICE_MODULE_NAME,
-			0,
-			NULL
-		},
-
-		virtio_device_supports_device,
-		virtio_device_register_device,
-		virtio_device_init_device,
-		virtio_device_uninit_device,
-		virtio_device_register_child_devices,
-		NULL,	// rescan
-		NULL,	// device removed
-	},
-	virtio_device_negotiate_features,
-	virtio_device_clear_feature,
-	virtio_device_read_device_config,
-	virtio_device_write_device_config,
-	virtio_device_alloc_queues,
-	virtio_device_free_queues,
-	virtio_device_setup_interrupt,
-	virtio_device_free_interrupts,
-	virtio_device_queue_setup_interrupt,
-	virtio_device_queue_request,
-	virtio_device_queue_request_v,
-	virtio_device_queue_is_full,
-	virtio_device_queue_is_empty,
-	virtio_device_queue_size,
-	virtio_device_queue_dequeue,
+static dk_driver_info sVirtioMmioDriver = {
+	.info   = { VIRTIO_MMIO_DEVICE_MODULE_NAME, 0, NULL },
+	.probe  = virtio_mmio_supports_device,
+	.attach = virtio_mmio_init_bus,
+	.detach = virtio_mmio_uninit_bus,
 };
 
 
 module_info* modules[] = {
-	(module_info* )&sVirtioDevice,
+	(module_info*)&sVirtioMmioDriver,
 	NULL
 };
