@@ -5,7 +5,7 @@
  */
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <OS.h>
 #include <KernelExport.h>
 #include <SupportDefs.h>
@@ -32,131 +32,22 @@
 
 #define MAX_CARDS 1
 
-#define FB_DRIVER_MODULE_NAME "drivers/graphics/framebuffer/driver_v1"
-#define FB_DEVICE_MODULE_NAME "drivers/graphics/framebuffer/device_v1"
+#define FB_DRIVER_MODULE_NAME "drivers/graphics/framebuffer/dk_driver_v1"
 
 
 char* gDeviceNames[MAX_CARDS + 1];
 framebuffer_info* gDeviceInfo[MAX_CARDS];
 mutex gLock;
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 static bool sPublished = false;
 
 
-//	#pragma mark - driver module API
-
-
-static float
-fb_supports_device(device_node *parent)
-{
-	TRACE((DEVICE_NAME ": supports_device()\n"));
-	const char *bus;
-
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
-		return -1;
-
-	if (strcmp(bus, "pci"))
-		return 0.0;
-
-	// only match if we're a framebuffer (no VESA modes, but have frame buffer)
-	if (get_boot_item(VESA_MODES_BOOT_INFO, NULL) != NULL
-		|| get_boot_item(FRAME_BUFFER_BOOT_INFO, NULL) == NULL)
-		return 0.0;
-
-	if (sPublished)
-		return 0.0;
-
-	// match PCI display devices with low priority
-	uint8 classBase = 0;
-	sDeviceManager->get_attr_uint8(parent, B_DEVICE_TYPE, &classBase, false);
-	if (classBase == PCI_display) {
-		TRACE((DEVICE_NAME ": framebuffer device found!\n"));
-		return 0.1;
-	}
-
-	return 0.0;
-}
+//	#pragma mark - dk_device_ops
 
 
 static status_t
-fb_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{.string = "Framebuffer"} },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(node, FB_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-fb_init_driver(device_node *node, void **cookie)
-{
-	TRACE((DEVICE_NAME ": init_driver()\n"));
-
-	gDeviceInfo[0] = (framebuffer_info*)malloc(sizeof(framebuffer_info));
-	if (gDeviceInfo[0] == NULL)
-		return B_NO_MEMORY;
-
-	memset(gDeviceInfo[0], 0, sizeof(framebuffer_info));
-
-	gDeviceNames[0] = strdup("graphics/framebuffer");
-	if (gDeviceNames[0] == NULL) {
-		free(gDeviceInfo[0]);
-		return B_NO_MEMORY;
-	}
-
-	gDeviceNames[1] = NULL;
-
-	mutex_init(&gLock, "framebuffer lock");
-
-	*cookie = node;
-	return B_OK;
-}
-
-
-static void
-fb_uninit_driver(void *_cookie)
-{
-	TRACE((DEVICE_NAME ": uninit_driver()\n"));
-
-	mutex_destroy(&gLock);
-
-	char* name;
-	for (int32 index = 0; (name = gDeviceNames[index]) != NULL; index++) {
-		free(gDeviceInfo[index]);
-		free(name);
-		gDeviceNames[index] = NULL;
-		gDeviceInfo[index] = NULL;
-	}
-
-	sPublished = false;
-}
-
-
-static status_t
-fb_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-
-	if (sPublished || gDeviceNames[0] == NULL)
-		return B_OK;
-
-	sPublished = true;
-	return sDeviceManager->publish_device(node, gDeviceNames[0],
-		FB_DEVICE_MODULE_NAME);
-}
-
-
-//	#pragma mark - device module API
-
-
-static status_t
-fb_open(void *_info, const char *path, int openMode, void **_cookie)
+fb_open(void *driverCookie, const char *path, int openMode, void **_cookie)
 {
 	return gDeviceHooks.open(path, openMode, _cookie);
 }
@@ -197,39 +88,7 @@ fb_control(void *cookie, uint32 op, void *buffer, size_t length)
 }
 
 
-static status_t
-fb_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-fb_uninit_device(void *_cookie)
-{
-}
-
-
-//	#pragma mark -
-
-
-module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
-	{ NULL }
-};
-
-struct device_module_info sFbDevice = {
-	{
-		FB_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	fb_init_device,
-	fb_uninit_device,
-	NULL,	// device_removed
-
+static dk_device_ops sDeviceOps = {
 	fb_open,
 	fb_close,
 	fb_free,
@@ -237,29 +96,133 @@ struct device_module_info sFbDevice = {
 	fb_write,
 	NULL,	// io
 	fb_control,
-
 	NULL,	// select
 	NULL,	// deselect
+	NULL,	// device_removed
 };
 
-struct driver_module_info sFbDriver = {
-	{
-		FB_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
 
-	fb_supports_device,
-	fb_register_device,
-	fb_init_driver,
-	fb_uninit_driver,
-	fb_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+//	#pragma mark - dk_driver_info
+
+
+static const dk_match_rule sFbMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sFbMatchDict = {
+	sFbMatchRules,
+	0
+};
+
+
+static float
+fb_probe(dk_node *node)
+{
+	TRACE((DEVICE_NAME ": probe()\n"));
+
+	// only match if we're a framebuffer (no VESA modes, but have frame buffer)
+	if (get_boot_item(VESA_MODES_BOOT_INFO, NULL) != NULL
+		|| get_boot_item(FRAME_BUFFER_BOOT_INFO, NULL) == NULL)
+		return 0.0;
+
+	if (sPublished)
+		return 0.0;
+
+	// match PCI display devices with low priority
+	uint8 classBase = 0;
+	sDeviceKeeper->get_property_uint8(node, KOSM_DEVICE_TYPE,
+		&classBase, false);
+	if (classBase == PCI_display) {
+		TRACE((DEVICE_NAME ": framebuffer device found!\n"));
+		return 0.1;
+	}
+
+	return 0.0;
+}
+
+
+static status_t
+fb_attach(dk_node *node, void **cookie)
+{
+	TRACE((DEVICE_NAME ": attach()\n"));
+
+	gDeviceInfo[0] = (framebuffer_info*)malloc(sizeof(framebuffer_info));
+	if (gDeviceInfo[0] == NULL)
+		return B_NO_MEMORY;
+
+	memset(gDeviceInfo[0], 0, sizeof(framebuffer_info));
+
+	gDeviceNames[0] = strdup("graphics/framebuffer");
+	if (gDeviceNames[0] == NULL) {
+		free(gDeviceInfo[0]);
+		return B_NO_MEMORY;
+	}
+
+	gDeviceNames[1] = NULL;
+
+	mutex_init(&gLock, "framebuffer lock");
+
+	// Publish device
+	status_t status = sDeviceKeeper->publish_device(node, gDeviceNames[0],
+		&sDeviceOps);
+	if (status != B_OK) {
+		TRACE((DEVICE_NAME ": publish_device failed: %s\n",
+			strerror(status)));
+		mutex_destroy(&gLock);
+		free(gDeviceNames[0]);
+		gDeviceNames[0] = NULL;
+		free(gDeviceInfo[0]);
+		gDeviceInfo[0] = NULL;
+		return status;
+	}
+
+	sPublished = true;
+	*cookie = node;
+	return B_OK;
+}
+
+
+static void
+fb_detach(void *_cookie)
+{
+	TRACE((DEVICE_NAME ": detach()\n"));
+
+	dk_node* node = (dk_node*)_cookie;
+
+	char* name;
+	for (int32 index = 0; (name = gDeviceNames[index]) != NULL; index++) {
+		sDeviceKeeper->unpublish_device(node, name);
+		free(gDeviceInfo[index]);
+		free(name);
+		gDeviceNames[index] = NULL;
+		gDeviceInfo[index] = NULL;
+	}
+
+	mutex_destroy(&gLock);
+
+	sPublished = false;
+}
+
+
+//	#pragma mark -
+
+
+module_dependency module_dependencies[] = {
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
+	{ NULL }
+};
+
+struct dk_driver_info sFbDriver = {
+	.info   = { FB_DRIVER_MODULE_NAME, 0, NULL },
+	.match  = &sFbMatchDict,
+	.probe  = fb_probe,
+	.attach = fb_attach,
+	.detach = fb_detach,
+	.ops    = &sDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sFbDriver,
-	(module_info*)&sFbDevice,
 	NULL
 };
