@@ -69,14 +69,13 @@ static const uint8 kDriveIcon[] = {
 };
 
 
-#define NVME_DISK_DRIVER_MODULE_NAME 	"drivers/disk/nvme_disk/driver_v1"
-#define NVME_DISK_DEVICE_MODULE_NAME 	"drivers/disk/nvme_disk/device_v1"
+#define NVME_DISK_DRIVER_MODULE_NAME 	"drivers/disk/nvme_disk/dk_driver_v1"
 #define NVME_DISK_DEVICE_ID_GENERATOR	"nvme_disk/device_id"
 
 #define NVME_MAX_QPAIRS					(16)
 
 
-static device_manager_info* sDeviceManager;
+static dk_keeper_info* sDeviceKeeper;
 
 
 struct NVMeRequestOwner : IORequestOwner {
@@ -102,7 +101,7 @@ typedef BOpenHashTable<RequestOwnerHashDefinition, false> RequestOwnerHashTable;
 
 
 typedef struct {
-	device_node*			node;
+	dk_node*			node;
 	pci_info				info;
 
 	struct nvme_ctrlr*		ctrlr;
@@ -179,19 +178,22 @@ static int32 nvme_interrupt_handler(void* _info);
 
 
 static status_t
-nvme_disk_init_device(void* _info, void** _cookie)
+nvme_disk_init_hardware(nvme_disk_driver_info* info)
 {
 	CALLED();
-	nvme_disk_driver_info* info = (nvme_disk_driver_info*)_info;
 	ASSERT(info->ctrlr == NULL);
 
-	pci_device_module_info* pci;
-	pci_device* pcidev;
-	device_node* parent = sDeviceManager->get_parent_node(info->node);
-	sDeviceManager->get_driver(parent, (driver_module_info**)&pci,
-		(void**)&pcidev);
+	pci_device_ops* pci;
+	void* pciCookie;
+	status_t pciStatus = sDeviceKeeper->get_interface(info->node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&pci, &pciCookie);
+	if (pciStatus != B_OK) {
+		TRACE_ERROR("failed to get PCI interface: %s\n", strerror(pciStatus));
+		return pciStatus;
+	}
+	pci_device* pcidev = (pci_device*)pciCookie;
 	pci->get_pci_info(pcidev, &info->info);
-	sDeviceManager->put_node(parent);
 
 	// construct the libnvme pci_device struct
 	pci_device* device = new pci_device;
@@ -428,16 +430,14 @@ nvme_disk_init_device(void* _info, void** _cookie)
 	// set up rounded-write lock
 	rw_lock_init(&info->rounded_write_lock, "nvme rounded writes");
 
-	*_cookie = info;
 	return B_OK;
 }
 
 
 static void
-nvme_disk_uninit_device(void* _cookie)
+nvme_disk_uninit_hardware(nvme_disk_driver_info* info)
 {
 	CALLED();
-	nvme_disk_driver_info* info = (nvme_disk_driver_info*)_cookie;
 
 	remove_io_interrupt_handler(info->info.u.h0.interrupt_line,
 		nvme_interrupt_handler, (void*)info);
@@ -1135,47 +1135,34 @@ nvme_disk_ioctl(void* cookie, uint32 op, void* buffer, size_t length)
 //	#pragma mark - driver module API
 
 
-static float
-nvme_disk_supports_device(device_node *parent)
-{
-	CALLED();
+static const dk_match_rule kNVMeMatchRules[] = {
+	{ KOSM_DEVICE_BUS, B_STRING_TYPE, { .string = "pci" } },
+	{ KOSM_DEVICE_TYPE, B_UINT16_TYPE, { .ui16 = PCI_mass_storage } },
+	{ KOSM_DEVICE_SUB_TYPE, B_UINT16_TYPE, { .ui16 = PCI_nvm } },
+	{}
+};
 
-	const char* bus;
-	uint16 baseClass, subClass;
-
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false) != B_OK
-		|| sDeviceManager->get_attr_uint16(parent, B_DEVICE_TYPE, &baseClass, false) != B_OK
-		|| sDeviceManager->get_attr_uint16(parent, B_DEVICE_SUB_TYPE, &subClass, false) != B_OK)
-		return -1.0f;
-
-	if (strcmp(bus, "pci") != 0 || baseClass != PCI_mass_storage)
-		return 0.0f;
-
-	if (subClass != PCI_nvm)
-		return 0.0f;
-
-	TRACE("NVMe device found!\n");
-	return 1.0f;
-}
+static const dk_match_dict kNVMeMatch = {
+	kNVMeMatchRules,
+	0
+};
 
 
-static status_t
-nvme_disk_register_device(device_node* parent)
-{
-	CALLED();
-
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE, { .string = "NVMe Disk" } },
-		{ NULL }
-	};
-
-	return sDeviceManager->register_node(parent, NVME_DISK_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
+static dk_device_ops sNvmeDiskDeviceOps = {
+	nvme_disk_open,
+	nvme_disk_close,
+	nvme_disk_free,
+	nvme_disk_read,
+	nvme_disk_write,
+	nvme_disk_io,
+	nvme_disk_ioctl,
+	NULL,	// select
+	NULL,	// deselect
+};
 
 
 static status_t
-nvme_disk_init_driver(device_node* node, void** cookie)
+nvme_disk_init_driver(dk_node* node, void** cookie)
 {
 	CALLED();
 
@@ -1194,6 +1181,24 @@ nvme_disk_init_driver(device_node* node, void** cookie)
 
 	info->ctrlr = NULL;
 
+	// Initialize hardware
+	status_t status = nvme_disk_init_hardware(info);
+	if (status != B_OK) {
+		delete info;
+		return status;
+	}
+
+	// Publish device
+	int32 id = sDeviceKeeper->create_id(NVME_DISK_DEVICE_ID_GENERATOR);
+	if (id < 0) {
+		delete info;
+		return id;
+	}
+
+	char name[64];
+	snprintf(name, sizeof(name), "disk/nvme/%" B_PRId32 "/raw", id);
+	sDeviceKeeper->publish_device(node, name, &sNvmeDiskDeviceOps);
+
 	*cookie = info;
 	return B_OK;
 }
@@ -1205,30 +1210,8 @@ nvme_disk_uninit_driver(void* _cookie)
 	CALLED();
 
 	nvme_disk_driver_info* info = (nvme_disk_driver_info*)_cookie;
-	free(info);
-}
-
-
-static status_t
-nvme_disk_register_child_devices(void* _cookie)
-{
-	CALLED();
-
-	nvme_disk_driver_info* info = (nvme_disk_driver_info*)_cookie;
-	status_t status;
-
-	int32 id = sDeviceManager->create_id(NVME_DISK_DEVICE_ID_GENERATOR);
-	if (id < 0)
-		return id;
-
-	char name[64];
-	snprintf(name, sizeof(name), "disk/nvme/%" B_PRId32 "/raw",
-		id);
-
-	status = sDeviceManager->publish_device(info->node, name,
-		NVME_DISK_DEVICE_MODULE_NAME);
-
-	return status;
+	nvme_disk_uninit_hardware(info);
+	delete info;
 }
 
 
@@ -1236,51 +1219,25 @@ nvme_disk_register_child_devices(void* _cookie)
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper },
 	{ NULL }
 };
 
-struct device_module_info sNvmeDiskDevice = {
-	{
-		NVME_DISK_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	nvme_disk_init_device,
-	nvme_disk_uninit_device,
-	NULL, // remove,
-
-	nvme_disk_open,
-	nvme_disk_close,
-	nvme_disk_free,
-	nvme_disk_read,
-	nvme_disk_write,
-	nvme_disk_io,
-	nvme_disk_ioctl,
-
-	NULL,	// select
-	NULL,	// deselect
-};
-
-struct driver_module_info sNvmeDiskDriver = {
+static dk_driver_info sNvmeDiskDriver = {
 	{
 		NVME_DISK_DRIVER_MODULE_NAME,
 		0,
 		NULL
 	},
 
-	nvme_disk_supports_device,
-	nvme_disk_register_device,
-	nvme_disk_init_driver,
-	nvme_disk_uninit_driver,
-	nvme_disk_register_child_devices,
-	NULL,	// rescan
-	NULL,	// removed
+	.match = &kNVMeMatch,
+	.attach = nvme_disk_init_driver,
+	.detach = nvme_disk_uninit_driver,
+
+	.ops = &sNvmeDiskDeviceOps,
 };
 
 module_info* modules[] = {
 	(module_info*)&sNvmeDiskDriver,
-	(module_info*)&sNvmeDiskDevice,
 	NULL
 };
