@@ -8,7 +8,7 @@
 #ifndef _USB_SERIAL_DRIVER_H_
 #define _USB_SERIAL_DRIVER_H_
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <OS.h>
@@ -38,7 +38,7 @@ extern "C" {
 
 extern usb_module_info *gUSBModule;
 extern tty_module_info *gTTYModule;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern struct ddomain gSerialDomain;
 
 class SerialDevice;
