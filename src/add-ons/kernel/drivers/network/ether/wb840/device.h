@@ -28,10 +28,10 @@
 #	define write32(address,data) 		(*((volatile uint32 *)(address)) = (data))
 #endif
 
-extern pci_device_module_info* gPci;
+extern pci_device_ops* gPci;
 extern pci_device* gPciDev;
 
-/* Device hooks (used by device_module_info in driver.c) */
+/* Device hooks (used by dk_device_ops in driver.c) */
 status_t wb840_open(void* info, const char* name, int flags, void** cookie);
 status_t wb840_close(void* cookie);
 status_t wb840_free(void* cookie);

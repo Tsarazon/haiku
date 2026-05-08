@@ -373,4 +373,4 @@ wb840_free(void* cookie)
 }
 
 
-/* device_hooks replaced by device_module_info in driver.c */
+/* device_hooks replaced by dk_device_ops in driver.c */

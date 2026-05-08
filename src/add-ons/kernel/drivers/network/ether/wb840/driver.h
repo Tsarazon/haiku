@@ -5,16 +5,16 @@
 #ifndef __DRIVER_H
 #define __DRIVER_H
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <Drivers.h>
 #include <bus/PCI.h>
 #include "ether_driver.h"
 
 #define DEVICE_NAME "net/wb840"
 
-extern pci_device_module_info *gPci;
+extern pci_device_ops *gPci;
 extern pci_device *gPciDev;
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 extern char* gDevNameList[];
 extern pci_info *gDevList[];
 

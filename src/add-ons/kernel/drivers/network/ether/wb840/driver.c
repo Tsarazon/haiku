@@ -16,13 +16,12 @@
 
 #define MAX_CARDS 4
 
-#define WB840_DRIVER_MODULE_NAME "drivers/network/wb840/driver_v1"
-#define WB840_DEVICE_MODULE_NAME "drivers/network/wb840/device_v1"
+#define WB840_DRIVER_MODULE_NAME "drivers/network/wb840/dk_driver_v1"
 #define WB840_DEVICE_ID_GENERATOR "wb840/device_id"
 
-pci_device_module_info* gPci;
+pci_device_ops* gPci;
 pci_device* gPciDev;
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 char* gDevNameList[MAX_CARDS + 1];
 pci_info* gDevList[MAX_CARDS];
 
@@ -41,20 +40,21 @@ probe(pci_info* item)
 
 
 static float
-wb840_supports_device(device_node *parent)
+wb840_supports_device(dk_node *parent)
 {
-	const char *bus;
+	char bus[64];
 	uint16 vendorId, deviceId;
 
-	if (gDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false))
+	if (gDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false))
 		return -1;
 	if (strcmp(bus, "pci"))
 		return 0.0;
 
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_VENDOR_ID,
 			&vendorId, false) != B_OK)
 		return 0.0;
-	if (gDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
+	if (gDeviceKeeper->get_property_uint16(parent, KOSM_DEVICE_ID,
 			&deviceId, false) != B_OK)
 		return 0.0;
 
@@ -68,22 +68,31 @@ wb840_supports_device(device_node *parent)
 }
 
 
+
+/* device hooks from device.c */
+extern status_t wb840_open(void*, const char*, int, void**);
+extern status_t wb840_close(void*);
+extern status_t wb840_free(void*);
+extern status_t wb840_read(void*, off_t, void*, size_t*);
+extern status_t wb840_write(void*, off_t, const void*, size_t*);
+extern status_t wb840_control(void*, uint32, void*, size_t);
+
+static dk_device_ops sWb840DeviceOps = {
+	wb840_open,
+	wb840_close,
+	wb840_free,
+	wb840_read,
+	wb840_write,
+	NULL,	/* io */
+	wb840_control,
+	NULL,	/* select */
+	NULL,	/* deselect */
+	NULL,	/* device_removed */
+};
+
+
 static status_t
-wb840_register_device(device_node *node)
-{
-	device_attr attrs[] = {
-		{ B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{ .string = "WinBond W89C840F Ethernet" } },
-		{ NULL }
-	};
-
-	return gDeviceManager->register_node(node, WB840_DRIVER_MODULE_NAME,
-		attrs, NULL, NULL);
-}
-
-
-static status_t
-wb840_init_driver(device_node *node, void **cookie)
+wb840_init_driver(dk_node *node, void **cookie)
 {
 	LOG((DEVICE_NAME ": init_driver\n"));
 
@@ -91,11 +100,12 @@ wb840_init_driver(device_node *node, void **cookie)
 	set_dprintf_enabled(true);
 #endif
 
-	/* Get pci_device_module_info from parent node */
-	device_node *parent = gDeviceManager->get_parent_node(node);
-	gDeviceManager->get_driver(parent, (driver_module_info **)&gPci,
-		(void **)&gPciDev);
-	gDeviceManager->put_node(parent);
+	/* Get PCI bus ops from parent bus manager */
+	status_t status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void **)&gPci, (void **)&gPciDev);
+	if (status != B_OK)
+		return status;
 
 	pci_info *item = (pci_info *)malloc(sizeof(pci_info));
 	if (item == NULL)
@@ -120,6 +130,15 @@ wb840_init_driver(device_node *node, void **cookie)
 
 	LOG((DEVICE_NAME ": enabled %s\n", devName));
 
+	status = gDeviceKeeper->publish_device(node, devName, &sWb840DeviceOps);
+	if (status != B_OK) {
+		free(gDevNameList[0]);
+		gDevNameList[0] = NULL;
+		free(item);
+		gDevList[0] = NULL;
+		return status;
+	}
+
 	*cookie = node;
 	return B_OK;
 }
@@ -128,10 +147,12 @@ wb840_init_driver(device_node *node, void **cookie)
 static void
 wb840_uninit_driver(void *_cookie)
 {
+	dk_node *node = (dk_node *)_cookie;
 	int32 i = 0;
 
 	LOG((DEVICE_NAME ": uninit_driver()\n"));
 	while (gDevNameList[i] != NULL) {
+		gDeviceKeeper->unpublish_device(node, gDevNameList[i]);
 		free(gDevList[i]);
 		free(gDevNameList[i]);
 		gDevList[i] = NULL;
@@ -141,93 +162,23 @@ wb840_uninit_driver(void *_cookie)
 }
 
 
-static status_t
-wb840_register_child_devices(void *_cookie)
-{
-	device_node *node = (device_node *)_cookie;
-
-	if (gDevNameList[0] == NULL)
-		return B_ERROR;
-
-	return gDeviceManager->publish_device(node, gDevNameList[0],
-		WB840_DEVICE_MODULE_NAME);
-}
-
-
-//	#pragma mark - device init/uninit
-
-
-static status_t
-wb840_init_device(void *_info, void **_cookie)
-{
-	*_cookie = _info;
-	return B_OK;
-}
-
-
-static void
-wb840_uninit_device(void *_cookie)
-{
-}
-
-
 //	#pragma mark - module exports
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&gDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&gDeviceKeeper },
 	{ NULL }
 };
 
-/* device hooks from device.c */
-extern status_t wb840_open(void*, const char*, int, void**);
-extern status_t wb840_close(void*);
-extern status_t wb840_free(void*);
-extern status_t wb840_read(void*, off_t, void*, size_t*);
-extern status_t wb840_write(void*, off_t, const void*, size_t*);
-extern status_t wb840_control(void*, uint32, void*, size_t);
-
-struct device_module_info sWb840Device = {
-	{
-		WB840_DEVICE_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	wb840_init_device,
-	wb840_uninit_device,
-	NULL,	/* device_removed */
-
-	wb840_open,
-	wb840_close,
-	wb840_free,
-	wb840_read,
-	wb840_write,
-	NULL,	/* io */
-	wb840_control,
-
-	NULL,	/* select */
-	NULL,	/* deselect */
-};
-
-struct driver_module_info sWb840Driver = {
-	{
-		WB840_DRIVER_MODULE_NAME,
-		0,
-		NULL
-	},
-
-	wb840_supports_device,
-	wb840_register_device,
-	wb840_init_driver,
-	wb840_uninit_driver,
-	wb840_register_child_devices,
-	NULL,	/* rescan */
-	NULL,	/* removed */
+static dk_driver_info sWb840Driver = {
+	.info   = { WB840_DRIVER_MODULE_NAME, 0, NULL },
+	.probe  = wb840_supports_device,
+	.attach = wb840_init_driver,
+	.detach = wb840_uninit_driver,
+	.ops    = &sWb840DeviceOps,
 };
 
 module_info *modules[] = {
 	(module_info *)&sWb840Driver,
-	(module_info *)&sWb840Device,
 	NULL
 };
