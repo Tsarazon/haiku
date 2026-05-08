@@ -43,6 +43,17 @@ NO_HAIKU_FBSD_MII_DRIVER();
 NO_HAIKU_REENABLE_INTERRUPTS();
 
 
+driver_t *
+_fbsd_probe_pci_one(device_t dev)
+{
+	driver_t *drivers[] = {
+		DRIVER_MODULE_NAME(rtwn_pci, pci),
+		NULL
+	};
+	return __haiku_probe_drivers(dev, drivers);
+}
+
+
 void
 __haiku_init_hardware()
 {
