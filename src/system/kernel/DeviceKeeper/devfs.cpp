@@ -1281,8 +1281,17 @@ devfs_write(fs_volume* _volume, fs_vnode* _vnode, void* _cookie, off_t pos,
 	if (*_length == 0)
 		return B_OK;
 
-	return vnode->stream.u.dev.device->Write(cookie->device_cookie, pos, buffer,
-		_length);
+	const size_t requested = *_length;
+	const off_t requestedPos = pos;
+	status_t status = vnode->stream.u.dev.device->Write(cookie->device_cookie,
+		pos, buffer, _length);
+	if (status != B_OK || *_length != requested) {
+		dprintf("devfs_write[%s]: pos=%" B_PRIdOFF " requested=%zu "
+			"actual=%zu status=%s\n",
+			vnode->name != NULL ? vnode->name : "<null>",
+			requestedPos, requested, *_length, strerror(status));
+	}
+	return status;
 }
 
 

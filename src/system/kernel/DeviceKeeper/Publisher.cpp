@@ -163,12 +163,24 @@ DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 			(addr_t)buffer + totalTransferred,
 			chunkSize, isWrite, 0);
 		if (status != B_OK) {
+			dprintf("_DoIO: %s IORequest::Init failed for %zu byte "
+				"chunk at offset %" B_PRIdOFF ": %s "
+				"(transferred so far %zu/%zu)\n",
+				isWrite ? "write" : "read", chunkSize,
+				pos + (off_t)totalTransferred, strerror(status),
+				totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return totalTransferred > 0 ? B_OK : status;
 		}
 
 		status = fOps->io(cookie, &request);
 		if (status != B_OK) {
+			dprintf("_DoIO: %s fOps->io failed for %zu byte chunk "
+				"at offset %" B_PRIdOFF ": %s "
+				"(transferred so far %zu/%zu)\n",
+				isWrite ? "write" : "read", chunkSize,
+				pos + (off_t)totalTransferred, strerror(status),
+				totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return totalTransferred > 0 ? B_OK : status;
 		}
@@ -192,6 +204,12 @@ DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 
 		if (chunk == 0) {
 			// No progress and error — end of device or hard error.
+			dprintf("_DoIO: %s Wait failed with no progress for %zu "
+				"byte chunk at offset %" B_PRIdOFF ": %s "
+				"(transferred so far %zu/%zu)\n",
+				isWrite ? "write" : "read", chunkSize,
+				pos + (off_t)totalTransferred, strerror(status),
+				totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return totalTransferred > 0 ? B_OK : status;
 		}
@@ -200,6 +218,13 @@ DkPublishedDevice::_DoIO(void* cookie, off_t pos, void* buffer,
 
 		if (status != B_OK) {
 			// Error after partial progress — return what we have.
+			dprintf("_DoIO: %s Wait failed after partial transfer of "
+				"%" B_PRIuGENADDR " bytes (chunk %zu, offset "
+				"%" B_PRIdOFF "): %s "
+				"(total transferred %zu/%zu)\n",
+				isWrite ? "write" : "read", chunk, chunkSize,
+				pos + (off_t)(totalTransferred - chunk),
+				strerror(status), totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return B_OK;
 		}
@@ -283,6 +308,11 @@ DkPublishedDevice::Write(void* cookie, off_t pos, const void* buffer,
 			(const uint8*)buffer + totalTransferred, &remaining);
 
 		if (remaining == 0) {
+			dprintf("DkPublishedDevice::Write: fOps->write made no "
+				"progress at offset %" B_PRIdOFF " (status=%s, "
+				"transferred so far %zu/%zu)\n",
+				pos + (off_t)totalTransferred, strerror(status),
+				totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return totalTransferred > 0 ? B_OK : status;
 		}
@@ -290,6 +320,12 @@ DkPublishedDevice::Write(void* cookie, off_t pos, const void* buffer,
 		totalTransferred += remaining;
 
 		if (status != B_OK) {
+			dprintf("DkPublishedDevice::Write: fOps->write returned "
+				"%s after partial transfer of %zu bytes at offset "
+				"%" B_PRIdOFF " (total transferred %zu/%zu)\n",
+				strerror(status), remaining,
+				pos + (off_t)(totalTransferred - remaining),
+				totalTransferred, totalLength);
 			*_length = totalTransferred;
 			return totalTransferred > 0 ? B_OK : status;
 		}
