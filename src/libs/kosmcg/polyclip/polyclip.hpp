@@ -14,8 +14,17 @@
 ///   polyclip::Polygon subject, clip;
 ///   // ... populate contours ...
 ///   auto result = polyclip::compute(polyclip::Operation::Union, subject, clip);
-///   result.compute_holes();   // optional: classify inner contours as holes
+///   double filled = result.area();   // works directly, even with holes
 /// @endcode
+///
+/// @par Hole classification
+/// compute() establishes the (outer CCW, holes CW) convention on its
+/// result automatically by calling compute_holes() before returning.
+/// This guarantees that area() reports the correctly filled region and
+/// is_hole() returns meaningful values without an extra user step.
+/// The cost is O(n^2) in the number of output contours, negligible for
+/// typical results.  If you build a Polygon manually (without compute())
+/// and need hole classification, call compute_holes() yourself.
 ///
 /// Self-intersecting contours: call decompose() before compute() to split
 /// self-intersecting contours into simple ones.  Without decomposition,
@@ -28,9 +37,10 @@
 /// typical screen coordinates (0-4096).
 ///
 /// @par Coordinate range
-/// Safe range: |x|, |y| < 1e6.  At 1e7+ the snap grid approaches
-/// IEEE-754 ULP and numerical coincidence detection degrades.
-/// Debug builds assert coordinates are within range.
+/// Recommended safe range: |x|, |y| < 1e6 (snap grid has ~860x ULP
+/// of headroom).  Hard upper bound: 1e7, beyond which numerical
+/// coincidence detection breaks down.  Debug builds assert the hard
+/// bound; staying inside the safe range is the caller's responsibility.
 
 #include <vector>
 #include <span>
@@ -156,8 +166,10 @@ public:
 
     [[nodiscard]] Rect bbox() const noexcept;
 
-    /// Total signed area (sum of all contour signed areas).
-    /// Holes contribute negative area.
+    /// Total signed area of the polygon: the actual filled region with
+    /// holes subtracted.  Polygons returned by compute() are ready to
+    /// query directly; manually-constructed polygons need an explicit
+    /// compute_holes() call first to establish hole orientation.
     [[nodiscard]] double area() const noexcept;
 
     Contour& operator[](std::size_t i) { return m_contours[i]; }
@@ -169,7 +181,12 @@ public:
     auto begin() const { return m_contours.begin(); }
     auto end() const { return m_contours.end(); }
 
-    /// Classify contours as outer boundaries or holes using a sweep line.
+    /// Classify contours as outer boundaries or holes via point-in-polygon
+    /// containment, and normalize orientation (outer CCW, holes CW) so
+    /// that area() reports the correctly filled region.  compute() calls
+    /// this automatically before returning; you only need to call it
+    /// explicitly on manually-constructed polygons.  Cost is O(n^2) in
+    /// the number of contours.
     void compute_holes();
 
     /// Check all contours for self-intersections.  O(n log n) per contour.
@@ -177,6 +194,8 @@ public:
 
     /// Decompose self-intersecting contours into simple contours.
     /// Call before compute() if input may contain self-intersections.
+    /// Iterates up to MaxDecomposeDepth times; deeply nested
+    /// self-intersections may need multiple passes to fully resolve.
     void decompose(FillRule rule = FillRule::EvenOdd);
 
     /// Remove contours with fewer than 3 vertices and sanitize all
@@ -186,6 +205,11 @@ public:
 
 private:
     std::vector<Contour> m_contours;
+
+    /// Single decomposition pass over m_contours.  Returns true if at
+    /// least one contour was actually split.  Used internally by
+    /// decompose() to drive the bounded retry loop.
+    bool decompose_one_pass(FillRule rule);
 };
 
 /// Perform a boolean operation on two polygons.

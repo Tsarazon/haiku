@@ -182,7 +182,22 @@ struct Outline {
 Error outline_check(Outline* outline);
 void  outline_get_cbox(const Outline* outline, BBox* acbox);
 
-// -- Span --
+// -- Span (grayscale coverage) --
+//
+// Emitted by the rasterizer in grayscale mode via SpanFunc. Each span
+// covers a horizontal run of pixels at a single y coordinate, all with
+// the same coverage value (run-length encoded). The rasterizer batches
+// adjacent same-coverage cells into one span where possible.
+//
+// Callback contract:
+//   - All spans within a single callback share the same y (one scanline
+//     per call). Take advantage of this to compute the destination row
+//     pointer once.
+//   - Spans within a call are sorted left-to-right (ascending x).
+//   - Scanlines may arrive out of y-order across calls when the
+//     rasterizer subdivides bands. Do not assume monotonic y.
+//   - The spans pointer is owned by the rasterizer and only valid for
+//     the duration of the callback. Copy any data you need to keep.
 
 struct Span {
     int           x;
@@ -210,14 +225,85 @@ constexpr bool operator&(RasterFlags a, RasterFlags b) {
     return (static_cast<int>(a) & static_cast<int>(b)) != 0;
 }
 
+// -- LCD subpixel rendering --
+
+enum class LcdMode {
+    None = 0,  // grayscale (default)
+    HRgb = 1,  // horizontal stripe, red is leftmost subpixel
+    HBgr = 2,  // horizontal stripe, blue is leftmost subpixel
+};
+
+// 5-tap FIR filter applied to subpixel coverage in linear gamma space.
+// Taps should sum to 256 for unity gain (some presets use lower sum for
+// slightly darker antialiasing).
+struct LcdFilter {
+    unsigned char taps[5];
+};
+
+// FreeType-default filter. Balanced sharpness and chroma suppression.
+inline constexpr LcdFilter lcd_filter_default = {{ 0x08, 0x4D, 0x56, 0x4D, 0x08 }};
+// Lighter filter: sharper text, slightly more colour fringing.
+inline constexpr LcdFilter lcd_filter_light   = {{ 0x00, 0x55, 0x56, 0x55, 0x00 }};
+// No filter: raw subpixel coverage. Maximum sharpness, maximum fringing.
+// Useful for testing and for already-filtered fonts.
+inline constexpr LcdFilter lcd_filter_none    = {{ 0x00, 0x00, 0xFF, 0x00, 0x00 }};
+
+// -- LCD span (subpixel RGB coverage) --
+//
+// Emitted by the rasterizer in LCD mode (lcd_mode != None) via LcdSpanFunc.
+// Each span carries len pixels of post-filter, gamma-corrected R/G/B
+// coverage in left-to-right pixel order. The rgb buffer is densely
+// packed: rgb[0..2] is the leftmost pixel's R, G, B; rgb[3..5] is the
+// next pixel; etc.
+//
+// Channel order is always RGB regardless of LcdMode. The HBgr mode
+// only affects how subpixel coverage is mapped to channels internally;
+// what comes out of the callback is always (R, G, B) per pixel.
+//
+// Callback contract:
+//   - All spans within a single callback share the same y. The current
+//     implementation emits exactly one span per call (count == 1), but
+//     callers should iterate over the count array to be future-proof
+//     against batching.
+//   - The rgb pointer is owned by the rasterizer and only valid for
+//     the duration of the callback. Copy bytes immediately if you need
+//     them later — they will be overwritten on the next scanline.
+//   - Scanlines may arrive out of y-order across calls when the
+//     rasterizer subdivides bands. Do not assume monotonic y.
+//   - Spans are left-trimmed and right-trimmed to non-zero RGB pixels;
+//     fully-transparent leading and trailing pixels are clipped from
+//     the emitted span automatically.
+
+struct LcdSpan {
+    int                   x;    // leftmost pixel x coordinate
+    int                   y;    // pixel y coordinate
+    int                   len;  // number of pixels
+    const unsigned char*  rgb;  // len * 3 bytes: R, G, B per pixel
+};
+
+using LcdSpanFunc = void(*)(int count, const LcdSpan* spans, void* user);
+
 // -- Raster parameters --
 
 struct RasterParams {
-    const Outline* source    = nullptr;
-    RasterFlags    flags     = RasterFlags::Default;
-    SpanFunc       gray_spans = nullptr;
-    void*          user      = nullptr;
-    BBox           clip_box  = {};
+    const Outline* source     = nullptr;
+    RasterFlags    flags      = RasterFlags::Default;
+    SpanFunc       gray_spans = nullptr;  // for grayscale output
+    LcdSpanFunc    lcd_spans  = nullptr;  // for LCD output (when lcd_mode != None)
+    void*          user       = nullptr;
+    BBox           clip_box   = {};
+
+    // LCD subpixel rendering. Default LcdMode::None gives grayscale via
+    // gray_spans. Setting an LCD mode triggers subpixel rendering via
+    // lcd_spans; gray_spans is unused in that case.
+    LcdMode    lcd_mode   = LcdMode::None;
+    LcdFilter  lcd_filter = lcd_filter_default;
+
+    // Gamma correction applied to coverage values.
+    // 0 disables correction (linear blending in 8-bit, fast).
+    // Typical values: F(1.8) for Apple-style, F(2.2) for sRGB.
+    // 16.16 fixed-point.
+    Fixed gamma = 0;
 };
 
 // -- Raster entry point --

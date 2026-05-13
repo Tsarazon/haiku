@@ -11,80 +11,144 @@
  */
 
 #include "kosmcg-ft.hpp"
+#include "kosmcg-ft-internal.hpp"
 
 #include <cstddef>
 #include <cstdlib>
 #include <climits>
 #include <cstring>
+#include <cmath>
+#include <memory>
+#include <new>
 
-namespace kcg::ft {
+/* ============================================================ */
+/* LCD filter and gamma-table implementations (detail::).       */
+/* (Was kosmcg-ft-lcd.cpp.)                                     */
+/* ============================================================ */
 
-/* ---- error codes ---- */
+namespace kcg::ft::detail {
 
-static constexpr int ErrRaster_Invalid_Mode     = -2;
-static constexpr int ErrRaster_Invalid_Outline  = -1;
-static constexpr int ErrRaster_Invalid_Argument = -3;
-static constexpr int ErrRaster_Memory_Overflow  = -4;
-static constexpr int ErrRaster_OutOfMemory      = -6;
+// -- GammaTable --
 
-static constexpr int kMinPoolSize   = 8192;
-
-/* ---- pixel configuration ---- */
-
-static constexpr int PIXEL_BITS = 8;
-static constexpr int64_t ONE_PIXEL = 1L << PIXEL_BITS;
-
-static constexpr int32_t trunc_pixel(int64_t x) { return static_cast<int32_t>(x >> PIXEL_BITS); }
-static constexpr int32_t fract_pixel(int64_t x) { return static_cast<int32_t>(x & (ONE_PIXEL - 1)); }
-
-static constexpr int64_t upscale(int64_t x)
+void GammaTable::build(Fixed gamma_16_16)
 {
-    if constexpr (PIXEL_BITS >= 6)
-        return x * (ONE_PIXEL >> 6);
-    else
-        return x >> (6 - PIXEL_BITS);
-}
+    if (gamma_16_16 == 0) {
+        identity_ = true;
+        for (int i = 0; i < 256; i++)
+            decode_[i] = static_cast<uint16_t>(i * 257);  // 0..65535 linear scale
+        for (int i = 0; i < 1024; i++) {
+            int v = (i * 255 + 511) / 1023;
+            encode_[i] = static_cast<uint8_t>(v);
+        }
+        return;
+    }
 
-static constexpr int64_t downscale(int64_t x)
-{
-    if constexpr (PIXEL_BITS >= 6)
-        return x >> (PIXEL_BITS - 6);
-    else
-        return x * (64 >> PIXEL_BITS);
-}
+    identity_ = false;
+    double gamma = gamma_16_16 / 65536.0;
 
-/* Compute dividend/divisor with corrected positive remainder. */
-static inline void ft_div_mod(int32_t dividend, int64_t divisor,
-                                  int32_t& quotient, int32_t& remainder)
-{
-    quotient  = static_cast<int32_t>(dividend / divisor);
-    remainder = static_cast<int32_t>(dividend % divisor);
-    if (remainder < 0) {
-        quotient--;
-        remainder += static_cast<int32_t>(divisor);
+    // decode: 8-bit gamma-encoded -> 16-bit linear
+    for (int i = 0; i < 256; i++) {
+        double v = i / 255.0;
+        double lin = std::pow(v, gamma);
+        int linq = static_cast<int>(lin * 65535.0 + 0.5);
+        if (linq < 0) linq = 0;
+        if (linq > 65535) linq = 65535;
+        decode_[i] = static_cast<uint16_t>(linq);
+    }
+
+    // encode: 10-bit linear -> 8-bit gamma-encoded
+    // index i represents linear value (i * 64) in [0, 65535] range.
+    double inv_gamma = 1.0 / gamma;
+    for (int i = 0; i < 1024; i++) {
+        double v = (i * 64) / 65535.0;
+        if (v > 1.0) v = 1.0;
+        double enc = std::pow(v, inv_gamma);
+        int encq = static_cast<int>(enc * 255.0 + 0.5);
+        if (encq < 0) encq = 0;
+        if (encq > 255) encq = 255;
+        encode_[i] = static_cast<uint8_t>(encq);
     }
 }
 
-/* ---- exception for memory overflow (replaces setjmp/longjmp) ---- */
+// -- LCD filter --
 
-struct RasterMemoryOverflow {};
+void lcd_filter_scanline(LcdScanlineBuffer& buf,
+                         const LcdFilter&   filter,
+                         const GammaTable&  gamma,
+                         LcdMode            mode)
+{
+    const uint8_t* in  = buf.subpixel_coverage;
+    uint8_t*       out = buf.pixel_rgb;
+    const int      N   = buf.subpixel_width;
+    const int      W   = buf.pixel_width;
 
-/* ---- internal types ---- */
+    const int t0 = filter.taps[0];
+    const int t1 = filter.taps[1];
+    const int t2 = filter.taps[2];
+    const int t3 = filter.taps[3];
+    const int t4 = filter.taps[4];
 
-using TCoord = int32_t;   /* integer scanline/pixel coordinate */
-using TPos   = int64_t;   /* sub-pixel coordinate              */
-using TArea  = int64_t;   /* cell areas, coordinate products   */
+    const bool bgr = (mode == LcdMode::HBgr);
 
-static constexpr int kMaxGraySpans = 256;
+    // Two paths: identity gamma (cheap, 8-bit FIR) and full gamma.
+    if (gamma.is_identity()) {
+        for (int i = 0; i < N; i++) {
+            int m2 = i - 2 < 0 ? 0 : i - 2;
+            int m1 = i - 1 < 0 ? 0 : i - 1;
+            int p1 = i + 1 >= N ? N - 1 : i + 1;
+            int p2 = i + 2 >= N ? N - 1 : i + 2;
 
-struct TCell {
-    int    x;
-    int    cover;
-    TArea  area;
-    TCell* next;
-};
+            int sum = in[m2] * t0 + in[m1] * t1 + in[i] * t2
+                    + in[p1] * t3 + in[p2] * t4;
+            int v = sum >> 8;
+            if (v > 255) v = 255;
+            if (v < 0)   v = 0;
 
-using PCell = TCell*;
+            int px = i / 3;
+            int ch = i - px * 3;
+            if (bgr) ch = 2 - ch;
+            out[px * 3 + ch] = static_cast<uint8_t>(v);
+        }
+    } else {
+        for (int i = 0; i < N; i++) {
+            int m2 = i - 2 < 0 ? 0 : i - 2;
+            int m1 = i - 1 < 0 ? 0 : i - 1;
+            int p1 = i + 1 >= N ? N - 1 : i + 1;
+            int p2 = i + 2 >= N ? N - 1 : i + 2;
+
+            // Decode to 16-bit linear, then convolve.
+            uint32_t v_m2 = gamma.decode(in[m2]);
+            uint32_t v_m1 = gamma.decode(in[m1]);
+            uint32_t v_i  = gamma.decode(in[i]);
+            uint32_t v_p1 = gamma.decode(in[p1]);
+            uint32_t v_p2 = gamma.decode(in[p2]);
+
+            uint32_t sum = v_m2 * t0 + v_m1 * t1 + v_i * t2
+                         + v_p1 * t3 + v_p2 * t4;
+            // taps sum to 256, so divide.
+            uint32_t linear = sum >> 8;
+
+            uint8_t encoded = gamma.encode_linear(linear);
+
+            int px = i / 3;
+            int ch = i - px * 3;
+            if (bgr) ch = 2 - ch;
+            out[px * 3 + ch] = encoded;
+        }
+    }
+
+    (void)W;  // pixel_width unused beyond accessing out[] within bounds
+}
+
+} // namespace kcg::ft::detail
+
+namespace kcg::ft {
+
+using namespace kcg::ft::detail;
+
+/* ---- internal forward declarations ---- */
+
+static void flush_lcd_scanline_if_needed(struct TWorker& ras, int new_y);
 
 struct TWorker {
     TCoord  ex, ey;
@@ -123,7 +187,23 @@ struct TWorker {
 
     PCell*     ycells;
     TPos       ycount;
+
+    /* LCD subpixel rendering state */
+    LcdMode             lcd_mode      = LcdMode::None;
+    LcdFilter           lcd_filter    = {};
+    const GammaTable*   gamma_table_ptr = nullptr;
+    LcdScanlineBuffer   lcd_buf       = {};
+    LcdSpanFunc         lcd_spans_cb  = nullptr;
+    void*               lcd_spans_user = nullptr;
+    int                 x_scale       = 1;
 };
+
+/* Upscale an outline X coordinate, applying the LCD subpixel scale factor.
+ * Y coordinates use plain upscale() since LCD stripe geometry is horizontal. */
+static inline TPos upscale_x(const TWorker& ras, TPos x)
+{
+    return upscale(x) * ras.x_scale;
+}
 
 /* ---- cell management ---- */
 
@@ -177,6 +257,13 @@ gray_compute_cbox(TWorker& ras)
     ras.min_ey = ras.min_ey >> 6;
     ras.max_ex = (ras.max_ex + 63) >> 6;
     ras.max_ey = (ras.max_ey + 63) >> 6;
+
+    /* LCD: convert X bounds from pixel to subpixel coordinates.
+     * Y bounds remain in pixel space (horizontal LCD stripes only). */
+    if (ras.x_scale != 1) {
+        ras.min_ex *= ras.x_scale;
+        ras.max_ex *= ras.x_scale;
+    }
 }
 
 /* ---- cell lookup ---- */
@@ -320,7 +407,7 @@ gray_render_scanline(TWorker& ras, TCoord ey,
         dx    = -dx;
     }
 
-    ft_div_mod(static_cast<int32_t>(p), dx, delta, mod);
+    ft_div_mod(p, dx, delta, mod);
 
     ras.area  += static_cast<TArea>(fx1 + first) * delta;
     ras.cover += delta;
@@ -332,7 +419,7 @@ gray_render_scanline(TWorker& ras, TCoord ey,
         TCoord lift, rem;
 
         p = ONE_PIXEL * dy;
-        ft_div_mod(static_cast<int32_t>(p), dx, lift, rem);
+        ft_div_mod(p, dx, lift, rem);
 
         do {
             delta = lift;
@@ -465,7 +552,7 @@ gray_render_line(TWorker& ras, TPos from_x, TPos from_y, TPos to_x, TPos to_y)
     }
 
     /* the fractional part of x-delta is mod/dy. */
-    ft_div_mod(static_cast<int32_t>(p), dy, delta, mod);
+    ft_div_mod(p, dy, delta, mod);
 
     x = from_x + delta;
     gray_render_scanline(ras, ey1, from_x, fy1, x, first);
@@ -477,7 +564,7 @@ gray_render_line(TWorker& ras, TPos from_x, TPos from_y, TPos to_x, TPos to_y)
         TCoord lift, rem;
 
         p = ONE_PIXEL * dx;
-        ft_div_mod(static_cast<int32_t>(p), dy, lift, rem);
+        ft_div_mod(p, dy, lift, rem);
 
         do {
             delta = lift;
@@ -835,9 +922,9 @@ gray_render_conic(TWorker& ras, const Vector* control,
     TPos      dx, dy;
     int       draw, split;
 
-    arc[0].x = static_cast<Pos>(upscale(to->x));
+    arc[0].x = static_cast<Pos>(upscale_x(ras, to->x));
     arc[0].y = static_cast<Pos>(upscale(to->y));
-    arc[1].x = static_cast<Pos>(upscale(control->x));
+    arc[1].x = static_cast<Pos>(upscale_x(ras, control->x));
     arc[1].y = static_cast<Pos>(upscale(control->y));
     arc[2].x = static_cast<Pos>(ras.x);
     arc[2].y = static_cast<Pos>(ras.y);
@@ -920,11 +1007,11 @@ gray_render_cubic(TWorker& ras, const Vector* control1,
     TPos      dx1, dy1, dx2, dy2;
     TPos      L, s, s_limit;
 
-    arc[0].x = static_cast<Pos>(upscale(to->x));
+    arc[0].x = static_cast<Pos>(upscale_x(ras, to->x));
     arc[0].y = static_cast<Pos>(upscale(to->y));
-    arc[1].x = static_cast<Pos>(upscale(control2->x));
+    arc[1].x = static_cast<Pos>(upscale_x(ras, control2->x));
     arc[1].y = static_cast<Pos>(upscale(control2->y));
-    arc[2].x = static_cast<Pos>(upscale(control1->x));
+    arc[2].x = static_cast<Pos>(upscale_x(ras, control1->x));
     arc[2].y = static_cast<Pos>(upscale(control1->y));
     arc[3].x = static_cast<Pos>(ras.x);
     arc[3].y = static_cast<Pos>(ras.y);
@@ -1004,7 +1091,7 @@ gray_move_to(const Vector* to, TWorker& ras)
         gray_record_cell(ras);
 
     /* start to a new position */
-    x = upscale(to->x);
+    x = upscale_x(ras, to->x);
     y = upscale(to->y);
 
     gray_start_cell(ras, trunc_pixel(x), trunc_pixel(y));
@@ -1018,9 +1105,53 @@ gray_move_to(const Vector* to, TWorker& ras)
 
 /* ---- horizontal line span output ---- */
 
+/* In LCD mode, accumulate subpixel coverage into the scanline buffer
+ * instead of emitting grayscale spans directly. */
+static void
+gray_hline_lcd(TWorker& ras, TCoord x, TCoord y, TPos area, int acount)
+{
+    int coverage = static_cast<int>(area >> (PIXEL_BITS * 2 + 1 - 8));
+    if (coverage < 0) coverage = -coverage;
+
+    if (ras.outline->flags & static_cast<int>(OutlineFlags::EvenOddFill)) {
+        coverage &= 511;
+        if (coverage > 256)      coverage = 512 - coverage;
+        else if (coverage == 256) coverage = 255;
+    } else {
+        if (coverage >= 256) coverage = 255;
+    }
+
+    if (coverage == 0) return;
+
+    y += static_cast<TCoord>(ras.min_ey);
+    x += static_cast<TCoord>(ras.min_ex);
+
+    /* x and acount are in subpixel coordinates (already x_scale wider) */
+    if (ras.lcd_buf.current_y != y) {
+        flush_lcd_scanline_if_needed(ras, y);
+        ras.lcd_buf.current_y = y;
+        std::memset(ras.lcd_buf.subpixel_coverage, 0, ras.lcd_buf.subpixel_width);
+        ras.lcd_buf.dirty = false;
+    }
+
+    int x0 = x;
+    int x1 = x + acount;
+    if (x0 < 0) x0 = 0;
+    if (x1 > ras.lcd_buf.subpixel_width) x1 = ras.lcd_buf.subpixel_width;
+    for (int i = x0; i < x1; i++)
+        ras.lcd_buf.subpixel_coverage[i] = static_cast<uint8_t>(coverage);
+
+    if (x1 > x0) ras.lcd_buf.dirty = true;
+}
+
 static void
 gray_hline(TWorker& ras, TCoord x, TCoord y, TPos area, int acount)
 {
+    if (ras.lcd_mode != LcdMode::None) {
+        gray_hline_lcd(ras, x, y, area, acount);
+        return;
+    }
+
     int coverage;
 
     coverage = static_cast<int>(area >> (PIXEL_BITS * 2 + 1 - 8));
@@ -1122,6 +1253,52 @@ gray_sweep(TWorker& ras)
             gray_hline(ras, x, yindex, cover * (ONE_PIXEL * 2),
                        static_cast<int>(ras.count_ex - x));
     }
+}
+
+/* Flush the LCD scanline buffer if its accumulated y differs from new_y.
+ * Called before switching to a new scanline (from gray_hline_lcd) and at
+ * the end of glyph conversion (from gray_convert_glyph). */
+static void
+flush_lcd_scanline_if_needed(TWorker& ras, int new_y)
+{
+    auto& buf = ras.lcd_buf;
+    if (buf.current_y < 0 || buf.current_y == new_y) return;
+    if (!buf.dirty) {
+        buf.current_y = -1;
+        return;
+    }
+
+    lcd_filter_scanline(buf, ras.lcd_filter, *ras.gamma_table_ptr, ras.lcd_mode);
+
+    /* Find leftmost / rightmost non-zero RGB pixels and emit one span. */
+    int p0 = 0;
+    int p1 = buf.pixel_width;
+    while (p0 < p1) {
+        uint8_t r = buf.pixel_rgb[p0 * 3 + 0];
+        uint8_t g = buf.pixel_rgb[p0 * 3 + 1];
+        uint8_t b = buf.pixel_rgb[p0 * 3 + 2];
+        if (r | g | b) break;
+        p0++;
+    }
+    while (p1 > p0) {
+        uint8_t r = buf.pixel_rgb[(p1 - 1) * 3 + 0];
+        uint8_t g = buf.pixel_rgb[(p1 - 1) * 3 + 1];
+        uint8_t b = buf.pixel_rgb[(p1 - 1) * 3 + 2];
+        if (r | g | b) break;
+        p1--;
+    }
+
+    if (p1 > p0 && ras.lcd_spans_cb) {
+        LcdSpan s;
+        s.x   = p0;
+        s.y   = buf.current_y;
+        s.len = p1 - p0;
+        s.rgb = buf.pixel_rgb + p0 * 3;
+        ras.lcd_spans_cb(1, &s, ras.lcd_spans_user);
+    }
+
+    buf.current_y = -1;
+    buf.dirty     = false;
 }
 
 /* ---- outline validation & cbox ---- */
@@ -1251,7 +1428,7 @@ Outline_Decompose(const Outline* outline, TWorker& ras)
                 Vector vec;
                 vec.x = point->x;
                 vec.y = point->y;
-                gray_line_to(ras, upscale(vec.x), upscale(vec.y));
+                gray_line_to(ras, upscale_x(ras, vec.x), upscale(vec.y));
                 continue;
             }
 
@@ -1323,7 +1500,7 @@ Outline_Decompose(const Outline* outline, TWorker& ras)
         }
 
         /* close the contour with a line segment */
-        gray_line_to(ras, upscale(v_start.x), upscale(v_start.y));
+        gray_line_to(ras, upscale_x(ras, v_start.x), upscale(v_start.y));
 
     Close:
         first = last + 1;
@@ -1541,6 +1718,24 @@ gray_raster_render(TWorker& ras, void* buffer, long buffer_size,
         ras.clip_box.yMax =  (1 << 23) - 1;
     }
 
+    /* LCD subpixel rendering: scale X-axis by 3 and widen the clip box.
+     * Pixel-space X bounds are converted to subpixel coordinates here. */
+    ras.lcd_mode = params->lcd_mode;
+    if (ras.lcd_mode != LcdMode::None) {
+        if (!params->lcd_spans)
+            return ErrRaster_Invalid_Argument;
+        ras.x_scale       = 3;
+        ras.lcd_filter    = params->lcd_filter;
+        ras.lcd_spans_cb  = params->lcd_spans;
+        ras.lcd_spans_user = params->user;
+        
+        ras.clip_box.xMin *= 3;
+        ras.clip_box.xMax *= 3;
+    } else {
+        ras.x_scale = 1;
+        
+    }
+
     gray_init_cells(ras, buffer, buffer_size);
 
     ras.outline   = outline;
@@ -1551,7 +1746,14 @@ gray_raster_render(TWorker& ras, void* buffer, long buffer_size,
     ras.render_span      = params->gray_spans;
     ras.render_span_data = params->user;
 
-    return gray_convert_glyph(ras);
+    int err = gray_convert_glyph(ras);
+
+    /* Flush any in-flight LCD scanline. */
+    if (ras.lcd_mode != LcdMode::None && ras.lcd_buf.current_y >= 0) {
+        flush_lcd_scanline_if_needed(ras, ras.lcd_buf.current_y + 1);
+    }
+
+    return err;
 }
 
 void
@@ -1562,14 +1764,65 @@ raster_render(const RasterParams* params)
 
     TWorker worker{};
     worker.skip_spans = 0;
+
+    /* Cache the gamma table per-thread to avoid rebuilding (1280 std::pow
+     * calls) on every render. Invalidated when gamma changes. */
+    static thread_local GammaTable cached_gamma_table;
+    static thread_local Fixed      cached_gamma_value = -1;
+    if (cached_gamma_value != params->gamma) {
+        cached_gamma_table.build(params->gamma);
+        cached_gamma_value = params->gamma;
+    }
+
+    /* Cache the LCD scanline buffer per-thread to avoid new[] on every
+     * render. Grow on demand, never shrink. */
+    static thread_local std::unique_ptr<uint8_t[]> cached_lcd_storage;
+    static thread_local size_t                     cached_lcd_storage_size = 0;
+
+    if (params->lcd_mode != LcdMode::None) {
+        BBox cbox = {};
+        if (params->source) outline_get_cbox(params->source, &cbox);
+        int pixel_w = static_cast<int>((cbox.xMax - cbox.xMin + 63) >> 6) + 2;
+        if (pixel_w < 1) pixel_w = 1;
+        if (pixel_w > 1048576) pixel_w = 1048576;
+
+        int subpx_w = pixel_w * 3;
+        size_t total = static_cast<size_t>(subpx_w) + static_cast<size_t>(pixel_w) * 3;
+
+        if (total > cached_lcd_storage_size) {
+            cached_lcd_storage.reset(new(std::nothrow) uint8_t[total]());
+            if (!cached_lcd_storage) {
+                cached_lcd_storage_size = 0;
+                return;
+            }
+            cached_lcd_storage_size = total;
+        }
+
+        worker.lcd_buf.subpixel_coverage = cached_lcd_storage.get();
+        worker.lcd_buf.pixel_rgb         = cached_lcd_storage.get() + subpx_w;
+        worker.lcd_buf.subpixel_width    = subpx_w;
+        worker.lcd_buf.pixel_width       = pixel_w;
+        worker.lcd_buf.current_y         = -1;
+        worker.lcd_buf.dirty             = false;
+        worker.gamma_table_ptr           = &cached_gamma_table;
+    } else {
+        worker.gamma_table_ptr = &cached_gamma_table;
+    }
+
     int rendered_spans = 0;
     int error = gray_raster_render(worker, stack, static_cast<long>(length), params);
+
+    constexpr size_t kMaxPoolSize = 16 * 1024 * 1024;
+
     while (error == ErrRaster_OutOfMemory) {
         if (worker.skip_spans < 0)
             rendered_spans += -worker.skip_spans;
         worker.skip_spans = rendered_spans;
         length *= 2;
+        if (length > kMaxPoolSize) break;
+
         void* heap = std::malloc(length);
+        if (!heap) break;
         error = gray_raster_render(worker, heap, static_cast<long>(length), params);
         std::free(heap);
     }

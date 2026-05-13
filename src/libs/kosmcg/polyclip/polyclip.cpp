@@ -1,9 +1,11 @@
 #include "polyclip_internal.hpp"
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <limits>
 #include <numeric>
 #include <unordered_map>
+#include <unordered_set>
 
 // ===== Public API (Point, Rect, Contour, Polygon, compute) =================
 
@@ -187,6 +189,11 @@ Polygon compute(Operation op, const Polygon& subject, const Polygon& clip, FillR
     Polygon result;
     detail::SweepLine sweep(subject, clip, rule);
     sweep.compute(op, result);
+    // Establish the (outer CCW, holes CW) convention so area() returns
+    // the filled region directly without an explicit user-side step.
+    // Cost is O(n^2) in the contour count, negligible for typical
+    // outputs (a few to a few hundred contours).
+    result.compute_holes();
     return result;
 }
 
@@ -230,6 +237,434 @@ struct VEventComp {
 bool VSegComp::operator()(const VEvent* e1, const VEvent* e2) const
 {
     return detail::segment_order<VEvent, VEventComp>(e1, e2);
+}
+
+// -- Bentley-Ottmann self-intersection sweep -------------------------------
+//
+// Full BO via the Martinez-Rueda divide_segment technique.  Instead of
+// swapping two crossing edges in the status structure (which is fragile
+// with std::set + a y_at comparator due to floating-point on the
+// intersection point), we SPLIT both edges at the intersection point.
+// The original edges leave status via their (newly-rescheduled) right
+// events at ip; the right halves enter status as fresh left events at
+// ip and naturally sort into post-swap order through segment_order's
+// cross-product comparator.
+//
+// Status comparator is detail::segment_order<BoEvent, BoEventComp>,
+// numerically robust because it uses signed_area on segment endpoints
+// rather than interpolated y values.
+//
+// BoEventComp uses the Martinez-Rueda convention "R before L at the
+// same point" (the existing VEventComp uses the opposite convention,
+// which would break divide_segment for us — original right events must
+// be processed before new left events at ip so the status is properly
+// cleaned up before the right halves are inserted).
+//
+// Complexity: O((n + k) log n) where n is edge count and k is number
+// of self-intersections.
+
+struct BoIsect {
+    std::size_t edge_a;
+    std::size_t edge_b;
+    Point pt;
+};
+
+// Cyclic dependency dance:
+//   BoSegComp's operator() uses BoEvent's interface.
+//   BoEvent stores a BoStatusSet::iterator, which needs BoSegComp.
+//   std::set requires Compare (BoSegComp) to be complete.
+// Resolution: declare BoEvent forward, define BoSegComp's struct body
+// with operator() prototype only, instantiate std::set, define BoEvent
+// (which now sees a complete BoStatusSet::iterator), then finally
+// define BoSegComp::operator() out-of-line where everything is complete.
+
+struct BoEvent;
+struct BoSegComp {
+    bool operator()(const BoEvent* a, const BoEvent* b) const;
+};
+using BoStatusSet = std::set<const BoEvent*, BoSegComp>;
+
+struct BoEvent {
+    Point p;
+    bool left = true;
+    std::size_t edge_idx = 0;
+    BoEvent* other = nullptr;
+    mutable BoStatusSet::iterator pos{};
+    mutable bool pos_valid = false;
+
+    detail::Segment segment() const { return {p, other->p}; }
+    bool below(const Point& x) const {
+        if (left) return detail::signed_area(p, other->p, x) > 0.0;
+        return other->below(x);
+    }
+    bool above(const Point& x) const { return !below(x); }
+};
+
+struct BoEventComp {
+    bool operator()(const BoEvent* a, const BoEvent* b) const {
+        if (a == b) return false;
+        if (a->p.x > b->p.x) return true;
+        if (b->p.x > a->p.x) return false;
+        if (a->p != b->p) return a->p.y > b->p.y;
+        // R before L at the same point: required for divide_segment to
+        // clean up originals before inserting right halves.
+        if (a->left != b->left) return a->left;
+        if (a->above(b->other->p) != b->above(a->other->p))
+            return a->above(b->other->p);
+        return a < b;
+    }
+};
+
+inline bool BoSegComp::operator()(const BoEvent* e1, const BoEvent* e2) const
+{
+    return detail::segment_order<BoEvent, BoEventComp>(e1, e2);
+}
+
+void collect_self_intersections(const std::vector<Point>& pts,
+                                std::vector<BoIsect>& out)
+{
+    auto n = pts.size();
+    if (n < 4) return;
+
+    // Event pool with stable pointers via deque.
+    std::deque<BoEvent> pool;
+
+    auto make_event = [&](const Point& p, bool left, std::size_t edge_idx) -> BoEvent* {
+        BoEvent ev{};
+        ev.p = p;
+        ev.left = left;
+        ev.edge_idx = edge_idx;
+        pool.push_back(ev);
+        return &pool.back();
+    };
+
+    // Build initial endpoint events.
+    std::priority_queue<BoEvent*, std::vector<BoEvent*>, BoEventComp> eq;
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t j = (i + 1) % n;
+        if (pts[i] == pts[j]) continue;
+        if (pts[i].distance_sq(pts[j]) < detail::SnapDistSq) continue;
+
+        auto* e1 = make_event(pts[i], true, i);
+        auto* e2 = make_event(pts[j], true, i);
+        e1->other = e2;
+        e2->other = e1;
+        if (e1->p.x < e2->p.x ||
+            (e1->p.x == e2->p.x && e1->p.y < e2->p.y)) {
+            e2->left = false;
+        } else {
+            e1->left = false;
+        }
+        eq.push(e1);
+        eq.push(e2);
+    }
+
+    BoStatusSet S;
+
+    auto adjacent = [n](std::size_t a, std::size_t b) {
+        if (a > b) std::swap(a, b);
+        return (b - a == 1) || (a == 0 && b == n - 1);
+    };
+
+    // Split a left-event edge at point ip.  The original left event keeps
+    // its position in the status; its segment shortens to end at ip.  Two
+    // new events at ip are scheduled: a right event paired with the
+    // original left, and a left event paired with the original right.
+    auto divide_segment = [&](BoEvent* e, const Point& ip) {
+        auto* r_for_left  = make_event(ip, false, e->edge_idx);
+        auto* l_for_right = make_event(ip, true,  e->edge_idx);
+
+        BoEvent* original_right = e->other;
+
+        // Left half: e ⟷ r_for_left
+        r_for_left->other = e;
+        e->other = r_for_left;
+
+        // Right half: l_for_right ⟷ original_right
+        l_for_right->other = original_right;
+        original_right->other = l_for_right;
+
+        eq.push(r_for_left);
+        eq.push(l_for_right);
+    };
+
+    auto check_pair = [&](BoEvent* a, BoEvent* b) {
+        if (!a || !b || a == b) return;
+        if (adjacent(a->edge_idx, b->edge_idx)) return;
+
+        Point ip0, ip1;
+        int ni = detail::find_intersection(a->segment(), b->segment(), ip0, ip1);
+        if (ni == 0) return;
+
+        auto interior = [](const Point& p, const detail::Segment& s) {
+            return !(p == s.p1) && !(p == s.p2);
+        };
+
+        if (ni == 1) {
+            if (interior(ip0, a->segment()) && interior(ip0, b->segment())) {
+                out.push_back({a->edge_idx, b->edge_idx, ip0});
+                divide_segment(a, ip0);
+                divide_segment(b, ip0);
+            }
+        } else {
+            // ni == 2: collinear overlap from ip0 to ip1 (in some order).
+            // Geometrically rare for self-intersections of a single
+            // simple polygon traversal but can occur when the path
+            // back-tracks along its own edge.
+            bool ip0_int = interior(ip0, a->segment()) &&
+                           interior(ip0, b->segment());
+            bool ip1_int = interior(ip1, a->segment()) &&
+                           interior(ip1, b->segment());
+            if (ip0_int && ip1_int) {
+                // Split at the leftward point first; then split the
+                // right halves at the second point.  Order by sweep key
+                // (smaller x, then smaller y).
+                Point lo = ip0, hi = ip1;
+                if (ip1.x < ip0.x ||
+                    (ip1.x == ip0.x && ip1.y < ip0.y)) {
+                    std::swap(lo, hi);
+                }
+                BoEvent* orig_a_right = a->other;
+                BoEvent* orig_b_right = b->other;
+                out.push_back({a->edge_idx, b->edge_idx, lo});
+                divide_segment(a, lo);
+                divide_segment(b, lo);
+                // After divide_segment, the new left event for the right
+                // half is reachable via original_right->other.
+                BoEvent* a_right_half = orig_a_right->other;
+                BoEvent* b_right_half = orig_b_right->other;
+                out.push_back({a->edge_idx, b->edge_idx, hi});
+                divide_segment(a_right_half, hi);
+                divide_segment(b_right_half, hi);
+            } else if (ip0_int) {
+                out.push_back({a->edge_idx, b->edge_idx, ip0});
+                divide_segment(a, ip0);
+                divide_segment(b, ip0);
+            } else if (ip1_int) {
+                out.push_back({a->edge_idx, b->edge_idx, ip1});
+                divide_segment(a, ip1);
+                divide_segment(b, ip1);
+            }
+        }
+    };
+
+    while (!eq.empty()) {
+        BoEvent* e = eq.top(); eq.pop();
+
+        if (e->left) {
+            auto [it, ok] = S.insert(e);
+            (void)ok;
+            e->pos = it;
+            e->pos_valid = true;
+
+            BoEvent* prev = (it == S.begin())
+                          ? nullptr
+                          : const_cast<BoEvent*>(*std::prev(it));
+            auto next_it = std::next(it);
+            BoEvent* next = (next_it == S.end())
+                          ? nullptr
+                          : const_cast<BoEvent*>(*next_it);
+
+            check_pair(e, prev);
+            check_pair(e, next);
+        } else {
+            // Right event: erase the paired left event from status.
+            BoEvent* left = e->other;
+            if (!left->pos_valid) continue;
+
+            auto sli = left->pos;
+            left->pos_valid = false;
+
+            BoEvent* prev = (sli == S.begin())
+                          ? nullptr
+                          : const_cast<BoEvent*>(*std::prev(sli));
+            auto next_it = std::next(sli);
+            BoEvent* next = (next_it == S.end())
+                          ? nullptr
+                          : const_cast<BoEvent*>(*next_it);
+
+            S.erase(sli);
+            check_pair(prev, next);
+        }
+    }
+}
+
+// -- DCEL planar subdivision (used by Polygon::decompose_one_pass) ----------
+//
+// Given a refined vertex sequence with intersection points already inserted,
+// build a half-edge graph, walk faces using the "leftmost-turn" rule, drop
+// the outer face, and filter inner faces by fill rule via winding number
+// against the original contour.
+//
+// The "leftmost turn" at vertex v on incoming half-edge e is implemented as
+// the CW predecessor of twin(e) in the CCW-sorted outgoing list at v.  This
+// walks faces with their interior on the left; inner faces get positive
+// signed area and the outer face gets non-positive.
+
+struct PlanarHalfEdge {
+    std::size_t origin;
+    std::size_t target;
+    std::size_t twin;
+    std::size_t next = 0;
+    bool        visited = false;
+};
+
+inline double face_signed_area(const std::vector<Point>& verts,
+                               const std::vector<std::size_t>& face)
+{
+    double a = 0;
+    auto n = face.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        std::size_t j = (i + 1) % n;
+        a += verts[face[i]].x * verts[face[j]].y
+           - verts[face[j]].x * verts[face[i]].y;
+    }
+    return a * 0.5;
+}
+
+// Pick a representative interior point for a CCW-walked face: midpoint of
+// the first edge offset perpendicular to the LEFT (face interior side
+// under the leftmost-turn traversal convention).
+inline Point face_interior_point(const std::vector<Point>& verts,
+                                 const std::vector<std::size_t>& face)
+{
+    const Point& p0 = verts[face[0]];
+    const Point& p1 = verts[face[1 % face.size()]];
+    Point mid{(p0.x + p1.x) * 0.5, (p0.y + p1.y) * 0.5};
+    double dx = p1.x - p0.x;
+    double dy = p1.y - p0.y;
+    double len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1e-15) return mid;
+    // Left-perpendicular to (dx,dy) is (-dy,dx). Offset by ~16x snap grid.
+    double eps = detail::SnapGrid * 16.0;
+    return {mid.x - dy / len * eps, mid.y + dx / len * eps};
+}
+
+// Standard right-going-ray winding number against a polygon boundary.
+inline int planar_winding(const Point& test, const Contour& c)
+{
+    auto pts = c.points();
+    auto n = pts.size();
+    int wn = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        const Point& a = pts[i];
+        const Point& b = pts[(i + 1) % n];
+        if (a.y <= test.y) {
+            if (b.y > test.y && detail::signed_area(a, b, test) > 0)
+                ++wn;
+        } else {
+            if (b.y <= test.y && detail::signed_area(a, b, test) < 0)
+                --wn;
+        }
+    }
+    return wn;
+}
+
+// Build half-edge graph from refined vertex sequence and walk faces.
+// Drops outer face, applies fill rule via winding number against the
+// original contour, appends kept faces as Contours to `output`.
+void decompose_planar(const Contour& original,
+                      const std::vector<Point>& split_pts,
+                      FillRule rule,
+                      std::vector<Contour>& output)
+{
+    if (split_pts.size() < 3) return;
+
+    // Snap-dedupe vertices.
+    std::unordered_map<Point, std::size_t, PointHash> vmap;
+    std::vector<Point> verts;
+    verts.reserve(split_pts.size());
+    auto get_vertex = [&](const Point& p) -> std::size_t {
+        Point sp = detail::snap_to_grid(p);
+        auto it = vmap.find(sp);
+        if (it != vmap.end()) return it->second;
+        std::size_t idx = verts.size();
+        vmap[sp] = idx;
+        verts.push_back(sp);
+        return idx;
+    };
+
+    // Build half-edges (forward + twin) for each non-degenerate refined
+    // segment.  Twins are stored adjacent: twin(2k) = 2k+1.
+    std::vector<PlanarHalfEdge> edges;
+    edges.reserve(split_pts.size() * 2);
+    auto sn = split_pts.size();
+    for (std::size_t i = 0; i < sn; ++i) {
+        std::size_t a = get_vertex(split_pts[i]);
+        std::size_t b = get_vertex(split_pts[(i + 1) % sn]);
+        if (a == b) continue;  // collapsed by snap
+        std::size_t fwd = edges.size();
+        std::size_t bwd = fwd + 1;
+        edges.push_back({a, b, bwd, 0, false});
+        edges.push_back({b, a, fwd, 0, false});
+    }
+    if (edges.size() < 6) return;  // need >= 3 distinct edges for any face
+
+    // Outgoing half-edges per vertex, sorted CCW by angle.
+    std::vector<std::vector<std::size_t>> outgoing(verts.size());
+    for (std::size_t e = 0; e < edges.size(); ++e)
+        outgoing[edges[e].origin].push_back(e);
+
+    auto edge_angle = [&](std::size_t e) {
+        double dx = verts[edges[e].target].x - verts[edges[e].origin].x;
+        double dy = verts[edges[e].target].y - verts[edges[e].origin].y;
+        return std::atan2(dy, dx);
+    };
+    for (auto& list : outgoing) {
+        std::sort(list.begin(), list.end(),
+                  [&](std::size_t a, std::size_t b) {
+                      return edge_angle(a) < edge_angle(b);
+                  });
+    }
+
+    // For each half-edge, set face-traversal `next` =
+    // CW predecessor of twin in target's outgoing list.
+    for (std::size_t e = 0; e < edges.size(); ++e) {
+        std::size_t b = edges[e].target;
+        auto& list = outgoing[b];
+        std::size_t twin_idx = edges[e].twin;
+        std::size_t k = 0;
+        for (; k < list.size(); ++k)
+            if (list[k] == twin_idx) break;
+        assert(k < list.size() && "twin not found in outgoing list");
+        std::size_t pred = (k + list.size() - 1) % list.size();
+        edges[e].next = list[pred];
+    }
+
+    // Walk faces.
+    std::vector<std::vector<std::size_t>> faces;
+    const std::size_t max_walk = edges.size() * 2;
+    for (std::size_t start = 0; start < edges.size(); ++start) {
+        if (edges[start].visited) continue;
+        std::vector<std::size_t> face;
+        std::size_t cur = start;
+        std::size_t safety = 0;
+        while (!edges[cur].visited) {
+            edges[cur].visited = true;
+            face.push_back(edges[cur].origin);
+            cur = edges[cur].next;
+            if (++safety > max_walk) break;  // bounded against malformed graph
+        }
+        if (face.size() >= 3)
+            faces.push_back(std::move(face));
+    }
+
+    // Drop outer face (signed area <= 0 in CCW-walk convention) and filter
+    // inner faces by fill rule via winding number against the original.
+    for (auto& face : faces) {
+        double sa = face_signed_area(verts, face);
+        if (sa <= 0) continue;  // outer face (or degenerate zero-area face)
+        Point ip = face_interior_point(verts, face);
+        int wn = planar_winding(ip, original);
+        bool keep = (rule == FillRule::EvenOdd)
+                  ? (std::abs(wn) % 2 == 1)
+                  : (wn != 0);
+        if (!keep) continue;
+        Contour c;
+        c.reserve(face.size());
+        for (auto vi : face) c.add(verts[vi]);
+        output.push_back(std::move(c));
+    }
 }
 
 } // anonymous namespace
@@ -329,7 +764,22 @@ bool Polygon::validate() const
 
 void Polygon::decompose(FillRule rule)
 {
+    // Iterate decompose_one_pass until either nothing more can be split
+    // (early-exit) or the depth budget is exhausted.  Each pass may
+    // reveal nested self-intersections that a previous pass produced
+    // as side effects: e.g. when a multi-self-crossing contour is
+    // decomposed by stack-based loop extraction, some of the produced
+    // sub-contours can themselves still be self-intersecting.
+    for (int depth = 0; depth < detail::MaxDecomposeDepth; ++depth) {
+        if (!decompose_one_pass(rule))
+            break;
+    }
+}
+
+bool Polygon::decompose_one_pass(FillRule rule)
+{
     std::vector<Contour> result;
+    bool any_split = false;
 
     for (auto& contour : m_contours) {
         if (contour.size() < 4) {
@@ -340,90 +790,28 @@ void Polygon::decompose(FillRule rule)
         auto pts = contour.points();
         auto n = pts.size();
 
-        // Step 1: Find all self-intersections using sweep
-        struct ISect {
-            std::size_t edge_a, edge_b;
-            Point pt;
-        };
-        std::vector<ISect> isects;
+        // Step 1: Find all self-intersections via Bentley-Ottmann sweep
+        // with Martinez-Rueda divide_segment splitting.  Numerically
+        // robust through cross-product based segment ordering, and
+        // O((n + k) log n) where k is the number of intersections.
+        std::vector<BoIsect> isects;
+        collect_self_intersections(std::vector<Point>(pts.begin(), pts.end()),
+                                   isects);
 
-        std::deque<VEvent> pool;
-        std::vector<VEvent*> eq;
-        eq.reserve(n * 2);
-
-        for (std::size_t i = 0; i < n; i++) {
-            auto j = (i + 1) % n;
-            if (pts[i] == pts[j])
-                continue;
-            if (pts[i].distance_sq(pts[j]) < detail::SnapDistSq)
-                continue;
-            VEvent ev1{}; ev1.p = pts[i]; ev1.left = true;  ev1.edge_idx = i;
-            VEvent ev2{}; ev2.p = pts[j]; ev2.left = true;  ev2.edge_idx = i;
-            pool.push_back(ev1);
-            pool.push_back(ev2);
-            auto* e1 = &pool[pool.size() - 2];
-            auto* e2 = &pool[pool.size() - 1];
-            e1->other = e2;
-            e2->other = e1;
-            if (e1->p.x < e2->p.x || (e1->p.x == e2->p.x && e1->p.y < e2->p.y)) {
-                e2->left = false;
-            } else {
-                e1->left = false;
-            }
-            eq.push_back(e1);
-            eq.push_back(e2);
-        }
-
-        std::sort(eq.begin(), eq.end(), VEventComp{});
-
-        std::set<const VEvent*, VSegComp> S;
-
-        auto adjacent_edges = [n](std::size_t a, std::size_t b) -> bool {
-            if (a > b) std::swap(a, b);
-            return (b - a == 1) || (a == 0 && b == n - 1);
-        };
-
-        auto check_and_collect = [&](std::set<const VEvent*, VSegComp>::iterator it_a,
-                                     std::set<const VEvent*, VSegComp>::iterator it_b) {
-            if (it_a == S.end() || it_b == S.end())
-                return;
-            auto* ea = *it_a;
-            auto* eb = *it_b;
-            if (adjacent_edges(ea->edge_idx, eb->edge_idx))
-                return;
-
-            Point ip0, ip1;
-            int ni = detail::find_intersection(ea->segment(), eb->segment(), ip0, ip1);
-            if (ni >= 1)
-                isects.push_back({ea->edge_idx, eb->edge_idx, ip0});
-            if (ni == 2)
-                isects.push_back({ea->edge_idx, eb->edge_idx, ip1});
-        };
-
-        for (auto* e : eq) {
-            if (e->left) {
-                auto [it, _] = S.insert(e);
-                e->pos = it;
-                e->pos_valid = true;
-                auto next_it = std::next(it);
-                auto prev_it = (it != S.begin()) ? std::prev(it) : S.end();
-                check_and_collect(it, next_it);
-                if (prev_it != S.end())
-                    check_and_collect(prev_it, it);
-            } else {
-                if (!e->other->pos_valid)
-                    continue;
-                auto sli = e->other->pos;
-                e->other->pos_valid = false;
-                auto next_it = std::next(sli);
-                auto prev_it = (sli != S.begin()) ? std::prev(sli) : S.end();
-                if (prev_it != S.end() && next_it != S.end())
-                    check_and_collect(prev_it, next_it);
-                S.erase(sli);
+        // Detect coincident vertices (self-touch without edge crossing).
+        // If present, planar subdivision is needed even when isects is
+        // empty.
+        bool has_dup_vertices = false;
+        {
+            std::unordered_set<Point, PointHash> seen;
+            seen.reserve(n);
+            for (auto& p : pts) {
+                Point sp = detail::snap_to_grid(p);
+                if (!seen.insert(sp).second) { has_dup_vertices = true; break; }
             }
         }
 
-        if (isects.empty()) {
+        if (isects.empty() && !has_dup_vertices) {
             result.push_back(std::move(contour));
             continue;
         }
@@ -471,95 +859,25 @@ void Polygon::decompose(FillRule rule)
             }
         }
 
-        // Step 3: Extract simple loops from the split vertex sequence.
-        // At intersection nodes (vertices that appear more than once),
-        // we can "short-circuit" the traversal to extract sub-loops.
-        //
-        // Algorithm: walk the vertex sequence; when we encounter a
-        // vertex we've seen before, extract the loop between the two
-        // occurrences and continue with the remaining vertices.
+        // Step 3: Build planar subdivision (DCEL), walk faces, drop outer
+        // face, filter inner faces by fill rule via winding number against
+        // the original contour.
+        std::vector<Contour> sub;
+        decompose_planar(contour, split_pts, rule, sub);
 
-        // Build index of first occurrence for each snapped point
-        auto snap_pt = [](const Point& p) -> Point {
-            return detail::snap_to_grid(p);
-        };
-
-        // Use repeated traversals to extract all simple loops
-        std::vector<std::vector<Point>> loops;
-        std::vector<Point> current;
-        // Map from snapped point to index in 'current'
-        std::unordered_map<Point, std::size_t, PointHash> seen;
-
-        for (std::size_t i = 0; i < split_pts.size(); i++) {
-            Point sp = snap_pt(split_pts[i]);
-
-            auto it2 = seen.find(sp);
-            if (it2 != seen.end()) {
-                // Found a repeated vertex: extract the loop from the
-                // first occurrence to here.
-                std::size_t loop_start = it2->second;
-                std::vector<Point> loop(current.begin() + loop_start, current.end());
-
-                if (loop.size() >= 3)
-                    loops.push_back(std::move(loop));
-
-                // Remove the loop from 'current', but keep the
-                // intersection vertex so it can form further loops.
-                current.resize(loop_start + 1);
-
-                // Rebuild 'seen' for the remaining prefix
-                seen.clear();
-                for (std::size_t j = 0; j < current.size(); j++)
-                    seen[snap_pt(current[j])] = j;
-            } else {
-                seen[sp] = current.size();
-                current.push_back(split_pts[i]);
-            }
-        }
-
-        // Check if the remaining path connects back to the start
-        if (current.size() >= 3) {
-            Point first = snap_pt(current.front());
-            Point last = snap_pt(current.back());
-            if (first == last) {
-                current.pop_back();
-                if (current.size() >= 3)
-                    loops.push_back(std::move(current));
-            } else {
-                // Try to close: the original contour is closed, so the
-                // remaining vertices should form a closed loop.
-                if (current.size() >= 3)
-                    loops.push_back(std::move(current));
-            }
-        }
-
-        // Apply fill rule to determine which loops to keep
-        if (rule == FillRule::EvenOdd) {
-            // For even-odd, keep all simple loops
-            for (auto& loop : loops)
-                result.emplace_back(std::move(loop));
-        } else {
-            // For non-zero, keep loops whose winding direction matches
-            // the original contour (they represent filled regions).
-            // Opposite-winding loops represent cancellation regions
-            // that should be discarded for non-zero fill.
-            bool orig_ccw = contour.counter_clockwise();
-            for (auto& loop : loops) {
-                Contour c(std::move(loop));
-                if (c.counter_clockwise() == orig_ccw) {
-                    result.push_back(std::move(c));
-                }
-                // Opposite-winding loops are cancellation artifacts
-                // under non-zero fill rule — drop them.
-            }
-        }
-
-        // Fallback: if decomposition produced nothing, keep original
-        if (loops.empty())
+        if (sub.empty()) {
+            // Fallback: subdivision produced nothing usable. Keep original
+            // contour rather than silently losing geometry.
             result.push_back(std::move(contour));
+        } else {
+            for (auto& c : sub)
+                result.push_back(std::move(c));
+            any_split = true;
+        }
     }
 
     m_contours = std::move(result);
+    return any_split;
 }
 
 } // namespace polyclip
@@ -895,8 +1213,17 @@ void Connector::to_polygon(Polygon& p)
         // Remove wrap-around near-duplicate
         if (c.size() >= 2 && point_near(c.vertex(0), c.vertex(c.size() - 1)))
             c.pop_back();
-        if (c.size() >= 3)
+        if (c.size() >= 3) {
+            // Normalize orientation: the assembly direction depends on the
+            // arrival order of contributing segments at shared vertices,
+            // which can produce CW chains for peer outer contours (a
+            // foot-gun for any code calling Polygon::area() before
+            // compute_holes()).  We unconditionally orient every emitted
+            // contour CCW; hole/outer classification (which would re-flip
+            // holes back to CW) is the responsibility of compute_holes().
+            c.set_counter_clockwise();
             p.add(std::move(c));
+        }
     }
 }
 
@@ -1144,17 +1471,18 @@ void SweepLine::process_segment(const Segment& s, PolyLabel pl)
         return;
 
     // Compute winding delta from the ORIGINAL edge direction (before
-    // reordering endpoints for the sweep).  An edge going upward
-    // (y increases in polygon traversal order) contributes +1; downward
-    // contributes -1.  Horizontal edges contribute 0 because they cannot
-    // cross a horizontal ray used for winding-number computation.
+    // reordering endpoints for the sweep).  An edge going from low-x to
+    // high-x (in polygon traversal order) contributes +1; high-x to low-x
+    // contributes -1.  Vertical edges contribute 0 because they live in
+    // the status line only momentarily at their x and never propagate
+    // through to subsequent insertions.
     int original_delta;
-    if (p1.y < p2.y)
+    if (p1.x < p2.x)
         original_delta = 1;
-    else if (p1.y > p2.y)
+    else if (p1.x > p2.x)
         original_delta = -1;
     else
-        original_delta = 0;  // horizontal: no winding contribution
+        original_delta = 0;  // vertical: no winding contribution
 
     auto* e1 = store(SweepEvent(p1, true, pl, nullptr));
     auto* e2 = store(SweepEvent(p2, true, pl, e1));

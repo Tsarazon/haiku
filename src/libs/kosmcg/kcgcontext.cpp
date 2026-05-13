@@ -2124,8 +2124,6 @@ void Context::begin_transparency_layer(float layer_opacity, const Rect& bounds) 
     save_state();
     auto& st = m_impl->state();
 
-    int full_w = m_impl->render_width;
-    int full_h = m_impl->render_height;
     int bpp = pixel_format_info(m_impl->render_format).bpp;
 
     // Transform bounds to device space and intersect with clip_rect.
@@ -2160,14 +2158,17 @@ void Context::begin_transparency_layer(float layer_opacity, const Rect& bounds) 
     layer.blend_mode = BlendMode::Normal;
     layer.op = st.op;
     layer.device_bounds = layer_rect;
+
+    // Save parent render target non-owningly. The parent buffer is owned
+    // by BitmapImpl and stays valid for the duration of the layer.
+    layer.parent_data      = m_impl->render_data;
+    layer.parent_width     = m_impl->render_width;
+    layer.parent_height    = m_impl->render_height;
+    layer.parent_stride    = m_impl->render_stride;
+    layer.parent_format    = m_impl->render_format;
     layer.parent_clip_rect = m_impl->clip_rect;
 
-    layer.parent_surface = Image::create(full_w, full_h, m_impl->render_stride,
-                                         m_impl->render_format,
-                                         ColorSpace::srgb(),
-                                         {m_impl->render_data,
-                                          static_cast<size_t>(full_h) * m_impl->render_stride});
-
+    // std::vector zero-initializes, Image::create copies — no extra memset needed.
     std::vector<unsigned char> zero(static_cast<size_t>(layer_h) * stride, 0);
     layer.surface = Image::create(layer_w, layer_h, stride, m_impl->render_format,
                                   ColorSpace::srgb(),
@@ -2211,13 +2212,14 @@ void Context::begin_transparency_layer(float layer_opacity, BlendMode blend) {
     layer.blend_mode = blend;
     layer.op = st.op;
     layer.device_bounds = m_impl->clip_rect;
-    layer.parent_clip_rect = m_impl->clip_rect;
 
-    layer.parent_surface = Image::create(w, h, m_impl->render_stride,
-                                         m_impl->render_format,
-                                         ColorSpace::srgb(),
-                                         {m_impl->render_data,
-                                          static_cast<size_t>(h) * m_impl->render_stride});
+    // Save parent render target non-owningly. See LayerInfo comment.
+    layer.parent_data      = m_impl->render_data;
+    layer.parent_width     = m_impl->render_width;
+    layer.parent_height    = m_impl->render_height;
+    layer.parent_stride    = m_impl->render_stride;
+    layer.parent_format    = m_impl->render_format;
+    layer.parent_clip_rect = m_impl->clip_rect;
 
     // std::vector zero-initializes, Image::create copies — no extra memset needed.
     std::vector<unsigned char> zero(static_cast<size_t>(h) * stride, 0);
@@ -2242,8 +2244,6 @@ void Context::begin_transparency_layer(float layer_opacity, const Rect& bounds, 
     save_state();
     auto& st = m_impl->state();
 
-    int full_w = m_impl->render_width;
-    int full_h = m_impl->render_height;
     int bpp = pixel_format_info(m_impl->render_format).bpp;
 
     IntRect layer_rect = m_impl->clip_rect;
@@ -2276,13 +2276,14 @@ void Context::begin_transparency_layer(float layer_opacity, const Rect& bounds, 
     layer.blend_mode = blend;
     layer.op = st.op;
     layer.device_bounds = layer_rect;
-    layer.parent_clip_rect = m_impl->clip_rect;
 
-    layer.parent_surface = Image::create(full_w, full_h, m_impl->render_stride,
-                                         m_impl->render_format,
-                                         ColorSpace::srgb(),
-                                         {m_impl->render_data,
-                                          static_cast<size_t>(full_h) * m_impl->render_stride});
+    // Save parent render target non-owningly. See LayerInfo comment.
+    layer.parent_data      = m_impl->render_data;
+    layer.parent_width     = m_impl->render_width;
+    layer.parent_height    = m_impl->render_height;
+    layer.parent_stride    = m_impl->render_stride;
+    layer.parent_format    = m_impl->render_format;
+    layer.parent_clip_rect = m_impl->clip_rect;
 
     std::vector<unsigned char> zero(static_cast<size_t>(layer_h) * stride, 0);
     layer.surface = Image::create(layer_w, layer_h, stride, m_impl->render_format,
@@ -2314,21 +2315,27 @@ void Context::end_transparency_layer() {
 
     auto& layer = *st.layer;
 
-    auto* parent_data = image_data_mut(layer.parent_surface);
-    if (!parent_data) {
+    // Validate that begin_transparency_layer actually captured a parent.
+    if (!layer.parent_data) {
         st.layer.reset();
         restore_state();
         return;
     }
 
-    // Restore render target to parent.
-    int parent_w = layer.parent_surface.width();
-    int parent_h = layer.parent_surface.height();
-    m_impl->render_data = parent_data;
-    m_impl->render_width = parent_w;
-    m_impl->render_height = parent_h;
-    m_impl->render_stride = layer.parent_surface.stride();
-    m_impl->clip_rect = layer.parent_clip_rect;
+    // Restore parent render target *before* compositing.  Subsequent code
+    // (including the compositing loop) addresses pixels through
+    // m_impl->render_*, so it must already point at the parent buffer.
+    // The parent buffer is owned by BitmapImpl, never by LayerInfo, so this
+    // restore is safe regardless of what happens to st.layer afterwards.
+    m_impl->render_data   = layer.parent_data;
+    m_impl->render_width  = layer.parent_width;
+    m_impl->render_height = layer.parent_height;
+    m_impl->render_stride = layer.parent_stride;
+    m_impl->render_format = layer.parent_format;
+    m_impl->clip_rect     = layer.parent_clip_rect;
+
+    const int parent_w = layer.parent_width;
+    const int parent_h = layer.parent_height;
 
     // Composite layer onto parent within device_bounds only.
     const auto* li = image_impl(layer.surface);
@@ -2467,7 +2474,29 @@ void Context::draw_glyphs(const Font& f,
                            st.text_mode == TextDrawingMode::StrokeClip ||
                            st.text_mode == TextDrawingMode::FillStrokeClip);
 
+    // Probe color font capability once. has_color_glyphs is cheap (table
+    // presence flags) so for monochrome fonts we skip the per-glyph
+    // dispatcher entirely.
+    const bool try_color = f.has_color_glyphs();
+    const uint32_t fg_argb = st.fill_color.to_argb32();
+    const int palette = st.color_palette_index;
+
     for (size_t i = 0; i < glyphs.size(); ++i) {
+        // Color rendering path: COLR v0/v1, sbix, CBDT, or SVG (skipped).
+        // Honored only when there's a fill to do; clip-only and stroke-
+        // only modes always go through the monochrome outline path
+        // because color glyphs can't be meaningfully stroked or clipped.
+        if (try_color && do_fill && !do_stroke_text
+            && st.text_mode != TextDrawingMode::Clip
+            && st.text_mode != TextDrawingMode::Invisible) {
+            if (detail::try_render_color_glyph(
+                    *m_impl, f, glyphs[i], positions[i],
+                    ColorFormatPreference::AutoBySize,
+                    palette, fg_argb)) {
+                continue;
+            }
+        }
+
         Path glyph_path = f.glyph_path(glyphs[i], positions[i].x, positions[i].y);
         if (!glyph_path) continue;
         if (do_fill) fill_path(glyph_path, st.winding);

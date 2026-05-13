@@ -273,6 +273,26 @@ struct Shading::Impl : RefCounted {
 
 // -- Font::Impl and FontCollection::Impl are defined in kcgfont.cpp --
 // They depend on kcgotf.hpp and are not needed by other translation units.
+// Color glyph rendering (COLR v0/v1, sbix, CBDT) lives in the same TU.
+
+namespace detail {
+
+/// Render one color glyph (COLR v0/v1, sbix, CBDT) at the given baseline.
+/// Returns true if the glyph was handled by a color path (including the
+/// case of SVG, which is silently skipped). Returns false to indicate the
+/// caller should fall back to the monochrome outline path.
+///
+/// Defined in kcgfont.cpp. The font subsystem is the only translation
+/// unit chain that pulls in kcgotf.hpp; everything else uses this bridge.
+bool try_render_color_glyph(Context::Impl& ctx,
+                             const Font& font,
+                             GlyphID glyph,
+                             Point baseline,
+                             ColorFormatPreference pref,
+                             int palette_index,
+                             uint32_t foreground_argb);
+
+} // namespace detail
 
 // -- Internal span type --
 // Layout-compatible with kosmcg::ft::Span for zero-copy callback.
@@ -319,11 +339,33 @@ struct StrokeData {
 };
 
 // -- Layer state for offscreen rendering (begin_transparency_layer / end) --
+//
+// While a transparency layer is active, the Context's render target is
+// switched from the parent surface (owned by BitmapImpl) to `surface`,
+// the layer's offscreen buffer.  On end_transparency_layer the contents
+// of `surface` are composited back into the parent.
+//
+// `parent_*` fields are a NON-OWNING snapshot of the parent's render
+// target.  The parent buffer is owned by BitmapImpl for the entire
+// BitmapContext lifetime, so it is safe to remember the address by
+// raw pointer and restore it when the layer is torn down.  Wrapping
+// it in an Image (which would copy + free) is wrong: it both leaks the
+// real parent buffer and leaves a dangling render_data after teardown.
 
 struct LayerInfo {
-    Image     surface;            ///< Offscreen layer (drawing target).
-    Image     parent_surface;     ///< Surface we were rendering to before the layer.
-    IntRect   parent_clip_rect;   ///< Clip rect of the parent.
+    /// Layer's offscreen drawing target (owned).
+    Image     surface;
+
+    /// Saved parent render target. Non-owning — the parent buffer is
+    /// owned by BitmapImpl and outlives this LayerInfo.
+    unsigned char* parent_data   = nullptr;
+    int            parent_width  = 0;
+    int            parent_height = 0;
+    int            parent_stride = 0;
+    PixelFormat    parent_format = PixelFormat::ARGB32_Premultiplied;
+    IntRect        parent_clip_rect;
+
+    /// Layer placement and composite parameters.
     IntRect   device_bounds;      ///< Layer bounding box in parent device space.
     float     alpha = 1.0f;       ///< Group opacity applied when compositing.
     BlendMode blend_mode = BlendMode::Normal;

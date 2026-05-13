@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <cassert>
+#include <charconv>
 #include <cmath>
 #include <cstring>
 #include <limits>
 #include <numeric>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -546,7 +548,35 @@ bool Path::is_empty() const {
     return !m_impl || m_impl->commands.empty();
 }
 
+// -- bounding_box (loose: control-polygon based) --
+//
+// Returns the smallest rectangle enclosing every point stored in the
+// path's data, INCLUDING Bezier control points. This is the fast,
+// loose bbox — equivalent to iOS CGPathGetBoundingBox.
+//
+// For curve-free paths the result is identical to path_bounding_box;
+// for paths with Bezier curves it is wider, since control points
+// generally lie outside the rendered geometry.
 Rect Path::bounding_box() const {
+    if (!m_impl || m_impl->points.empty())
+        return {};
+
+    BBoxAccum bb;
+    for (auto& p : m_impl->points)
+        bb.add(p);
+    return bb.to_rect();
+}
+
+// -- path_bounding_box (tight: geometry-accurate) --
+//
+// Returns the smallest rectangle enclosing the actual rendered path
+// geometry. For Bezier segments this finds the curve's extrema by
+// solving the derivative for zeros — equivalent to iOS
+// CGPathGetPathBoundingBox.
+//
+// Slower than bounding_box, but useful when you need the true
+// rendered extent (e.g. for fitting layout, draw clipping).
+Rect Path::path_bounding_box() const {
     if (!m_impl || m_impl->commands.empty())
         return {};
 
@@ -584,16 +614,6 @@ Rect Path::bounding_box() const {
             break;
         }
     }
-    return bb.to_rect();
-}
-
-Rect Path::path_bounding_box() const {
-    if (!m_impl || m_impl->points.empty())
-        return {};
-
-    BBoxAccum bb;
-    for (auto& p : m_impl->points)
-        bb.add(p);
     return bb.to_rect();
 }
 
@@ -662,6 +682,322 @@ bool Path::stroke_contains(Point p, float line_width, LineCap cap,
     Path stroked_path = stroked(line_width, cap, join, miter_limit);
     return stroked_path.contains(p, FillRule::Winding);
 }
+
+
+//  Area
+//
+// Total filled area of the path, with holes correctly subtracted, under
+// the given fill rule. Curves are flattened; self-intersections are
+// resolved by polyclip's decompose() pass; holes are classified by
+// orientation. Result is non-negative.
+
+
+float Path::area(FillRule rule, float tolerance) const {
+    if (!m_impl || m_impl->commands.empty())
+        return 0.0f;
+
+    auto poly = path_to_polygon(*m_impl, tolerance);
+    poly.decompose(to_polyclip_fill(rule));
+    poly.sanitize();
+    poly.compute_holes();
+
+    return static_cast<float>(std::abs(poly.area()));
+}
+
+
+//  Convexity test
+//
+// True iff the path consists of exactly one closed subpath whose
+// consecutive edge cross-products do not change sign. Curves are
+// flattened at a tight tolerance before the check. Near-collinear
+// edges (cross ≈ 0 relative to edge lengths) are skipped — they
+// do not constitute a direction change.
+
+
+bool Path::is_convex() const {
+    if (!m_impl || m_impl->commands.empty())
+        return false;
+
+    // Must have exactly one subpath and end with CloseSubpath.
+    int move_count = 0;
+    bool has_close = false;
+    for (auto cmd : m_impl->commands) {
+        if (cmd == PathElement::MoveToPoint) ++move_count;
+        else if (cmd == PathElement::CloseSubpath) has_close = true;
+    }
+    if (move_count != 1 || !has_close)
+        return false;
+
+    // Flatten curves at a tight tolerance so the polyline tracks the
+    // curve closely enough that flattening artefacts don't introduce
+    // spurious sign changes.
+    Path flat = (m_impl->num_curves == 0) ? *this : flattened(0.1f);
+    if (!flat.m_impl)
+        return false;
+
+    // Collect polyline vertices. After flattening, the only point-
+    // producing commands are MoveToPoint and AddLineToPoint.
+    std::vector<Point> verts;
+    verts.reserve(flat.m_impl->points.size());
+    int pt = 0;
+    for (auto cmd : flat.m_impl->commands) {
+        switch (cmd) {
+        case PathElement::MoveToPoint:
+        case PathElement::AddLineToPoint:
+            verts.push_back(flat.m_impl->points[pt++]);
+            break;
+        case PathElement::CloseSubpath:
+            break;
+        case PathElement::AddQuadCurve:
+        case PathElement::AddCurve:
+            // Should not occur after flattening; bail out conservatively.
+            return false;
+        }
+    }
+
+    if (verts.size() < 3)
+        return false;
+
+    // Drop a trailing duplicate vertex (some builders emit the start
+    // point again right before CloseSubpath).
+    if (verts.size() >= 2 && verts.front() == verts.back())
+        verts.pop_back();
+    if (verts.size() < 3)
+        return false;
+
+    // Walk edges and require all non-degenerate cross products to share
+    // a sign. The cross-product threshold scales with both edge lengths
+    // to remain numerically meaningful across coordinate magnitudes.
+    //
+    // The sign check alone classifies an L-shape as non-convex (its
+    // reflex corners produce opposite-sign cross products), but it is
+    // not sufficient to reject self-intersecting polygons whose edges
+    // happen to all turn the same way — e.g. a five-pointed pentagram
+    // is "uniformly left-turning" yet not convex.  We therefore also
+    // sum the signed turning angle and require it to equal one full
+    // rotation (±2π).  A pentagram cumulates to ±4π and is rejected.
+    int sign = 0;  // -1, 0, +1
+    double total_turn = 0.0;
+    const int n = static_cast<int>(verts.size());
+    for (int i = 0; i < n; ++i) {
+        Point a = verts[i];
+        Point b = verts[(i + 1) % n];
+        Point c = verts[(i + 2) % n];
+        Point e1 = b - a;
+        Point e2 = c - b;
+        float cross = e1.cross(e2);
+        float len2_product = (e1.x * e1.x + e1.y * e1.y)
+                           * (e2.x * e2.x + e2.y * e2.y);
+        // Treat |cross|² < 1e-10 · |e1|² · |e2|² as collinear.
+        if (cross * cross <= 1e-10f * len2_product)
+            continue;
+        int s = (cross > 0.0f) ? 1 : -1;
+        if (sign == 0) sign = s;
+        else if (sign != s) return false;
+
+        double dot = static_cast<double>(e1.x) * e2.x
+                   + static_cast<double>(e1.y) * e2.y;
+        total_turn += std::atan2(static_cast<double>(cross), dot);
+    }
+
+    // Simple convex polygon: total turn = ±2π.  Self-intersecting
+    // polygon with uniform turn direction: ±4π or more.  Tolerance
+    // of 0.01 rad covers numerical drift while keeping the gap
+    // between 2π and 4π trivially distinguishable.
+    constexpr double k_two_pi = 6.28318530717958647692;
+    return std::abs(std::abs(total_turn) - k_two_pi) < 0.01;
+}
+
+
+//  Sample at arc-length
+//
+// Walk the path's segments in order, advancing a "remaining" distance
+// until the target falls inside a segment. For curves, we subdivide
+// recursively (same scheme as cubic_length) until the sub-piece is
+// short enough that linear interpolation is faithful to the curve at
+// the configured tolerance, then sample the endpoints. Quads are
+// promoted to cubics for a single unified walker.
+//
+// Out-of-range distances are clamped to [0, length()]. At a segment
+// boundary (numerically: when remaining ≤ seg_len at the moment of
+// entry), the result lies on the *incoming* segment so the tangent
+// matches that segment. This matches PathMeasure-style behaviour and
+// avoids the lookahead that an "outgoing tangent" rule would require.
+
+
+namespace {
+
+struct SampleState {
+    float        remaining;
+    bool         found = false;
+    PathSample   sample{};
+    Point        last_tangent{};   ///< Direction of the last consumed segment.
+    Point        last_point{};     ///< Endpoint of the last consumed segment.
+};
+
+inline Point unit(Point v) {
+    float len = v.length();
+    return (len > 0.0f) ? v * (1.0f / len) : Point{};
+}
+
+void sample_line(Point p0, Point p1, SampleState& s) {
+    if (s.found) return;
+    Point dir = p1 - p0;
+    float seg_len = dir.length();
+    if (seg_len <= 0.0f) {
+        // Zero-length segment: still advances current point but
+        // contributes no length and no tangent direction.
+        s.last_point = p1;
+        return;
+    }
+    if (s.remaining > seg_len + 1e-6f) {
+        s.remaining -= seg_len;
+        s.last_tangent = dir * (1.0f / seg_len);
+        s.last_point = p1;
+        return;
+    }
+    float frac = std::clamp(s.remaining / seg_len, 0.0f, 1.0f);
+    s.sample.point   = p0 + dir * frac;
+    s.sample.tangent = dir * (1.0f / seg_len);
+    s.found = true;
+}
+
+void sample_cubic_walk(Point p0, Point p1, Point p2, Point p3,
+                       SampleState& s, int depth = 0)
+{
+    if (s.found) return;
+
+    float chord = p0.distance_to(p3);
+    float net   = p0.distance_to(p1) + p1.distance_to(p2) + p2.distance_to(p3);
+
+    // Termination: the piece is straight enough to sample as a line, or
+    // we have recursed deep enough that further subdivision would yield
+    // pieces below float precision.
+    if (depth >= 24 || (net - chord) < 1e-4f) {
+        sample_line(p0, p3, s);
+        return;
+    }
+
+    // Subdivide via De Casteljau.
+    Point m01  = (p0 + p1) * 0.5f;
+    Point m12  = (p1 + p2) * 0.5f;
+    Point m23  = (p2 + p3) * 0.5f;
+    Point m012 = (m01 + m12) * 0.5f;
+    Point m123 = (m12 + m23) * 0.5f;
+    Point mid  = (m012 + m123) * 0.5f;
+
+    // Compute the left half's length with the same routine Path::length()
+    // uses.  This is the authoritative arc length for our accounting; it
+    // makes the walker's total length consumed across all recursion equal
+    // exactly Path::length(), so the requested distance never overflows.
+    float left_len = cubic_length(p0, m01, m012, mid, depth + 1);
+
+    if (s.remaining > left_len) {
+        // Target lies in the right half — consume the left half exactly.
+        s.remaining -= left_len;
+        Point chord_left = mid - p0;
+        float clen = chord_left.length();
+        if (clen > 0.0f)
+            s.last_tangent = chord_left * (1.0f / clen);
+        s.last_point = mid;
+        sample_cubic_walk(mid, m123, m23, p3, s, depth + 1);
+    } else {
+        // Target is in the left half.
+        sample_cubic_walk(p0, m01, m012, mid, s, depth + 1);
+    }
+}
+
+} // anonymous namespace
+
+PathSample Path::sample_at_length(float length) const {
+    PathSample empty{};
+    if (!m_impl || m_impl->commands.empty())
+        return empty;
+
+    float total = this->length();
+    if (total <= 0.0f) {
+        // Degenerate path (only MoveTo commands): position is the first
+        // moveto destination, tangent is zero.
+        if (!m_impl->points.empty())
+            return {m_impl->points[0], {0, 0}};
+        return empty;
+    }
+
+    length = std::clamp(length, 0.0f, total);
+
+    SampleState s{};
+    s.remaining = length;
+
+    Point cur{};
+    Point subpath_start{};
+    int pt = 0;
+
+    for (auto cmd : m_impl->commands) {
+        if (s.found) break;
+        switch (cmd) {
+        case PathElement::MoveToPoint: {
+            cur = m_impl->points[pt++];
+            subpath_start = cur;
+            // MoveTo contributes no length. last_point follows but we do
+            // not reset last_tangent — a sample exactly at a moveto's
+            // start gets the tangent of the *next* segment naturally,
+            // since remaining will reach 0 inside that segment and
+            // produce its outgoing direction.
+            s.last_point = cur;
+            break;
+        }
+        case PathElement::AddLineToPoint: {
+            Point p = m_impl->points[pt++];
+            sample_line(cur, p, s);
+            cur = p;
+            break;
+        }
+        case PathElement::AddQuadCurve: {
+            Point cp = m_impl->points[pt++];
+            Point ep = m_impl->points[pt++];
+            // Promote quad to cubic for the unified walker.
+            Point c1 = cur + (cp  - cur) * (2.0f / 3.0f);
+            Point c2 = ep  + (cp  - ep ) * (2.0f / 3.0f);
+            sample_cubic_walk(cur, c1, c2, ep, s);
+            cur = ep;
+            break;
+        }
+        case PathElement::AddCurve: {
+            Point c1 = m_impl->points[pt++];
+            Point c2 = m_impl->points[pt++];
+            Point ep = m_impl->points[pt++];
+            sample_cubic_walk(cur, c1, c2, ep, s);
+            cur = ep;
+            break;
+        }
+        case PathElement::CloseSubpath: {
+            sample_line(cur, subpath_start, s);
+            cur = subpath_start;
+            break;
+        }
+        }
+    }
+
+    if (!s.found) {
+        // Numeric drift past the last segment, or length == total.
+        // Use the last consumed segment's endpoint and direction.
+        s.sample.point   = s.last_point;
+        s.sample.tangent = s.last_tangent;
+    }
+    return s.sample;
+}
+
+Point Path::point_at_length(float length) const {
+    return sample_at_length(length).point;
+}
+
+Point Path::tangent_at_length(float length) const {
+    return sample_at_length(length).tangent;
+}
+
+
+//  Derived paths
+
 
 // -- Derived paths --
 
@@ -1144,6 +1480,27 @@ Path Path::reversed() const {
     return builder.build();
 }
 
+
+//  Simplified
+//
+// Returns a self-intersection-free version of this path that fills the
+// same region under the given fill rule. Reuses the same polyclip
+// pipeline as the boolean ops: flatten → decompose → sanitize →
+// classify holes → emit. Curve fidelity is lost (output is polylines)
+// just as it is for united/intersected/etc.
+
+
+Path Path::simplified(FillRule rule, float tolerance) const {
+    if (!m_impl || m_impl->commands.empty())
+        return {};
+
+    auto poly = path_to_polygon(*m_impl, tolerance);
+    poly.decompose(to_polyclip_fill(rule));
+    poly.sanitize();
+    poly.compute_holes();
+    return polygon_to_path(poly);
+}
+
 // -- Boolean ops --
 
 Path Path::united(const Path& other, FillRule rule) const {
@@ -1443,6 +1800,82 @@ fail:
     return std::nullopt;
 }
 
+
+//  to_svg_string
+//
+// Serialize the path as SVG path-data using absolute commands only.
+// Numbers are formatted with std::to_chars (locale-independent,
+// shortest round-trip representation) — safer than snprintf("%g",...)
+// which respects the C locale and may emit ',' as the decimal
+// separator on some systems.
+
+
+namespace {
+
+inline void append_num(std::string& out, float v) {
+    char buf[32];
+    auto res = std::to_chars(buf, buf + sizeof(buf), v);
+    if (res.ec == std::errc{})
+        out.append(buf, res.ptr);
+    else
+        out += '0';  // unreachable in practice; defensive fallback
+}
+
+} // anonymous namespace
+
+std::string Path::to_svg_string() const {
+    if (!m_impl || m_impl->commands.empty())
+        return {};
+
+    std::string out;
+    // Rough heuristic: average ~16 chars per command after formatting.
+    out.reserve(m_impl->commands.size() * 16);
+
+    bool first = true;
+    int pt = 0;
+    for (auto cmd : m_impl->commands) {
+        if (!first) out += ' ';
+        first = false;
+
+        switch (cmd) {
+        case PathElement::MoveToPoint: {
+            Point p = m_impl->points[pt++];
+            out += 'M'; out += ' ';
+            append_num(out, p.x); out += ' '; append_num(out, p.y);
+            break;
+        }
+        case PathElement::AddLineToPoint: {
+            Point p = m_impl->points[pt++];
+            out += 'L'; out += ' ';
+            append_num(out, p.x); out += ' '; append_num(out, p.y);
+            break;
+        }
+        case PathElement::AddQuadCurve: {
+            Point cp = m_impl->points[pt++];
+            Point ep = m_impl->points[pt++];
+            out += 'Q'; out += ' ';
+            append_num(out, cp.x); out += ' '; append_num(out, cp.y); out += ' ';
+            append_num(out, ep.x); out += ' '; append_num(out, ep.y);
+            break;
+        }
+        case PathElement::AddCurve: {
+            Point c1 = m_impl->points[pt++];
+            Point c2 = m_impl->points[pt++];
+            Point ep = m_impl->points[pt++];
+            out += 'C'; out += ' ';
+            append_num(out, c1.x); out += ' '; append_num(out, c1.y); out += ' ';
+            append_num(out, c2.x); out += ' '; append_num(out, c2.y); out += ' ';
+            append_num(out, ep.x); out += ' '; append_num(out, ep.y);
+            break;
+        }
+        case PathElement::CloseSubpath:
+            out += 'Z';
+            break;
+        }
+    }
+    return out;
+}
+
 // -- from_raw --
 
 Path Path::from_raw(const PathElement* elements, int element_count,
@@ -1551,8 +1984,29 @@ static void ensure_move(Path::Builder::Impl* m) {
     m->subpath_start = {0.0f, 0.0f};
 }
 
+// Quietly drop commands containing non-finite (NaN or ±Inf) coordinates.
+// Per Skia-style convention, an `add` call with bad input is treated as
+// a no-op rather than poisoning the geometry. This prevents a single
+// non-finite vertex from causing arbitrary visual artifacts during
+// rasterisation (NaN coordinates get coerced during edge walking and
+// produce spurious AA fills across the whole bitmap otherwise).
+static inline bool path_coords_finite(float x, float y) {
+    return std::isfinite(x) && std::isfinite(y);
+}
+static inline bool path_coords_finite(float x1, float y1, float x2, float y2) {
+    return std::isfinite(x1) && std::isfinite(y1)
+        && std::isfinite(x2) && std::isfinite(y2);
+}
+static inline bool path_coords_finite(float x1, float y1, float x2, float y2,
+                                       float x3, float y3) {
+    return std::isfinite(x1) && std::isfinite(y1)
+        && std::isfinite(x2) && std::isfinite(y2)
+        && std::isfinite(x3) && std::isfinite(y3);
+}
+
 Path::Builder& Path::Builder::move_to(float x, float y) {
     if (!m_impl) return *this;
+    if (!path_coords_finite(x, y)) return *this;
     m_impl->commands.push_back(PathElement::MoveToPoint);
     m_impl->points.push_back({x, y});
     m_impl->current = {x, y};
@@ -1564,6 +2018,7 @@ Path::Builder& Path::Builder::move_to(float x, float y) {
 
 Path::Builder& Path::Builder::line_to(float x, float y) {
     if (!m_impl) return *this;
+    if (!path_coords_finite(x, y)) return *this;
     ensure_move(m_impl);
     m_impl->commands.push_back(PathElement::AddLineToPoint);
     m_impl->points.push_back({x, y});
@@ -1573,6 +2028,7 @@ Path::Builder& Path::Builder::line_to(float x, float y) {
 
 Path::Builder& Path::Builder::quad_to(float cpx, float cpy, float x, float y) {
     if (!m_impl) return *this;
+    if (!path_coords_finite(cpx, cpy, x, y)) return *this;
     ensure_move(m_impl);
     m_impl->commands.push_back(PathElement::AddQuadCurve);
     m_impl->points.push_back({cpx, cpy});
@@ -1586,6 +2042,7 @@ Path::Builder& Path::Builder::cubic_to(float cp1x, float cp1y,
                                         float cp2x, float cp2y,
                                         float x, float y) {
     if (!m_impl) return *this;
+    if (!path_coords_finite(cp1x, cp1y, cp2x, cp2y, x, y)) return *this;
     ensure_move(m_impl);
     m_impl->commands.push_back(PathElement::AddCurve);
     m_impl->points.push_back({cp1x, cp1y});
@@ -1600,6 +2057,8 @@ Path::Builder& Path::Builder::arc_to(float rx, float ry, float angle,
                                       bool large_arc, bool sweep,
                                       float x, float y) {
     if (!m_impl) return *this;
+    if (!path_coords_finite(rx, ry, x, y) || !std::isfinite(angle))
+        return *this;
     ensure_move(m_impl);
 
     Point from = m_impl->current;

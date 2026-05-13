@@ -251,6 +251,14 @@ bool parse_css_alpha(const char*& it, const char* end, float& out) {
     return true;
 }
 
+// Forward declarations of color-math helpers defined later in the file.
+// These are needed by Color::parse() for the CSS Color Level 4 functions
+// (oklab/oklch/lab/lch/color), which are below parse() because they
+// belong to the same logical group as their from_oklab/to_oklab impls.
+void lab_d65_to_linear_srgb(float L, float a, float b,
+                            float& r_lin, float& g_lin, float& b_lin);
+float srgb_encode(float v);
+
 } // anonymous namespace
 
 std::optional<Color> Color::parse(std::string_view css) {
@@ -271,7 +279,7 @@ std::optional<Color> Color::parse(std::string_view css) {
     }
 
     // Detect function name
-    enum class Func { None, RGB, HSL, HWB };
+    enum class Func { None, RGB, HSL, HWB, OkLab, OkLch, Lab, Lch, ColorFn };
     Func fn = Func::None;
     const char* saved = it;
     if (skip_string(it, end, "rgba")) {
@@ -298,6 +306,29 @@ std::optional<Color> Color::parse(std::string_view css) {
         if (skip_string(it, end, "hwb")) {
             fn = Func::HWB;
         }
+    }
+    // CSS Color Module Level 4 functions. Order matters — `oklab` must
+    // be checked before `lab`, and `oklch` before `lch`, since they
+    // share a suffix.
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "oklab")) fn = Func::OkLab;
+    }
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "oklch")) fn = Func::OkLch;
+    }
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "lab"))   fn = Func::Lab;
+    }
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "lch"))   fn = Func::Lch;
+    }
+    if (fn == Func::None) {
+        it = saved;
+        if (skip_string(it, end, "color")) fn = Func::ColorFn;
     }
 
     if (fn == Func::RGB) {
@@ -414,6 +445,182 @@ std::optional<Color> Color::parse(std::string_view css) {
                      base.b() * scale + w_val, a};
     }
 
+    // ---- CSS Color Level 4: oklab() / oklch() / lab() / lch() / color() ----
+    //
+    // Shared helpers and grammar:
+    //
+    //   <number> | <percentage> | none
+    //   Percentage on L: 100% = 1.0 (oklab) or 100% = 100 (lab).
+    //   Percentage on a/b axis: 100% = 0.4 (oklab) or 100% = 125 (lab).
+    //   Percentage on Chroma:   100% = 0.4 (oklch) or 100% = 150 (lch).
+    //   Hue: <number>[deg|rad|grad|turn]
+    //   Trailing "/ <alpha>" optional.
+
+    auto parse_hue = [&](float& out) -> bool {
+        skip_ws(it, end);
+        float v;
+        if (!parse_number(it, end, v)) return false;
+        skip_ws(it, end);
+        if (skip_string(it, end, "deg")) { /* already degrees */ }
+        else if (skip_string(it, end, "rad"))  v = rad2deg(v);
+        else if (skip_string(it, end, "grad")) v = v * 0.9f;
+        else if (skip_string(it, end, "turn")) v = v * 360.0f;
+        out = v;
+        return true;
+    };
+
+    // Parse "number | number%" — caller supplies the percent scale.
+    auto parse_scaled = [&](float& out, float percent_scale) -> bool {
+        skip_ws(it, end);
+        float v;
+        if (!parse_number(it, end, v)) return false;
+        skip_ws(it, end);
+        if (it < end && *it == '%') { ++it; v = v * percent_scale / 100.0f; }
+        out = v;
+        return true;
+    };
+
+    auto parse_optional_alpha = [&](float& a_out) -> bool {
+        // Already at position after last component; alpha is "/ value".
+        skip_ws(it, end);
+        if (it < end && *it == '/') {
+            ++it;
+            return parse_css_alpha(it, end, a_out);
+        }
+        return true;
+    };
+
+    if (fn == Func::OkLab) {
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        float L, a, b, alpha = 1.0f;
+        if (!parse_scaled(L, 1.0f))   return std::nullopt;   // L: 100% = 1.0
+        if (!parse_scaled(a, 0.4f))   return std::nullopt;   // a: 100% = 0.4
+        if (!parse_scaled(b, 0.4f))   return std::nullopt;   // b: 100% = 0.4
+        if (!parse_optional_alpha(alpha)) return std::nullopt;
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+        return Color::from_oklab(L, a, b, alpha);
+    }
+
+    if (fn == Func::OkLch) {
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        float L, C, h, alpha = 1.0f;
+        if (!parse_scaled(L, 1.0f))   return std::nullopt;
+        if (!parse_scaled(C, 0.4f))   return std::nullopt;
+        if (!parse_hue(h))            return std::nullopt;
+        if (!parse_optional_alpha(alpha)) return std::nullopt;
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+        return Color::from_oklch(L, C, h, alpha);
+    }
+
+    if (fn == Func::Lab) {
+        // CIE Lab D65. L in [0, 100]; a, b roughly in [-125, 125].
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        float L, a, b, alpha = 1.0f;
+        if (!parse_scaled(L, 100.0f)) return std::nullopt;   // L: 100% = 100
+        if (!parse_scaled(a, 125.0f)) return std::nullopt;
+        if (!parse_scaled(b, 125.0f)) return std::nullopt;
+        if (!parse_optional_alpha(alpha)) return std::nullopt;
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+
+        float r_lin, g_lin, b_lin;
+        lab_d65_to_linear_srgb(L, a, b, r_lin, g_lin, b_lin);
+        Color out{srgb_encode(r_lin), srgb_encode(g_lin), srgb_encode(b_lin), alpha};
+        out.space = ColorSpace::srgb();
+        return out;
+    }
+
+    if (fn == Func::Lch) {
+        // CIE Lch (polar form of CIE Lab D65). C: 100% = 150 per CSS L4.
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        float L, C, h, alpha = 1.0f;
+        if (!parse_scaled(L, 100.0f)) return std::nullopt;
+        if (!parse_scaled(C, 150.0f)) return std::nullopt;
+        if (!parse_hue(h))            return std::nullopt;
+        if (!parse_optional_alpha(alpha)) return std::nullopt;
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+
+        float h_rad = h * (3.14159265358979323846f / 180.0f);
+        float a = C * std::cos(h_rad);
+        float b = C * std::sin(h_rad);
+        float r_lin, g_lin, b_lin;
+        lab_d65_to_linear_srgb(L, a, b, r_lin, g_lin, b_lin);
+        Color out{srgb_encode(r_lin), srgb_encode(g_lin), srgb_encode(b_lin), alpha};
+        out.space = ColorSpace::srgb();
+        return out;
+    }
+
+    if (fn == Func::ColorFn) {
+        // color(<space> <c1> <c2> <c3> [/ <alpha>])
+        // Supported spaces: srgb, srgb-linear, display-p3.
+        skip_ws(it, end);
+        if (it >= end || *it != '(') return std::nullopt;
+        ++it;
+        skip_ws(it, end);
+
+        // Identify space identifier — bounded by whitespace.
+        const char* id_start = it;
+        while (it < end && !is_ws(*it) && *it != ')' && *it != '/') ++it;
+        size_t id_len = static_cast<size_t>(it - id_start);
+        if (id_len == 0) return std::nullopt;
+
+        enum class CSpace { sRGB, sRGBLinear, DisplayP3, Unknown };
+        CSpace cs = CSpace::Unknown;
+        auto match_id = [&](const char* name) {
+            size_t n = std::strlen(name);
+            if (id_len != n) return false;
+            for (size_t i = 0; i < n; ++i) {
+                char a = id_start[i];
+                char b = name[i];
+                if (a >= 'A' && a <= 'Z') a = char(a + 32);
+                if (a != b) return false;
+            }
+            return true;
+        };
+        if      (match_id("srgb"))         cs = CSpace::sRGB;
+        else if (match_id("srgb-linear"))  cs = CSpace::sRGBLinear;
+        else if (match_id("display-p3"))   cs = CSpace::DisplayP3;
+        else                                return std::nullopt;
+
+        // Parse three components (numbers or percentages, %=100 → 1.0).
+        float c0, c1, c2, alpha = 1.0f;
+        if (!parse_scaled(c0, 1.0f)) return std::nullopt;
+        if (!parse_scaled(c1, 1.0f)) return std::nullopt;
+        if (!parse_scaled(c2, 1.0f)) return std::nullopt;
+        if (!parse_optional_alpha(alpha)) return std::nullopt;
+        skip_ws(it, end);
+        if (it >= end || *it != ')') return std::nullopt;
+
+        switch (cs) {
+        case CSpace::sRGB:
+            return Color{c0, c1, c2, alpha};   // tagged sRGB by Color::converted defaulting
+        case CSpace::sRGBLinear: {
+            Color out{c0, c1, c2, alpha};
+            out.space = ColorSpace::linear_srgb();
+            return out;
+        }
+        case CSpace::DisplayP3: {
+            Color out{c0, c1, c2, alpha};
+            out.space = ColorSpace::display_p3();
+            return out;
+        }
+        case CSpace::Unknown:
+            return std::nullopt;
+        }
+        return std::nullopt;
+    }
+
     // Named color (case-insensitive)
     it = css.data();
     skip_ws(it, end);
@@ -448,8 +655,19 @@ Color Color::converted(const ColorSpace& target) const {
     const auto* src_impl = color_space_impl(space);
     const auto* dst_impl = color_space_impl(target);
 
-    if (!src_impl || !dst_impl) return *this;
-    if (src_impl->type == dst_impl->type)
+    if (!dst_impl) return *this;
+
+    // Many constructors and factories (Color::from_rgba8, Color::from_hsl,
+    // Color::red(), etc.) leave the color's `space` field default-constructed
+    // (i.e. m_impl == nullptr). The conventional interpretation of an
+    // 8-bit RGB literal is sRGB, so treat untagged sources as sRGB here.
+    // Without this fallback, Color::converted on an untagged color would
+    // silently return the input unchanged — a subtle correctness bug for
+    // any caller wanting linear-space blending.
+    Type src_type = src_impl ? src_impl->type : Type::SRGB;
+    Type dst_type = dst_impl->type;
+
+    if (src_type == dst_type)
         return Color(target, components[0], components[1], components[2], components[3]);
 
     // sRGB gamma decode/encode for float inputs (no uint8 quantization)
@@ -466,7 +684,7 @@ Color Color::converted(const ColorSpace& target) const {
 
     // Convert source to linear sRGB as intermediate
     float lr, lg, lb;
-    switch (src_impl->type) {
+    switch (src_type) {
     case Type::LinearSRGB:
     case Type::ExtLinearSRGB:
         lr = components[0];
@@ -496,7 +714,7 @@ Color Color::converted(const ColorSpace& target) const {
 
     // Convert from linear sRGB to target
     float dr, dg, db;
-    switch (dst_impl->type) {
+    switch (dst_type) {
     case Type::LinearSRGB:
     case Type::ExtLinearSRGB:
         dr = lr; dg = lg; db = lb;
@@ -623,6 +841,212 @@ ColorMatrix ColorMatrix::invert() {
     cm.m[10] =  0; cm.m[11] =  0; cm.m[12] = -1; cm.m[13] = 0; cm.m[14] = 1;
     cm.m[15] =  0; cm.m[16] =  0; cm.m[17] =  0; cm.m[18] = 1; cm.m[19] = 0;
     return cm;
+}
+
+// ============================================================
+// Oklab / Oklch / Lab / Lch
+//
+// Reference: Björn Ottosson, "A perceptual color space for image
+// processing" (2020). Oklab is defined via two 3×3 matrices and a
+// cube-root non-linearity over linear sRGB.
+// ============================================================
+
+namespace {
+
+// Linear sRGB → LMS' → Oklab.
+OkLab linear_srgb_to_oklab(float r, float g, float b) {
+    float l = 0.4122214708f * r + 0.5363325363f * g + 0.0514459929f * b;
+    float m = 0.2119034982f * r + 0.6806995451f * g + 0.1073969566f * b;
+    float s = 0.0883024619f * r + 0.2817188376f * g + 0.6299787005f * b;
+
+    float l_ = std::cbrt(l);
+    float m_ = std::cbrt(m);
+    float s_ = std::cbrt(s);
+
+    return {
+        0.2104542553f * l_ + 0.7936177850f * m_ - 0.0040720468f * s_,
+        1.9779984951f * l_ - 2.4285922050f * m_ + 0.4505937099f * s_,
+        0.0259040371f * l_ + 0.7827717662f * m_ - 0.8086757660f * s_
+    };
+}
+
+// Oklab → LMS' → LMS → linear sRGB.
+void oklab_to_linear_srgb(float L, float a, float b,
+                          float& r_lin, float& g_lin, float& b_lin) {
+    float l_ = L + 0.3963377774f * a + 0.2158037573f * b;
+    float m_ = L - 0.1055613458f * a - 0.0638541728f * b;
+    float s_ = L - 0.0894841775f * a - 1.2914855480f * b;
+
+    float l = l_ * l_ * l_;
+    float m = m_ * m_ * m_;
+    float s = s_ * s_ * s_;
+
+    r_lin =  4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+    g_lin = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+    b_lin = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+}
+
+// sRGB gamma encode / decode (component-wise, no clamping inside).
+float srgb_encode(float v) {
+    if (v <= 0.0f) return 0.0f;
+    if (v >= 1.0f) return 1.0f;
+    return (v <= 0.0031308f) ? v * 12.92f
+                             : 1.055f * std::pow(v, 1.0f / 2.4f) - 0.055f;
+}
+float srgb_decode(float v) {
+    if (v <= 0.0f) return 0.0f;
+    if (v >= 1.0f) return 1.0f;
+    return (v <= 0.04045f) ? v / 12.92f
+                           : std::pow((v + 0.055f) / 1.055f, 2.4f);
+}
+
+// CIE Lab D65 conversions for CSS lab()/lch() parsing.
+// L in [0, 100]; a, b roughly in [-125, 125].
+void lab_d65_to_linear_srgb(float L, float a, float b,
+                            float& r_lin, float& g_lin, float& b_lin) {
+    float fy = (L + 16.0f) / 116.0f;
+    float fx = fy + a / 500.0f;
+    float fz = fy - b / 200.0f;
+
+    auto f_inv = [](float t) -> float {
+        constexpr float delta = 6.0f / 29.0f;
+        constexpr float delta3 = delta * delta * delta;       // (6/29)^3
+        constexpr float k = 3.0f * delta * delta;             // 3*(6/29)^2
+        return (t > delta) ? t * t * t : k * (t - 4.0f / 29.0f);
+    };
+
+    // D65 reference white.
+    float X = 0.95047f * f_inv(fx);
+    float Y = 1.00000f * f_inv(fy);
+    float Z = 1.08883f * f_inv(fz);
+
+    // XYZ → linear sRGB (D65) matrix.
+    r_lin =  3.2404542f * X - 1.5371385f * Y - 0.4985314f * Z;
+    g_lin = -0.9692660f * X + 1.8760108f * Y + 0.0415560f * Z;
+    b_lin =  0.0556434f * X - 0.2040259f * Y + 1.0572252f * Z;
+}
+
+} // anonymous namespace
+
+Color Color::from_oklab(float L, float a, float b, float alpha) {
+    float r_lin, g_lin, b_lin;
+    oklab_to_linear_srgb(L, a, b, r_lin, g_lin, b_lin);
+    Color out{srgb_encode(r_lin), srgb_encode(g_lin), srgb_encode(b_lin), alpha};
+    out.space = ColorSpace::srgb();
+    return out;
+}
+
+Color Color::from_oklch(float L, float C, float h, float alpha) {
+    float h_rad = h * (3.14159265358979323846f / 180.0f);
+    float a = C * std::cos(h_rad);
+    float b = C * std::sin(h_rad);
+    return from_oklab(L, a, b, alpha);
+}
+
+OkLab Color::to_oklab() const {
+    // Always convert via linear sRGB so the math is unambiguous.
+    Color lin = converted(ColorSpace::extended_linear_srgb());
+    return linear_srgb_to_oklab(lin.r(), lin.g(), lin.b());
+}
+
+OkLCH Color::to_oklch() const {
+    OkLab lab = to_oklab();
+    float C = std::sqrt(lab.a * lab.a + lab.b * lab.b);
+    float h_rad = std::atan2(lab.b, lab.a);
+    float h_deg = h_rad * (180.0f / 3.14159265358979323846f);
+    if (h_deg < 0.0f) h_deg += 360.0f;
+    return {lab.L, C, h_deg};
+}
+
+// ============================================================
+// HSL inverse
+// ============================================================
+
+HSL Color::to_hsl() const {
+    float r = components[0];
+    float g = components[1];
+    float b = components[2];
+
+    float max = std::max({r, g, b});
+    float min = std::min({r, g, b});
+    float l = (max + min) * 0.5f;
+
+    // Achromatic case: hue and saturation undefined; conventionally zero.
+    if (max == min)
+        return {0.0f, 0.0f, l};
+
+    float d = max - min;
+    float s = (l > 0.5f) ? d / (2.0f - max - min) : d / (max + min);
+
+    float h;
+    if      (max == r) h = (g - b) / d + (g < b ? 6.0f : 0.0f);
+    else if (max == g) h = (b - r) / d + 2.0f;
+    else               h = (r - g) / d + 4.0f;
+    h *= 60.0f;
+    // Normalize to [0, 360). Float precision from upstream (e.g. from_hsl
+    // producing 3.6e-7 in a "zero" channel) can push h to 359.999...
+    // immediately below the wrap boundary; snap it back to 0.
+    if (h < 0.0f)    h += 360.0f;
+    if (h >= 360.0f) h -= 360.0f;
+    if (h >= 359.99f) h = 0.0f;
+
+    return {h, s, l};
+}
+
+// ============================================================
+// Mix
+// ============================================================
+
+Color Color::mix(const Color& other, float t, const ColorSpace& working_space) const {
+    Color self_ws  = converted(working_space);
+    Color other_ws = other.converted(working_space);
+    Color mixed_ws = self_ws.lerp(other_ws, t);
+    // Convert result back to *this*'s space. When self is untagged
+    // (default-constructed ColorSpace), treat it as sRGB so callers see
+    // a properly gamma-encoded result. Without this fallback, the back
+    // -conversion would silently no-op and return linear-space values
+    // tagged as sRGB — a hard-to-spot correctness bug.
+    ColorSpace target = space ? space : ColorSpace::srgb();
+    return mixed_ws.converted(target);
+}
+
+Color Color::mix_oklab(const Color& other, float t) const {
+    OkLab a_lab = to_oklab();
+    OkLab b_lab = other.to_oklab();
+    float L = a_lab.L + (b_lab.L - a_lab.L) * t;
+    float A = a_lab.a + (b_lab.a - a_lab.a) * t;
+    float B = a_lab.b + (b_lab.b - a_lab.b) * t;
+    float alpha = components[3] + (other.components[3] - components[3]) * t;
+    Color out = from_oklab(L, A, B, alpha);
+    // from_oklab tags result as sRGB; route through our space if different.
+    if (auto* impl = color_space_impl(space); impl && impl->type != ColorSpace::Impl::Type::SRGB)
+        out = out.converted(space);
+    return out;
+}
+
+// ============================================================
+// WCAG contrast ratio
+// ============================================================
+
+namespace {
+
+float relative_luminance_srgb(const Color& c) {
+    // Convert to sRGB if not already, unpremultiply implicit by alpha=ignored.
+    Color srgb = c.converted(ColorSpace::srgb());
+    // Decode each channel from sRGB to linear, apply Rec.709 coefficients.
+    float r_lin = srgb_decode(srgb.r());
+    float g_lin = srgb_decode(srgb.g());
+    float b_lin = srgb_decode(srgb.b());
+    return 0.2126f * r_lin + 0.7152f * g_lin + 0.0722f * b_lin;
+}
+
+} // anonymous namespace
+
+float Color::contrast_ratio(const Color& other) const {
+    float L1 = relative_luminance_srgb(*this);
+    float L2 = relative_luminance_srgb(other);
+    if (L1 < L2) std::swap(L1, L2);
+    return (L1 + 0.05f) / (L2 + 0.05f);
 }
 
 } // namespace kcg

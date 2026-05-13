@@ -131,6 +131,20 @@ void convert_scanline(const unsigned char* src, PixelFormat src_fmt,
 }
 
 // -- Public bulk conversion --
+//
+// These helpers convert between kcg's internal ARGB32_Premultiplied
+// (memory bytes [B, G, R, A] on little-endian) and standard memory-order
+// RGBA bytes [R, G, B, A].  Memory-order RGBA is the convention used by
+// stb_image, libpng, OpenGL, WebP, and most other image libraries — so
+// these are the correct helpers for interop with external byte buffers.
+//
+// NOTE: This is intentionally distinct from `PixelFormat::RGBA32`, which
+// in kcg refers to a uint32 bit-pattern with R in the high byte (matching
+// the file's `ARGB32` naming convention).  On little-endian those store
+// bytes `[A, B, G, R]` in memory, which is the opposite of stb_image's
+// output.  Use these convert_*_to_* helpers when interoperating with
+// external memory-order RGBA streams; use the PixelFormat::RGBA32 path
+// for user-supplied buffers tagged with that format.
 
 void convert_argb_to_rgba(unsigned char* dst, const unsigned char* src,
                           int width, int height, int stride) {
@@ -140,10 +154,16 @@ void convert_argb_to_rgba(unsigned char* dst, const unsigned char* src,
         auto* d = reinterpret_cast<uint32_t*>(dst + y * stride);
         for (int x = 0; x < width; ++x) {
             uint32_t px = s[x];
-            // ARGB premul → RGBA straight
+            // ARGB premul: stored as uint32 (A<<24)|(R<<16)|(G<<8)|B,
+            // i.e. memory bytes [B, G, R, A] on LE.
             uint8_t a = pixel_alpha(px);
             auto [r, g, b] = unpremultiply(px);
-            d[x] = (uint32_t(r) << 24) | (uint32_t(g) << 16) | (uint32_t(b) << 8) | a;
+            // Write RGBA in memory order: byte 0 = R, byte 3 = A.
+            // On LE that means R goes to the LSB of the uint32 store.
+            d[x] = static_cast<uint32_t>(r)
+                 | (static_cast<uint32_t>(g) <<  8)
+                 | (static_cast<uint32_t>(b) << 16)
+                 | (static_cast<uint32_t>(a) << 24);
         }
     }
 }
@@ -156,11 +176,12 @@ void convert_rgba_to_argb(unsigned char* dst, const unsigned char* src,
         auto* d = reinterpret_cast<uint32_t*>(dst + y * stride);
         for (int x = 0; x < width; ++x) {
             uint32_t px = s[x];
-            // RGBA straight → ARGB premul
-            uint8_t r = static_cast<uint8_t>((px >> 24) & 0xFF);
-            uint8_t g = static_cast<uint8_t>((px >> 16) & 0xFF);
-            uint8_t b = static_cast<uint8_t>((px >> 8) & 0xFF);
-            uint8_t a = static_cast<uint8_t>(px & 0xFF);
+            // Source bytes in memory: R, G, B, A.
+            // On LE: byte 0 (= R) is bits 0-7, byte 3 (= A) is bits 24-31.
+            uint8_t r = static_cast<uint8_t>( px        & 0xFF);
+            uint8_t g = static_cast<uint8_t>((px >>  8) & 0xFF);
+            uint8_t b = static_cast<uint8_t>((px >> 16) & 0xFF);
+            uint8_t a = static_cast<uint8_t>((px >> 24) & 0xFF);
             d[x] = premultiply_argb(pack_argb(a, r, g, b));
         }
     }

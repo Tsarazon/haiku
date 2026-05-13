@@ -10,13 +10,15 @@ UseLibraryHeaders kosmcg ;
 SubDirC++Flags -std=c++20 -w -fpermissive -DKOSMCG_BUILD
 	-I$(SUBDIR)/polyclip
 	-I$(SUBDIR)/stb
-	-I$(SUBDIR)/FT ;
+	-I$(SUBDIR)/FT
+	-I$(SUBDIR)/OTF ;
 SubDirCcFlags -w -DKOSMCG_BUILD ;
 
 local architectureObject ;
 for architectureObject in [ MultiArchSubDirSetup ] {
 	on $(architectureObject) {
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) FT ] ;
+		SEARCH_SOURCE += [ FDirName $(SUBDIR) OTF ] ;
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) polyclip ] ;
 		SEARCH_SOURCE += [ FDirName $(SUBDIR) stb ] ;
 		SharedLibrary [ MultiArchDefaultGristFiles libkosmcg.so ] :
@@ -40,15 +42,18 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			kcgfont.cpp
 
 			# OpenType
-			kcgotf.cpp
+			kcgotf_core.cpp
+			kcgotf_color.cpp
+			kcgotf_layout.cpp
+			kcgotf_outlines.cpp
 
 			# Path boolean operations
 			polyclip.cpp
 
 			# Embedded FreeType components
+			kosmcg-ft-aa.cpp
 			kosmcg-ft-math.cpp
 			kosmcg-ft-mono.cpp
-			kosmcg-ft-raster.cpp
 			kosmcg-ft-stroker.cpp
 
 			# STB image

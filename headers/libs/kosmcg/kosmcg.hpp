@@ -9,6 +9,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -424,17 +425,38 @@ enum class InterpolationQuality {
 
 // -- Masking --
 
+/// How a mask is interpreted when applied via clip_to_mask, draw_with_mask,
+/// or as a mask paint source.
+///
+/// The first four modes are SINGLE-MASK channel extractors: each pixel
+/// of the mask is reduced to a coverage value via the chosen channel.
+/// The resulting coverage multiplies through any existing clip mask
+/// (intersect-style: coverage_new = existing × extracted ÷ 255).
+///
+/// The last six modes are TWO-MASK COMPOSITES: the mask's alpha channel
+/// is extracted and combined with the existing coverage T via the named
+/// pixel-level operation. Where there is no existing clip, T = 255.
+///
+///   Add        coverage = clamp(T + S, 0, 255)   — saturating union
+///   Subtract   coverage = max(T − S, 0)          — saturating difference
+///   Intersect  coverage = T × S ÷ 255            — multiplicative (soft)
+///   Difference coverage = |T − S|                — symmetric difference
+///   Lighten    coverage = max(T, S)              — sharp union
+///   Darken     coverage = min(T, S)              — sharp intersection
+///
+/// Where T = existing coverage at the pixel and S = the mask's alpha
+/// at that pixel.
 enum class MaskMode {
     Alpha,
     InvertedAlpha,
     Luminance,
     InvertedLuminance,
-    Add,               // (T * TA) + (S * (1 - TA))
-    Subtract,          // (T * TA) - (S * (1 - TA))
-    Intersect,         // T * min(TA, SA)
-    Difference,        // abs(T - S * (1 - TA))
-    Lighten,           // max(TA, SA) — highest transparency wins
-    Darken             // min(TA, SA) — lowest transparency wins
+    Add,
+    Subtract,
+    Intersect,
+    Difference,
+    Lighten,
+    Darken
 };
 
 // -- Text enums --
@@ -571,6 +593,33 @@ private:
     Impl* m_impl = nullptr;
 };
 
+// -- Color component structs --
+
+/// HSL (Hue / Saturation / Lightness) component triple.
+/// h in degrees [0, 360); s, l in [0, 1].
+struct HSL {
+    float h;
+    float s;
+    float l;
+};
+
+/// Oklab perceptually-uniform color components.
+/// L in [0, 1] (lightness); a, b roughly in [-0.5, 0.5] (chroma axes).
+/// Reference: Björn Ottosson, "A perceptual color space for image processing" (2020).
+struct OkLab {
+    float L;
+    float a;
+    float b;
+};
+
+/// Oklch — Oklab in polar form.
+/// L in [0, 1]; C >= 0 (chroma); h in degrees [0, 360) (hue).
+struct OkLCH {
+    float L;
+    float C;
+    float h;
+};
+
 // -- Color --
 
 /// RGBA color with float components in [0, 1], tagged with a ColorSpace.
@@ -613,9 +662,57 @@ struct Color {
     }
 
     KCG_API static Color from_hsl(float h, float s, float l, float a = 1.0f);
+
+    /// Construct from Oklab components. L in [0, 1]; a, b roughly
+    /// in [-0.5, 0.5]. Result is tagged sRGB (gamma-encoded after the
+    /// Oklab → linear sRGB transform). Components outside the sRGB
+    /// gamut are clamped.
+    KCG_API static Color from_oklab(float L, float a, float b, float alpha = 1.0f);
+
+    /// Construct from Oklch (Oklab polar). L in [0, 1]; C >= 0;
+    /// h in degrees. Equivalent to from_oklab(L, C·cos(h), C·sin(h)).
+    KCG_API static Color from_oklch(float L, float C, float h, float alpha = 1.0f);
+
     KCG_API static std::optional<Color> parse(std::string_view css_color);
 
     [[nodiscard]] KCG_API Color converted(const ColorSpace& target) const;
+
+    /// Convert to HSL. Components computed from this color's RGB values
+    /// in their current space (the conversion does NOT first move the
+    /// color to sRGB — call .converted(srgb()).to_hsl() if needed).
+    /// Inverse of from_hsl.
+    [[nodiscard]] KCG_API HSL  to_hsl() const;
+
+    /// Convert to Oklab (always via linear sRGB intermediate).
+    [[nodiscard]] KCG_API OkLab to_oklab() const;
+
+    /// Convert to Oklch (polar form of Oklab).
+    [[nodiscard]] KCG_API OkLCH to_oklch() const;
+
+    /// Mix two colors in the given working color space:
+    /// both colors converted to working_space, lerped per-component,
+    /// result converted back to this color's space.
+    ///
+    /// Use linear_srgb() for gamma-correct mixing, or mix_oklab() for
+    /// perceptually uniform mixing. Mixing in sRGB (gamma-encoded)
+    /// produces the same result as plain lerp() and is rarely what
+    /// you want for color interpolation.
+    [[nodiscard]] KCG_API Color mix(const Color& other, float t,
+                                     const ColorSpace& working_space) const;
+
+    /// Mix two colors in Oklab space — perceptually uniform interpolation,
+    /// the recommended choice for gradients and color animations.
+    /// Alpha lerps linearly. Result is tagged in this color's space.
+    [[nodiscard]] KCG_API Color mix_oklab(const Color& other, float t) const;
+
+    /// WCAG 2.1 contrast ratio (luminance-based) between two colors,
+    /// returned in [1, 21]. Used for accessibility checks:
+    ///   ≥ 4.5  : meets WCAG AA for normal text
+    ///   ≥ 7.0  : meets WCAG AAA for normal text
+    ///   ≥ 3.0  : meets WCAG AA for large text / UI components
+    /// Both colors are first converted to sRGB and unpremultiplied; alpha
+    /// is ignored (WCAG assumes opaque colors).
+    [[nodiscard]] KCG_API float contrast_ratio(const Color& other) const;
 
     // -- Modifications --
 
@@ -845,7 +942,43 @@ enum class ColorFontFormat {
     COLR_v0,     // Layered color outlines (COLR + CPAL, version 0)
     COLR_v1,     // Paint-based color outlines (COLR v1, gradients etc.)
     Sbix,        // Embedded bitmap (Apple sbix)
-    CBDT         // Embedded bitmap (Google CBDT/CBLC)
+    CBDT,        // Embedded bitmap (Google CBDT/CBLC)
+    SVG          // Embedded SVG document (OpenType SVG table)
+};
+
+/// Strategy for picking among multiple color formats present in one font.
+/// Some fonts ship both bitmap (sbix/CBDT) and vector (COLR) tables.
+enum class ColorFormatPreference {
+    BitmapFirst,  // sbix > CBDT > COLR v1 > COLR v0 > SVG. Best for low-DPI.
+    VectorFirst,  // COLR v1 > COLR v0 > SVG > sbix > CBDT. Best for HiDPI/4K.
+    AutoBySize    // Bitmap when a strike is close to target size, vector otherwise.
+};
+
+// -- GSUB/GPOS shaper helpers --
+
+/// Result of a ligature substitution lookup ('liga' feature).
+struct LigatureMatch {
+    GlyphID glyph    = 0;  // 0 if no match
+    int     consumed = 0;  // input glyphs consumed (0 if no match)
+};
+
+/// Single horizontal kerning pair from the font's GPOS/kern tables.
+/// `value` is in scaled pixel units (already multiplied by Font's scale).
+struct KerningPair {
+    GlyphID left  = 0;
+    GlyphID right = 0;
+    float   value = 0.0f;
+};
+
+// -- Path sampling result --
+
+/// Result of sampling a path at a given arc-length distance.
+/// `tangent` is a unit-length vector in the direction of travel along
+/// the path; it is the zero vector at degenerate sample points (e.g.
+/// the moveto of an empty subpath).
+struct PathSample {
+    Point point;
+    Point tangent;
 };
 
 // -- Path (immutable geometry) --
@@ -874,8 +1007,19 @@ public:
     // -- Queries --
 
     [[nodiscard]] bool  is_empty() const;
+
+    /// Loose bounding box: smallest rect enclosing every stored point,
+    /// including Bezier control points. Fast (single pass over the
+    /// point array). For paths with curves, this is wider than the
+    /// rendered geometry. Matches CGPathGetBoundingBox semantics.
     [[nodiscard]] Rect  bounding_box() const;
+
+    /// Tight bounding box: smallest rect enclosing the actual rendered
+    /// geometry, computed by solving Bezier derivative zeros to find
+    /// curve extrema. Slower than bounding_box. For curve-free paths
+    /// it is identical to bounding_box. Matches CGPathGetPathBoundingBox.
     [[nodiscard]] Rect  path_bounding_box() const;
+
     [[nodiscard]] float length() const;
     [[nodiscard]] bool  contains(Point p, FillRule rule = FillRule::Winding) const;
 
@@ -883,6 +1027,35 @@ public:
                                        LineCap cap = LineCap::Butt,
                                        LineJoin join = LineJoin::Miter,
                                        float miter_limit = 10.0f) const;
+
+    /// Total filled area of the path under the given fill rule, with
+    /// holes correctly subtracted. Curves are flattened internally to
+    /// the supplied tolerance, so the result is an approximation
+    /// proportional to that tolerance. Always non-negative.
+    [[nodiscard]] float area(FillRule rule = FillRule::Winding,
+                             float tolerance = 0.25f) const;
+
+    /// True iff the path consists of exactly one closed subpath whose
+    /// interior angles all turn in the same direction. Open paths,
+    /// empty paths, or paths with multiple subpaths return false.
+    /// Curves are flattened internally; the check then walks the
+    /// polyline checking that consecutive edge cross-products do not
+    /// change sign.
+    [[nodiscard]] bool is_convex() const;
+
+    /// Sample the path at a given arc-length distance from its start.
+    /// `length` is clamped to `[0, this->length()]`. Returns the point
+    /// on the path and the unit tangent vector at that point. At a
+    /// subpath boundary (moveto discontinuity) the tangent comes from
+    /// the next segment. Returns a degenerate sample (zero tangent)
+    /// for empty paths.
+    [[nodiscard]] PathSample sample_at_length(float length) const;
+
+    /// Convenience: position only (see sample_at_length).
+    [[nodiscard]] Point point_at_length(float length) const;
+
+    /// Convenience: unit tangent only (see sample_at_length).
+    [[nodiscard]] Point tangent_at_length(float length) const;
 
     // -- Derived paths --
 
@@ -898,6 +1071,19 @@ public:
                                TrimMode mode = TrimMode::Simultaneous) const;
     [[nodiscard]] Path flattened(float tolerance = 0.25f) const;
     [[nodiscard]] Path reversed() const;
+
+    /// Return a self-intersection-free version of this path that fills
+    /// the same region under the given fill rule. Output is polylines:
+    /// curves are flattened, self-intersecting contours are split, and
+    /// hole orientation is canonicalised (outer CCW, holes CW). Useful
+    /// before stroking complex paths, or as a normalisation step
+    /// before hit-testing.
+    ///
+    /// NOTE: Like the boolean ops, this loses curve fidelity. The
+    /// returned path is a polygon approximation at the requested
+    /// tolerance.
+    [[nodiscard]] Path simplified(FillRule rule = FillRule::Winding,
+                                  float tolerance = 0.25f) const;
 
     // -- Boolean ops --
     // NOTE: Boolean operations flatten all curves to line segments before
@@ -946,9 +1132,15 @@ public:
     [[nodiscard]] Iterator begin() const;
     [[nodiscard]] Iterator end() const;
 
-    // -- SVG parsing --
+    // -- SVG parsing & serialisation --
 
     [[nodiscard]] static std::optional<Path> parse_svg(std::string_view data);
+
+    /// Serialise this path as an SVG path-data string ("d" attribute).
+    /// Uses absolute commands (M, L, Q, C, Z) only; numbers are printed
+    /// with `%g` precision so the output round-trips through parse_svg
+    /// for typical float values. Empty path returns an empty string.
+    [[nodiscard]] std::string to_svg_string() const;
 
     /// Construct a path from pre-existing command and point arrays without copying.
     /// The arrays must remain valid for the lifetime of this Path.
@@ -1361,9 +1553,14 @@ public:
 
     /// Which color font technology this glyph uses, if any.
     /// Returns ColorFontFormat::None for standard monochrome glyphs.
-    [[nodiscard]] ColorFontFormat color_format(GlyphID glyph) const;
+    /// `pref` controls which format is preferred when several are present;
+    /// defaults to AutoBySize which picks bitmap or vector depending on
+    /// the current font size relative to available bitmap strikes.
+    [[nodiscard]] ColorFontFormat color_format(
+        GlyphID glyph,
+        ColorFormatPreference pref = ColorFormatPreference::AutoBySize) const;
 
-    /// True if the font has any color glyph data (COLR, sbix, CBDT).
+    /// True if the font has any color glyph data (COLR, sbix, CBDT, SVG).
     [[nodiscard]] bool has_color_glyphs() const;
 
     /// Number of color palettes in CPAL table (0 if no CPAL).
@@ -1374,13 +1571,37 @@ public:
     [[nodiscard]] int palette_size() const;
     [[nodiscard]] Color palette_color(int palette_index, int color_index) const;
 
+    /// Raw bytes of the SVG document for this glyph, or empty span if the
+    /// font has no SVG table or this glyph is not covered by one.
+    /// The returned span is valid for the lifetime of this Font; the SVG
+    /// document itself must be parsed externally (kcg does not link SVG).
+    [[nodiscard]] std::span<const std::byte> glyph_svg_data(GlyphID glyph) const;
+
     [[nodiscard]] float       size() const;
     [[nodiscard]] FontMetrics metrics() const;
     [[nodiscard]] GlyphMetrics glyph_metrics(GlyphID glyph) const;
 
+    // -- Name table --
+
+    /// Family name from the font's name table (English, platform-preferred).
+    [[nodiscard]] std::optional<std::string> family_name() const;
+
+    /// Style name ("Regular", "Bold Italic", etc).
+    [[nodiscard]] std::optional<std::string> style_name() const;
+
+    /// Raw OS/2 usWeightClass value (100..900, 0 if unset).
+    /// Finer-grained than FontCollection::Weight (which buckets to nine values).
+    [[nodiscard]] int weight_class() const;
+
     /// Map a Unicode codepoint to a glyph ID via the font's cmap table.
     /// Returns 0 (.notdef) if the codepoint is not covered by this font.
     [[nodiscard]] GlyphID glyph_for_codepoint(Codepoint cp) const;
+
+    /// Variation-selector aware lookup. Used for emoji presentation
+    /// (U+FE0E text, U+FE0F emoji) and CJK language variants. Falls back
+    /// to the non-VS mapping if the (codepoint, selector) pair is unknown.
+    [[nodiscard]] GlyphID glyph_for_codepoint(Codepoint cp,
+                                              Codepoint variation_selector) const;
 
     /// True if the font has a real glyph (not .notdef) for this codepoint.
     /// Use this to implement font fallback chains.
@@ -1410,6 +1631,23 @@ public:
     /// Note: this covers simple pair kerning only; complex GPOS
     /// features (contextual, extension lookups) require a shaper.
     [[nodiscard]] float kerning(GlyphID left, GlyphID right) const;
+
+    // -- Shaper helpers (for text shapers building on top of kcg) --
+
+    /// True if the font has any active 'liga' GSUB subtables.
+    [[nodiscard]] bool has_ligatures() const;
+
+    /// Match the start of a glyph sequence against the font's standard
+    /// ligature ('liga') lookup. Returns the longest match, or `{0, 0}`
+    /// if no ligature applies. Caller advances `glyphs` by `consumed`.
+    [[nodiscard]] LigatureMatch lookup_ligature(std::span<const GlyphID> glyphs) const;
+
+    /// Number of horizontal kerning pairs (GPOS + legacy kern combined).
+    [[nodiscard]] int kern_pair_count() const;
+
+    /// Bulk extraction of kerning pairs (for shaper precomputation).
+    /// Writes up to out.size() pairs and returns the number written.
+    int kern_pairs(std::span<KerningPair> out) const;
 
     // -- Raw OpenType table access --
     // For external consumers (HarfBuzz, text shapers, accessibility tools)

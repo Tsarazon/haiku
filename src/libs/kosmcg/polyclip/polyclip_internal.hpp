@@ -29,15 +29,25 @@ namespace polyclip::detail {
 //            matching in the Connector.  Covers +/-1 grid-cell mismatch from
 //            cascaded divide_segment() calls.
 //
-// Safe coordinate range: |x|, |y| < 1e6.
-// At 1e7 the snap grid is ~10x ULP; at 1e8 it equals ULP and fails.
-// The MaxCoord constant gates debug assertions.
+// Coordinate limits.
+//
+//   SafeMaxCoord (1e6) — recommended operating range with comfortable
+//                        numerical headroom (snap grid ~860x ULP).
+//   HardMaxCoord (1e7) — absolute upper bound; beyond this snap grid
+//                        approaches ULP and numerical coincidence
+//                        detection breaks. Asserted in debug builds.
+//
+// Callers should keep |x|, |y| < SafeMaxCoord. The hard assert exists
+// only to catch accidentally unbounded coordinates, not to define the
+// supported range.
+
+constexpr double SafeMaxCoord = 1e6;
+constexpr double HardMaxCoord = 1e7;
 
 constexpr double GeomEpsilon  = 1e-10;
 constexpr double SnapDistSq   = 1e-12;
 constexpr double SnapGrid     = 1e-7;
 constexpr double ConnectorTolSq = SnapDistSq;
-constexpr double MaxCoord     = 1e7;
 
 // Maximum number of events the sweep line will process before aborting.
 // Guards against infinite loops from degenerate / adversarial input.
@@ -72,8 +82,9 @@ inline void assert_coord_range([[maybe_unused]] const Point& p) noexcept
 {
     assert(std::isfinite(p.x) && std::isfinite(p.y)
            && "polyclip: non-finite coordinate");
-    assert(std::abs(p.x) < MaxCoord && std::abs(p.y) < MaxCoord
-           && "polyclip: coordinate exceeds safe range (1e7)");
+    assert(std::abs(p.x) < HardMaxCoord && std::abs(p.y) < HardMaxCoord
+           && "polyclip: coordinate beyond hard limit (1e7); "
+              "recommended safe range is 1e6");
 }
 
 // -- Geometry primitives ----------------------------------------------------
@@ -280,10 +291,8 @@ private:
 
 class SweepLine {
 public:
-    SweepLine(const Polygon& subj, const Polygon& clip, FillRule rule,
-              int decompose_depth = 0)
-        : m_subject(subj), m_clipping(clip), m_fill_rule(rule)
-        , m_decompose_depth(decompose_depth) {}
+    SweepLine(const Polygon& subj, const Polygon& clip, FillRule rule)
+        : m_subject(subj), m_clipping(clip), m_fill_rule(rule) {}
 
     void compute(Operation op, Polygon& result);
 
@@ -291,7 +300,6 @@ private:
     const Polygon& m_subject;
     const Polygon& m_clipping;
     FillRule m_fill_rule;
-    int m_decompose_depth;
     std::priority_queue<SweepEvent*, std::vector<SweepEvent*>, SweepEventComp> m_eq;
     std::deque<SweepEvent> m_events;
     SweepEventComp m_sec;

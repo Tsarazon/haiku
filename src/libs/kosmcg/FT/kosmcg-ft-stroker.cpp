@@ -18,6 +18,7 @@
 
 namespace kcg::ft {
 
+
 /* ---- bezier computation thresholds ---- */
 
 static constexpr Angle kSmallConicThreshold = angle_pi / 6;
@@ -465,6 +466,10 @@ static void ft_stroke_border_export(StrokeBorder border,
         for (UInt i = 0; i < count; i++, tags_ptr++, idx++) {
             if (*tags_ptr & kStrokeTagEnd) {
                 *write++ = idx;
+                /* Stroked contours are always closed; mark the flag explicitly
+                 * so subsequent operations (e.g. re-stroking) don't read
+                 * uninitialised memory. */
+                outline->contours_flag[outline->n_contours] = 0;
                 outline->n_contours++;
             }
         }
