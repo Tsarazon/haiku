@@ -11,13 +11,10 @@
 
 #include <AutoDeleter.h>
 #include <Accelerant.h>
-#include <GraphicsCard.h>
 #include <List.h>
 #include <Locker.h>
 #include <OS.h>
 #include <Region.h>
-
-#include <video_overlay.h>
 
 #include <new>
 

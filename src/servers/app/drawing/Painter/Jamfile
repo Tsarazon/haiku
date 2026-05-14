@@ -3,7 +3,7 @@ SubDir HAIKU_TOP src servers app drawing Painter ;
 AddSubDirSupportedPlatforms libbe_test ;
 
 UseLibraryHeaders agg ;
-UseLibraryHeaders kosmvg plutovg ;
+UseLibraryHeaders kosmcg plutovg ;
 SubDirC++Flags -std=c++20 -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-float-conversion ;
 UsePublicHeaders support ;
 UsePrivateHeaders app graphics interface shared ;

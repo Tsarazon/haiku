@@ -16,7 +16,7 @@
 #include <AutoDeleter.h>
 #include <Locker.h>
 #include <image.h>
-#include <video_overlay.h>
+#include <Accelerant.h>
 
 #include <memory>
 

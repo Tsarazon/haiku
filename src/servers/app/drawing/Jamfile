@@ -1,7 +1,7 @@
 SubDir HAIKU_TOP src servers app drawing ;
 
 UseLibraryHeaders agg ;
-UseLibraryHeaders kosmvg plutovg ;
+UseLibraryHeaders kosmcg plutovg ;
 UsePrivateHeaders app graphics interface shared ;
 UsePrivateHeaders kernel ;
 UsePrivateHeaders [ FDirName graphics common ] ;

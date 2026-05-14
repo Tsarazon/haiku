@@ -11,7 +11,7 @@
 
 #include <InterfaceDefs.h>
 
-#include <video_overlay.h>
+#include <Accelerant.h>
 
 
 class HWInterface;

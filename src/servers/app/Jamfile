@@ -1,7 +1,7 @@
 SubDir HAIKU_TOP src servers app ;
 
 UseLibraryHeaders agg ;
-UseLibraryHeaders kosmvg plutovg ;
+UseLibraryHeaders kosmcg plutovg ;
 UsePrivateHeaders app graphics input interface shared storage support ;
 UsePrivateHeaders kernel ;
 
@@ -110,7 +110,7 @@ Application app_server :
 	:
 	libtranslation.so libbe.so libbnetapi.so
 	libaslocal.a libasremote.a
-	libasdrawing.a libpainter.a libkosmvg.so libplutovg.so libagg.a
+	libasdrawing.a libpainter.a libkosmcg.so libplutovg.so libagg.a
 	[ BuildFeatureAttribute freetype : library ]
 	[ BuildFeatureAttribute fontconfig : library ]
 	libstackandtile.a liblinprog.a libtextencoding.so shared
