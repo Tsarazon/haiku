@@ -1,4 +1,5 @@
 - always doublecheck your decisions
+- before any edit, always read at least 100 lines of surrounding context
 
 # Mobile Haiku (KosmOS)
 
@@ -25,7 +26,20 @@
 
 ## Целевое железо
 
-- На первом этапе Intel N150 планшеты (X86_64)
+Поддерживается только современное железо **2014+ года выпуска**:
+
+- **x86_64** (Broadwell и новее): UEFI, AHCI/NVMe storage, ксHCI USB, IOMMU. Reference target — Intel N150 планшеты (Alder Lake-N), также Atom Z8500 (Cherry Trail, eMMC), мобильные Core i-series.
+- **ARM64** (ARMv8, Cortex-A53/A57+): Raspberry Pi 4/5, Apple Silicon, Rockchip RK3399/RK3588, Allwinner H6/H616, NXP i.MX 8 и т.п.
+- **RISC-V** (RV64GC): VisionFive 2, HiFive Unmatched, QEMU virt.
+
+**Явно НЕ поддерживается legacy:**
+- PATA / PCI IDE (нет ни на одном target'е 2014+)
+- SATA в legacy IDE-compat mode (UEFI 2014+ даёт AHCI)
+- ISA device discovery (кроме минимального для ACPI legacy I/O вроде PS/2 KBC)
+- Firmware pre-UEFI (CSM, BIOS-only) — не boot-target
+- 32-битный x86 / ARMv7
+
+Хардверная граница означает: если драйвер или подсистема таргетит железо старше 2014 — её можно удалять без оглядки на "а вдруг у кого-то будет". Пример: ATA bus manager + `generic_ide_pci` + `legacy_sata` + `ata_adapter` удалены целиком (~4700 строк) — ни один 2014+ SoC/chipset не использует PATA или SATA-в-IDE-режиме. AHCI+NVMe+eMMC(SDHCI) покрывают весь actual storage; `ata_types.h` (protocol-level константы для SATA FIS) остался, т.к. его использует AHCI.
 
 ## Соглашения
 
@@ -59,6 +73,8 @@ cd /home/ruslan/haiku/generated
 **Размеры образов** (настраиваются в `build/jam/`):
 - `haiku-anyboot.iso` — 2 ГБ (BuildSetup:66)
 - `haiku-nightly-anyboot.iso` — 1 ГБ (DefaultBuildProfiles:129)
+
+**Известная проблема:** инкрементальная сборка (без `-a`) падает на этапе `BuildAnybootImageEfi1` с ошибкой `failed to open ISO file: No such file or directory` — `haiku-boot-cd.iso` не пересоздаётся. Обходное решение — полная пересборка с `-a`. TODO: разобраться почему boot CD ISO не попадает в зависимости инкрементальной сборки.
 
 ## Запуск QEMU
 
