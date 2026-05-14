@@ -33,7 +33,7 @@
 #include <fs/devfs.h>
 #include <fs/KPath.h>
 #include <interrupts.h>
-#include <kdevice_manager.h>
+#include <kdevice_keeper.h>
 #include <kdriver_settings.h>
 #include <kernel_daemon.h>
 #include <kmodule.h>
@@ -344,13 +344,18 @@ main2(void* /*unused*/)
 	boot_splash_set_stage(BOOT_SPLASH_STAGE_2_BOOTSTRAP_FS);
 	vfs_bootstrap_file_systems();
 
-	TRACE("Init Device Manager\n");
+	TRACE("Init DeviceKeeper\n");
 	boot_splash_set_stage(BOOT_SPLASH_STAGE_3_INIT_DEVICES);
-	device_manager_init(&sKernelArgs);
+	dk_keeper_init(&sKernelArgs);
 
-	/* Legacy driver loading removed — all drivers use device_manager */
+	/* Legacy driver loading removed — all drivers use DeviceKeeper */
 
-	interrupts_init_post_device_manager(&sKernelArgs);
+	interrupts_init_post_device_keeper(&sKernelArgs);
+
+	// First pass: discover boot-loaded drivers and probe devices
+	// needed to find the boot partition (AHCI, SCSI, etc.)
+	TRACE("dk_keeper_init_post_modules (pre-boot)\n");
+	dk_keeper_init_post_modules(&sKernelArgs);
 
 	TRACE("Mount boot file system\n");
 	boot_splash_set_stage(BOOT_SPLASH_STAGE_4_MOUNT_BOOT_FS);
@@ -372,8 +377,10 @@ main2(void* /*unused*/)
 	TRACE("debug_init_post_modules\n");
 	debug_init_post_modules(&sKernelArgs);
 
-	TRACE("device_manager_init_post_modules\n");
-	device_manager_init_post_modules(&sKernelArgs);
+	// Second pass: packagefs now mounted, discover drivers from disk
+	// (graphics, USB HID, network, etc.)
+	TRACE("dk_keeper_init_post_modules (post-boot)\n");
+	dk_keeper_init_post_modules(&sKernelArgs);
 
 	boot_splash_set_stage(BOOT_SPLASH_STAGE_7_RUN_BOOT_SCRIPT);
 	boot_splash_uninit();

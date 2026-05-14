@@ -326,7 +326,7 @@ DiskBootMethod::IsBootDevice(KDiskDevice* device, bool strict)
 		case PCI_BUS:
 		case LEGACY_BUS:
 			// TODO: Implement PCI/legacy bus device identification
-			// Requires device_node access for proper matching
+			// Requires dk_node access for proper matching
 			break;
 
 		case UNKNOWN_BUS:
@@ -842,6 +842,8 @@ vfs_mount_boot_file_system(kernel_args* args)
 	bool hasPackages = (bootVolume.GetBool(BOOT_VOLUME_BOOTED_FROM_IMAGE, false)
 		&& lstat(kSystemPackagesDirectory, &st) == 0);
 
+	dprintf("vfs_mount_boot: isPackaged=%d hasPackages=%d\n",
+		isPackaged, hasPackages);
 	if (isPackaged || hasPackages) {
 		static const char* const kPackageFSName = "packagefs";
 
@@ -856,8 +858,12 @@ vfs_mount_boot_file_system(kernel_args* args)
 			strlcat(arguments, stateName, sizeof(arguments));
 		}
 
+		dprintf("vfs_mount_boot: mounting packagefs at /boot/system args='%s'\n",
+			arguments);
 		dev_t packageMount = _kern_mount("/boot/system", NULL, kPackageFSName,
 			0, arguments, 0);
+		dprintf("vfs_mount_boot: packagefs mount result: %s\n",
+			packageMount >= 0 ? "OK" : strerror(packageMount));
 		if (packageMount < 0) {
 			panic("vfs_mount_boot_file_system: failed to mount system packagefs: %s\n",
 				strerror(packageMount));

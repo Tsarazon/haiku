@@ -767,6 +767,11 @@ common_vector_io(int fd, off_t pos, const iovec* vecs, size_t count, bool write,
 		if (status != B_OK) {
 			if (bytesTransferred == 0)
 				return status;
+			dprintf("common_vector_io: %s iovec %zu/%zu (pos=%" B_PRIdOFF
+				", iov_len=%zu) failed with %s — returning partial "
+				"transfer of %zd bytes\n",
+				write ? "write" : "read", i, count, pos,
+				vecs[i].iov_len, strerror(status), bytesTransferred);
 			break;
 		}
 
@@ -778,8 +783,14 @@ common_vector_io(int fd, off_t pos, const iovec* vecs, size_t count, bool write,
 		if (pos != -1)
 			pos += length;
 
-		if (length < vecs[i].iov_len)
+		if (length < vecs[i].iov_len) {
+			dprintf("common_vector_io: short %s of iovec %zu/%zu "
+				"(pos=%" B_PRIdOFF "): only %zu of %zu bytes "
+				"transferred — returning partial total %zd\n",
+				write ? "write" : "read", i, count, pos - length,
+				length, vecs[i].iov_len, bytesTransferred);
 			break;
+		}
 	}
 
 	if (movePosition) {

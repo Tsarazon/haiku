@@ -51,6 +51,7 @@
 #include <kosm_mutex.h>
 #include <kosm_ray.h>
 #include <vm/kosm_dot.h>
+#include "DeviceKeeper/Syscall.h"
 #include <usergroup.h>
 #include <UserTimer.h>
 #include <util/AutoLock.h>

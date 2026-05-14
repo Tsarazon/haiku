@@ -50,9 +50,7 @@
 /*! The modules referenced by this structure are built-in
 	modules that can't be loaded from disk.
 */
-extern module_info gDeviceManagerModule;
-extern module_info gDeviceRootModule;
-extern module_info gDeviceGenericModule;
+extern module_info gDeviceKeeperModule;
 extern module_info gFrameBufferConsoleModule;
 
 // file systems
@@ -60,9 +58,7 @@ extern module_info gRootFileSystem;
 extern module_info gDeviceFileSystem;
 
 static module_info* sBuiltInModules[] = {
-	&gDeviceManagerModule,
-	&gDeviceRootModule,
-	&gDeviceGenericModule,
+	&gDeviceKeeperModule,
 	&gFrameBufferConsoleModule,
 
 	&gRootFileSystem,
@@ -1891,34 +1887,65 @@ module_init_post_boot_device(bool bootingFromBootLoaderVolume)
 		} else if (bootingFromBootLoaderVolume) {
 			bool pathNormalized = false;
 			KPath pathBuffer;
+			dprintf("  normalizing image '%s' (relative=%d)\n",
+				image->path, image->path[0] != '/');
 			if (image->path[0] != '/') {
+				// Mirror the boot loader's preload layout (see
+				// load_modules() in src/system/boot/loader/loader.cpp):
+				// modules are loaded from kernel/boot, kernel/file_systems
+				// and kernel/partitioning_systems, with names stored
+				// without the subdir prefix. We have to try each subdir
+				// here to recover the full path.
+				static const char* const kPreloadSubdirs[] = {
+					"kernel/boot",
+					"kernel/file_systems",
+					"kernel/partitioning_systems",
+				};
+				const uint32 kNumPreloadSubdirs = sizeof(kPreloadSubdirs)
+					/ sizeof(kPreloadSubdirs[0]);
+
 				// relative path
 				for (uint32 i = kNumModulePaths; i-- > 0;) {
 					if (sDisableUserAddOns && i >= kFirstNonSystemModulePath)
 						continue;
 
-					if (__find_directory(kModulePaths[i], gBootDevice, true,
-							pathBuffer.LockBuffer(), pathBuffer.BufferSize())
-								!= B_OK) {
-						pathBuffer.UnlockBuffer();
+					KPath basePath;
+					status_t fdStatus = __find_directory(
+						kModulePaths[i], gBootDevice, true,
+						basePath.LockBuffer(), basePath.BufferSize());
+					basePath.UnlockBuffer();
+					if (fdStatus != B_OK) {
+						dprintf("    __find_directory(%u, dev=%" B_PRId32
+							") failed: %s\n", kModulePaths[i],
+							gBootDevice, strerror(fdStatus));
 						continue;
 					}
 
-					pathBuffer.UnlockBuffer();
+					for (uint32 j = 0; j < kNumPreloadSubdirs; j++) {
+						pathBuffer.SetPath(basePath.Path());
 
-					// Append the relative boot module directory and the
-					// relative image path, normalize the path, and check
-					// whether it exists.
-					struct stat st;
-					if (pathBuffer.Append("kernel/boot") != B_OK
-						|| pathBuffer.Append(image->path) != B_OK
-						|| pathBuffer.Normalize(true) != B_OK
-						|| lstat(pathBuffer.Path(), &st) != 0) {
-						continue;
+						// Append the preload subdir and the relative image
+						// path, normalize, and check whether it exists.
+						struct stat st;
+						status_t appendStatus = pathBuffer.Append(
+							kPreloadSubdirs[j]);
+						if (appendStatus == B_OK)
+							appendStatus = pathBuffer.Append(image->path);
+						dprintf("    trying path '%s' (append=%s)\n",
+							pathBuffer.Path(), strerror(appendStatus));
+						if (appendStatus != B_OK
+							|| pathBuffer.Normalize(true) != B_OK
+							|| lstat(pathBuffer.Path(), &st) != 0) {
+							dprintf("    -> not found "
+								"(normalize/lstat failed)\n");
+							continue;
+						}
+
+						pathNormalized = true;
+						break;
 					}
-
-					pathNormalized = true;
-					break;
+					if (pathNormalized)
+						break;
 				}
 			} else {
 				// absolute path -- try to normalize it anyway

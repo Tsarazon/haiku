@@ -1293,7 +1293,7 @@ KDiskDeviceManager::_Scan(const char* path)
 			return B_OK;
 		}
 
-		TRACE("  found device: %s\n", path);
+		dprintf("KDiskDeviceManager: found device: %s\n", path);
 		// create a KDiskDevice for it
 		KDiskDevice* device = new(nothrow) KDiskDevice;
 		if (!device)
@@ -1301,12 +1301,16 @@ KDiskDeviceManager::_Scan(const char* path)
 
 		// init the KDiskDevice
 		error = device->SetTo(path);
+		dprintf("KDiskDeviceManager: SetTo(%s) = %s\n", path, strerror(error));
 		// add the device
 		if (error == B_OK && !_AddDevice(device))
 			error = B_NO_MEMORY;
 		// cleanup on error
-		if (error != B_OK)
+		if (error != B_OK) {
+			dprintf("KDiskDeviceManager: failed to add device %s: %s\n",
+				path, strerror(error));
 			delete device;
+		}
 	}
 	return error;
 }

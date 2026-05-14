@@ -1732,8 +1732,15 @@ load_image_internal(char**& _flatArgs, size_t flatArgsSize, int32 argCount,
 
 	const char* path = flatArgs[0];
 
-	TRACE(("load_image_internal: name '%s', args = %p, argCount = %" B_PRId32
-		"\n", path, flatArgs, argCount));
+	// Snapshot the path on the stack: once create_team_arg() takes
+	// ownership of flatArgs and the loader thread runs, `path` (which
+	// points into flatArgs[0]) becomes a dangling reference. Any
+	// dprintf() after the ownership transfer must use pathSafe instead.
+	char pathSafe[B_PATH_NAME_LENGTH];
+	strlcpy(pathSafe, path, sizeof(pathSafe));
+
+	dprintf("load_image_internal: '%s' argCount=%" B_PRId32 "\n",
+		path, argCount);
 
 	// cut the path from the main thread name
 	const char* threadName = strrchr(path, '/');
@@ -1898,10 +1905,15 @@ load_image_internal(char**& _flatArgs, size_t flatArgsSize, int32 argCount,
 		team->Unlock();
 		teamLoadingReference.Unset();
 
-		if (loadingInfo.result < B_OK)
+		if (loadingInfo.result < B_OK) {
+			dprintf("load_image_internal: '%s' loading failed: %s\n",
+				pathSafe, strerror(loadingInfo.result));
 			return loadingInfo.result;
+		}
 	}
 
+	dprintf("load_image_internal: '%s' success, thread=%" B_PRId32 "\n",
+		pathSafe, thread);
 	return thread;
 
 err6:
@@ -1934,6 +1946,10 @@ err1:
 	if (parentIOContext != NULL)
 		vfs_put_io_context(parentIOContext);
 
+	if (status != B_OK) {
+		dprintf("load_image_internal: '%s' failed: %s\n",
+			pathSafe, strerror(status));
+	}
 	return status;
 }
 

@@ -101,7 +101,7 @@ KernelLd kernel_$(TARGET_ARCH) :
 	kernel_cache.o
 	kernel_core.o
 	kernel_debug.o
-	kernel_device_manager.o
+	kernel_devicekeeper.o
 	kernel_disk_device_manager.o
 	kernel_fs.o
 	kernel_messaging.o
@@ -142,7 +142,7 @@ if $(HAIKU_ARCH) in x86_64 arm {
 		kernel_cache.o
 		kernel_core.o
 		kernel_debug.o
-		kernel_device_manager.o
+		kernel_devicekeeper.o
 		kernel_disk_device_manager.o
 		kernel_fs.o
 		kernel_messaging.o
@@ -191,7 +191,7 @@ if $(TARGET_PLATFORM) = haiku {
 
 SubInclude HAIKU_TOP src system kernel arch ;
 SubInclude HAIKU_TOP src system kernel cache ;
-SubInclude HAIKU_TOP src system kernel device_manager ;
+SubInclude HAIKU_TOP src system kernel DeviceKeeper ;
 SubInclude HAIKU_TOP src system kernel debug ;
 SubInclude HAIKU_TOP src system kernel disk_device_manager ;
 SubInclude HAIKU_TOP src system kernel fs ;

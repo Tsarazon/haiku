@@ -1341,14 +1341,20 @@ BlockWriter::_WriteBlocks(cached_block** blocks, uint32 count)
 		vecs[i].iov_len = blockSize;
 	}
 
+	const size_t expected = blockSize * count;
 	ssize_t written = writev_pos(fCache->fd,
 		blocks[0]->block_number * blockSize, vecs, count);
 
-	if (written != (ssize_t)(blockSize * count)) {
+	if (written != (ssize_t)expected) {
 		TB(Error(fCache, block->block_number, "write failed", written));
 		status_t error = errno;
-		TRACE_ALWAYS("could not write back %" B_PRIu32 " blocks (start block %" B_PRIdOFF
-			"): %s\n", count, blocks[0]->block_number, strerror(error));
+		TRACE_ALWAYS("block_cache: writeback failed for %" B_PRIu32
+			" blocks (start block %" B_PRIdOFF ", offset %" B_PRIdOFF
+			", blockSize %zu): writev_pos returned %zd of %zu bytes "
+			"(errno=%d \"%s\")\n",
+			count, blocks[0]->block_number,
+			(off_t)(blocks[0]->block_number * blockSize), blockSize,
+			written, expected, error, strerror(error));
 		if (written < 0 && error != 0)
 			return error;
 		return B_IO_ERROR;

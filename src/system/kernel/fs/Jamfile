@@ -5,7 +5,7 @@ UsePrivateHeaders [ FDirName kernel fs ] ;
 UsePrivateHeaders [ FDirName kernel util ] ;
 UsePrivateHeaders net shared storage file_systems ;
 
-UseHeaders [ FDirName $(SUBDIR) $(DOTDOT) device_manager ] ;
+UseHeaders [ FDirName $(SUBDIR) $(DOTDOT) DeviceKeeper ] ;
 
 KernelMergeObject kernel_fs.o :
 	EntryCache.cpp

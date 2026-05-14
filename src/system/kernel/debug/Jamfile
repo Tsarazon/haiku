@@ -5,7 +5,7 @@ UsePrivateHeaders [ FDirName graphics common ] ;
 UsePrivateHeaders [ FDirName graphics vesa ] ;
 UsePrivateHeaders shared ;
 
-SubDirHdrs [ FDirName $(SUBDIR) $(DOTDOT) device_manager ] ;
+SubDirHdrs [ FDirName $(SUBDIR) $(DOTDOT) DeviceKeeper ] ;
 
 
 KernelMergeObject kernel_debug.o :
