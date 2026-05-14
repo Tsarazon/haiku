@@ -11,6 +11,8 @@ extern "C" {
 #include <compat/dev/pci/pcivar.h>
 }
 
+#include <stdlib.h>
+
 #include <bus/PCI.h>
 
 
@@ -22,7 +24,7 @@ extern "C" {
 #endif
 
 
-pci_device_module_info *gPci;
+pci_device_ops *gPci;
 pci_device *gPciDev;
 
 
@@ -38,7 +40,72 @@ init_pci()
 void
 uninit_pci()
 {
-	// No module to put — pci_device_module_info comes from device_manager.
+	// No module to put — pci_device_ops comes from DeviceKeeper.
+}
+
+
+// Probe a single candidate PCI node against the driver's FreeBSD probe list.
+//
+// Called from DK probe (_fbsd_supports_device) under the matcher read lock.
+// `probe_callback` is provided by each driver's outer glue macro; it wraps
+// __haiku_probe_drivers with the driver's own static `drivers[]` array
+// (which cannot live at file scope in C because DRIVER_MODULE_NAME expands
+// to a runtime pointer variable, not a constant address).
+//
+// The compat layer's FreeBSD drivers use pci_get_vendor() / pci_get_device()
+// (which read gPci / gPciDev), so the globals are swapped in for the duration
+// of the probe and restored afterward.
+//
+// Returns the winning driver_t* (as chosen by __haiku_probe_drivers) or NULL
+// if no driver recognises the device.
+extern "C" driver_t*
+_fbsd_probe_pci_drivers(dk_node* parent,
+	driver_t* (*probe_callback)(device_t dev),
+	dk_keeper_info* keeper)
+{
+	if (probe_callback == NULL)
+		return NULL;
+
+	pci_device_ops* pci = NULL;
+	pci_device* pciDev = NULL;
+	if (keeper->get_interface(parent, PCI_DEVICE_INTERFACE_NAME,
+			KOSM_INTERFACE_ANCESTORS,
+			(const void**)&pci, (void**)&pciDev) != B_OK) {
+		return NULL;
+	}
+
+	// gPci/gPciDev may already be set from another probe or attach; save and
+	// restore to keep those call sites unaffected.
+	pci_device_ops* const savedPci = gPci;
+	pci_device* const savedPciDev = gPciDev;
+	gPci = pci;
+	gPciDev = pciDev;
+
+	struct root_device_softc rootSoftc = {};
+	rootSoftc.bus = root_device_softc::BUS_pci;
+	pci->get_pci_info(pciDev, &rootSoftc.pci_info);
+
+	struct device rootDev = {};
+	rootDev.softc = &rootSoftc;
+	rootDev.root = &rootDev;
+
+	struct device probeDev = {};
+	probeDev.parent = &rootDev;
+	probeDev.root = &rootDev;
+
+	driver_t* winner = probe_callback(&probeDev);
+
+	// FreeBSD probe may have set a description via strdup on match. Free it
+	// so we don't leak — real attach will call probe again on a fresh device.
+	if ((probeDev.flags & DEVICE_DESC_ALLOCED) != 0
+			&& probeDev.description != NULL) {
+		free((void*)probeDev.description);
+	}
+
+	gPci = savedPci;
+	gPciDev = savedPciDev;
+
+	return winner;
 }
 
 

@@ -51,7 +51,7 @@ enum {
 
 
 extern struct net_buffer_module_info *gBufferModule;
-extern pci_device_module_info *gPci;
+extern pci_device_ops *gPci;
 extern pci_device *gPciDev;
 
 
