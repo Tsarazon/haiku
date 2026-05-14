@@ -43,7 +43,7 @@
 #include "KosmDotPurgeableCache.h"
 #include "../cache/vnode_store.h"
 
-// B_PHYSICAL_IO_REQUEST is defined in device_manager/IORequest.h
+// B_PHYSICAL_IO_REQUEST is defined in DeviceKeeper/IORequest.h
 // but pulling that header brings unwanted dependencies.
 #ifndef B_PHYSICAL_IO_REQUEST
 #	define B_PHYSICAL_IO_REQUEST	0x01
