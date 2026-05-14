@@ -50,7 +50,7 @@ extern "C" {
 status_t interrupts_init(struct kernel_args* args);
 status_t interrupts_init_post_vm(struct kernel_args* args);
 status_t interrupts_init_io(struct kernel_args* args);
-status_t interrupts_init_post_device_manager(struct kernel_args* args);
+status_t interrupts_init_post_device_keeper(struct kernel_args* args);
 int io_interrupt_handler(int vector, bool levelTriggered);
 
 bool interrupts_enabled(void);

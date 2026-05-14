@@ -17,9 +17,6 @@
 // guid (string)
 #define WMI_GUID_STRING_ITEM "wmi/guid_string"
 
-// node type
-#define WMI_DEVICE_TYPE_NAME "wmi/device/v1"
-
 // device cookie, issued by wmi bus manager
 typedef void* wmi_device;
 

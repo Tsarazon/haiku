@@ -7,7 +7,7 @@
 
 
 #include <ACPI.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 
@@ -28,28 +28,22 @@ typedef enum {
 #define IS_BLOCK_OP(op)	(((op) & 4) != 0)
 
 
-// bus/device handle
-typedef void* i2c_bus;
-typedef void* i2c_device;
-
-
-// Device node
-
-// slave address (uint16)
-#define I2C_DEVICE_SLAVE_ADDR_ITEM "i2c/slave_addr"
-
-// node type
-#define I2C_DEVICE_TYPE_NAME "i2c/device/v1"
-
 // bus cookie, issued by i2c bus manager
 typedef void* i2c_bus;
 // device cookie, issued by i2c bus manager
 typedef void* i2c_device;
 
+
+// Device node
+
+// Bus interface name for publish_interface/get_interface. Published by
+// the I2C bus manager on each I2C slave device node; peripheral drivers
+// retrieve it via gDeviceKeeper->get_interface(node, NAME, ...).
+// The slave address is exposed via the standard KOSM_I2C_ADDRESS property.
+#define I2C_DEVICE_INTERFACE_NAME	"interface/i2c/device/v1"
+
 // bus manager device interface for peripheral driver
 typedef struct {
-	driver_module_info info;
-
 	status_t (*exec_command)(i2c_device cookie, i2c_op op,
 		const void *cmdBuffer, size_t cmdLength, void* dataBuffer,
 		size_t dataLength);
@@ -58,69 +52,45 @@ typedef struct {
 } i2c_device_interface;
 
 
-#define I2C_DEVICE_MODULE_NAME "bus_managers/i2c/device/driver_v1"
+#define I2C_DEVICE_MODULE_NAME "bus_managers/i2c/device/dk_driver_v1"
 
 
 // Bus node
 
-#define I2C_BUS_PATH_ID_ITEM "i2c/path_id"
-
-// node type
-#define I2C_BUS_TYPE_NAME "i2c/bus"
-
-// I2C bus node driver.
-// This interface can be used by peripheral drivers to access the
-// bus directly.
-typedef struct {
-	driver_module_info info;
-
-	status_t (*exec_command)(i2c_bus cookie, i2c_op op, i2c_addr slaveAddress,
-		const void *cmdBuffer, size_t cmdLength, void* dataBuffer,
-		size_t dataLength);
-	status_t (*acquire_bus)(i2c_bus cookie);
-	void (*release_bus)(i2c_bus cookie);
-} i2c_bus_interface;
-
-
 // name of I2C bus node driver
-#define I2C_BUS_MODULE_NAME "bus_managers/i2c/bus/driver_v1"
+#define I2C_BUS_MODULE_NAME "bus_managers/i2c/bus/dk_driver_v1"
 
-
-
-// Interface for Controllers
-
-typedef struct {
-	driver_module_info info;
-
-	status_t (*register_device)(i2c_bus bus, i2c_addr slaveAddress,
-		char* hid, char** cid, acpi_handle acpiHandle);
-} i2c_for_controller_interface;
-
-#define I2C_FOR_CONTROLLER_MODULE_NAME "bus_managers/i2c/controller/driver_v1"
 
 
 // Controller Node
-
-// node type
-#define I2C_CONTROLLER_TYPE_NAME "bus/i2c/v1"
-// controller name (required, string)
-#define I2C_DESCRIPTION_CONTROLLER_NAME "controller_name"
 
 typedef void *i2c_bus_cookie;
 typedef void *i2c_intr_cookie;
 
 
-// Bus manager interface used by I2C controller drivers.
-typedef struct {
-	driver_module_info info;
+// Bus interface name for publish_interface/get_interface. I2C controller
+// drivers (pch_i2c, ocores_i2c) publish this on their node; the I2C bus
+// manager retrieves it via get_interface(node, I2C_SIM_INTERFACE_NAME, ...).
+#define I2C_SIM_INTERFACE_NAME	"interface/i2c/sim/v1"
 
+// Bus manager interface used by I2C controller drivers.
+// Published by the controller driver on its own node via
+// publish_interface(I2C_SIM_INTERFACE_NAME, &ops); the I2C bus manager
+// retrieves it in attach via get_interface(node, I2C_SIM_INTERFACE_NAME,
+// KOSM_INTERFACE_ANCESTORS, ...).
+//
+// scan_bus receives the I2C bus manager's dk_node so the controller can
+// register_node() directly for each discovered slave (the controller
+// walks ACPI / firmware / probe) — replacing the old register_device
+// callback path.
+typedef struct {
 	void (*set_i2c_bus)(i2c_bus_cookie cookie, i2c_bus bus);
 
 	status_t (*exec_command)(i2c_bus_cookie cookie, i2c_op op,
 		i2c_addr slaveAddress, const void *cmdBuffer, size_t cmdLength,
 		void* dataBuffer, size_t dataLength);
 
-	status_t (*scan_bus)(i2c_bus_cookie cookie);
+	status_t (*scan_bus)(i2c_bus_cookie cookie, dk_node* busNode);
 
 	status_t (*acquire_bus)(i2c_bus_cookie cookie);
 	void (*release_bus)(i2c_bus_cookie cookie);

@@ -6,7 +6,7 @@
 #define _POKE_DRIVER_H_
 
 #include <Drivers.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <bus/PCI.h>
 
 

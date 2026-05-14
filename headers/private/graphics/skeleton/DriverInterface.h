@@ -12,7 +12,6 @@
 #define DRIVERINTERFACE_H
 
 #include <Accelerant.h>
-#include "video_overlay.h"
 #include <Drivers.h>
 #include <bus/PCI.h>
 #include <OS.h>

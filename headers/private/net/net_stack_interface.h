@@ -12,10 +12,6 @@
 // name of the kernel stack interface
 #define NET_STACK_INTERFACE_MODULE_NAME "network/stack/kernel_interface/v1"
 
-// name of the userland stack interface
-#define NET_STACK_USERLAND_INTERFACE_MODULE_NAME \
-	"network/stack/userland_interface/v1"
-
 
 struct net_socket;
 struct net_stat;
