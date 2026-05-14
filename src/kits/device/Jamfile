@@ -12,9 +12,7 @@ for architectureObject in [ MultiArchSubDirSetup ] {
 			A2D.cpp
 			D2A.cpp
 			DigitalPort.cpp
-			Joystick.cpp
-			JoystickTweaker.cpp
-			SerialPort.cpp
+	SerialPort.cpp
 			USBConfiguration.cpp
 			USBDevice.cpp
 			USBEndpoint.cpp

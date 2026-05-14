@@ -8,7 +8,7 @@ UsePrivateHeaders libroot shared ;
 UsePrivateKernelHeaders ;
 SubDirHdrs [ FDirName $(userlandFSIncludes) private ] ;
 SubDirHdrs [ FDirName $(userlandFSIncludes) shared ] ;
-SubDirHdrs [ FDirName $(HAIKU_TOP) src system kernel device_manager ] ;
+SubDirHdrs [ FDirName $(HAIKU_TOP) src system kernel DeviceKeeper ] ;
 	# for IORequest.h
 
 SEARCH_SOURCE += [ FDirName $(userlandFSTop) private ] ;

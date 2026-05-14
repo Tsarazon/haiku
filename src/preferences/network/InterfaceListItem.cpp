@@ -181,9 +181,6 @@ InterfaceListItem::_Init()
 		case B_NETWORK_INTERFACE_TYPE_VPN:
 			_PopulateBitmaps("vpn");
 			break;
-		case B_NETWORK_INTERFACE_TYPE_DIAL_UP:
-			_PopulateBitmaps("dialup");
-			break;
 		default:
 			_PopulateBitmaps(NULL);
 			break;

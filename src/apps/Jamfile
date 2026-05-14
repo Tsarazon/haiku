@@ -60,6 +60,6 @@ HaikuSubInclude switcher ;
 HaikuSubInclude terminal ;
 HaikuSubInclude text_search ;
 HaikuSubInclude tracker ;
-HaikuSubInclude thorvgdemo ;
+HaikuSubInclude 2drenderdemo ;
 HaikuSubInclude webpositive ;
 HaikuSubInclude workspaces ;
