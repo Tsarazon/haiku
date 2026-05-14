@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <ctype.h>
+#include <inttypes.h>
 
 extern dev_t gBootDevice;
 
@@ -151,19 +152,6 @@ class SessionGetter {
 		Session	*fSession;
 };
 
-static Session *sMainSession;
-static SessionTable *sTeamHash;
-static PrefetchTable *sPrefetchHash;
-static Session *sMainPrefetchSessions;
-	// singly-linked list
-static recursive_lock sLock;
-
-
-node_ref::node_ref()
-{
-	// part of libbe.so
-}
-
 
 struct PrefetchHash {
 	typedef node_ref	KeyType;
@@ -210,7 +198,7 @@ struct SessionHash {
 
 	bool Compare(KeyType key, ValueType* session) const
 	{
-		return session->Team == key;
+		return session->Team() == key;
 	}
 
 	ValueType*& GetLink(ValueType* value) const
@@ -220,6 +208,32 @@ struct SessionHash {
 };
 
 typedef BOpenHashTable<SessionHash> SessionTable;
+
+
+static Session *sMainSession;
+static SessionTable *sTeamHash;
+static PrefetchTable *sPrefetchHash;
+static Session *sMainPrefetchSessions;
+	// singly-linked list
+static recursive_lock sLock;
+
+
+// node_ref's methods normally live in libbe.so. Kernel addons can't link
+// against that, so provide minimal stubs for the ones the hashtable uses.
+node_ref::node_ref()
+	:
+	device(-1),
+	node(-1)
+{
+}
+
+
+node_ref::node_ref(const node_ref& other)
+	:
+	device(other.device),
+	node(other.node)
+{
+}
 
 
 static void
@@ -398,7 +412,8 @@ Session::Session(team_id team, const char *name, dev_t device,
 	fNodeRef.device = device;
 	fNodeRef.node = node;
 
-	TRACE(("start session %ld:%lld \"%s\", system_time: %lld, active until: %lld\n",
+	TRACE(("start session %" B_PRIdDEV ":%" B_PRIdINO " \"%s\", "
+		"system_time: %" B_PRIdBIGTIME ", active until: %" B_PRIdBIGTIME "\n",
 		device, node, Name(), system_time(), fActiveUntil));
 }
 
@@ -589,7 +604,8 @@ Session::Save()
 
 	char name[B_OS_NAME_LENGTH + 25];
 	if (!IsMainSession()) {
-		snprintf(name, sizeof(name), "/etc/launch_cache/%ld:%lld %s",
+		snprintf(name, sizeof(name),
+			"/etc/launch_cache/%" B_PRIdDEV ":%" B_PRIdINO " %s",
 			fNodeRef.device, fNodeRef.node, Name());
 	} else
 		snprintf(name, sizeof(name), "/etc/launch_cache/%s", Name());
@@ -610,7 +626,8 @@ Session::Save()
 	NodeTable::Iterator iterator(fNodeHash);
 	while (iterator.HasNext()) {
 		struct node *node = iterator.Next();
-		snprintf(name, sizeof(name), "%ld:%lld\n", node->ref.device, node->ref.node);
+		snprintf(name, sizeof(name), "%" B_PRIdDEV ":%" B_PRIdINO "\n",
+			node->ref.device, node->ref.node);
 
 		ssize_t bytesWritten = write(fd, name, strlen(name));
 		if (bytesWritten < B_OK) {
@@ -790,7 +807,7 @@ launch_speedup_control(const char *subsystem, uint32 function,
 				return B_BAD_VALUE;
 
 			if (!strcmp(name, "system boot"))
-				dprintf("STOP BOOT %lld\n", system_time());
+				dprintf("STOP BOOT %" B_PRIdBIGTIME "\n", system_time());
 
 			sMainSession->Lock();
 			stop_session(sMainSession);
@@ -814,13 +831,13 @@ uninit()
 
 	Session *session = sTeamHash->Clear(true);
 	while (session != NULL) {
-		Session *next = session->next;
+		Session *next = session->Next();
 		delete session;
 		session = next;
 	}
 	session = sPrefetchHash->Clear(true);
 	while (session != NULL) {
-		Session *next = session->next;
+		Session *next = session->Next();
 		delete session;
 		session = next;
 	}
@@ -872,7 +889,7 @@ init()
 
 	sMainSession = start_session(-1, -1, -1, "system boot");
 	sMainSession->Unlock();
-	dprintf("START BOOT %lld\n", system_time());
+	dprintf("START BOOT %" B_PRIdBIGTIME "\n", system_time());
 	return B_OK;
 
 err3:

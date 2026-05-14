@@ -16,7 +16,7 @@
 #include <KernelExport.h>
 #include <device_keeper.h>
 #include <Drivers.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <bus/PCI.h>
 #include <string.h>
 

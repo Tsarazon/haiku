@@ -8,7 +8,7 @@
 #include <device_keeper.h>
 #include <Drivers.h>
 #include <KernelExport.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <bus/PCI.h>
 
 #include <malloc.h>

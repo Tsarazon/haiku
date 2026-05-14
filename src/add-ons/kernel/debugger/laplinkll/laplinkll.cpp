@@ -25,7 +25,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 
 //XXX: move to Jamfile when adding driver
 #define _BUILDING_kernel 1

@@ -7,7 +7,7 @@
 #define DRIVER_H
 
 
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <KernelExport.h>
 
 #include <lock.h>

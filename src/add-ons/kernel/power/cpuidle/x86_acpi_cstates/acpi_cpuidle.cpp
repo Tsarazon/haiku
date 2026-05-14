@@ -89,7 +89,7 @@ struct acpi_cstate_info {
 };
 
 struct acpi_cpuidle_driver_info {
-	device_node *processor;
+	dk_node *processor;
 	acpi_device_module_info *acpi;
 	acpi_device acpi_cookie;
 	uint32 flags;
@@ -101,7 +101,7 @@ struct acpi_cpuidle_driver_info {
 
 
 static acpi_cpuidle_driver_info *sAcpiProcessor[SMP_MAX_CPUS];
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 static acpi_module_info *sAcpi;
 
 static int32 sStateIndex = -1;
@@ -562,7 +562,7 @@ acpi_cpuidle_uninit()
 		if (sAcpiProcessor[i] == NULL)
 			continue;
 
-		sDeviceManager->put_node(sAcpiProcessor[i]->processor);
+		sDeviceKeeper->put_node(sAcpiProcessor[i]->processor);
 		free(sAcpiProcessor[i]);
 		sAcpiProcessor[i] = NULL;
 	}
@@ -575,36 +575,42 @@ acpi_cpuidle_init()
 	if (x86_check_feature(IA32_FEATURE_EXT_HYPERVISOR, FEATURE_EXT))
 		return B_ERROR;
 
-	device_node* root = sDeviceManager->get_root_node();
+	dk_node* root = sDeviceKeeper->get_root_node();
 
 	status_t status = B_OK;
 	int32 processors = 0;
-	device_node* processor = NULL;
+	dk_node* processor = NULL;
 	while (true) {
-		device_attr acpiAttrs[] = {
-			{ B_DEVICE_BUS, B_STRING_TYPE, { .string = "acpi" }},
-			{ ACPI_DEVICE_TYPE_ITEM, B_UINT32_TYPE, { .ui32 = ACPI_TYPE_PROCESSOR }},
-			{ NULL }
+		dk_match_rule acpiAttrs[] = {
+			DK_MATCH_STRING(KOSM_DEVICE_BUS, "acpi"),
+			DK_MATCH_UINT32(ACPI_DEVICE_TYPE_ITEM, ACPI_TYPE_PROCESSOR),
+			DK_MATCH_END
 		};
 
-		if (sDeviceManager->find_child_node(root, acpiAttrs, &processor) != B_OK)
+		if (sDeviceKeeper->find_child_node(root, acpiAttrs, &processor) != B_OK)
 			break;
 
 		acpi_cpuidle_driver_info *device;
 		device = (acpi_cpuidle_driver_info *)calloc(1, sizeof(*device));
 		if (device == NULL) {
-			sDeviceManager->put_node(processor);
+			sDeviceKeeper->put_node(processor);
 			status = B_NO_MEMORY;
 			break;
 		}
 
 		device->processor = processor;
-		sDeviceManager->get_driver(processor, (driver_module_info **)&device->acpi,
-			(void **)&device->acpi_cookie);
+		if (sDeviceKeeper->get_interface(processor,
+				ACPI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+				(const void **)&device->acpi,
+				(void **)&device->acpi_cookie) != B_OK) {
+			sDeviceKeeper->put_node(processor);
+			free(device);
+			continue;
+		}
 
 		status = acpi_processor_init(device);
 		if (status != B_OK) {
-			sDeviceManager->put_node(processor);
+			sDeviceKeeper->put_node(processor);
 			free(device);
 
 			// Ignore the error and continue: there are sometimes processor
@@ -616,7 +622,7 @@ acpi_cpuidle_init()
 		processors++;
 	}
 
-	sDeviceManager->put_node(root);
+	sDeviceKeeper->put_node(root);
 	if (status == B_OK && processors != smp_get_num_cpus()) {
 		dprintf("can't use x86 ACPI idle: missing %" B_PRId32 " processor objects\n",
 			smp_get_num_cpus() - processors);
@@ -677,7 +683,7 @@ module_info *modules[] = {
 
 
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{ B_ACPI_MODULE_NAME, (module_info **)&sAcpi },
 	{}
 };

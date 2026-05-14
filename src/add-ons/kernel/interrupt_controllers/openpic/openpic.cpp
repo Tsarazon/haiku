@@ -37,13 +37,14 @@
 
 #include <AutoDeleter.h>
 #include <bus/PCI.h>
+#include <device_keeper.h>
 #include <interrupt_controller.h>
 #include <util/kernel_cpp.h>
 
 #include "openpic.h"
 
 
-#define OPENPIC_MODULE_NAME	"interrupt_controllers/openpic/device_v1"
+#define OPENPIC_MODULE_NAME	"interrupt_controllers/openpic/dk_driver_v1"
 
 enum {
 	OPENPIC_MIN_REGISTER_SPACE_SIZE	= 0x21000,
@@ -62,8 +63,8 @@ static openpic_supported_device sSupportedDevices[] = {
 	{}
 };
 
-static device_manager_info *sDeviceManager;
-static pci_module_info *sPCIBusManager;
+static dk_keeper_info* gDeviceKeeper;
+
 
 struct openpic_info : interrupt_controller_info {
 	openpic_info()
@@ -74,35 +75,27 @@ struct openpic_info : interrupt_controller_info {
 
 	~openpic_info()
 	{
-		// unmap registers)
 		if (register_area >= 0)
 			delete_area(register_area);
-
-		// uninit parent node driver
-		if (pci)
-			//XXX do I mean it ?
-			sDeviceManager->put_node(sDeviceManager->get_parent_node(node));
 	}
 
-	openpic_supported_device	*supported_device;
-	device_node			*node;
-	pci_device_module_info		*pci;
-	pci_device					*device;
+	openpic_supported_device*	supported_device;
+	dk_node*					node;
+	pci_device_ops*				pci;
+	pci_device*					device;
 
-	addr_t						physical_registers;	// physical registers base
-	addr_t						virtual_registers;	// virtual (mapped)
-													// registers base
-	area_id						register_area;		// register area
+	addr_t						physical_registers;
+	addr_t						virtual_registers;
+	area_id						register_area;
 	size_t						register_space_size;
 };
 
 
-static openpic_supported_device *
+static openpic_supported_device*
 openpic_check_supported_device(uint16 vendorID, uint16 deviceID)
 {
-	for (openpic_supported_device *supportedDevice = sSupportedDevices;
-		 supportedDevice->name;
-		 supportedDevice++) {
+	for (openpic_supported_device* supportedDevice = sSupportedDevices;
+			supportedDevice->name; supportedDevice++) {
 		if (supportedDevice->vendor_id == vendorID
 			&& supportedDevice->device_id == deviceID) {
 			return supportedDevice;
@@ -114,7 +107,7 @@ openpic_check_supported_device(uint16 vendorID, uint16 deviceID)
 
 
 static uint32
-openpic_read(openpic_info *info, int reg)
+openpic_read(openpic_info* info, int reg)
 {
 	return B_SWAP_INT32(info->pci->read_io_32(info->device,
 		info->virtual_registers + reg));
@@ -122,7 +115,7 @@ openpic_read(openpic_info *info, int reg)
 
 
 static void
-openpic_write(openpic_info *info, int reg, uint32 val)
+openpic_write(openpic_info* info, int reg, uint32 val)
 {
 	info->pci->write_io_32(info->device, info->virtual_registers + reg,
 		B_SWAP_INT32(val));
@@ -130,14 +123,14 @@ openpic_write(openpic_info *info, int reg, uint32 val)
 
 
 static int
-openpic_read_irq(openpic_info *info, int cpu)
+openpic_read_irq(openpic_info* info, int cpu)
 {
 	return openpic_read(info, OPENPIC_IACK(cpu)) & OPENPIC_VECTOR_MASK;
 }
 
 
 static void
-openpic_eoi(openpic_info *info, int cpu)
+openpic_eoi(openpic_info* info, int cpu)
 {
 	openpic_write(info, OPENPIC_EOI(cpu), 0);
 // the Linux driver does this:
@@ -146,7 +139,7 @@ openpic_eoi(openpic_info *info, int cpu)
 
 
 static void
-openpic_enable_irq(openpic_info *info, int irq, int type)
+openpic_enable_irq(openpic_info* info, int irq, int type)
 {
 // TODO: Align this code with the sequence recommended in the Open PIC
 // Specification (v 1.2 section 5.2.2).
@@ -163,7 +156,7 @@ openpic_enable_irq(openpic_info *info, int irq, int type)
 
 
 static void
-openpic_disable_irq(openpic_info *info, int irq)
+openpic_disable_irq(openpic_info* info, int irq)
 {
 	uint32 x;
 
@@ -174,7 +167,7 @@ openpic_disable_irq(openpic_info *info, int irq)
 
 
 static void
-openpic_set_priority(openpic_info *info, int cpu, int pri)
+openpic_set_priority(openpic_info* info, int cpu, int pri)
 {
 	uint32 x;
 
@@ -186,10 +179,10 @@ openpic_set_priority(openpic_info *info, int cpu, int pri)
 
 
 static status_t
-openpic_init(openpic_info *info)
+openpic_init(openpic_info* info)
 {
 	uint32 x = openpic_read(info, OPENPIC_FEATURE);
-	const char *featureVersion;
+	const char* featureVersion;
 	char versionBuffer[64];
 	switch (x & OPENPIC_FEATURE_VERSION_MASK) {
 		case 1:
@@ -261,224 +254,43 @@ openpic_init(openpic_info *info)
 }
 
 
-// #pragma mark - driver interface
+// #pragma mark - interrupt_controller_module_info
 
 
 static status_t
-openpic_std_ops(int32 op, ...)
+openpic_get_controller_info(void* cookie, interrupt_controller_info* _info)
 {
-	switch (op) {
-		case B_MODULE_INIT:
-		case B_MODULE_UNINIT:
-			return B_OK;
-
-		default:
-			return B_ERROR;
-	}
-}
-
-
-static float
-openpic_supports_device(device_node *parent)
-{
-	const char *bus;
-	uint16 vendorID;
-	uint16 deviceID;
-
-	// get the bus (should be PCI)
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-			!= B_OK) {
-		return B_ERROR;
-	}
-
-	// get vendor and device ID
-	if (sDeviceManager->get_attr_uint16(parent, B_DEVICE_VENDOR_ID,
-			&vendorID, false) != B_OK
-		|| sDeviceManager->get_attr_uint16(parent, B_DEVICE_ID,
-			&deviceID, false) != B_OK) {
-		return B_ERROR;
-	}
-
-	// check, whether bus, vendor and device ID match
-	if (strcmp(bus, "pci") != 0
-		|| !openpic_check_supported_device(vendorID, deviceID)) {
-		return 0.0;
-	}
-
-	return 0.6;
-}
-
-
-static status_t
-openpic_register_device(device_node *parent)
-{
-	device_node *newNode;
-	device_attr attrs[] = {
-		// info about ourself
-		{ B_DEVICE_TYPE, B_UINT16_TYPE, { .ui16 = PCI_base_peripheral }},
-		{ B_DEVICE_SUB_TYPE, B_UINT16_TYPE, { .ui16 = PCI_pic }},
-		// TODO How do we identify ourselves as OpenPIC?
-		{ B_DEVICE_INTERFACE, B_UINT16_TYPE, { .ui16 = PCI_pic_8259 }},
-		{}
-	};
-	io_resource resources[] = {
-		// TODO Fill in whatever necessary
-		{}
-	};
-
-	return sDeviceManager->register_node(parent, OPENPIC_MODULE_NAME,
-		attrs, resources, &newNode);
-}
-
-
-static status_t
-openpic_init_driver(device_node *node, void **cookie)
-{
-	openpic_info *info = new(nothrow) openpic_info;
-	if (!info)
-		return B_NO_MEMORY;
-	ObjectDeleter<openpic_info> infoDeleter(info);
-
-	info->node = node;
-
-	// get interface to PCI device
-	void *aCookie;
-	status_t status = sDeviceManager->get_driver(sDeviceManager->get_parent_node(node),
-												 (driver_module_info**)&info->pci, &aCookie);
-	if (status != B_OK)
-		return status;
-
-	info->pci->info.init_driver(node, (void**)&info->device);
-
-	// get the pci info for the device
-	pci_info pciInfo;
-	info->pci->get_pci_info(info->device, &pciInfo);
-
-	// find supported device info
-	info->supported_device = openpic_check_supported_device(pciInfo.vendor_id,
-		pciInfo.device_id);
-	if (!info->supported_device) {
-		dprintf("openpic: device (0x%04hx:0x%04hx) not supported\n",
-			pciInfo.vendor_id, pciInfo.device_id);
-		return B_ERROR;
-	}
-	dprintf("openpic: found supported device: %s (0x%04hx:0x%04hx)\n",
-		info->supported_device->name, pciInfo.vendor_id, pciInfo.device_id);
-
-	// get register space
-	addr_t physicalRegisterBase = pciInfo.u.h0.base_registers[0];
-	uint32 registerSpaceSize = pciInfo.u.h0.base_register_sizes[0];
-	if (registerSpaceSize < info->supported_device->register_offset
-		|| registerSpaceSize - info->supported_device->register_offset
-			< OPENPIC_MIN_REGISTER_SPACE_SIZE) {
-		dprintf("openpic: register space too small\n");
-	}
-	physicalRegisterBase += info->supported_device->register_offset;
-	registerSpaceSize -= info->supported_device->register_offset;
-	if (registerSpaceSize > OPENPIC_MAX_REGISTER_SPACE_SIZE)
-		registerSpaceSize = OPENPIC_MAX_REGISTER_SPACE_SIZE;
-
-	// map register space
-	void *virtualRegisterBase = NULL;
-	area_id registerArea = map_physical_memory("openpic registers",
-		physicalRegisterBase, registerSpaceSize, B_ANY_KERNEL_ADDRESS,
-		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &virtualRegisterBase);
-	if (registerArea < 0)
-		return info->register_area;
-
-	info->physical_registers = physicalRegisterBase;
-	info->register_space_size = registerSpaceSize;
-	info->register_area = registerArea;
-	info->virtual_registers = (addr_t)virtualRegisterBase;
-
-	// init the controller
-	status = openpic_init(info);
-	if (status != B_OK)
-		return status;
-
-	// keep the info
-	infoDeleter.Detach();
-	*cookie = info;
-
-	dprintf("openpic_init_driver(): Successfully initialized!\n");
-
-	return B_OK;
-}
-
-
-static void
-openpic_uninit_driver(void *cookie)
-{
-	openpic_info *info = (openpic_info*)cookie;
-
-	delete info;
-}
-
-
-static status_t
-openpic_register_child_devices(void *cookie)
-{
-	return B_OK;
-}
-
-
-static status_t
-openpic_rescan_child_devices(void *cookie)
-{
-	return B_OK;
-}
-
-
-static void
-openpic_device_removed(void *driverCookie)
-{
-	// TODO: ...
-}
-
-
-// #pragma mark - interrupt_controller interface
-
-
-static status_t
-openpic_get_controller_info(void *cookie, interrupt_controller_info *_info)
-{
-	if (!_info)
+	if (_info == NULL)
 		return B_BAD_VALUE;
 
-	openpic_info *info = (openpic_info*)cookie;
-
+	openpic_info* info = (openpic_info*)cookie;
 	*_info = *info;
-
 	return B_OK;
 }
 
 
 static status_t
-openpic_enable_io_interrupt(void *cookie, int irq, int type)
+openpic_enable_io_interrupt(void* cookie, int irq, int type)
 {
-	openpic_info *info = (openpic_info*)cookie;
-
+	openpic_info* info = (openpic_info*)cookie;
 	openpic_enable_irq(info, irq, type);
-
 	return B_OK;
 }
 
 
 static status_t
-openpic_disable_io_interrupt(void *cookie, int irq)
+openpic_disable_io_interrupt(void* cookie, int irq)
 {
-	openpic_info *info = (openpic_info*)cookie;
-
+	openpic_info* info = (openpic_info*)cookie;
 	openpic_disable_irq(info, irq);
-
 	return B_OK;
 }
 
 
 static int
-openpic_acknowledge_io_interrupt(void *cookie)
+openpic_acknowledge_io_interrupt(void* cookie)
 {
-	openpic_info *info = (openpic_info*)cookie;
+	openpic_info* info = (openpic_info*)cookie;
 
 	int cpu = 0;
 	// Note: We direct all I/O interrupts to CPU 0. We could nevertheless
@@ -488,45 +300,142 @@ openpic_acknowledge_io_interrupt(void *cookie)
 	if (irq == 255)
 		return -1;	// spurious interrupt
 
-	// signal end of interrupt
 	openpic_eoi(info, cpu);
-
 	return irq;
 }
 
 
-static interrupt_controller_module_info sControllerModuleInfo = {
-	{
-		{
-			OPENPIC_MODULE_NAME,
-			0,
-			openpic_std_ops
-		},
-
-		openpic_supports_device,
-		openpic_register_device,
-		openpic_init_driver,
-		openpic_uninit_driver,
-		openpic_register_child_devices,
-		openpic_rescan_child_devices,
-		openpic_device_removed,
-		NULL,	// suspend
-		NULL // resume
-	},
-
+static interrupt_controller_module_info sOpenPICOps = {
 	openpic_get_controller_info,
 	openpic_enable_io_interrupt,
 	openpic_disable_io_interrupt,
 	openpic_acknowledge_io_interrupt,
 };
 
+
+// #pragma mark - dk_driver_info
+
+
+static const dk_match_rule sOpenPICMatchRules[] = {
+	DK_MATCH_STRING(KOSM_DEVICE_BUS, "pci"),
+	DK_MATCH_END
+};
+
+static const dk_match_dict sOpenPICMatchDict = {
+	sOpenPICMatchRules,
+	0
+};
+
+
+static float
+openpic_probe(dk_node* node)
+{
+	uint16 vendorID = 0, deviceID = 0;
+	gDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_VENDOR_ID,
+		&vendorID, false);
+	gDeviceKeeper->get_property_uint16(node, KOSM_DEVICE_ID,
+		&deviceID, false);
+
+	if (openpic_check_supported_device(vendorID, deviceID) != NULL)
+		return 0.6f;
+
+	return 0.0f;
+}
+
+
+static status_t
+openpic_attach(dk_node* node, void** _cookie)
+{
+	openpic_info* info = new(nothrow) openpic_info;
+	if (info == NULL)
+		return B_NO_MEMORY;
+	ObjectDeleter<openpic_info> infoDeleter(info);
+
+	info->node = node;
+
+	// Get PCI bus ops from parent.
+	status_t status = gDeviceKeeper->get_interface(node,
+		PCI_DEVICE_INTERFACE_NAME, KOSM_INTERFACE_ANCESTORS,
+		(const void**)&info->pci, (void**)&info->device);
+	if (status != B_OK) {
+		DK_ERROR("openpic: no PCI parent: %s\n", strerror(status));
+		return status;
+	}
+	if (info->pci == NULL || info->device == NULL)
+		return B_ERROR;
+
+	pci_info pciInfo;
+	info->pci->get_pci_info(info->device, &pciInfo);
+
+	info->supported_device = openpic_check_supported_device(pciInfo.vendor_id,
+		pciInfo.device_id);
+	if (info->supported_device == NULL) {
+		DK_ERROR("openpic: device (0x%04hx:0x%04hx) not supported\n",
+			pciInfo.vendor_id, pciInfo.device_id);
+		return B_ERROR;
+	}
+	DK_INFO("openpic: found supported device: %s (0x%04hx:0x%04hx)\n",
+		info->supported_device->name, pciInfo.vendor_id, pciInfo.device_id);
+
+	// Register space from BAR0.
+	addr_t physicalRegisterBase = pciInfo.u.h0.base_registers[0];
+	uint32 registerSpaceSize = pciInfo.u.h0.base_register_sizes[0];
+	if (registerSpaceSize < info->supported_device->register_offset
+		|| registerSpaceSize - info->supported_device->register_offset
+			< OPENPIC_MIN_REGISTER_SPACE_SIZE) {
+		DK_ERROR("openpic: register space too small\n");
+	}
+	physicalRegisterBase += info->supported_device->register_offset;
+	registerSpaceSize -= info->supported_device->register_offset;
+	if (registerSpaceSize > OPENPIC_MAX_REGISTER_SPACE_SIZE)
+		registerSpaceSize = OPENPIC_MAX_REGISTER_SPACE_SIZE;
+
+	void* virtualRegisterBase = NULL;
+	area_id registerArea = map_physical_memory("openpic registers",
+		physicalRegisterBase, registerSpaceSize, B_ANY_KERNEL_ADDRESS,
+		B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA, &virtualRegisterBase);
+	if (registerArea < 0)
+		return registerArea;
+
+	info->physical_registers = physicalRegisterBase;
+	info->register_space_size = registerSpaceSize;
+	info->register_area = registerArea;
+	info->virtual_registers = (addr_t)virtualRegisterBase;
+
+	status = openpic_init(info);
+	if (status != B_OK)
+		return status;
+
+	infoDeleter.Detach();
+	*_cookie = info;
+
+	DK_INFO("openpic: initialized\n");
+	return B_OK;
+}
+
+
+static void
+openpic_detach(void* cookie)
+{
+	openpic_info* info = (openpic_info*)cookie;
+	delete info;
+}
+
+
 module_dependency module_dependencies[] = {
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
-	{ B_PCI_MODULE_NAME, (module_info**)&sPCIBusManager},
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper },
 	{}
 };
 
-module_info *modules[] = {
-	(module_info *)&sControllerModuleInfo,
+static dk_driver_info sOpenPICDriver = {
+	.info		= { OPENPIC_MODULE_NAME, 0, NULL },
+	.match		= &sOpenPICMatchDict,
+	.probe		= openpic_probe,
+	.attach		= openpic_attach,
+	.detach		= openpic_detach,
+};
+
+module_info* modules[] = {
+	(module_info*)&sOpenPICDriver,
 	NULL
 };

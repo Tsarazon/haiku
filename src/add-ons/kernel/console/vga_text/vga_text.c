@@ -9,7 +9,7 @@
 
 #include <KernelExport.h>
 #include <Drivers.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 
 #include <console.h>
 

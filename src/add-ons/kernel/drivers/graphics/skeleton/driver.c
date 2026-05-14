@@ -10,7 +10,7 @@
 /* standard kernel driver stuff */
 #include <device_keeper.h>
 #include <KernelExport.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <bus/PCI.h>
 #include <OS.h>
 #include <directories.h>

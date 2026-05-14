@@ -9,7 +9,7 @@
 
 #include <debug.h>
 #include <driver_settings.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 
 static isa_module_info *sISAModule;
 
