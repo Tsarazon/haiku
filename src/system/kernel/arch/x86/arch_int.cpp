@@ -494,7 +494,7 @@ arch_int_init_io(kernel_args* args)
 
 
 status_t
-arch_int_init_post_device_manager(kernel_args* args)
+arch_int_init_post_device_keeper(kernel_args* args)
 {
 	return B_OK;
 }
