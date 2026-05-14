@@ -9,7 +9,7 @@ KernelAddon <test_driver>config :
 	config.c
 ;
 
-SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+SubDirHdrs $(HAIKU_TOP) src system kernel DeviceKeeper ;
 UsePrivateKernelHeaders ;
 
 KernelAddon <test_driver>dma_resource_test :

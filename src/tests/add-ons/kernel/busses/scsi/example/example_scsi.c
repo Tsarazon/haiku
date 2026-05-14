@@ -6,7 +6,7 @@
  *		Michael Lotz <mmlr@mlotz.ch>
  */
 #include <module.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <bus/SCSI.h>
 
 
@@ -14,7 +14,7 @@
 
 
 static scsi_for_sim_interface *sSimInterface;
-static device_manager_info *sDeviceManager;
+static dk_keeper_info *sDeviceKeeper;
 
 
 // module functions
@@ -41,7 +41,7 @@ example_std_ops(int32 op, ...)
 
 // driver functions
 static float
-example_supports_device(device_node_handle parent, bool *noConnection)
+example_supports_device(dk_node *parent)
 {
 	dprintf(MODULE_NAME": supports device\n");
 	return 0.0f;
@@ -49,52 +49,17 @@ example_supports_device(device_node_handle parent, bool *noConnection)
 
 
 static status_t
-example_register_device(device_node_handle parent)
-{
-	dprintf(MODULE_NAME": register device\n");
-	return B_OK;
-}
-
-
-static status_t
-example_init_driver(device_node_handle node, void *userCookie, void **cookie)
+example_init_driver(dk_node *node, void **cookie)
 {
 	dprintf(MODULE_NAME": init driver\n");
 	return B_OK;
 }
 
 
-static status_t
+static void
 example_uninit_driver(void *cookie)
 {
 	dprintf(MODULE_NAME": uninit driver\n");
-	return B_OK;
-}
-
-
-static void
-example_device_removed(device_node_handle node, void *cookie)
-{
-	dprintf(MODULE_NAME": device removed\n");
-}
-
-
-static void
-example_device_cleanup(device_node_handle node)
-{
-	dprintf(MODULE_NAME": device cleanup\n");
-}
-
-
-static void
-example_get_supported_paths(const char ***busses, const char ***devices)
-{
-	static const char *sBusses[] = { "pci", NULL };
-	static const char *sDevices[] = { "drivers/dev/example", NULL };
-
-	dprintf(MODULE_NAME": get supported paths\n");
-	*busses = sBusses;
-	*devices = sDevices;
 }
 
 
@@ -174,43 +139,37 @@ example_ioctl(scsi_sim_cookie cookie, uint8 targetID, uint32 op, void *buffer,
 // module management
 module_dependency module_dependencies[] = {
 	{ SCSI_FOR_SIM_MODULE_NAME, (module_info **)&sSimInterface },
-	{ B_DEVICE_MANAGER_MODULE_NAME, (module_info **)&sDeviceManager },
+	{ KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info **)&sDeviceKeeper },
 	{}
 };
 
 
-scsi_sim_interface example_sim = {
-	{									// driver_module_info
-		{									// module_info
-			"busses/scsi/example/v1",			// module name
-			0,									// module flags
-			example_std_ops						// module standard ops
-		},
+static scsi_sim_interface example_sim_ops = {
+	example_scsi_io,
+	example_abort,
+	example_reset_device,
+	example_term_io,
+	example_path_inquiry,
+	example_scan_bus,
+	example_reset_bus,
+	example_get_restrictions,
+	example_ioctl
+};
 
-		example_supports_device,			// supports device
-		example_register_device,			// register device
 
-		example_init_driver,				// init driver
-		example_uninit_driver,				// uninit driver
-
-		example_device_removed,				// device removed
-		example_device_cleanup,				// device cleanup
-
-		example_get_supported_paths			// get supported paths
+static dk_driver_info example_sim = {
+	{
+		"busses/scsi/example/dk_driver_v1",
+		0,
+		example_std_ops
 	},
 
-	example_scsi_io,					// scsi io
-	example_abort,						// abort
-	example_reset_device,				// reset device
-	example_term_io,					// terminate io
+	.probe = example_supports_device,
+	.attach = example_init_driver,
+	.detach = example_uninit_driver,
 
-	example_path_inquiry,				// path inquiry
-	example_scan_bus,					// scan bus
-	example_reset_bus,					// reset bus
-
-	example_get_restrictions,			// get restrictions
-
-	example_ioctl						// io control
+	.bus_ops = &example_sim_ops,
+	.bus_ops_type = KOSM_BUS_TYPE_SCSI,
 };
 
 

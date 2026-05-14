@@ -15,7 +15,7 @@
 
 #include <algorithm>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 
 #include <AutoDeleter.h>
 #include <util/AutoLock.h>
@@ -64,7 +64,9 @@ static const char* const kFilePathItem = "checksum_device/file_path";
 struct RawDevice;
 typedef DoublyLinkedList<RawDevice> RawDeviceList;
 
-struct device_manager_info* sDeviceManager;
+struct dk_keeper_info* sDeviceKeeper;
+static dk_device_ops sChecksumControlDeviceOps;
+static dk_device_ops sChecksumRawDeviceOps;
 
 static RawDeviceList sDeviceList;
 static mutex sDeviceListLock = MUTEX_INITIALIZER("checksum device list");
@@ -237,7 +239,7 @@ private:
 
 
 struct Device {
-	Device(device_node* node)
+	Device(dk_node* node)
 		:
 		fNode(node)
 	{
@@ -252,18 +254,18 @@ struct Device {
 	bool Lock()		{ mutex_lock(&fLock); return true; }
 	void Unlock()	{ mutex_unlock(&fLock); }
 
-	device_node* Node() const	{ return fNode; }
+	dk_node* Node() const	{ return fNode; }
 
 	virtual status_t PublishDevice() = 0;
 
 protected:
 	mutex			fLock;
-	device_node*	fNode;
+	dk_node*	fNode;
 };
 
 
 struct ControlDevice : Device {
-	ControlDevice(device_node* node)
+	ControlDevice(dk_node* node)
 		:
 		Device(node)
 	{
@@ -278,21 +280,21 @@ struct ControlDevice : Device {
 			{NULL}
 		};
 
-		return sDeviceManager->register_node(
-			sDeviceManager->get_parent_node(Node()), kDriverModuleName, attrs,
+		return sDeviceKeeper->register_node(
+			sDeviceKeeper->get_parent_node(Node()), kDriverModuleName, attrs,
 			NULL, NULL);
 	}
 
 	virtual status_t PublishDevice()
 	{
-		return sDeviceManager->publish_device(Node(), kControlDeviceName,
-			kControlDeviceModuleName);
+		return sDeviceKeeper->publish_device(Node(), kControlDeviceName,
+			&sChecksumControlDeviceOps);
 	}
 };
 
 
 struct RawDevice : Device, DoublyLinkedListLinkImpl<RawDevice> {
-	RawDevice(device_node* node)
+	RawDevice(dk_node* node)
 		:
 		Device(node),
 		fIndex(-1),
@@ -467,8 +469,8 @@ struct RawDevice : Device, DoublyLinkedListLinkImpl<RawDevice> {
 
 	virtual status_t PublishDevice()
 	{
-		return sDeviceManager->publish_device(Node(), fDeviceName,
-			kRawDeviceModuleName);
+		return sDeviceKeeper->publish_device(Node(), fDeviceName,
+			&sChecksumRawDeviceOps);
 	}
 
 	status_t GetBlockCheckSum(uint64 blockIndex, CheckSum& checkSum)
@@ -718,11 +720,11 @@ parse_command_line(char* buffer, char**& _argv, int& _argc)
 
 
 static float
-checksum_driver_supports_device(device_node* parent)
+checksum_driver_supports_device(dk_node* parent)
 {
-	const char* bus = NULL;
-	if (sDeviceManager->get_attr_string(parent, B_DEVICE_BUS, &bus, false)
-			== B_OK && !strcmp(bus, "generic"))
+	char bus[64];
+	if (sDeviceKeeper->get_property_string(parent, KOSM_DEVICE_BUS, bus,
+			sizeof(bus), NULL, false) == B_OK && !strcmp(bus, "generic"))
 		return 0.8;
 
 	return -1;
@@ -730,25 +732,11 @@ checksum_driver_supports_device(device_node* parent)
 
 
 static status_t
-checksum_driver_register_device(device_node* parent)
+checksum_driver_init_driver(dk_node* node, void** _driverCookie)
 {
-	device_attr attrs[] = {
-		{B_DEVICE_PRETTY_NAME, B_STRING_TYPE,
-			{string: "Checksum Control Device"}},
-		{NULL}
-	};
-
-	return sDeviceManager->register_node(parent, kDriverModuleName, attrs, NULL,
-		NULL);
-}
-
-
-static status_t
-checksum_driver_init_driver(device_node* node, void** _driverCookie)
-{
-	const char* fileName;
-	if (sDeviceManager->get_attr_string(node, kFilePathItem, &fileName, false)
-			== B_OK) {
+	char fileName[B_PATH_NAME_LENGTH];
+	if (sDeviceKeeper->get_property_string(node, kFilePathItem, fileName,
+			sizeof(fileName), NULL, false) == B_OK) {
 		RawDevice* device = new(std::nothrow) RawDevice(node);
 		if (device == NULL)
 			return B_NO_MEMORY;
@@ -768,7 +756,8 @@ checksum_driver_init_driver(device_node* node, void** _driverCookie)
 		*_driverCookie = (Device*)device;
 	}
 
-	return B_OK;
+	Device* dev = (Device*)*_driverCookie;
+	return dev->PublishDevice();
 }
 
 
@@ -780,29 +769,7 @@ checksum_driver_uninit_driver(void* driverCookie)
 }
 
 
-static status_t
-checksum_driver_register_child_devices(void* driverCookie)
-{
-	Device* device = (Device*)driverCookie;
-	return device->PublishDevice();
-}
-
-
 //	#pragma mark - control device
-
-
-static status_t
-checksum_control_device_init_device(void* driverCookie, void** _deviceCookie)
-{
-	*_deviceCookie = driverCookie;
-	return B_OK;
-}
-
-
-static void
-checksum_control_device_uninit_device(void* deviceCookie)
-{
-}
 
 
 static status_t
@@ -909,7 +876,7 @@ checksum_control_device_write(void* cookie, off_t position, const void* data,
 				locker.Unlock();
 // TODO: The following doesn't work! unpublish_device(), as per implementation
 // (partially commented out) and unregister_node() returns B_BUSY.
-				status_t error = sDeviceManager->unpublish_device(
+				status_t error = sDeviceKeeper->unpublish_device(
 					device->Node(), device->DeviceName());
 				if (error != B_OK) {
 					dprintf("Failed to unpublish device \"%s\": %s\n",
@@ -917,7 +884,7 @@ checksum_control_device_write(void* cookie, off_t position, const void* data,
 					return error;
 				}
 
-				error = sDeviceManager->unregister_node(device->Node());
+				error = sDeviceKeeper->unregister_node(device->Node());
 				if (error != B_OK) {
 					dprintf("Failed to unregister node \"%s\": %s\n",
 						deviceName, strerror(error));
@@ -1179,78 +1146,50 @@ checksum_raw_device_control(void* _cookie, uint32 op, void* buffer,
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&sDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&sDeviceKeeper},
 	{}
 };
 
 
-static const struct driver_module_info sChecksumDeviceDriverModule = {
+static dk_device_ops sChecksumControlDeviceOps = {
+	checksum_control_device_open,
+	checksum_control_device_close,
+	checksum_control_device_free,
+	checksum_control_device_read,
+	checksum_control_device_write,
+	NULL,	// io
+	checksum_control_device_control,
+	NULL,	// select
+	NULL	// deselect
+};
+
+static dk_device_ops sChecksumRawDeviceOps = {
+	checksum_raw_device_open,
+	checksum_raw_device_close,
+	checksum_raw_device_free,
+	checksum_raw_device_read,
+	checksum_raw_device_write,
+	checksum_raw_device_io,
+	checksum_raw_device_control,
+	NULL,	// select
+	NULL	// deselect
+};
+
+static const struct dk_driver_info sChecksumDeviceDriverModule = {
 	{
 		kDriverModuleName,
 		0,
 		NULL
 	},
 
-	checksum_driver_supports_device,
-	checksum_driver_register_device,
-	checksum_driver_init_driver,
-	checksum_driver_uninit_driver,
-	checksum_driver_register_child_devices
-};
+	.probe = checksum_driver_supports_device,
+	.attach = checksum_driver_init_driver,
+	.detach = checksum_driver_uninit_driver,
 
-static const struct device_module_info sChecksumControlDeviceModule = {
-	{
-		kControlDeviceModuleName,
-		0,
-		NULL
-	},
-
-	checksum_control_device_init_device,
-	checksum_control_device_uninit_device,
-	NULL,
-
-	checksum_control_device_open,
-	checksum_control_device_close,
-	checksum_control_device_free,
-
-	checksum_control_device_read,
-	checksum_control_device_write,
-	NULL,	// io
-
-	checksum_control_device_control,
-
-	NULL,	// select
-	NULL	// deselect
-};
-
-static const struct device_module_info sChecksumRawDeviceModule = {
-	{
-		kRawDeviceModuleName,
-		0,
-		NULL
-	},
-
-	checksum_raw_device_init_device,
-	checksum_raw_device_uninit_device,
-	NULL,
-
-	checksum_raw_device_open,
-	checksum_raw_device_close,
-	checksum_raw_device_free,
-
-	checksum_raw_device_read,
-	checksum_raw_device_write,
-	checksum_raw_device_io,
-
-	checksum_raw_device_control,
-
-	NULL,	// select
-	NULL	// deselect
+	.ops = &sChecksumControlDeviceOps,
 };
 
 const module_info* modules[] = {
 	(module_info*)&sChecksumDeviceDriverModule,
-	(module_info*)&sChecksumControlDeviceModule,
-	(module_info*)&sChecksumRawDeviceModule,
 	NULL
 };

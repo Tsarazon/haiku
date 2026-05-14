@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <device_manager.h>
+#include <device_keeper.h>
 
 #include <vm/vm.h>
 

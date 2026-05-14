@@ -1,7 +1,7 @@
 SubDir HAIKU_TOP src tests system kernel file_corruption driver ;
 
 
-SubDirHdrs $(HAIKU_TOP) src system kernel device_manager ;
+SubDirHdrs $(HAIKU_TOP) src system kernel DeviceKeeper ;
 UsePrivateKernelHeaders ;
 UsePrivateHeaders libroot ;
 
