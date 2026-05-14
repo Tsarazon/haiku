@@ -28,6 +28,20 @@ typedef struct module_info {
 #define	B_KEEP_LOADED	0x00000001
 
 
+/* Bus manager modules export this structure as their first field instead
+ * of a bare module_info, so that the bus_manager subsystem can locate the
+ * optional rescan() callback for legacy bus enumeration.
+ *
+ * NOTE: rescan() is a vestigial BeOS-era callback; KosmOS bus managers
+ * always set it to NULL (the rescan path was superseded by DeviceKeeper's
+ * rescan_node / rescan_children mechanism).
+ */
+typedef struct bus_manager_info {
+	module_info		minfo;
+	status_t		(*rescan)();
+} bus_manager_info;
+
+
 /* Use the module_dependency structure to let the
  * kernel automatically load modules yet depend on
  * before B_MODULE_INIT is called.

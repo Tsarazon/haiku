@@ -6,7 +6,7 @@
 #define _ACPI_H
 
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 
 
@@ -312,20 +312,28 @@ enum {
 };
 
 
-#define ACPI_DEVICE_ADDR_ITEM	"acpi/addr"
-#define ACPI_DEVICE_CID_ITEM	"acpi/cid"
-#define ACPI_DEVICE_HANDLE_ITEM	"acpi/handle"
-#define ACPI_DEVICE_HID_ITEM	"acpi/hid"
-#define ACPI_DEVICE_PATH_ITEM	"acpi/path"
-#define ACPI_DEVICE_TYPE_ITEM	"acpi/type"
-#define ACPI_DEVICE_UID_ITEM	"acpi/uid"
+// ACPI device properties — use KOSM_ACPI_* macros from <device_keeper.h>
+// for property lookup. These legacy aliases are kept for transitional
+// code and may be removed after full migration.
+#define ACPI_DEVICE_ADDR_ITEM	KOSM_ACPI_DEVICE_ADR
+#define ACPI_DEVICE_CID_ITEM	KOSM_ACPI_DEVICE_CID
+#define ACPI_DEVICE_HANDLE_ITEM	KOSM_ACPI_DEVICE_HANDLE
+#define ACPI_DEVICE_HID_ITEM	KOSM_ACPI_DEVICE_HID
+#define ACPI_DEVICE_PATH_ITEM	KOSM_ACPI_DEVICE_PATH
+#define ACPI_DEVICE_TYPE_ITEM	KOSM_ACPI_DEVICE_TYPE
+#define ACPI_DEVICE_UID_ITEM	KOSM_ACPI_DEVICE_UID
 
 
 typedef struct acpi_device_cookie *acpi_device;
 
+// Bus interface name for publish_interface/get_interface. Published by
+// the ACPI bus manager on each ACPI device node. Retrieved by child
+// drivers via gDeviceKeeper->get_interface(node, ACPI_DEVICE_INTERFACE_NAME,
+// (const void**)&acpi, (void**)&cookie).
+#define ACPI_DEVICE_INTERFACE_NAME	"interface/acpi/device/v1"
+
 //	Interface to one ACPI device.
 typedef struct acpi_device_module_info {
-	driver_module_info info;
 
 	/* Notify Handler */
 

@@ -9,7 +9,7 @@
 #define _USB_V3_H_
 
 #include <KernelExport.h>
-#include <bus_manager.h>
+#include <module.h>
 #include <iovec.h>
 
 #include <USB_spec.h>

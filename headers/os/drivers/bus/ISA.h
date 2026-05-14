@@ -1,68 +1,77 @@
 /*
- * Copyright 2002-2003, Thomas Kurschel. All rights reserved.
- * Distributed under the terms of the MIT License.
+ *	Copyright 2023, Haiku Inc. All Rights Reserved.
+ *	Distributed under the terms of the MIT License.
  */
-#ifndef _ISA2_H
-#define _ISA2_H
 
+#ifndef _BUS_ISA_H
+#define _BUS_ISA_H
 
-/*!	ISA bus manager
+#include <module.h>
 
-	This is an improper name - this bus manager uses the PnP manager to
-	load device drivers, but calling it ISA PnP manager would be wrong as
-	ISA PnP information isn't used at all.
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-	All ISA drivers must be Universal driver (see pnp_manager.h), as they
-	are all direct children of the ISA bus node. Having an ISA PnP bus manager
-	(which we don't), one node would be created per ISA device and thus you
-	could write Specific drivers, but under normal ISA we don't even know
-	how many devices are there, therefore the Universal driver trick.
+/*
+ *	ISA scatter/gather dma support.
+ */
 
-	Apart from the loading, the main change is the resource manager. In
-	a driver, you must allocate the resources before registering the node and
-	deallocate it when your node is removed and if the driver isn't loaded at
-	this time. If it is, you must delay deallocation until the driver gets
-	unloaded to make sure no new driver touches the same resources like you
-	meanwhile.
-*/
+typedef struct {
+	uint32				address;					// memory address in little endian
+	uint16				transfer_count;				// number of transfers -1 in little endian
+	uint8				reserved;					// empty space
+	uint8				flag;						// end of link flag
+} isa_dma_entry;
 
+#define B_LAST_ISA_DMA_ENTRY						0x80				// sets end of link flag
+#define B_MAX_ISA_DMA_COUNT							0x10000
+#define B_ISA_MODULE_NAME							"bus_managers/isa/v1"
 
-#include <device_manager.h>
-#include <ISA.h>
+enum {
+	B_8_BIT_TRANSFER,
+	B_16_BIT_TRANSFER
+};
 
+typedef struct isa_module_info {
+	bus_manager_info    binfo;
 
-// maximum size of one dma transfer
-// (in bytes for 8 bit transfer, in words for 16 bit transfer)
-#define B_MAX_ISA_DMA_COUNT	0x10000
+	uint8				(*read_io_8)				(int mapped_io_addr);
+	void				(*write_io_8)				(int mapped_io_addr, uint8 value);
+	uint16				(*read_io_16)				(int mapped_io_addr);
+	void				(*write_io_16)				(int mapped_io_addr, uint16 value);
+	uint32				(*read_io_32)				(int mapped_io_addr);
+	void				(*write_io_32)				(int mapped_io_addr, uint32 value);
 
-typedef struct isa2_module_info {
-	driver_module_info info;
+	phys_addr_t			(*ram_address)				(phys_addr_t physical_address_in_system_memory);
 
-	uint8 (*read_io_8)(int mapped_io_addr);
-	void (*write_io_8)(int mapped_io_addr, uint8 value);
-	uint16 (*read_io_16)(int mapped_io_addr);
-	void (*write_io_16)(int mapped_io_addr, uint16 value);
-	uint32 (*read_io_32)(int mapped_io_addr);
-	void (*write_io_32)(int mapped_io_addr, uint32 value);
+	long				(*make_isa_dma_table) (
+							const void				*buffer,			// buffer for making table
+							long					buffer_size,		// size of the buffer
+							ulong					num_bits,			// dma transfer size
+							isa_dma_entry			*table,				// -> caller-supplied
+																		// scatter/gather table
+							long					num_entries			// max # of entries in table
+						);
+	status_t			(*start_isa_dma) (
+							long					channel,			// dma channel to use
+							void					*buf,				// buffer to transfer
+							long					transfer_count,		// number of transfers
+							uchar					mode,				// mode flags
+							uchar					e_mode				// extended mode flags
+						);
+	long				(*start_scattered_isa_dma) (
+							long					channel,			// channel number to use
+							const isa_dma_entry		*table,				// physical address of
+																		// scatter/gather table
+							uchar					mode,				// mode flags
+							uchar					emode				// extended mode flags
+						);
+	status_t			(*lock_isa_dma_channel)		(long channel);
+	status_t			(*unlock_isa_dma_channel)	(long channel);
+} isa_module_info;
 
-	// don't know what it's for, remains for compatibility
-	phys_addr_t (*ram_address)(phys_addr_t physical_address_in_system_memory);
+#ifdef __cplusplus
+}
+#endif
 
-	// start dma transfer (scattered DMA is not supported as it's EISA specific)
-	status_t (*start_isa_dma)(
-		long	channel,				// dma channel to use
-		void	*buf,					// buffer to transfer
-		long	transfer_count,			// # transfers
-		uchar	mode,					// mode flags
-		uchar	e_mode					// extended mode flags
-	);
-} isa2_module_info;
-
-// type of isa device
-#define ISA_DEVICE_TYPE_NAME "isa/device/v1"
-// directory of ISA drivers
-// (there is only one device node, so put all drivers under "universal")
-#define ISA_DRIVERS_DIR "isa"
-
-
-#endif	/* _ISA2_H */
+#endif	/* _BUS_ISA_H */

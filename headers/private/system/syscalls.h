@@ -13,6 +13,7 @@
 #include <image_defs.h>
 #include <OS.h>
 #include <KosmOS.h>
+#include <device_keeper_defs.h>
 
 #include <signal.h>
 #include <sys/socket.h>
@@ -211,6 +212,20 @@ extern kosm_dot_id	_kern_kosm_create_dot_file(int fd, off_t fileOffset,
 						uint32 flags, uint32 tag);
 extern status_t		_kern_kosm_dot_sync(kosm_dot_id handle,
 						size_t offset, size_t size, uint32 flags);
+
+/* DeviceKeeper syscalls */
+extern kosm_handle_t	_kern_kosm_dk_get_root(void);
+extern kosm_handle_t	_kern_kosm_dk_get_child(kosm_handle_t parent);
+extern kosm_handle_t	_kern_kosm_dk_get_next_child(kosm_handle_t parent,
+						kosm_handle_t previous);
+extern status_t		_kern_kosm_dk_get_property(kosm_handle_t node,
+						const char* name,
+						kosm_dk_prop_value* outValue);
+extern status_t		_kern_kosm_dk_find_node(
+						const kosm_dk_match_rule* userRules,
+						kosm_handle_t* iterator);
+extern status_t		_kern_kosm_dk_get_node_info(kosm_handle_t node,
+						kosm_dk_node_info* info);
 
 /* sem functions */
 extern sem_id		_kern_create_sem(int count, const char *name);

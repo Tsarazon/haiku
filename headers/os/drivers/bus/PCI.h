@@ -10,8 +10,8 @@
 #define _BUS_PCI_H
 
 
-#include <bus_manager.h>
-#include <device_manager.h>
+#include <module.h>
+#include <device_keeper.h>
 
 
 #ifdef __cplusplus
@@ -194,15 +194,18 @@ struct pci_module_info {
 
 
 /* =====================================================================
-	Device manager per-device PCI API (pci_device_module_info)
+	DeviceKeeper per-device PCI API (pci_device_ops)
 	Uses opaque pci_device* handle for addressing.
+	Published by bus_managers/pci on each PCI device node via
+	publish_interface(PCI_DEVICE_INTERFACE_NAME).
    ===================================================================== */
 
 typedef struct pci_device pci_device;
 
-typedef struct pci_device_module_info {
-	driver_module_info info;
+// Bus interface name for publish_interface/get_interface.
+#define PCI_DEVICE_INTERFACE_NAME	"interface/pci/device/v1"
 
+typedef struct pci_device_ops {
 	uint8	(*read_io_8)(pci_device *device, addr_t mappedIOAddress);
 	void	(*write_io_8)(pci_device *device, addr_t mappedIOAddress,
 				uint8 value);
@@ -241,11 +244,13 @@ typedef struct pci_device_module_info {
 				uint32 *startVector);
 	status_t (*enable_msix)(pci_device *device);
 
-} pci_device_module_info;
+} pci_device_ops;
 
 
 /* =====================================================================
 	PCI controller module (for PCI host bridge drivers)
+	Published by PCI host bridge drivers (x86, ecam, designware) via
+	publish_interface(PCI_CONTROLLER_INTERFACE_NAME).
    ===================================================================== */
 
 typedef struct pci_resource_range {
@@ -256,9 +261,9 @@ typedef struct pci_resource_range {
 	uint64 size;
 } pci_resource_range;
 
-typedef struct pci_controller_module_info {
-	driver_module_info info;
+#define PCI_CONTROLLER_INTERFACE_NAME	"interface/pci/controller/v1"
 
+typedef struct pci_controller_ops {
 	status_t	(*read_pci_config)(void *cookie,
 				uint8 bus, uint8 device, uint8 function,
 				uint16 offset, uint8 size, uint32 *value);
@@ -275,14 +280,15 @@ typedef struct pci_controller_module_info {
 	status_t	(*get_range)(void *cookie, uint32 index,
 				pci_resource_range *range);
 	status_t	(*finalize)(void *cookie);
-} pci_controller_module_info;
+} pci_controller_ops;
 
 
-/* Attributes of PCI device nodes */
-#define B_PCI_DEVICE_DOMAIN		"pci/domain"		/* uint32 */
-#define B_PCI_DEVICE_BUS		"pci/bus"			/* uint8 */
-#define B_PCI_DEVICE_DEVICE		"pci/device"		/* uint8 */
-#define B_PCI_DEVICE_FUNCTION	"pci/function"		/* uint8 */
+/* PCI device node attribute names are defined in <device_keeper.h>:
+ *   KOSM_PCI_DEVICE_DOMAIN   = "pci/domain"   (uint32)
+ *   KOSM_PCI_DEVICE_BUS      = "pci/bus"      (uint8)
+ *   KOSM_PCI_DEVICE_DEVICE   = "pci/device"   (uint8)
+ *   KOSM_PCI_DEVICE_FUNCTION = "pci/function" (uint8)
+ */
 
 
 /* =====================================================================

@@ -444,6 +444,76 @@ extern status_t			_kosm_get_next_dot_info(team_id team,
 	_kosm_get_next_dot_info((team), (cookie), (info), sizeof(*(info)))
 
 
+/* DeviceKeeper tree inspection
+ *
+ * All functions operate on per-process handles (kosm_handle_t).
+ * Handles are closed via kosm_close_handle().
+ * Property values are returned typed, no text conversion.
+ *
+ * Ownership: every returned handle carries one reference.
+ * Caller must close it via kosm_close_handle() when done.
+ */
+
+#define KOSM_DK_PROP_STRING_MAX		256
+
+#define KOSM_DK_MATCH_NAME_MAX		64
+#define KOSM_DK_MATCH_STRING_MAX	64
+#define KOSM_DK_MATCH_MAX_RULES		8
+
+#define KOSM_DK_MODULE_NAME_MAX		128
+#define KOSM_DK_PRETTY_NAME_MAX		128
+#define KOSM_DK_BUS_NAME_MAX		32
+#define KOSM_DK_DEVICE_PATH_MAX		128
+
+typedef struct kosm_dk_prop_value {
+	uint32		type;
+	uint32		size;
+	union {
+		uint8	ui8;
+		uint16	ui16;
+		uint32	ui32;
+		uint64	ui64;
+		char	string[KOSM_DK_PROP_STRING_MAX];
+	} value;
+} kosm_dk_prop_value;
+
+typedef struct kosm_dk_match_rule {
+	char		name[KOSM_DK_MATCH_NAME_MAX];
+	type_code	type;
+	union {
+		uint8	ui8;
+		uint16	ui16;
+		uint32	ui32;
+		uint64	ui64;
+		char	string[KOSM_DK_MATCH_STRING_MAX];
+	} value;
+} kosm_dk_match_rule;
+
+typedef struct kosm_dk_node_info {
+	char		module_name[KOSM_DK_MODULE_NAME_MAX];
+	char		pretty_name[KOSM_DK_PRETTY_NAME_MAX];
+	char		bus[KOSM_DK_BUS_NAME_MAX];
+	char		device_path[KOSM_DK_DEVICE_PATH_MAX];
+	uint32		flags;
+	uint32		child_count;
+	uint32		property_count;
+	bool		has_driver;
+} kosm_dk_node_info;
+
+extern kosm_handle_t	kosm_dk_get_root(void);
+extern kosm_handle_t	kosm_dk_get_child(kosm_handle_t parent);
+extern kosm_handle_t	kosm_dk_get_next_child(kosm_handle_t parent,
+							kosm_handle_t previous);
+extern status_t			kosm_dk_get_property(kosm_handle_t node,
+							const char* name,
+							kosm_dk_prop_value* outValue);
+extern status_t			kosm_dk_find_node(
+							const kosm_dk_match_rule* rules,
+							kosm_handle_t* iterator);
+extern status_t			kosm_dk_get_node_info(kosm_handle_t node,
+							kosm_dk_node_info* info);
+
+
 #ifdef __cplusplus
 }
 #endif

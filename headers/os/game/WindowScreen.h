@@ -7,7 +7,6 @@
 
 
 #include <Accelerant.h>
-#include <GraphicsCard.h>
 #include <OS.h>
 #include <SupportDefs.h>
 #include <Window.h>
@@ -20,6 +19,41 @@ enum {
 	B_ENABLE_VIEW_DRAWING	= 0x0001,
 	B_ENABLE_DEBUGGER		= 0x0002
 };
+
+
+// Legacy graphics card descriptors retained for the Game Kit's
+// BWindowScreen public API. The implementation populates them from
+// Accelerant data (see WindowScreen.cpp::_GetCardInfo); the older
+// GraphicsCard.h header that introduced these types is gone.
+enum {
+	B_FRAME_BUFFER_CONTROL		= 0x0004,
+	B_PARALLEL_BUFFER_ACCESS	= 0x0008
+};
+
+typedef struct {
+	int16			version;
+	int16			id;
+	void*			frame_buffer;
+	char			rgba_order[4];
+	int16			flags;
+	int16			bits_per_pixel;
+	int16			bytes_per_row;
+	int16			width;
+	int16			height;
+} graphics_card_info;
+
+typedef struct {
+	int16			bits_per_pixel;
+	int16			bytes_per_row;
+	int16			width;
+	int16			height;
+	int16			display_width;
+	int16			display_height;
+	int16			display_x;
+	int16			display_y;
+} frame_buffer_info;
+
+typedef void (*graphics_card_hook) ();
 
 class BWindowScreen : public BWindow {
 public:

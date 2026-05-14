@@ -270,8 +270,6 @@ typedef struct {
 #define SCSI_DEVICE_TARGET_ID_ITEM "scsi/target_id"
 // lun (uint8)
 #define SCSI_DEVICE_TARGET_LUN_ITEM "scsi/target_lun"
-// node type
-#define SCSI_DEVICE_TYPE_NAME "scsi/device/v1"
 // device inquiry data (raw scsi_res_inquiry)
 #define SCSI_DEVICE_INQUIRY_ITEM "scsi/device_inquiry"
 // device type (uint8)
@@ -287,9 +285,6 @@ typedef struct {
 #define SCSI_DEVICE_MAX_TARGET_COUNT "scsi/max_target_count"
 // maximum luns on scsi bus
 #define SCSI_DEVICE_MAX_LUN_COUNT "scsi/max_lun_count"
-
-// directory containing links to peripheral drivers
-#define SCSI_PERIPHERAL_DRIVERS_DIR "scsi"
 
 // Bus interface name for publish_interface/get_interface. Published by
 // the SCSI bus manager on each scsi device node; peripheral drivers
@@ -328,8 +323,6 @@ typedef struct scsi_device_interface {
 
 // path (uint8)
 #define SCSI_BUS_PATH_ID_ITEM "scsi/path_id"
-// node type
-#define SCSI_BUS_TYPE_NAME "scsi/bus"
 
 // Bus interface name for publish_interface/get_interface.
 #define SCSI_BUS_INTERFACE_NAME	"interface/scsi/bus/v1"
@@ -411,8 +404,6 @@ typedef struct scsi_for_sim_interface {
 
 // attributes:
 
-// node type
-#define SCSI_SIM_TYPE_NAME "bus/scsi/v1"
 // controller name (required, string)
 #define SCSI_DESCRIPTION_CONTROLLER_NAME "controller_name"
 
