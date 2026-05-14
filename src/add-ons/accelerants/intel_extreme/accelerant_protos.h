@@ -10,7 +10,6 @@
 
 
 #include <Accelerant.h>
-#include "video_overlay.h"
 
 
 #ifdef __cplusplus

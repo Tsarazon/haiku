@@ -16,7 +16,7 @@
 #include <Debug.h>
 
 #include <edid.h>
-#include <video_overlay.h>
+#include <Accelerant.h>
 
 #include "Ports.h"
 #include "Pipes.h"

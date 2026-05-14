@@ -7,7 +7,6 @@
 #define GENERIC_H
 
 #include <Accelerant.h>
-#include "video_overlay.h"
 
 #define DEBUG 1
 

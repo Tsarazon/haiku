@@ -11,7 +11,7 @@
 #include <string.h>
 
 #include <compute_display_timing.h>
-#include <video_overlay.h>
+#include <Accelerant.h>
 
 
 #define	POSITIVE_SYNC \
