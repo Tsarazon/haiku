@@ -16,6 +16,7 @@
 #include <TabView.h>
 #include <View.h>
 
+#include <KosmOS.h>
 #include <map>
 
 #include "Device.h"
@@ -58,7 +59,7 @@ class DevicesView : public BView {
 		virtual void DeleteDevices();
 		virtual void RebuildDevicesOutline();
 		virtual void AddChildrenToOutlineByConnection(Device* parent);
-		virtual void AddDeviceAndChildren(device_node_cookie* node, Device* parent);
+		virtual void AddDeviceAndChildren(kosm_handle_t node, Device* parent);
 		static int   SortItemsCompare(const BListItem*, const BListItem*);
 
 	private:

@@ -13,6 +13,7 @@
 #include <stdlib.h>
 
 #include <Catalog.h>
+#include <device_keeper.h>
 
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "DevicePCI"
@@ -56,18 +57,18 @@ void
 DevicePCI::InitFromAttributes()
 {
 	// Process the attributes
-	fClassBaseId = atoi(fAttributeMap[B_DEVICE_TYPE].String());
-	fClassSubId = atoi(fAttributeMap[B_DEVICE_SUB_TYPE].String());
-	fClassApiId = atoi(fAttributeMap[B_DEVICE_INTERFACE].String());
-	fVendorId = atoi(fAttributeMap[B_DEVICE_VENDOR_ID].String());
-	fDeviceId = atoi(fAttributeMap[B_DEVICE_ID].String());
+	fClassBaseId = atoi(fAttributeMap[KOSM_DEVICE_TYPE].String());
+	fClassSubId = atoi(fAttributeMap[KOSM_DEVICE_SUB_TYPE].String());
+	fClassApiId = atoi(fAttributeMap[KOSM_DEVICE_INTERFACE].String());
+	fVendorId = atoi(fAttributeMap[KOSM_DEVICE_VENDOR_ID].String());
+	fDeviceId = atoi(fAttributeMap[KOSM_DEVICE_ID].String());
 
 	// Looks better in Hex, so rewrite
-	fAttributeMap[B_DEVICE_TYPE] = ToHex(fClassBaseId);
-	fAttributeMap[B_DEVICE_SUB_TYPE] = ToHex(fClassSubId);
-	fAttributeMap[B_DEVICE_INTERFACE] = ToHex(fClassApiId);
-	fAttributeMap[B_DEVICE_VENDOR_ID] = ToHex(fVendorId);
-	fAttributeMap[B_DEVICE_ID] = ToHex(fDeviceId);
+	fAttributeMap[KOSM_DEVICE_TYPE] = ToHex(fClassBaseId);
+	fAttributeMap[KOSM_DEVICE_SUB_TYPE] = ToHex(fClassSubId);
+	fAttributeMap[KOSM_DEVICE_INTERFACE] = ToHex(fClassApiId);
+	fAttributeMap[KOSM_DEVICE_VENDOR_ID] = ToHex(fVendorId);
+	fAttributeMap[KOSM_DEVICE_ID] = ToHex(fDeviceId);
 
 	// Fetch ClassInfo	
 	char classInfo[128];

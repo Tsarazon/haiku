@@ -9,6 +9,7 @@
 
 #include "DeviceUSB.h"
 
+#include <device_keeper.h>
 #include <sstream>
 #include <stdlib.h>
 
@@ -54,15 +55,15 @@ DeviceUSB::InitFromAttributes()
 	fClassBaseId = atoi(fAttributeMap[USB_DEVICE_CLASS].String());
 	fClassSubId = atoi(fAttributeMap[USB_DEVICE_SUBCLASS].String());
 	fClassProtoId = atoi(fAttributeMap[USB_DEVICE_PROTOCOL].String());
-	fVendorId = atoi(fAttributeMap[B_DEVICE_VENDOR_ID].String());
-	fDeviceId = atoi(fAttributeMap[B_DEVICE_ID].String());
+	fVendorId = atoi(fAttributeMap[KOSM_DEVICE_VENDOR_ID].String());
+	fDeviceId = atoi(fAttributeMap[KOSM_DEVICE_ID].String());
 
 	// Looks better in Hex, so rewrite
 	fAttributeMap[USB_DEVICE_CLASS] = ToHex(fClassBaseId);
 	fAttributeMap[USB_DEVICE_SUBCLASS] = ToHex(fClassSubId);
 	fAttributeMap[USB_DEVICE_PROTOCOL] = ToHex(fClassProtoId);
-	fAttributeMap[B_DEVICE_VENDOR_ID] = ToHex(fVendorId);
-	fAttributeMap[B_DEVICE_ID] = ToHex(fDeviceId);
+	fAttributeMap[KOSM_DEVICE_VENDOR_ID] = ToHex(fVendorId);
+	fAttributeMap[KOSM_DEVICE_ID] = ToHex(fDeviceId);
 
 	// Fetch ClassInfo
 	char classInfo[128];

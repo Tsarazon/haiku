@@ -1,5 +1,6 @@
 SubDir HAIKU_TOP src apps devices ;
 
+UsePublicHeaders drivers ;
 UsePrivateHeaders shared ;
 UsePrivateHeaders interface ;
 UsePrivateKernelHeaders ;

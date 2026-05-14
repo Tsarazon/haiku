@@ -1,21 +1,14 @@
 /*
  * Copyright 2006 Haiku Inc. All rights reserved.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
- *
- * Authors:
- *		Jerome Duval (listdev)
  */
 
 
 #include <errno.h>
-#include <fcntl.h>
 #include <stdio.h>
-#include <unistd.h>
-
-#include <drivers/device_manager.h>
-#include <device_manager_defs.h>
-#include <generic_syscall_defs.h>
 #include <string.h>
+
 #include <syscalls.h>
 
 #include "dm_wrapper.h"
@@ -24,9 +17,7 @@
 status_t
 init_dm_wrapper(void)
 {
-	uint32 version = 0;
-	return _kern_generic_syscall(DEVICE_MANAGER_SYSCALLS, B_SYSCALL_INFO,
-		&version, sizeof(version));
+	return B_OK;
 }
 
 
@@ -38,32 +29,56 @@ uninit_dm_wrapper(void)
 
 
 status_t
-get_root(device_node_cookie *cookie)
+get_root(kosm_handle_t *cookie)
 {
-	return _kern_generic_syscall(DEVICE_MANAGER_SYSCALLS, DM_GET_ROOT, cookie,
-		sizeof(device_node_cookie));
+	kosm_handle_t h = _kern_kosm_dk_get_root();
+	if (h == KOSM_HANDLE_INVALID)
+		return B_ERROR;
+	*cookie = h;
+	return B_OK;
 }
 
 
-status_t 
-get_child(device_node_cookie *device)
+status_t
+get_child(kosm_handle_t parent, kosm_handle_t *child)
 {
-	return _kern_generic_syscall(DEVICE_MANAGER_SYSCALLS, DM_GET_CHILD, device,
-		sizeof(device_node_cookie));
+	kosm_handle_t h = _kern_kosm_dk_get_child(parent);
+	if (h == KOSM_HANDLE_INVALID)
+		return B_ENTRY_NOT_FOUND;
+	*child = h;
+	return B_OK;
 }
 
 
-status_t 
-get_next_child(device_node_cookie *device)
+status_t
+get_next_child(kosm_handle_t parent, kosm_handle_t previous,
+	kosm_handle_t *next)
 {
-	return _kern_generic_syscall(DEVICE_MANAGER_SYSCALLS, DM_GET_NEXT_CHILD,
-		device, sizeof(device_node_cookie));
+	kosm_handle_t h = _kern_kosm_dk_get_next_child(parent, previous);
+	if (h == KOSM_HANDLE_INVALID)
+		return B_ENTRY_NOT_FOUND;
+	*next = h;
+	return B_OK;
 }
 
 
-status_t 
-dm_get_next_attr(struct device_attr_info *attr)
+status_t
+dm_get_property(kosm_handle_t node, const char* name,
+	kosm_dk_prop_value *value)
 {
-	return _kern_generic_syscall(DEVICE_MANAGER_SYSCALLS,
-		DM_GET_NEXT_ATTRIBUTE, attr, sizeof(struct device_attr_info));
+	return _kern_kosm_dk_get_property(node, name, value);
+}
+
+
+status_t
+dm_get_node_info(kosm_handle_t node, kosm_dk_node_info *info)
+{
+	return _kern_kosm_dk_get_node_info(node, info);
+}
+
+
+void
+close_node(kosm_handle_t node)
+{
+	_kern_kosm_close_handle(node);
 }

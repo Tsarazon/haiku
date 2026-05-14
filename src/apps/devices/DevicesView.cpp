@@ -16,7 +16,10 @@
 
 #include <iostream>
 
+#include <device_keeper.h>
+
 #include "DevicesView.h"
+#include "dm_wrapper.h"
 
 #undef B_TRANSLATION_CONTEXT
 #define B_TRANSLATION_CONTEXT "DevicesView"
@@ -98,15 +101,17 @@ DevicesView::RescanDevices()
 
 	// Fill the devices list
 	status_t error;
-	device_node_cookie rootCookie;
 	if ((error = init_dm_wrapper()) < 0) {
 		std::cerr << "Error initializing device manager: " << strerror(error)
 			<< std::endl;
 		return;
 	}
 
-	get_root(&rootCookie);
-	AddDeviceAndChildren(&rootCookie, NULL);
+	kosm_handle_t rootHandle;
+	if (get_root(&rootHandle) == B_OK) {
+		AddDeviceAndChildren(rootHandle, NULL);
+		close_node(rootHandle);
+	}
 
 	uninit_dm_wrapper();
 
@@ -226,151 +231,113 @@ DevicesView::AddChildrenToOutlineByConnection(Device* parent)
 
 
 void
-DevicesView::AddDeviceAndChildren(device_node_cookie *node, Device* parent)
+DevicesView::AddDeviceAndChildren(kosm_handle_t node, Device* parent)
 {
-	Attributes attributes;
 	Device* newDevice = NULL;
 
-	// Copy all its attributes,
-	// necessary because we can only request them once from the device manager
-	char data[256];
-	struct device_attr_info attr;
-	attr.cookie = 0;
-	attr.node_cookie = *node;
-	attr.value.raw.data = data;
-	attr.value.raw.length = sizeof(data);
-
-	while (dm_get_next_attr(&attr) == B_OK) {
-		BString attrString;
-		switch (attr.type) {
-			case B_STRING_TYPE:
-				attrString << attr.value.string;
-				break;
-			case B_UINT8_TYPE:
-				attrString << attr.value.ui8;
-				break;
-			case B_UINT16_TYPE:
-				attrString << attr.value.ui16;
-				break;
-			case B_UINT32_TYPE:
-				attrString << attr.value.ui32;
-				break;
-			case B_UINT64_TYPE:
-				attrString << attr.value.ui64;
-				break;
-			default:
-				attrString << "Raw data";
-		}
-		attributes.push_back(Attribute(attr.name, attrString));
+	// Get node metadata in one syscall
+	kosm_dk_node_info nodeInfo;
+	if (dm_get_node_info(node, &nodeInfo) != B_OK) {
+		newDevice = new Device(parent, BUS_NONE,
+			CAT_NONE, B_TRANSLATE("Unknown device"));
+		fDevices.push_back(newDevice);
+		return;
 	}
 
-	// Determine what type of device it is and create it
-	for (unsigned int i = 0; i < attributes.size(); i++) {
-		// Devices Root
-		if (attributes[i].fName == B_DEVICE_PRETTY_NAME
-			&& attributes[i].fValue == "Devices Root") {
-			newDevice = new Device(parent, BUS_NONE,
-				CAT_COMPUTER, B_TRANSLATE("Computer"));
-			break;
-		}
+	BString prettyName(nodeInfo.pretty_name);
+	BString bus(nodeInfo.bus);
 
-		// ACPI Controller
-		if (attributes[i].fName == B_DEVICE_PRETTY_NAME
-			&& attributes[i].fValue == "ACPI") {
-			newDevice = new Device(parent, BUS_ACPI,
-				CAT_BUS, B_TRANSLATE("ACPI bus"));
-			break;
-		}
-
-		// PCI bus
-		if (attributes[i].fName == B_DEVICE_PRETTY_NAME
-			&& attributes[i].fValue == "PCI") {
-			newDevice = new Device(parent, BUS_PCI,
-				CAT_BUS, B_TRANSLATE("PCI bus"));
-			break;
-		}
-
-		// ISA bus
-		if (attributes[i].fName == B_DEVICE_BUS
-			&& attributes[i].fValue == "isa") {
-			newDevice = new Device(parent, BUS_ISA,
-				CAT_BUS, B_TRANSLATE("ISA bus"));
-			break;
-		}
-
-		// USB bus
-		if (attributes[i].fName == B_DEVICE_PRETTY_NAME
-			&& attributes[i].fValue == "USB") {
-			newDevice = new Device(parent, BUS_USB,
-				CAT_BUS, B_TRANSLATE("USB bus"));
-			break;
-		}
-
-		// PCI device
-		if (attributes[i].fName == B_DEVICE_BUS
-			&& attributes[i].fValue == "pci") {
-			newDevice = new DevicePCI(parent);
-			break;
-		}
-
-		// ACPI device
-		if (attributes[i].fName == B_DEVICE_BUS
-			&& attributes[i].fValue == "acpi") {
-			newDevice = new DeviceACPI(parent);
-			break;
-		}
-
-		// USB device
-		if (attributes[i].fName == B_DEVICE_BUS
-			&& attributes[i].fValue == "usb") {
-			newDevice = new DeviceUSB(parent);
-			break;
-		}
-
-		// ATA / SCSI / IDE controller
-		if (attributes[i].fName == "controller_name") {
-			newDevice = new Device(parent, BUS_PCI,
-				CAT_MASS, attributes[i].fValue);
-		}
-
-		// SCSI device node
-		if (attributes[i].fName == B_DEVICE_BUS
-			&& attributes[i].fValue == "scsi") {
-			newDevice = new DeviceSCSI(parent);
-			break;
-		}
-
-		// Last resort, lets look for a pretty name
-		if (attributes[i].fName == B_DEVICE_PRETTY_NAME) {
-			newDevice = new Device(parent, BUS_NONE,
-				CAT_NONE, attributes[i].fValue);
-			break;
-		}
-	}
-
-	// A completely unknown device
-	if (newDevice == NULL) {
+	// Classify the device based on bus and pretty_name
+	if (prettyName == "Devices Root") {
+		newDevice = new Device(parent, BUS_NONE,
+			CAT_COMPUTER, B_TRANSLATE("Computer"));
+	} else if (prettyName == "ACPI") {
+		newDevice = new Device(parent, BUS_ACPI,
+			CAT_BUS, B_TRANSLATE("ACPI bus"));
+	} else if (prettyName == "PCI") {
+		newDevice = new Device(parent, BUS_PCI,
+			CAT_BUS, B_TRANSLATE("PCI bus"));
+	} else if (prettyName == "USB") {
+		newDevice = new Device(parent, BUS_USB,
+			CAT_BUS, B_TRANSLATE("USB bus"));
+	} else if (bus == "isa") {
+		newDevice = new Device(parent, BUS_ISA,
+			CAT_BUS, B_TRANSLATE("ISA bus"));
+	} else if (bus == "pci") {
+		newDevice = new DevicePCI(parent);
+	} else if (bus == "acpi") {
+		newDevice = new DeviceACPI(parent);
+	} else if (bus == "usb") {
+		newDevice = new DeviceUSB(parent);
+	} else if (bus == "scsi") {
+		newDevice = new DeviceSCSI(parent);
+	} else if (prettyName.Length() > 0) {
+		newDevice = new Device(parent, BUS_NONE,
+			CAT_NONE, prettyName);
+	} else {
 		newDevice = new Device(parent, BUS_NONE,
 			CAT_NONE, B_TRANSLATE("Unknown device"));
 	}
 
-	// Add its attributes to the device, initialize it and add to the list.
-	for (unsigned int i = 0; i < attributes.size(); i++) {
-		newDevice->SetAttribute(attributes[i].fName, attributes[i].fValue);
+	// Store known attributes from node_info
+	newDevice->SetAttribute(KOSM_LABEL, prettyName);
+	newDevice->SetAttribute(KOSM_DEVICE_BUS, bus);
+	if (nodeInfo.module_name[0] != '\0')
+		newDevice->SetAttribute("device/driver", nodeInfo.module_name);
+
+	// Query additional properties by name for detailed device info
+	kosm_dk_prop_value propVal;
+	static const char* kPropertyNames[] = {
+		KOSM_DEVICE_VENDOR_ID, KOSM_DEVICE_ID,
+		KOSM_DEVICE_TYPE, KOSM_DEVICE_SUB_TYPE,
+		"controller_name", "usb/vendor", "usb/product",
+		NULL
+	};
+
+	for (const char** name = kPropertyNames; *name != NULL; name++) {
+		if (dm_get_property(node, *name, &propVal) == B_OK) {
+			BString value;
+			switch (propVal.type) {
+				case B_STRING_TYPE:
+					value = propVal.value.string;
+					break;
+				case B_UINT8_TYPE:
+					value << propVal.value.ui8;
+					break;
+				case B_UINT16_TYPE:
+					value << propVal.value.ui16;
+					break;
+				case B_UINT32_TYPE:
+					value << propVal.value.ui32;
+					break;
+				case B_UINT64_TYPE:
+					value << propVal.value.ui64;
+					break;
+				default:
+					value = "Raw data";
+			}
+			newDevice->SetAttribute(*name, value);
+		}
 	}
+
 	newDevice->InitFromAttributes();
 	fDevices.push_back(newDevice);
 
 	// Process children
-	status_t err;
-	device_node_cookie child = *node;
-
-	if (get_child(&child) != B_OK)
+	kosm_handle_t child;
+	if (get_child(node, &child) != B_OK)
 		return;
 
 	do {
-		AddDeviceAndChildren(&child, newDevice);
-	} while ((err = get_next_child(&child)) == B_OK);
+		AddDeviceAndChildren(child, newDevice);
+		kosm_handle_t next;
+		if (get_next_child(node, child, &next) != B_OK) {
+			close_node(child);
+			break;
+		}
+		close_node(child);
+		child = next;
+	} while (true);
 }
 
 

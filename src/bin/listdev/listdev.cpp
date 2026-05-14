@@ -1,5 +1,6 @@
 /*
  * Copyright 2006-2012, Haiku, Inc. All Rights Reserved.
+ * Copyright 2025, KosmOS Project.
  * Distributed under the terms of the MIT License.
  *
  * Authors:
@@ -12,9 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <drivers/device_manager.h>
+#include <drivers/device_keeper.h>
 #include <drivers/module.h>
-#include <drivers/bus/PCI.h>
 #include <drivers/bus/PCI.h>
 #include <drivers/bus/SCSI.h>
 #include <drivers/bus/USB.h>
@@ -79,181 +79,149 @@ put_level(int32 level)
 }
 
 
-static void
-dump_attribute(struct device_attr_info *attr, int32 level)
+// Helper: get a string property, returns empty string on failure.
+static bool
+get_string_prop(kosm_handle_t node, const char* name, char* buf, size_t bufSize)
 {
-	if (attr == NULL)
-		return;
-
-	put_level(level);
-	printf("\"%s\" : ", attr->name);
-	switch (attr->type) {
-		case B_STRING_TYPE:
-			printf("string : \"%s\"", attr->value.string);
-			break;
-		case B_UINT8_TYPE:
-			printf("uint8 : %" B_PRIu8 " (%#" B_PRIx8 ")", attr->value.ui8,
-				attr->value.ui8);
-			break;
-		case B_UINT16_TYPE:
-			printf("uint16 : %" B_PRIu16 " (%#" B_PRIx16 ")", attr->value.ui16,
-				attr->value.ui16);
-			break;
-		case B_UINT32_TYPE:
-			printf("uint32 : %" B_PRIu32 " (%#" B_PRIx32 ")", attr->value.ui32,
-				attr->value.ui32);
-			break;
-		case B_UINT64_TYPE:
-			printf("uint64 : %" B_PRIu64 " (%#" B_PRIx64 ")", attr->value.ui64,
-				attr->value.ui64);
-			break;
-		default:
-			printf("raw data");
+	kosm_dk_prop_value val;
+	if (dm_get_property(node, name, &val) == B_OK && val.type == B_STRING_TYPE) {
+		strlcpy(buf, val.value.string, bufSize);
+		return true;
 	}
+	buf[0] = '\0';
+	return false;
+}
+
+
+static bool
+get_uint8_prop(kosm_handle_t node, const char* name, uint8* out)
+{
+	kosm_dk_prop_value val;
+	if (dm_get_property(node, name, &val) == B_OK && val.type == B_UINT8_TYPE) {
+		*out = val.value.ui8;
+		return true;
+	}
+	return false;
+}
+
+
+static bool
+get_uint16_prop(kosm_handle_t node, const char* name, uint16* out)
+{
+	kosm_dk_prop_value val;
+	if (dm_get_property(node, name, &val) == B_OK && val.type == B_UINT16_TYPE) {
+		*out = val.value.ui16;
+		return true;
+	}
+	return false;
+}
+
+
+static bool
+get_uint32_prop(kosm_handle_t node, const char* name, uint32* out)
+{
+	kosm_dk_prop_value val;
+	if (dm_get_property(node, name, &val) == B_OK && val.type == B_UINT32_TYPE) {
+		*out = val.value.ui32;
+		return true;
+	}
+	return false;
+}
+
+
+static void
+dump_device(kosm_handle_t node, uint8 level)
+{
+	put_level(level);
+	printf("(%d)", level);
+
+	// Try to print pretty name and bus
+	char pretty[128];
+	if (get_string_prop(node, KOSM_LABEL, pretty, sizeof(pretty)))
+		printf(" \"%s\"", pretty);
+
+	char bus[64];
+	if (get_string_prop(node, KOSM_DEVICE_BUS, bus, sizeof(bus)))
+		printf(" [bus=%s]", bus);
+
+	uint16 vid, did;
+	if (get_uint16_prop(node, KOSM_DEVICE_VENDOR_ID, &vid))
+		printf(" vendor=%04x", vid);
+	if (get_uint16_prop(node, KOSM_DEVICE_ID, &did))
+		printf(" device=%04x", did);
+
 	printf("\n");
 }
 
 
 static void
-dump_device(device_node_cookie *node, uint8 level)
+dump_nodes(kosm_handle_t node, uint8 level)
 {
-	char data[256];
-	struct device_attr_info attr;
-	attr.cookie = 0;
-	attr.node_cookie = *node;
-	attr.value.raw.data = data;
-	attr.value.raw.length = sizeof(data);
-
-	put_level(level);
-	printf("(%d)\n", level);
-	while (dm_get_next_attr(&attr) == B_OK) {
-		dump_attribute(&attr, level);
-	}
-}
-
-
-static void
-dump_nodes(device_node_cookie *node, uint8 level)
-{
-	status_t err;
-	device_node_cookie child = *node;
 	dump_device(node, level);
 
-	if (get_child(&child) != B_OK)
+	kosm_handle_t child;
+	if (get_child(node, &child) != B_OK)
 		return;
 
 	do {
-		dump_nodes(&child, level + 1);
-	} while ((err = get_next_child(&child)) == B_OK);
-
+		dump_nodes(child, level + 1);
+		kosm_handle_t next;
+		if (get_next_child(node, child, &next) != B_OK) {
+			close_node(child);
+			break;
+		}
+		close_node(child);
+		child = next;
+	} while (true);
 }
 
 
 static int32
-display_device(device_node_cookie *node, uint8 level)
+display_device(kosm_handle_t node, uint8 level)
 {
 	uint8 new_level = level;
 
-	char data[256];
-	struct device_attr_info attr;
-
-	// BUS attributes
-	char device_bus[64];
+	char device_bus[64] = {};
 	uint8 scsi_path_id = 255;
 	int bus = 0;
-	uint16 vendor_id = 0;
-	uint16 device_id = 0;
+	uint16 vendor_id = 0, device_id = 0;
 
-	// PCI attributes
-	uint8 pci_class_base_id = 0;
-	uint8 pci_class_sub_id = 0;
-	uint8 pci_class_api_id = 0;
-	uint16 pci_subsystem_vendor_id = 0;
-	uint16 pci_subsystem_id = 0;
+	uint8 pci_class_base_id = 0, pci_class_sub_id = 0, pci_class_api_id = 0;
+	uint16 pci_subsystem_vendor_id = 0, pci_subsystem_id = 0;
 
-	// SCSI attributes
-	uint8 scsi_target_lun = 0;
-	uint8 scsi_target_id = 0;
-	uint8 scsi_type = 255;
-	char scsi_vendor[64];
-	char scsi_product[64];
+	uint8 scsi_target_lun = 0, scsi_target_id = 0, scsi_type = 255;
+	char scsi_vendor[64] = {}, scsi_product[64] = {};
 
-	// USB attributes
-	uint8 usb_class_base_id = 0;
-	uint8 usb_class_sub_id = 0;
-	uint8 usb_class_proto_id = 0;
+	uint8 usb_class_base_id = 0, usb_class_sub_id = 0, usb_class_proto_id = 0;
 
-	attr.cookie = 0;
-	attr.node_cookie = *node;
-	attr.value.raw.data = data;
-	attr.value.raw.length = sizeof(data);
+	get_string_prop(node, KOSM_DEVICE_BUS, device_bus, sizeof(device_bus));
+	get_uint8_prop(node, "scsi/path_id", &scsi_path_id);
+	get_uint16_prop(node, KOSM_DEVICE_TYPE, &vendor_id);
+	pci_class_base_id = (uint8)vendor_id; vendor_id = 0;
+	get_uint16_prop(node, KOSM_DEVICE_SUB_TYPE, &device_id);
+	pci_class_sub_id = (uint8)device_id; device_id = 0;
+	uint16 tmp16;
+	if (get_uint16_prop(node, KOSM_DEVICE_INTERFACE, &tmp16))
+		pci_class_api_id = (uint8)tmp16;
+	get_uint16_prop(node, KOSM_DEVICE_VENDOR_ID, &vendor_id);
+	get_uint16_prop(node, KOSM_DEVICE_ID, &device_id);
+	get_uint8_prop(node, SCSI_DEVICE_TARGET_LUN_ITEM, &scsi_target_lun);
+	get_uint8_prop(node, SCSI_DEVICE_TARGET_ID_ITEM, &scsi_target_id);
+	get_uint8_prop(node, SCSI_DEVICE_TYPE_ITEM, &scsi_type);
+	get_string_prop(node, SCSI_DEVICE_VENDOR_ITEM, scsi_vendor, sizeof(scsi_vendor));
+	get_string_prop(node, SCSI_DEVICE_PRODUCT_ITEM, scsi_product, sizeof(scsi_product));
+	get_uint8_prop(node, USB_DEVICE_CLASS, &usb_class_base_id);
+	get_uint8_prop(node, USB_DEVICE_SUBCLASS, &usb_class_sub_id);
+	get_uint8_prop(node, USB_DEVICE_PROTOCOL, &usb_class_proto_id);
 
-	while (dm_get_next_attr(&attr) == B_OK) {
-		if (!strcmp(attr.name, B_DEVICE_BUS)
-			&& attr.type == B_STRING_TYPE) {
-			strlcpy(device_bus, attr.value.string, 64);
-		} else if (!strcmp(attr.name, "scsi/path_id")
-			&& attr.type == B_UINT8_TYPE) {
-			scsi_path_id = attr.value.ui8;
-		} else if (!strcmp(attr.name, B_DEVICE_TYPE)
-			&& attr.type == B_UINT16_TYPE)
-			pci_class_base_id = attr.value.ui8;
-		else if (!strcmp(attr.name, B_DEVICE_SUB_TYPE)
-			&& attr.type == B_UINT16_TYPE)
-			pci_class_sub_id = attr.value.ui8;
-		else if (!strcmp(attr.name, B_DEVICE_INTERFACE)
-			&& attr.type == B_UINT16_TYPE)
-			pci_class_api_id = attr.value.ui8;
-		else if (!strcmp(attr.name, B_DEVICE_VENDOR_ID)
-			&& attr.type == B_UINT16_TYPE)
-			vendor_id = attr.value.ui16;
-		else if (!strcmp(attr.name, B_DEVICE_ID)
-			&& attr.type == B_UINT16_TYPE)
-			device_id = attr.value.ui16;
-		else if (!strcmp(attr.name, SCSI_DEVICE_TARGET_LUN_ITEM)
-			&& attr.type == B_UINT8_TYPE)
-			scsi_target_lun = attr.value.ui8;
-		else if (!strcmp(attr.name, SCSI_DEVICE_TARGET_ID_ITEM)
-			&& attr.type == B_UINT8_TYPE)
-			scsi_target_id = attr.value.ui8;
-		else if (!strcmp(attr.name, SCSI_DEVICE_TYPE_ITEM)
-			&& attr.type == B_UINT8_TYPE)
-			scsi_type = attr.value.ui8;
-		else if (!strcmp(attr.name, SCSI_DEVICE_VENDOR_ITEM)
-			&& attr.type == B_STRING_TYPE)
-			strlcpy(scsi_vendor, attr.value.string, 64);
-		else if (!strcmp(attr.name, SCSI_DEVICE_PRODUCT_ITEM)
-			&& attr.type == B_STRING_TYPE)
-			strlcpy(scsi_product, attr.value.string, 64);
-		else if (!strcmp(attr.name, USB_DEVICE_CLASS)
-			&& attr.type == B_UINT8_TYPE)
-			usb_class_base_id = attr.value.ui8;
-		else if (!strcmp(attr.name, USB_DEVICE_SUBCLASS)
-			&& attr.type == B_UINT8_TYPE)
-			usb_class_sub_id = attr.value.ui8;
-		else if (!strcmp(attr.name, USB_DEVICE_PROTOCOL)
-			&& attr.type == B_UINT8_TYPE)
-			usb_class_proto_id = attr.value.ui8;
-
-		if (!strcmp(device_bus, "isa"))
-			bus = BUS_ISA;
-		else if (!strcmp(device_bus, "pci"))
-			bus = BUS_PCI;
-		else if (!strcmp(device_bus, "usb"))
-			bus = BUS_USB;
-		else if (scsi_path_id < 255)
-			bus = BUS_SCSI;
-
-		/*else if (!strcmp(attr.name, PCI_DEVICE_SUBVENDOR_ID_ITEM)
-			&& attr.type == B_UINT16_TYPE)
-			pci_subsystem_vendor_id = attr.value.ui16;
-		else if (!strcmp(attr.name, PCI_DEVICE_SUBSYSTEM_ID_ITEM)
-			&& attr.type == B_UINT16_TYPE)
-			pci_subsystem_id = attr.value.ui16;*/
-
-		attr.value.raw.data = data;
-		attr.value.raw.length = sizeof(data);
-	}
+	if (!strcmp(device_bus, "isa"))
+		bus = BUS_ISA;
+	else if (!strcmp(device_bus, "pci"))
+		bus = BUS_PCI;
+	else if (!strcmp(device_bus, "usb"))
+		bus = BUS_USB;
+	else if (scsi_path_id < 255)
+		bus = BUS_SCSI;
 
 	switch (bus) {
 		case BUS_ISA:
@@ -272,34 +240,26 @@ display_device(device_node_cookie *node, uint8 level)
 
 			put_level(level);
 			printf("  ");
-			const char *venShort;
-			const char *venFull;
-			const char *devShort;
-			const char *devFull;
+			{
+				const char *venShort, *venFull, *devShort, *devFull;
+				get_vendor_info(vendor_id, &venShort, &venFull);
+				if (!venShort && !venFull)
+					printf("vendor %04x: Unknown\n", vendor_id);
+				else if (venShort && venFull)
+					printf("vendor %04x: %s - %s\n", vendor_id, venShort, venFull);
+				else
+					printf("vendor %04x: %s\n", vendor_id, venShort ? venShort : venFull);
 
-			get_vendor_info(vendor_id, &venShort, &venFull);
-			if (!venShort && !venFull) {
-				printf("vendor %04x: Unknown\n", vendor_id);
-			} else if (venShort && venFull) {
-				printf("vendor %04x: %s - %s\n", vendor_id,
-					venShort, venFull);
-			} else {
-				printf("vendor %04x: %s\n", vendor_id,
-					venShort ? venShort : venFull);
-			}
-
-			put_level(level);
-			printf("  ");
-			get_device_info(vendor_id, device_id, pci_subsystem_vendor_id, pci_subsystem_id,
-				&devShort, &devFull);
-			if (!devShort && !devFull) {
-				printf("device %04x: Unknown\n", device_id);
-			} else if (devShort && devFull) {
-				printf("device %04x: %s (%s)\n", device_id,
-					devShort, devFull);
-			} else {
-				printf("device %04x: %s\n", device_id,
-					devShort ? devShort : devFull);
+				put_level(level);
+				printf("  ");
+				get_device_info(vendor_id, device_id, pci_subsystem_vendor_id,
+					pci_subsystem_id, &devShort, &devFull);
+				if (!devShort && !devFull)
+					printf("device %04x: Unknown\n", device_id);
+				else if (devShort && devFull)
+					printf("device %04x: %s (%s)\n", device_id, devShort, devFull);
+				else
+					printf("device %04x: %s\n", device_id, devShort ? devShort : devFull);
 			}
 			new_level = level + 1;
 			break;
@@ -311,30 +271,29 @@ display_device(device_node_cookie *node, uint8 level)
 			put_level(level);
 			printf("  vendor %15s\tmodel %15s\ttype %s\n", scsi_vendor,
 				scsi_product, get_scsi_device_type(scsi_type));
-
 			new_level = level + 1;
 			break;
-
 		case BUS_USB:
 			{
 				printf("\n");
 				char classInfo[128];
-				usb_get_class_info(usb_class_base_id, usb_class_sub_id, usb_class_proto_id,
-					classInfo, sizeof(classInfo));
+				usb_get_class_info(usb_class_base_id, usb_class_sub_id,
+					usb_class_proto_id, classInfo, sizeof(classInfo));
 				put_level(level);
 				printf("device %s [%x|%x|%x]\n", classInfo, usb_class_base_id,
 					usb_class_sub_id, usb_class_proto_id);
-
 				put_level(level);
 				printf("  ");
 				const char* vendorName = NULL;
 				const char* deviceName = NULL;
 				usb_get_vendor_info(vendor_id, &vendorName);
 				usb_get_device_info(vendor_id, device_id, &deviceName);
-				printf("vendor %04x: %s\n", vendor_id, vendorName != NULL ? vendorName : "Unknown");
+				printf("vendor %04x: %s\n", vendor_id,
+					vendorName != NULL ? vendorName : "Unknown");
 				put_level(level);
 				printf("  ");
-				printf("device %04x: %s\n", device_id, deviceName != NULL ? deviceName : "Unknown");
+				printf("device %04x: %s\n", device_id,
+					deviceName != NULL ? deviceName : "Unknown");
 				new_level = level + 1;
 				break;
 			}
@@ -345,18 +304,24 @@ display_device(device_node_cookie *node, uint8 level)
 
 
 static void
-display_nodes(device_node_cookie *node, uint8 level)
+display_nodes(kosm_handle_t node, uint8 level)
 {
-	status_t err;
-	device_node_cookie child = *node;
 	level = display_device(node, level);
 
-	if (get_child(&child) != B_OK)
+	kosm_handle_t child;
+	if (get_child(node, &child) != B_OK)
 		return;
 
 	do {
-		display_nodes(&child, level);
-	} while ((err = get_next_child(&child)) == B_OK);
+		display_nodes(child, level);
+		kosm_handle_t next;
+		if (get_next_child(node, child, &next) != B_OK) {
+			close_node(child);
+			break;
+		}
+		close_node(child);
+		child = next;
+	} while (true);
 }
 
 
@@ -364,10 +329,10 @@ int
 main(int argc, char **argv)
 {
 	status_t error;
-	device_node_cookie root;
+	kosm_handle_t root;
 
 	if ((error = init_dm_wrapper()) < 0) {
-		printf("Error initializing device manager (%s)\n", strerror(error));
+		printf("Error initializing DeviceKeeper (%s)\n", strerror(error));
 		return error;
 	}
 
@@ -382,14 +347,18 @@ main(int argc, char **argv)
 		}
 	}
 
-	if (gMode == DUMP_MODE) {
-		get_root(&root);
-		dump_nodes(&root, 0);
-	} else {
-		get_root(&root);
-		display_nodes(&root, 0);
+	if (get_root(&root) != B_OK) {
+		printf("Error: cannot get root node\n");
+		return 1;
 	}
 
+	if (gMode == DUMP_MODE) {
+		dump_nodes(root, 0);
+	} else {
+		display_nodes(root, 0);
+	}
+
+	close_node(root);
 	uninit_dm_wrapper();
 
 	return 0;
