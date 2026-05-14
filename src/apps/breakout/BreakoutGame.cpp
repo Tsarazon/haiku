@@ -2,7 +2,7 @@
  * Copyright 2026 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * Breakout Game - KosmVG test application
+ * Breakout Game - KosmCG test application
  */
 
 #include "BreakoutView.h"
@@ -15,7 +15,7 @@ class BreakoutWindow : public BWindow {
 public:
 	BreakoutWindow()
 		:
-		BWindow(BRect(100, 100, 899, 699), "KosmVG Breakout",
+		BWindow(BRect(100, 100, 899, 699), "KosmCG Breakout",
 			B_TITLED_WINDOW, B_QUIT_ON_WINDOW_CLOSE)
 	{
 		AddChild(new BreakoutView());

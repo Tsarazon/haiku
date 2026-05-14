@@ -2,45 +2,28 @@
 #define POLYCLIP_HPP
 
 /// @file polyclip.hpp
-/// @brief Martinez-Rueda polygon clipping library.
+/// @brief Polygon boolean operations (intersection, union, difference, xor).
 ///
-/// Computes boolean operations (intersection, union, difference, xor)
-/// on two polygons represented as sets of contours.  Each contour is a
-/// simple closed polyline; a Polygon may contain multiple contours
-/// including holes.
+/// Operates on polygons represented as sets of contours; each contour is a
+/// simple closed polyline, and a Polygon may hold several contours including
+/// holes. The implementation builds a planar subdivision (DCEL) of the two
+/// inputs and classifies its faces by winding number.
 ///
-/// Usage:
 /// @code
 ///   polyclip::Polygon subject, clip;
 ///   // ... populate contours ...
 ///   auto result = polyclip::compute(polyclip::Operation::Union, subject, clip);
-///   double filled = result.area();   // works directly, even with holes
+///   double filled = result.area();   // correct even with holes
 /// @endcode
 ///
-/// @par Hole classification
-/// compute() establishes the (outer CCW, holes CW) convention on its
-/// result automatically by calling compute_holes() before returning.
-/// This guarantees that area() reports the correctly filled region and
-/// is_hole() returns meaningful values without an extra user step.
-/// The cost is O(n^2) in the number of output contours, negligible for
-/// typical results.  If you build a Polygon manually (without compute())
-/// and need hole classification, call compute_holes() yourself.
+/// @par Coordinates
+/// Input must be in device space (post-transform). Computed intersection
+/// points are snapped to a 1e-7 grid. Keep |x|, |y| < 1e6 for comfortable
+/// numerical headroom; 1e7 is the hard bound (asserted in debug builds),
+/// beyond which coincidence detection breaks down.
 ///
-/// Self-intersecting contours: call decompose() before compute() to split
-/// self-intersecting contours into simple ones.  Without decomposition,
-/// self-intersecting input may silently lose geometry.
-///
-/// @par Coordinate contract
-/// Input coordinates must be in **device space** (post-transform).
-/// The library internally snaps computed intersection points to a grid
-/// of spacing 1e-7, which provides ~3 decimal digits of headroom for
-/// typical screen coordinates (0-4096).
-///
-/// @par Coordinate range
-/// Recommended safe range: |x|, |y| < 1e6 (snap grid has ~860x ULP
-/// of headroom).  Hard upper bound: 1e7, beyond which numerical
-/// coincidence detection breaks down.  Debug builds assert the hard
-/// bound; staying inside the safe range is the caller's responsibility.
+/// See compute(), decompose() and compute_holes() for the input contracts
+/// around self-intersecting contours and hole orientation.
 
 #include <vector>
 #include <span>
@@ -83,13 +66,9 @@ enum class Operation : uint8_t {
 };
 
 /// Fill rule for determining polygon interior.
-///
-/// EvenOdd: a point is inside if a ray from it crosses an odd number
-///     of edges.  SVG/PDF default.  Original Martinez-Rueda behavior.
-///
-/// NonZero: a point is inside if the net signed crossing count (winding
-///     number) is non-zero.  Required for TrueType glyphs, many icon
-///     formats, and Core Graphics kCGPathFillStrokeWinding.
+///   EvenOdd: inside if a ray crosses an odd number of edges (SVG/PDF default).
+///   NonZero: inside if the winding number is non-zero (TrueType glyphs,
+///            many icon formats, Core Graphics winding fill).
 enum class FillRule : uint8_t {
     EvenOdd,
     NonZero
@@ -166,10 +145,9 @@ public:
 
     [[nodiscard]] Rect bbox() const noexcept;
 
-    /// Total signed area of the polygon: the actual filled region with
-    /// holes subtracted.  Polygons returned by compute() are ready to
-    /// query directly; manually-constructed polygons need an explicit
-    /// compute_holes() call first to establish hole orientation.
+    /// Total filled area: the sum of contour areas with holes subtracted.
+    /// Polygons from compute() are ready to query directly; hand-built
+    /// polygons need compute_holes() first to orient their holes.
     [[nodiscard]] double area() const noexcept;
 
     Contour& operator[](std::size_t i) { return m_contours[i]; }
@@ -181,21 +159,18 @@ public:
     auto begin() const { return m_contours.begin(); }
     auto end() const { return m_contours.end(); }
 
-    /// Classify contours as outer boundaries or holes via point-in-polygon
-    /// containment, and normalize orientation (outer CCW, holes CW) so
-    /// that area() reports the correctly filled region.  compute() calls
-    /// this automatically before returning; you only need to call it
-    /// explicitly on manually-constructed polygons.  Cost is O(n^2) in
-    /// the number of contours.
+    /// Classify contours as outer boundaries or holes by containment, and
+    /// normalize orientation (outer CCW, holes CW) so area() reports the
+    /// filled region. compute() does this automatically; call it yourself
+    /// on hand-built polygons. O(n^2) in the number of contours.
     void compute_holes();
 
-    /// Check all contours for self-intersections.  O(n log n) per contour.
+    /// Check every contour for self-intersection. O(n log n) per contour.
     [[nodiscard]] bool validate() const;
 
-    /// Decompose self-intersecting contours into simple contours.
-    /// Call before compute() if input may contain self-intersections.
-    /// Iterates up to MaxDecomposeDepth times; deeply nested
-    /// self-intersections may need multiple passes to fully resolve.
+    /// Split self-intersecting contours into simple ones. Call before
+    /// compute() if the input may self-intersect. Runs a bounded number of
+    /// passes, since deeply nested self-intersections can need more than one.
     void decompose(FillRule rule = FillRule::EvenOdd);
 
     /// Remove contours with fewer than 3 vertices and sanitize all
@@ -206,16 +181,12 @@ public:
 private:
     std::vector<Contour> m_contours;
 
-    /// Single decomposition pass over m_contours.  Returns true if at
-    /// least one contour was actually split.  Used internally by
-    /// decompose() to drive the bounded retry loop.
+    /// One decomposition pass. Returns true if any contour was split.
     bool decompose_one_pass(FillRule rule);
 };
 
-/// Perform a boolean operation on two polygons.
-///
-/// Both @p subject and @p clip should consist of simple contours.
-/// Call decompose() first if needed.
+/// Perform a boolean operation on two polygons. Both inputs should consist
+/// of simple contours; call decompose() first if they might not.
 [[nodiscard]] Polygon compute(Operation op, const Polygon& subject, const Polygon& clip,
                               FillRule rule = FillRule::EvenOdd);
 

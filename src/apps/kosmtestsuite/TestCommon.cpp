@@ -164,6 +164,47 @@ run_benchmark(bench_func_t func, int runs, int warmup)
 }
 
 
+static void
+sort_bigtime(bigtime_t* arr, size_t n)
+{
+	// Insertion sort — n is in the hundreds for our use,
+	// avoids a generic-qsort dependency in this layer.
+	for (size_t i = 1; i < n; i++) {
+		bigtime_t key = arr[i];
+		size_t j = i;
+		while (j > 0 && arr[j - 1] > key) {
+			arr[j] = arr[j - 1];
+			j--;
+		}
+		arr[j] = key;
+	}
+}
+
+
+LatencyStats
+compute_latency_stats(bigtime_t* samples, size_t count)
+{
+	LatencyStats stats = {};
+	stats.count = count;
+	if (count == 0)
+		return stats;
+
+	sort_bigtime(samples, count);
+
+	stats.min = samples[0];
+	stats.max = samples[count - 1];
+	stats.p50 = samples[count / 2];
+	stats.p95 = samples[(count * 95) / 100];
+	stats.p99 = samples[(count * 99) / 100];
+
+	bigtime_t sum = 0;
+	for (size_t i = 0; i < count; i++)
+		sum += samples[i];
+	stats.mean = sum / (bigtime_t)count;
+	return stats;
+}
+
+
 void
 run_test(const TestEntry& entry)
 {

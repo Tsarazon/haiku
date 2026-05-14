@@ -135,6 +135,23 @@ typedef double (*bench_func_t)();	// returns ops/sec for one iteration
 BenchStats	run_benchmark(bench_func_t func, int runs, int warmup);
 
 
+// Latency distribution helper — sorts samples and reports percentiles.
+// Used by sustained-pacing and QoS tests where worst-case max is misleading
+// and only percentiles capture the realistic behavior.
+struct LatencyStats {
+	bigtime_t	p50;
+	bigtime_t	p95;
+	bigtime_t	p99;
+	bigtime_t	min;
+	bigtime_t	max;
+	bigtime_t	mean;
+	size_t		count;
+};
+
+// Note: this sorts the samples array in place.
+LatencyStats	compute_latency_stats(bigtime_t* samples, size_t count);
+
+
 // Trace file management
 void	open_trace(const char* filename);
 void	close_trace();

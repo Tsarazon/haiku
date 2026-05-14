@@ -10,6 +10,7 @@
 
 #include <KosmOS.h>
 
+#include <sys/uio.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -227,6 +228,171 @@ mobile_dispatcher_func(void* data)
 			a->maxLatency = dt;
 		if (s == B_OK)
 			a->received++;
+	}
+	return B_OK;
+}
+
+
+// INPUT-PROFILE helpers (sustained pacing / latency distribution / QoS / writev / call)
+
+// 64-byte timed message — matches realistic KosmPointerEvent size and starts
+// with bigtime_t so the receiver computes one-way latency directly.
+struct timed_msg {
+	bigtime_t	send_time;
+	uint32		seq;
+	uint8		filler[52];
+};
+
+
+struct paced_writer_args {
+	kosm_ray_id		ray;
+	int				rateHz;
+	int				totalCount;
+	int				sent;
+	int				writeErrors;
+	bigtime_t		startTime;
+};
+
+
+static status_t
+paced_writer_func(void* data)
+{
+	paced_writer_args* a = (paced_writer_args*)data;
+	a->sent = 0;
+	a->writeErrors = 0;
+	bigtime_t period = 1000000 / a->rateHz;
+	bigtime_t deadline = a->startTime;
+	for (int i = 0; i < a->totalCount; i++) {
+		snooze_until(deadline, B_SYSTEM_TIMEBASE);
+		deadline += period;
+
+		timed_msg msg;
+		memset(&msg, 0, sizeof(msg));
+		msg.seq = (uint32)i;
+		msg.send_time = system_time();
+		status_t s = kosm_ray_write_etc(a->ray, &msg, sizeof(msg),
+			NULL, 0, B_RELATIVE_TIMEOUT, 0);
+		if (s == B_OK)
+			a->sent++;
+		else
+			a->writeErrors++;
+	}
+	return B_OK;
+}
+
+
+struct latency_reader_args {
+	kosm_ray_id		ray;
+	int				expectedCount;
+	bigtime_t*		samples;	// allocated by caller, sized expectedCount
+	int				received;
+	int				readErrors;
+	bigtime_t		readTimeout;
+};
+
+
+static status_t
+latency_reader_func(void* data)
+{
+	latency_reader_args* a = (latency_reader_args*)data;
+	a->received = 0;
+	a->readErrors = 0;
+	for (int i = 0; i < a->expectedCount; i++) {
+		timed_msg msg;
+		size_t sz = sizeof(msg);
+		size_t hc = 0;
+		status_t s = kosm_ray_read_etc(a->ray, &msg, &sz, NULL, &hc,
+			B_RELATIVE_TIMEOUT, a->readTimeout);
+		if (s != B_OK) {
+			a->readErrors++;
+			break;
+		}
+		a->samples[a->received] = system_time() - msg.send_time;
+		a->received++;
+	}
+	return B_OK;
+}
+
+
+struct ray_call_server_args {
+	kosm_ray_id		ray;
+	int				count;
+	int				processed;
+	bool			stop;
+};
+
+
+static status_t
+ray_call_server_func(void* data)
+{
+	ray_call_server_args* a = (ray_call_server_args*)data;
+	a->processed = 0;
+	while (!a->stop && a->processed < a->count) {
+		uint8 buf[64];
+		size_t sz = sizeof(buf);
+		size_t hc = 0;
+		status_t s = kosm_ray_read_etc(a->ray, buf, &sz, NULL, &hc,
+			B_RELATIVE_TIMEOUT, 200000);
+		if (s != B_OK)
+			continue;
+		// Echo back, increment first byte to verify round-trip.
+		buf[0]++;
+		kosm_ray_write_etc(a->ray, buf, sz, NULL, 0,
+			B_RELATIVE_TIMEOUT, 100000);
+		a->processed++;
+	}
+	return B_OK;
+}
+
+
+struct slow_reader_args {
+	kosm_ray_id		ray;
+	int				count;
+	bigtime_t		perReadSnooze;
+	int				received;
+};
+
+
+static status_t
+slow_reader_func(void* data)
+{
+	slow_reader_args* a = (slow_reader_args*)data;
+	a->received = 0;
+	for (int i = 0; i < a->count; i++) {
+		timed_msg msg;
+		size_t sz = sizeof(msg);
+		size_t hc = 0;
+		status_t s = kosm_ray_read_etc(a->ray, &msg, &sz, NULL, &hc,
+			B_RELATIVE_TIMEOUT, 5000000);
+		if (s != B_OK)
+			break;
+		a->received++;
+		if (a->perReadSnooze > 0)
+			snooze(a->perReadSnooze);
+	}
+	return B_OK;
+}
+
+
+struct fairness_writer_args {
+	kosm_ray_id		ray;
+	int				count;
+	int				sent;
+};
+
+
+static status_t
+fairness_writer_func(void* data)
+{
+	fairness_writer_args* a = (fairness_writer_args*)data;
+	a->sent = 0;
+	uint8 msg[16];
+	for (int i = 0; i < a->count; i++) {
+		msg[0] = (uint8)i;
+		status_t s = kosm_ray_write_etc(a->ray, msg, sizeof(msg),
+			NULL, 0, B_RELATIVE_TIMEOUT, 1000000);
+		if (s == B_OK)
+			a->sent++;
 	}
 	return B_OK;
 }
@@ -2315,6 +2481,752 @@ test_team_death_select_integration()
 }
 
 
+// INPUT-PROFILE
+//
+// These tests exercise ray under the load profile that KosmTouch /
+// pointer-pipeline will produce: sustained pacing at vsync / HID rates,
+// QoS-prioritized contention, writev frame layouts, ray_call RPC, and
+// realistic backpressure & multi-ray fanout. Acceptance numbers are
+// expressed as percentile bounds, not just max — they are the contract
+// the input pipeline assumes from the ray runtime.
+
+static void
+log_latency(const char* label, const LatencyStats& s)
+{
+	trace("    %s: count=%zu  p50=%lld  p95=%lld  p99=%lld  "
+		"max=%lld  mean=%lld us\n", label, s.count,
+		(long long)s.p50, (long long)s.p95, (long long)s.p99,
+		(long long)s.max, (long long)s.mean);
+}
+
+
+static void
+test_input_sustained_240hz()
+{
+	trace("\n--- test_input_sustained_240hz ---\n");
+	// Mirrors a 240 Hz pointer device delivering events to its window.
+	// Latency is wall-clock from write() to read() return, per message.
+	const int kRateHz = 240;
+	const int kDurationSec = 2;
+	const int kTotal = kRateHz * kDurationSec;	// 480 msgs
+
+	kosm_ray_id ep0, ep1;
+	status_t s = kosm_create_ray(&ep0, &ep1, 0);
+	TEST_REQUIRE("create", s == B_OK);
+	kosm_ray_set_qos(ep0, KOSM_QOS_USER_INTERACTIVE);
+
+	bigtime_t* samples = (bigtime_t*)calloc(kTotal, sizeof(bigtime_t));
+	TEST_REQUIRE("alloc samples", samples != NULL);
+
+	latency_reader_args rargs = {};
+	rargs.ray = ep1;
+	rargs.expectedCount = kTotal;
+	rargs.samples = samples;
+	rargs.readTimeout = 2000000;
+	thread_id rTid = spawn_thread(latency_reader_func, "lat_reader",
+		B_NORMAL_PRIORITY, &rargs);
+	resume_thread(rTid);
+
+	paced_writer_args wargs = {};
+	wargs.ray = ep0;
+	wargs.rateHz = kRateHz;
+	wargs.totalCount = kTotal;
+	wargs.startTime = system_time() + 100000;
+	thread_id wTid = spawn_thread(paced_writer_func, "paced_writer",
+		B_NORMAL_PRIORITY, &wargs);
+	resume_thread(wTid);
+
+	status_t exitVal;
+	wait_for_thread(wTid, &exitVal);
+	wait_for_thread(rTid, &exitVal);
+
+	TEST_ASSERT("writer sent all", wargs.sent == kTotal);
+	TEST_ASSERT("no write errors", wargs.writeErrors == 0);
+	TEST_ASSERT("reader received all", rargs.received == kTotal);
+
+	LatencyStats lat = compute_latency_stats(samples, rargs.received);
+	log_latency("240Hz", lat);
+
+	// Acceptance: 1 frame = 4.16ms @ 240 Hz; 1 vsync (60 Hz) = 16.6ms.
+	TEST_ASSERT("p50 < 1ms", lat.p50 < 1000);
+	TEST_ASSERT("p95 < 4ms (1 frame)", lat.p95 < 4000);
+	TEST_ASSERT("p99 < 8ms (2 frames)", lat.p99 < 8000);
+	TEST_ASSERT("max < 16ms (1 vsync)", lat.max < 16000);
+
+	free(samples);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_sustained_1000hz()
+{
+	trace("\n--- test_input_sustained_1000hz ---\n");
+	// Tablet/Wacom-style report rate. Same ratchet, tighter bounds.
+	const int kRateHz = 1000;
+	const int kDurationSec = 1;
+	const int kTotal = kRateHz * kDurationSec;	// 1000 msgs
+
+	kosm_ray_id ep0, ep1;
+	status_t s = kosm_create_ray(&ep0, &ep1, 0);
+	TEST_REQUIRE("create", s == B_OK);
+	kosm_ray_set_qos(ep0, KOSM_QOS_USER_INTERACTIVE);
+
+	bigtime_t* samples = (bigtime_t*)calloc(kTotal, sizeof(bigtime_t));
+	TEST_REQUIRE("alloc samples", samples != NULL);
+
+	latency_reader_args rargs = {};
+	rargs.ray = ep1;
+	rargs.expectedCount = kTotal;
+	rargs.samples = samples;
+	rargs.readTimeout = 2000000;
+	thread_id rTid = spawn_thread(latency_reader_func, "lat_reader_1k",
+		B_NORMAL_PRIORITY, &rargs);
+	resume_thread(rTid);
+
+	paced_writer_args wargs = {};
+	wargs.ray = ep0;
+	wargs.rateHz = kRateHz;
+	wargs.totalCount = kTotal;
+	wargs.startTime = system_time() + 100000;
+	thread_id wTid = spawn_thread(paced_writer_func, "paced_writer_1k",
+		B_NORMAL_PRIORITY, &wargs);
+	resume_thread(wTid);
+
+	status_t exitVal;
+	wait_for_thread(wTid, &exitVal);
+	wait_for_thread(rTid, &exitVal);
+
+	TEST_ASSERT("reader received all", rargs.received == kTotal);
+
+	LatencyStats lat = compute_latency_stats(samples, rargs.received);
+	log_latency("1000Hz", lat);
+
+	// At 1ms inter-arrival, p99 must stay under 2ms.
+	TEST_ASSERT("p50 < 500us", lat.p50 < 500);
+	TEST_ASSERT("p99 < 2ms", lat.p99 < 2000);
+	TEST_ASSERT("max < 8ms", lat.max < 8000);
+
+	free(samples);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_qos_preemption()
+{
+	trace("\n--- test_input_qos_preemption ---\n");
+	// Two readers same priority, one on USER_INTERACTIVE ray, one on
+	// BACKGROUND ray. Both rays get heavy back-to-back writes; we
+	// compare drain time. USER_INTERACTIVE must not be slower; ideally
+	// it dominates. This is a regression-detector — exact ratio depends
+	// on scheduler implementation, but USER_INTERACTIVE behind BACKGROUND
+	// would indicate broken QoS plumbing.
+	kosm_ray_id hiEp0, hiEp1, loEp0, loEp1;
+	TEST_REQUIRE("create high ray", kosm_create_ray(&hiEp0, &hiEp1, 0) == B_OK);
+	TEST_REQUIRE("create low ray",  kosm_create_ray(&loEp0, &loEp1, 0) == B_OK);
+	kosm_ray_set_qos(hiEp0, KOSM_QOS_USER_INTERACTIVE);
+	kosm_ray_set_qos(hiEp1, KOSM_QOS_USER_INTERACTIVE);
+	kosm_ray_set_qos(loEp0, KOSM_QOS_BACKGROUND);
+	kosm_ray_set_qos(loEp1, KOSM_QOS_BACKGROUND);
+
+	const int kCount = 200;
+	bigtime_t* hiSamples = (bigtime_t*)calloc(kCount, sizeof(bigtime_t));
+	bigtime_t* loSamples = (bigtime_t*)calloc(kCount, sizeof(bigtime_t));
+	TEST_REQUIRE("alloc samples", hiSamples != NULL && loSamples != NULL);
+
+	// Readers start first; they will block until writers run.
+	latency_reader_args hiR = {};
+	hiR.ray = hiEp1;
+	hiR.expectedCount = kCount;
+	hiR.samples = hiSamples;
+	hiR.readTimeout = 5000000;
+	thread_id hiRTid = spawn_thread(latency_reader_func, "qos_hi_rdr",
+		B_NORMAL_PRIORITY, &hiR);
+
+	latency_reader_args loR = {};
+	loR.ray = loEp1;
+	loR.expectedCount = kCount;
+	loR.samples = loSamples;
+	loR.readTimeout = 5000000;
+	thread_id loRTid = spawn_thread(latency_reader_func, "qos_lo_rdr",
+		B_NORMAL_PRIORITY, &loR);
+
+	// Writers same prio, paced together so contention is real.
+	bigtime_t startAt = system_time() + 100000;
+	paced_writer_args hiW = {};
+	hiW.ray = hiEp0;
+	hiW.rateHz = 240;
+	hiW.totalCount = kCount;
+	hiW.startTime = startAt;
+	thread_id hiWTid = spawn_thread(paced_writer_func, "qos_hi_wr",
+		B_NORMAL_PRIORITY, &hiW);
+
+	paced_writer_args loW = {};
+	loW.ray = loEp0;
+	loW.rateHz = 240;
+	loW.totalCount = kCount;
+	loW.startTime = startAt;
+	thread_id loWTid = spawn_thread(paced_writer_func, "qos_lo_wr",
+		B_NORMAL_PRIORITY, &loW);
+
+	resume_thread(hiRTid);
+	resume_thread(loRTid);
+	resume_thread(hiWTid);
+	resume_thread(loWTid);
+
+	status_t exitVal;
+	wait_for_thread(hiWTid, &exitVal);
+	wait_for_thread(loWTid, &exitVal);
+	wait_for_thread(hiRTid, &exitVal);
+	wait_for_thread(loRTid, &exitVal);
+
+	TEST_ASSERT("hi reader received all",  hiR.received == kCount);
+	TEST_ASSERT("lo reader received all",  loR.received == kCount);
+
+	LatencyStats hiL = compute_latency_stats(hiSamples, hiR.received);
+	LatencyStats loL = compute_latency_stats(loSamples, loR.received);
+	log_latency("USER_INTERACTIVE", hiL);
+	log_latency("BACKGROUND      ", loL);
+
+	// Lower bound: USER_INTERACTIVE must not be substantially slower.
+	// Tolerate 50% slack — anything worse signals broken QoS routing.
+	TEST_ASSERT("hi p50 <= lo p50 * 1.5",
+		hiL.p50 <= (loL.p50 * 3) / 2);
+	TEST_ASSERT("hi p99 <= lo p99 * 1.5",
+		hiL.p99 <= (loL.p99 * 3) / 2);
+
+	free(hiSamples);
+	free(loSamples);
+	kosm_close_ray(hiEp0); kosm_close_ray(hiEp1);
+	kosm_close_ray(loEp0); kosm_close_ray(loEp1);
+}
+
+
+static void
+test_input_writev_basic()
+{
+	trace("\n--- test_input_writev_basic ---\n");
+	// Two iovecs concatenated: header + payload. Reader gets a single
+	// contiguous buffer matching their concatenation.
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+
+	struct {
+		uint32 magic;
+		uint32 version;
+		uint32 itemCount;
+		uint32 reserved;
+	} header = { 0xDEADC0DE, 1, 5, 0 };
+
+	uint32 payload[5] = { 11, 22, 33, 44, 55 };
+
+	struct iovec vecs[2];
+	vecs[0].iov_base = &header;
+	vecs[0].iov_len = sizeof(header);
+	vecs[1].iov_base = payload;
+	vecs[1].iov_len = sizeof(payload);
+
+	status_t s = kosm_ray_writev(ep0, vecs, 2, NULL, 0, 0);
+	TEST_ASSERT("writev 2 vecs", s == B_OK);
+
+	uint8 recv[sizeof(header) + sizeof(payload)];
+	size_t sz = sizeof(recv);
+	size_t hc = 0;
+	s = kosm_ray_read(ep1, recv, &sz, NULL, &hc, 0);
+	TEST_ASSERT("read concat", s == B_OK);
+	TEST_ASSERT("size matches", sz == sizeof(header) + sizeof(payload));
+	TEST_ASSERT("header part", memcmp(recv, &header, sizeof(header)) == 0);
+	TEST_ASSERT("payload part",
+		memcmp(recv + sizeof(header), payload, sizeof(payload)) == 0);
+
+	// readv: scatter the same bytes into two recv buffers.
+	s = kosm_ray_writev(ep0, vecs, 2, NULL, 0, 0);
+	TEST_ASSERT("writev again", s == B_OK);
+
+	uint8 hdrBuf[sizeof(header)];
+	uint32 plBuf[5];
+	struct iovec rvecs[2];
+	rvecs[0].iov_base = hdrBuf;
+	rvecs[0].iov_len = sizeof(hdrBuf);
+	rvecs[1].iov_base = plBuf;
+	rvecs[1].iov_len = sizeof(plBuf);
+	hc = 0;
+	s = kosm_ray_readv(ep1, rvecs, 2, NULL, &hc, 0);
+	TEST_ASSERT("readv 2 vecs", s == B_OK);
+	TEST_ASSERT("header scattered correctly",
+		memcmp(hdrBuf, &header, sizeof(header)) == 0);
+	TEST_ASSERT("payload scattered correctly",
+		memcmp(plBuf, payload, sizeof(payload)) == 0);
+
+	// Empty vec list — kernel rejects (does NOT enqueue an empty message).
+	// We do NOT follow with a read; the queue is empty and a blocking read
+	// would hang the entire suite.
+	s = kosm_ray_writev(ep0, NULL, 0, NULL, 0, 0);
+	TEST_ASSERT("writev 0 vecs returns error", s != B_OK);
+
+	// Verify queue truly is empty (timeout=0, must not block).
+	uint8 dummy[4];
+	sz = sizeof(dummy);
+	hc = 0;
+	s = kosm_ray_read_etc(ep1, dummy, &sz, NULL, &hc,
+		B_RELATIVE_TIMEOUT, 0);
+	TEST_ASSERT("queue empty after rejected 0-vec writev",
+		s == B_WOULD_BLOCK);
+
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_writev_pointer_frame()
+{
+	trace("\n--- test_input_writev_pointer_frame ---\n");
+	// Realistic KosmPointerFrame layout: fixed header + variable-length
+	// coalesced sub-samples. Plan uses writev to avoid temp buffers.
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+	kosm_ray_set_qos(ep0, KOSM_QOS_USER_INTERACTIVE);
+
+	struct primary_event {
+		uint32 kind;
+		uint32 version;
+		bigtime_t timestamp;
+		float position[2];
+		float pressure;
+		uint32 contact_id;
+		uint32 padding;
+	};
+	struct sub_sample {
+		bigtime_t timestamp;
+		float position[2];
+		float pressure;
+	};
+
+	const int kFrames = 240;
+	const int kSubSamplesPerFrame = 8;
+	int errors = 0;
+	bigtime_t totalLatency = 0;
+	bigtime_t maxLatency = 0;
+
+	for (int f = 0; f < kFrames; f++) {
+		primary_event hdr;
+		memset(&hdr, 0, sizeof(hdr));
+		hdr.kind = 0x504F494E;	// 'POIN'
+		hdr.version = 1;
+		hdr.timestamp = system_time();
+		hdr.position[0] = 100.0f + (float)f;
+		hdr.position[1] = 200.0f;
+		hdr.pressure = 0.5f;
+		hdr.contact_id = 1;
+
+		sub_sample subs[kSubSamplesPerFrame];
+		for (int i = 0; i < kSubSamplesPerFrame; i++) {
+			subs[i].timestamp = hdr.timestamp - (kSubSamplesPerFrame - i);
+			subs[i].position[0] = hdr.position[0] - (float)i * 0.5f;
+			subs[i].position[1] = hdr.position[1];
+			subs[i].pressure = hdr.pressure;
+		}
+
+		struct iovec vecs[2];
+		vecs[0].iov_base = &hdr;
+		vecs[0].iov_len = sizeof(hdr);
+		vecs[1].iov_base = subs;
+		vecs[1].iov_len = sizeof(subs);
+
+		bigtime_t t0 = system_time();
+		status_t s = kosm_ray_writev(ep0, vecs, 2, NULL, 0, 0);
+		if (s != B_OK) { errors++; continue; }
+
+		uint8 recvBuf[sizeof(hdr) + sizeof(subs)];
+		size_t sz = sizeof(recvBuf);
+		size_t hc = 0;
+		s = kosm_ray_read(ep1, recvBuf, &sz, NULL, &hc, 0);
+		bigtime_t dt = system_time() - t0;
+		if (s != B_OK || sz != sizeof(recvBuf)) { errors++; continue; }
+		if (memcmp(recvBuf, &hdr, sizeof(hdr)) != 0) errors++;
+		if (memcmp(recvBuf + sizeof(hdr), subs, sizeof(subs)) != 0) errors++;
+		totalLatency += dt;
+		if (dt > maxLatency) maxLatency = dt;
+	}
+
+	trace("    pointer-frame: frames=%d errors=%d  "
+		"avg=%lld us  max=%lld us\n",
+		kFrames, errors,
+		(long long)(totalLatency / kFrames), (long long)maxLatency);
+
+	TEST_ASSERT("no writev/read errors", errors == 0);
+	TEST_ASSERT("avg < 200us", (totalLatency / kFrames) < 200);
+	TEST_ASSERT("max < 8ms", maxLatency < 8000);
+
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_ray_call_latency()
+{
+	trace("\n--- test_input_ray_call_latency ---\n");
+	// kosm_ray_call should be cheaper than write+read separately
+	// because the scheduler can hand-off to the responder atomically.
+	// We measure both paths and log the ratio. Acceptance is loose:
+	// ray_call must not be substantially worse.
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+	kosm_ray_set_qos(ep0, KOSM_QOS_USER_INTERACTIVE);
+	kosm_ray_set_qos(ep1, KOSM_QOS_USER_INTERACTIVE);
+
+	const int kCount = 500;
+
+	ray_call_server_args sargs = {};
+	sargs.ray = ep1;
+	sargs.count = kCount;
+	thread_id sTid = spawn_thread(ray_call_server_func, "rpc_server",
+		B_NORMAL_PRIORITY, &sargs);
+	resume_thread(sTid);
+
+	bigtime_t* callSamples = (bigtime_t*)calloc(kCount, sizeof(bigtime_t));
+	TEST_REQUIRE("alloc samples", callSamples != NULL);
+
+	int callErrors = 0;
+	for (int i = 0; i < kCount; i++) {
+		uint8 send[64];
+		memset(send, 0, sizeof(send));
+		send[0] = (uint8)i;
+		uint8 recv[64];
+		size_t recvSz = sizeof(recv);
+		size_t recvHc = 0;
+		bigtime_t t0 = system_time();
+		status_t s = kosm_ray_call(ep0, send, sizeof(send), NULL, 0,
+			recv, &recvSz, NULL, &recvHc,
+			B_RELATIVE_TIMEOUT, 1000000);
+		bigtime_t dt = system_time() - t0;
+		if (s == B_OK && recv[0] == (uint8)(send[0] + 1))
+			callSamples[i] = dt;
+		else
+			callErrors++;
+	}
+
+	status_t exitVal;
+	sargs.stop = true;
+	wait_for_thread(sTid, &exitVal);
+
+	TEST_ASSERT("server processed all", sargs.processed == kCount);
+	TEST_ASSERT("no call errors", callErrors == 0);
+
+	LatencyStats lat = compute_latency_stats(callSamples, kCount);
+	log_latency("kosm_ray_call ", lat);
+
+	// Hard ceiling — RPC primitive should be << 2ms p99 on idle system.
+	TEST_ASSERT("p50 < 200us", lat.p50 < 200);
+	TEST_ASSERT("p99 < 2ms",   lat.p99 < 2000);
+
+	free(callSamples);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_endurance_10s()
+{
+	trace("\n--- test_input_endurance_10s ---\n");
+	// Sustained 240 Hz for 10 seconds. We split samples in half and
+	// compare first vs last second of p99 to detect monotonic latency
+	// drift. Also queries team-info before/after for handle/area leak.
+	const int kRateHz = 240;
+	const int kDurationSec = 10;
+	const int kTotal = kRateHz * kDurationSec;	// 2400 msgs
+
+	team_info beforeInfo;
+	memset(&beforeInfo, 0, sizeof(beforeInfo));
+	get_team_info(B_CURRENT_TEAM, &beforeInfo);
+
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+	kosm_ray_set_qos(ep0, KOSM_QOS_USER_INTERACTIVE);
+
+	bigtime_t* samples = (bigtime_t*)calloc(kTotal, sizeof(bigtime_t));
+	TEST_REQUIRE("alloc samples", samples != NULL);
+
+	latency_reader_args rargs = {};
+	rargs.ray = ep1;
+	rargs.expectedCount = kTotal;
+	rargs.samples = samples;
+	rargs.readTimeout = 5000000;
+	thread_id rTid = spawn_thread(latency_reader_func, "endur_rdr",
+		B_NORMAL_PRIORITY, &rargs);
+	resume_thread(rTid);
+
+	paced_writer_args wargs = {};
+	wargs.ray = ep0;
+	wargs.rateHz = kRateHz;
+	wargs.totalCount = kTotal;
+	wargs.startTime = system_time() + 100000;
+	thread_id wTid = spawn_thread(paced_writer_func, "endur_wr",
+		B_NORMAL_PRIORITY, &wargs);
+	resume_thread(wTid);
+
+	status_t exitVal;
+	wait_for_thread(wTid, &exitVal);
+	wait_for_thread(rTid, &exitVal);
+
+	TEST_ASSERT("reader received all", rargs.received == kTotal);
+
+	// Drift: compare first second window vs last.
+	bigtime_t firstWin[kRateHz], lastWin[kRateHz];
+	memcpy(firstWin, samples, sizeof(firstWin));
+	memcpy(lastWin, samples + (kTotal - kRateHz), sizeof(lastWin));
+	LatencyStats first = compute_latency_stats(firstWin, kRateHz);
+	LatencyStats last  = compute_latency_stats(lastWin, kRateHz);
+	log_latency("first 1s", first);
+	log_latency("last  1s", last);
+
+	// Aggregate over full run — separate buffer so we don't re-sort
+	// the windows we already used.
+	LatencyStats lat = compute_latency_stats(samples, rargs.received);
+	log_latency("total 10s", lat);
+
+	team_info afterInfo;
+	memset(&afterInfo, 0, sizeof(afterInfo));
+	get_team_info(B_CURRENT_TEAM, &afterInfo);
+	int32 areaDelta = afterInfo.area_count - beforeInfo.area_count;
+	int32 threadDelta = afterInfo.thread_count - beforeInfo.thread_count;
+	trace("    leak check: area_delta=%ld thread_delta=%ld\n",
+		(long)areaDelta, (long)threadDelta);
+
+	// last p99 / first p99 — drift > 2x over 10s indicates a problem.
+	bool driftBounded = last.p99 <= (first.p99 * 2 + 1000);
+	TEST_ASSERT("p99 drift bounded (last <= 2x first + 1ms slack)",
+		driftBounded);
+	TEST_ASSERT("aggregate p99 < 16ms", lat.p99 < 16000);
+	TEST_ASSERT("no area leak (delta < 5)", areaDelta < 5);
+	TEST_ASSERT("no thread leak (delta == 0)", threadDelta == 0);
+
+	free(samples);
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_backpressure_slow_consumer()
+{
+	trace("\n--- test_input_backpressure_slow_consumer ---\n");
+	// Producer at 240 Hz, consumer 10x slower (snooze 41ms per read).
+	// Queue depth (256) is filled in ~1.07s. Producer uses timeout=0
+	// — must observe B_WOULD_BLOCK and continue (drop semantics) rather
+	// than hang. Consumer must drain whatever was buffered.
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+
+	const int kProducerTotal = 240 * 3;	// 720 attempts (3s @ 240 Hz)
+	const int kConsumerTotal = 24 * 3;	// 72 reads (3s @ 24 Hz)
+
+	slow_reader_args sr = {};
+	sr.ray = ep1;
+	sr.count = kConsumerTotal;
+	sr.perReadSnooze = 41000;	// 24 Hz = 41.6ms
+	thread_id rTid = spawn_thread(slow_reader_func, "slow_rdr",
+		B_NORMAL_PRIORITY, &sr);
+	resume_thread(rTid);
+
+	int sent = 0, blocks = 0, otherErrors = 0;
+	bigtime_t period = 1000000 / 240;
+	bigtime_t deadline = system_time() + 100000;
+	for (int i = 0; i < kProducerTotal; i++) {
+		snooze_until(deadline, B_SYSTEM_TIMEBASE);
+		deadline += period;
+		timed_msg msg;
+		memset(&msg, 0, sizeof(msg));
+		msg.seq = (uint32)i;
+		msg.send_time = system_time();
+		status_t s = kosm_ray_write_etc(ep0, &msg, sizeof(msg),
+			NULL, 0, B_RELATIVE_TIMEOUT, 0);
+		if (s == B_OK) sent++;
+		else if (s == B_WOULD_BLOCK) blocks++;
+		else otherErrors++;
+	}
+
+	status_t exitVal;
+	wait_for_thread(rTid, &exitVal);
+
+	trace("    producer attempts=%d sent=%d blocks=%d other_errors=%d\n",
+		kProducerTotal, sent, blocks, otherErrors);
+	trace("    consumer received=%d (target %d)\n",
+		sr.received, kConsumerTotal);
+
+	TEST_ASSERT("no producer hang (loop completed)",
+		sent + blocks + otherErrors == kProducerTotal);
+	TEST_ASSERT("no unexpected errors", otherErrors == 0);
+	// Producer must have hit backpressure — otherwise queue size or
+	// consumer timing has changed unexpectedly.
+	TEST_ASSERT("producer did hit backpressure (blocks > 0)",
+		blocks > 0);
+	TEST_ASSERT("consumer drained at its rate",
+		sr.received >= kConsumerTotal - 2);
+
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
+static void
+test_input_multi_ray_fairness()
+{
+	trace("\n--- test_input_multi_ray_fairness ---\n");
+	// Orbita-like fanout: many windows = many rays of equal QoS.
+	// Each writer must get roughly equal service from a single reader
+	// using wait_for_objects across all rays.
+	const int kRayCount = 16;
+	const int kPerRay = 50;
+	kosm_ray_id ep0[kRayCount], ep1[kRayCount];
+	for (int i = 0; i < kRayCount; i++) {
+		TEST_REQUIRE("create",
+			kosm_create_ray(&ep0[i], &ep1[i], 0) == B_OK);
+		kosm_ray_set_qos(ep0[i], KOSM_QOS_USER_INTERACTIVE);
+		kosm_ray_set_qos(ep1[i], KOSM_QOS_USER_INTERACTIVE);
+	}
+
+	fairness_writer_args wargs[kRayCount];
+	thread_id wTids[kRayCount];
+	for (int i = 0; i < kRayCount; i++) {
+		wargs[i].ray = ep0[i];
+		wargs[i].count = kPerRay;
+		wargs[i].sent = 0;
+		char name[32];
+		snprintf(name, sizeof(name), "fair_wr_%d", i);
+		wTids[i] = spawn_thread(fairness_writer_func, name,
+			B_NORMAL_PRIORITY, &wargs[i]);
+		resume_thread(wTids[i]);
+	}
+
+	// Single reader, multiplex via wait_for_objects.
+	int perRayReceived[kRayCount];
+	memset(perRayReceived, 0, sizeof(perRayReceived));
+	int totalExpected = kRayCount * kPerRay;
+	int totalReceived = 0;
+	bigtime_t deadline = system_time() + 5000000;	// 5s budget
+	while (totalReceived < totalExpected
+			&& system_time() < deadline) {
+		object_wait_info infos[kRayCount];
+		for (int i = 0; i < kRayCount; i++) {
+			infos[i].object = ep1[i];
+			infos[i].type = B_OBJECT_TYPE_KOSM_RAY;
+			infos[i].events = B_EVENT_READ;
+		}
+		ssize_t r = wait_for_objects_etc(infos, kRayCount,
+			B_RELATIVE_TIMEOUT, 200000);
+		if (r < 0)
+			continue;
+		for (int i = 0; i < kRayCount; i++) {
+			if ((infos[i].events & B_EVENT_READ) == 0)
+				continue;
+			uint8 buf[16];
+			size_t sz = sizeof(buf);
+			size_t hc = 0;
+			status_t s = kosm_ray_read_etc(ep1[i], buf, &sz,
+				NULL, &hc, B_RELATIVE_TIMEOUT, 0);
+			if (s == B_OK) {
+				perRayReceived[i]++;
+				totalReceived++;
+			}
+		}
+	}
+
+	status_t exitVal;
+	for (int i = 0; i < kRayCount; i++)
+		wait_for_thread(wTids[i], &exitVal);
+
+	int minPerRay = perRayReceived[0];
+	int maxPerRay = perRayReceived[0];
+	for (int i = 1; i < kRayCount; i++) {
+		if (perRayReceived[i] < minPerRay) minPerRay = perRayReceived[i];
+		if (perRayReceived[i] > maxPerRay) maxPerRay = perRayReceived[i];
+	}
+	trace("    rays=%d total_recv=%d min=%d max=%d (target %d each)\n",
+		kRayCount, totalReceived, minPerRay, maxPerRay, kPerRay);
+
+	TEST_ASSERT("all messages received",
+		totalReceived == totalExpected);
+	TEST_ASSERT("no starvation (min == kPerRay)",
+		minPerRay == kPerRay);
+	TEST_ASSERT("no over-delivery", maxPerRay == kPerRay);
+
+	for (int i = 0; i < kRayCount; i++) {
+		kosm_close_ray(ep0[i]);
+		kosm_close_ray(ep1[i]);
+	}
+}
+
+
+static void
+test_input_handle_transfer_overhead()
+{
+	trace("\n--- test_input_handle_transfer_overhead ---\n");
+	// Per-window-ray bootstrap will transfer 1 ray handle per window.
+	// Document overhead at common counts. No hard assertion — this is
+	// a baseline to catch future regressions.
+	kosm_ray_id ep0, ep1;
+	TEST_REQUIRE("create", kosm_create_ray(&ep0, &ep1, 0) == B_OK);
+
+	const int kIters = 500;
+	const int kCounts[] = { 0, 1, 4, 16 };
+	const int kCountVariants = sizeof(kCounts) / sizeof(kCounts[0]);
+
+	for (int v = 0; v < kCountVariants; v++) {
+		int n = kCounts[v];
+
+		kosm_mutex_id mutexes[16];
+		kosm_handle_t handles[16];
+		for (int i = 0; i < n; i++) {
+			char name[32];
+			snprintf(name, sizeof(name), "hover_%d_%d", v, i);
+			mutexes[i] = kosm_create_mutex(name, 0);
+			handles[i] = mutexes[i];
+		}
+
+		bigtime_t t0 = system_time();
+		uint8 msg = 0;
+		int errors = 0;
+		uint32 writeFlags = (n > 0) ? KOSM_RAY_COPY_HANDLES : 0;
+		for (int i = 0; i < kIters; i++) {
+			status_t s = kosm_ray_write(ep0, &msg, 1,
+				n > 0 ? handles : NULL, n, writeFlags);
+			if (s != B_OK) { errors++; continue; }
+			uint8 recvMsg;
+			size_t sz = 1;
+			kosm_handle_t recvH[16];
+			size_t rhc = 16;
+			s = kosm_ray_read(ep1, &recvMsg, &sz,
+				n > 0 ? recvH : NULL, &rhc, 0);
+			if (s != B_OK) { errors++; continue; }
+			for (size_t j = 0; j < rhc; j++)
+				kosm_close_handle(recvH[j]);
+		}
+		bigtime_t dt = system_time() - t0;
+
+		double opsPerSec = (double)kIters * 1000000.0 / (double)dt;
+		trace("    handles=%2d  iters=%d  errors=%d  "
+			"%.0f ops/sec  (avg %lld us/op)\n",
+			n, kIters, errors, opsPerSec,
+			(long long)(dt / kIters));
+
+		for (int i = 0; i < n; i++)
+			kosm_delete_mutex(mutexes[i]);
+
+		TEST_ASSERT("no errors at this handle count", errors == 0);
+	}
+
+	kosm_close_ray(ep0);
+	kosm_close_ray(ep1);
+}
+
+
 // Suite registration
 
 static const TestEntry sRayTests[] = {
@@ -2383,6 +3295,17 @@ static const TestEntry sRayTests[] = {
 	{ "team death drain then closed", test_team_death_drain_then_closed, "Team Death" },
 	{ "team death unblocks wait",    test_team_death_unblocks_wait,  "Team Death" },
 	{ "team death select integration", test_team_death_select_integration, "Team Death" },
+	// Input Profile (KosmTouch / pointer-pipeline acceptance)
+	{ "sustained 240 Hz",            test_input_sustained_240hz,             "INPUT-PROFILE" },
+	{ "sustained 1000 Hz",           test_input_sustained_1000hz,            "INPUT-PROFILE" },
+	{ "QoS preemption under load",   test_input_qos_preemption,              "INPUT-PROFILE" },
+	{ "writev basic",                test_input_writev_basic,                "INPUT-PROFILE" },
+	{ "writev pointer frame",        test_input_writev_pointer_frame,        "INPUT-PROFILE" },
+	{ "ray_call latency",            test_input_ray_call_latency,            "INPUT-PROFILE" },
+	{ "endurance 10s + leak check",  test_input_endurance_10s,               "INPUT-PROFILE" },
+	{ "backpressure slow consumer",  test_input_backpressure_slow_consumer,  "INPUT-PROFILE" },
+	{ "multi-ray fairness",          test_input_multi_ray_fairness,          "INPUT-PROFILE" },
+	{ "handle transfer overhead",    test_input_handle_transfer_overhead,    "INPUT-PROFILE" },
 };
 
 

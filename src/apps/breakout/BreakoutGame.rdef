@@ -17,7 +17,7 @@ resource app_version {
 	internal = 0,
 
 	short_info = "Breakout Game",
-	long_info = "KosmVG Breakout Game ©2026 Haiku, Inc."
+	long_info = "KosmCG Breakout Game ©2026 Haiku, Inc."
 };
 
 resource vector_icon {

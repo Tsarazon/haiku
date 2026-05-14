@@ -2,7 +2,7 @@
  * Copyright 2026 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * Breakout Game - KosmVG test application
+ * Breakout Game - KosmCG test application
  */
 #ifndef BREAKOUT_VIEW_H
 #define BREAKOUT_VIEW_H
@@ -11,7 +11,7 @@
 
 #include <optional>
 
-#include <kosmvg.hpp>
+#include <kosmcg.hpp>
 
 class BBitmap;
 
@@ -67,18 +67,18 @@ private:
 	void				_ResetBall();
 
 	void				_Render();
-	void				_DrawBackground(kvg::BitmapContext& ctx);
-	void				_DrawBricks(kvg::BitmapContext& ctx);
-	void				_DrawPaddle(kvg::BitmapContext& ctx);
-	void				_DrawBall(kvg::BitmapContext& ctx);
-	void				_DrawHUD(kvg::BitmapContext& ctx);
-	void				_DrawGameOver(kvg::BitmapContext& ctx);
+	void				_DrawBackground(kcg::BitmapContext& ctx);
+	void				_DrawBricks(kcg::BitmapContext& ctx);
+	void				_DrawPaddle(kcg::BitmapContext& ctx);
+	void				_DrawBall(kcg::BitmapContext& ctx);
+	void				_DrawHUD(kcg::BitmapContext& ctx);
+	void				_DrawGameOver(kcg::BitmapContext& ctx);
 
 	// Rendering
 	BBitmap*						fBitmap;
-	std::optional<kvg::BitmapContext>	fCtx;
-	kvg::Font						fFont;
-	kvg::Font						fFontLarge;
+	std::optional<kcg::BitmapContext>	fCtx;
+	kcg::Font						fFont;
+	kcg::Font						fFontLarge;
 
 	// Game state
 	Brick							fBricks[kBrickCount];

@@ -2,7 +2,7 @@
  * Copyright 2026 Haiku, Inc. All rights reserved.
  * Distributed under the terms of the MIT License.
  *
- * Breakout Game - KosmVG test application
+ * Breakout Game - KosmCG test application
  */
 
 #include "BreakoutView.h"
@@ -36,8 +36,8 @@ static const float kBallRadius = 7.0f;
 static const float kSideMargin = 20.0f;
 
 static const auto kGradExtend =
-	kvg::GradientDrawingOptions::DrawsBeforeStart
-	| kvg::GradientDrawingOptions::DrawsAfterEnd;
+	kcg::GradientDrawingOptions::DrawsBeforeStart
+	| kcg::GradientDrawingOptions::DrawsAfterEnd;
 
 
 // Brick colors per row (top to bottom)
@@ -135,10 +135,10 @@ BreakoutView::MouseDown(BPoint where)
 	if (!fBall.launched) {
 		fBall.launched = true;
 		// Launch at angle depending on paddle position
-		float angle = -kvg::pi / 4.0f
-			+ (fBall.x - fPaddle.x) / fPaddle.w * kvg::pi / 4.0f;
+		float angle = -kcg::pi / 4.0f
+			+ (fBall.x - fPaddle.x) / fPaddle.w * kcg::pi / 4.0f;
 		// Clamp angle
-		angle = std::max(-kvg::pi * 0.4f, std::min(kvg::pi * 0.4f, angle));
+		angle = std::max(-kcg::pi * 0.4f, std::min(kcg::pi * 0.4f, angle));
 		fBall.vx = kBallSpeed * sinf(angle);
 		fBall.vy = -kBallSpeed * cosf(angle);
 	}
@@ -187,10 +187,10 @@ BreakoutView::_InitCanvas()
 	int height = bounds.IntegerHeight() + 1;
 	int stride = fBitmap->BytesPerRow();
 
-	fCtx.emplace(kvg::BitmapContext::create(
+	fCtx.emplace(kcg::BitmapContext::create(
 		(unsigned char*)fBitmap->Bits(), width, height,
-		stride, kvg::PixelFormat::ARGB32_Premultiplied,
-		kvg::ColorSpace::srgb(), kvg::ColorSpace::srgb()));
+		stride, kcg::PixelFormat::ARGB32_Premultiplied,
+		kcg::ColorSpace::srgb(), kcg::ColorSpace::srgb()));
 }
 
 
@@ -242,7 +242,7 @@ BreakoutView::_InitFont()
 		BPath fontPath(dir);
 		fontPath.Append("Nokia Sans S60 Regular.ttf");
 
-		fFont = kvg::Font::load(fontPath.Path(), 16.0f);
+		fFont = kcg::Font::load(fontPath.Path(), 16.0f);
 		if (fFont)
 			fFontLarge = fFont.with_size(48.0f);
 	}
@@ -253,7 +253,7 @@ BreakoutView::_InitFont()
 		if (find_directory(B_SYSTEM_FONTS_DIRECTORY, &fontDir) == B_OK) {
 			BPath fontPath(fontDir);
 			fontPath.Append("ttfonts/NotoSansDisplay-Regular.ttf");
-			fFont = kvg::Font::load(fontPath.Path(), 16.0f);
+			fFont = kcg::Font::load(fontPath.Path(), 16.0f);
 			if (fFont)
 				fFontLarge = fFont.with_size(48.0f);
 		}
@@ -387,7 +387,7 @@ BreakoutView::_CheckPaddleCollision()
 	float offset = (bx - center) / (pw / 2); // -1..1
 	offset = std::max(-0.9f, std::min(0.9f, offset));
 
-	float angle = offset * kvg::pi / 3.0f; // max +-60 degrees
+	float angle = offset * kcg::pi / 3.0f; // max +-60 degrees
 	float speed = sqrtf(fBall.vx * fBall.vx + fBall.vy * fBall.vy);
 
 	fBall.vx = speed * sinf(angle);
@@ -450,7 +450,7 @@ BreakoutView::_Render()
 	if (fBitmap == NULL || !fCtx.has_value() || !(*fCtx))
 		return;
 
-	kvg::BitmapContext& ctx = *fCtx;
+	kcg::BitmapContext& ctx = *fCtx;
 
 	_DrawBackground(ctx);
 	_DrawBricks(ctx);
@@ -464,36 +464,36 @@ BreakoutView::_Render()
 
 
 void
-BreakoutView::_DrawBackground(kvg::BitmapContext& ctx)
+BreakoutView::_DrawBackground(kcg::BitmapContext& ctx)
 {
 	float w = (float)(fBitmap->Bounds().IntegerWidth() + 1);
 	float h = (float)(fBitmap->Bounds().IntegerHeight() + 1);
 
 	float diag = sqrtf(w * w + h * h) / 2.0f;
 
-	kvg::Gradient::Stop stops[] = {
-		{0.0f, kvg::Color::from_rgba8(35, 35, 60, 255)},
-		{1.0f, kvg::Color::from_rgba8(8, 8, 16, 255)}
+	kcg::Gradient::Stop stops[] = {
+		{0.0f, kcg::Color::from_rgba8(35, 35, 60, 255)},
+		{1.0f, kcg::Color::from_rgba8(8, 8, 16, 255)}
 	};
-	kvg::Gradient grad = kvg::Gradient::create(stops);
+	kcg::Gradient grad = kcg::Gradient::create(stops);
 
-	kvg::Path bgRect = kvg::Path::Builder{}
-		.add_rect(kvg::Rect(0, 0, w, h))
+	kcg::Path bgRect = kcg::Path::Builder{}
+		.add_rect(kcg::Rect(0, 0, w, h))
 		.build();
 
 	ctx.save_state();
 	ctx.clip_to_path(bgRect);
 	ctx.draw_radial_gradient(grad,
-		kvg::Point(w / 2, h / 3), 0,
-		kvg::Point(w / 2, h / 3), diag,
+		kcg::Point(w / 2, h / 3), 0,
+		kcg::Point(w / 2, h / 3), diag,
 		nullptr, kGradExtend);
 	ctx.restore_state();
 
 	// Side walls — subtle lines
-	ctx.set_stroke_color(kvg::Color::from_rgba8(80, 80, 120, 100));
+	ctx.set_stroke_color(kcg::Color::from_rgba8(80, 80, 120, 100));
 	ctx.set_line_width(2.0f);
 
-	kvg::Path walls = kvg::Path::Builder{}
+	kcg::Path walls = kcg::Path::Builder{}
 		.move_to(kSideMargin, 0)
 		.line_to(kSideMargin, h)
 		.move_to(w - kSideMargin, 0)
@@ -504,7 +504,7 @@ BreakoutView::_DrawBackground(kvg::BitmapContext& ctx)
 
 
 void
-BreakoutView::_DrawBricks(kvg::BitmapContext& ctx)
+BreakoutView::_DrawBricks(kcg::BitmapContext& ctx)
 {
 	for (int i = 0; i < kBrickCount; i++) {
 		if (!fBricks[i].alive)
@@ -515,37 +515,37 @@ BreakoutView::_DrawBricks(kvg::BitmapContext& ctx)
 		uint8 cg = kBrickColors[b.row][1];
 		uint8 cb = kBrickColors[b.row][2];
 
-		kvg::Gradient::Stop stops[] = {
-			{0.0f, kvg::Color::from_rgba8(
+		kcg::Gradient::Stop stops[] = {
+			{0.0f, kcg::Color::from_rgba8(
 				(uint8)std::min(255, cr + 40),
 				(uint8)std::min(255, cg + 40),
 				(uint8)std::min(255, cb + 40), 255)},
-			{1.0f, kvg::Color::from_rgba8(
+			{1.0f, kcg::Color::from_rgba8(
 				(uint8)(cr * 2 / 3),
 				(uint8)(cg * 2 / 3),
 				(uint8)(cb * 2 / 3), 255)}
 		};
-		kvg::Gradient grad = kvg::Gradient::create(stops);
+		kcg::Gradient grad = kcg::Gradient::create(stops);
 
-		kvg::Rect rect(b.x, b.y, b.w, b.h);
+		kcg::Rect rect(b.x, b.y, b.w, b.h);
 
-		kvg::Path brickPath = kvg::Path::Builder{}
+		kcg::Path brickPath = kcg::Path::Builder{}
 			.add_round_rect(rect, kBrickRadius, kBrickRadius)
 			.build();
 
 		ctx.save_state();
 		ctx.clip_to_path(brickPath);
 		ctx.draw_linear_gradient(grad,
-			kvg::Point(b.x, b.y),
-			kvg::Point(b.x, b.y + b.h),
+			kcg::Point(b.x, b.y),
+			kcg::Point(b.x, b.y + b.h),
 			nullptr, kGradExtend);
 		ctx.restore_state();
 
 		// Subtle highlight on top edge
 		ctx.save_state();
-		ctx.set_stroke_color(kvg::Color::from_rgba8(255, 255, 255, 50));
+		ctx.set_stroke_color(kcg::Color::from_rgba8(255, 255, 255, 50));
 		ctx.set_line_width(1.0f);
-		kvg::Path topEdge = kvg::Path::Builder{}
+		kcg::Path topEdge = kcg::Path::Builder{}
 			.move_to(b.x + kBrickRadius, b.y + 0.5f)
 			.line_to(b.x + b.w - kBrickRadius, b.y + 0.5f)
 			.build();
@@ -556,29 +556,29 @@ BreakoutView::_DrawBricks(kvg::BitmapContext& ctx)
 
 
 void
-BreakoutView::_DrawPaddle(kvg::BitmapContext& ctx)
+BreakoutView::_DrawPaddle(kcg::BitmapContext& ctx)
 {
-	kvg::Gradient::Stop stops[] = {
-		{0.0f, kvg::Color::from_rgba8(180, 200, 230, 255)},
-		{1.0f, kvg::Color::from_rgba8(80, 100, 140, 255)}
+	kcg::Gradient::Stop stops[] = {
+		{0.0f, kcg::Color::from_rgba8(180, 200, 230, 255)},
+		{1.0f, kcg::Color::from_rgba8(80, 100, 140, 255)}
 	};
-	kvg::Gradient grad = kvg::Gradient::create(stops);
+	kcg::Gradient grad = kcg::Gradient::create(stops);
 
-	kvg::Rect rect(fPaddle.x, fPaddle.y, fPaddle.w, fPaddle.h);
+	kcg::Rect rect(fPaddle.x, fPaddle.y, fPaddle.w, fPaddle.h);
 
 	ctx.save_state();
-	ctx.set_shadow(kvg::Point(0, 3), 6,
-		kvg::Color(0, 0, 0, 0.4f));
+	ctx.set_shadow(kcg::Point(0, 3), 6,
+		kcg::Color(0, 0, 0, 0.4f));
 
-	kvg::Path paddlePath = kvg::Path::Builder{}
+	kcg::Path paddlePath = kcg::Path::Builder{}
 		.add_round_rect(rect, kPaddleRadius, kPaddleRadius)
 		.build();
 
 	ctx.save_state();
 	ctx.clip_to_path(paddlePath);
 	ctx.draw_linear_gradient(grad,
-		kvg::Point(fPaddle.x, fPaddle.y),
-		kvg::Point(fPaddle.x, fPaddle.y + fPaddle.h),
+		kcg::Point(fPaddle.x, fPaddle.y),
+		kcg::Point(fPaddle.x, fPaddle.y + fPaddle.h),
 		nullptr, kGradExtend);
 	ctx.restore_state();
 
@@ -587,31 +587,31 @@ BreakoutView::_DrawPaddle(kvg::BitmapContext& ctx)
 
 
 void
-BreakoutView::_DrawBall(kvg::BitmapContext& ctx)
+BreakoutView::_DrawBall(kcg::BitmapContext& ctx)
 {
 	if (fGameOver)
 		return;
 
 	ctx.save_state();
-	ctx.set_shadow(kvg::Point(2, 2), 6,
-		kvg::Color(0, 0, 0, 0.5f));
+	ctx.set_shadow(kcg::Point(2, 2), 6,
+		kcg::Color(0, 0, 0, 0.5f));
 
-	kvg::Gradient::Stop stops[] = {
-		{0.0f, kvg::Color::from_rgba8(255, 255, 255, 255)},
-		{1.0f, kvg::Color::from_rgba8(180, 200, 240, 255)}
+	kcg::Gradient::Stop stops[] = {
+		{0.0f, kcg::Color::from_rgba8(255, 255, 255, 255)},
+		{1.0f, kcg::Color::from_rgba8(180, 200, 240, 255)}
 	};
-	kvg::Gradient grad = kvg::Gradient::create(stops);
+	kcg::Gradient grad = kcg::Gradient::create(stops);
 
-	kvg::Path circle = kvg::Path::Builder{}
-		.add_circle(kvg::Point(fBall.x, fBall.y), fBall.radius)
+	kcg::Path circle = kcg::Path::Builder{}
+		.add_circle(kcg::Point(fBall.x, fBall.y), fBall.radius)
 		.build();
 
 	ctx.save_state();
 	ctx.clip_to_path(circle);
 	ctx.draw_radial_gradient(grad,
-		kvg::Point(fBall.x - fBall.radius * 0.3f,
+		kcg::Point(fBall.x - fBall.radius * 0.3f,
 			fBall.y - fBall.radius * 0.3f), 0,
-		kvg::Point(fBall.x, fBall.y), fBall.radius * 1.2f,
+		kcg::Point(fBall.x, fBall.y), fBall.radius * 1.2f,
 		nullptr, kGradExtend);
 	ctx.restore_state();
 
@@ -620,7 +620,7 @@ BreakoutView::_DrawBall(kvg::BitmapContext& ctx)
 
 
 void
-BreakoutView::_DrawHUD(kvg::BitmapContext& ctx)
+BreakoutView::_DrawHUD(kcg::BitmapContext& ctx)
 {
 	if (!fFont)
 		return;
@@ -629,27 +629,27 @@ BreakoutView::_DrawHUD(kvg::BitmapContext& ctx)
 
 	ctx.save_state();
 	ctx.set_font(fFont);
-	ctx.set_fill_color(kvg::Color::from_rgba8(220, 220, 240, 255));
+	ctx.set_fill_color(kcg::Color::from_rgba8(220, 220, 240, 255));
 
 	// Score — top left
 	char scoreText[64];
 	snprintf(scoreText, sizeof(scoreText), "SCORE: %d", fScore);
-	ctx.draw_text(scoreText, kvg::Point(kSideMargin + 8, 24));
+	ctx.draw_text(scoreText, kcg::Point(kSideMargin + 8, 24));
 
 	// Lives — top right
 	char livesText[64];
 	snprintf(livesText, sizeof(livesText), "LIVES: %d", fLives);
 	float livesWidth = fFont.measure(livesText);
 	ctx.draw_text(livesText,
-		kvg::Point(w - kSideMargin - livesWidth - 8, 24));
+		kcg::Point(w - kSideMargin - livesWidth - 8, 24));
 
 	// Launch hint
 	if (!fBall.launched && !fGameOver) {
 		const char* hint = "CLICK TO LAUNCH";
 		float hintWidth = fFont.measure(hint);
-		ctx.set_fill_color(kvg::Color::from_rgba8(180, 180, 200, 160));
+		ctx.set_fill_color(kcg::Color::from_rgba8(180, 180, 200, 160));
 		ctx.draw_text(hint,
-			kvg::Point((w - hintWidth) / 2, fPaddle.y - 30));
+			kcg::Point((w - hintWidth) / 2, fPaddle.y - 30));
 	}
 
 	ctx.restore_state();
@@ -657,40 +657,40 @@ BreakoutView::_DrawHUD(kvg::BitmapContext& ctx)
 
 
 void
-BreakoutView::_DrawGameOver(kvg::BitmapContext& ctx)
+BreakoutView::_DrawGameOver(kcg::BitmapContext& ctx)
 {
 	float w = (float)(fBitmap->Bounds().IntegerWidth() + 1);
 	float h = (float)(fBitmap->Bounds().IntegerHeight() + 1);
 
 	// Dim overlay
 	ctx.save_state();
-	ctx.set_fill_color(kvg::Color(0, 0, 0, 0.6f));
-	ctx.fill_rect(kvg::Rect(0, 0, w, h));
+	ctx.set_fill_color(kcg::Color(0, 0, 0, 0.6f));
+	ctx.fill_rect(kcg::Rect(0, 0, w, h));
 
 	if (fFontLarge) {
 		ctx.set_font(fFontLarge);
-		ctx.set_fill_color(kvg::Color::from_rgba8(240, 80, 80, 255));
+		ctx.set_fill_color(kcg::Color::from_rgba8(240, 80, 80, 255));
 
 		const char* gameOver = "GAME OVER";
 		float textWidth = fFontLarge.measure(gameOver);
 		ctx.draw_text(gameOver,
-			kvg::Point((w - textWidth) / 2, h / 2 - 10));
+			kcg::Point((w - textWidth) / 2, h / 2 - 10));
 	}
 
 	if (fFont) {
 		ctx.set_font(fFont);
-		ctx.set_fill_color(kvg::Color::from_rgba8(200, 200, 220, 200));
+		ctx.set_fill_color(kcg::Color::from_rgba8(200, 200, 220, 200));
 
 		char finalScore[64];
 		snprintf(finalScore, sizeof(finalScore), "FINAL SCORE: %d", fScore);
 		float scoreWidth = fFont.measure(finalScore);
 		ctx.draw_text(finalScore,
-			kvg::Point((w - scoreWidth) / 2, h / 2 + 30));
+			kcg::Point((w - scoreWidth) / 2, h / 2 + 30));
 
 		const char* restart = "CLICK TO RESTART";
 		float restartWidth = fFont.measure(restart);
 		ctx.draw_text(restart,
-			kvg::Point((w - restartWidth) / 2, h / 2 + 60));
+			kcg::Point((w - restartWidth) / 2, h / 2 + 60));
 	}
 
 	ctx.restore_state();
