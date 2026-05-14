@@ -23,22 +23,22 @@
 static status_t
 inquiry(scsi_periph_device_info *device, scsi_inquiry *inquiry)
 {
-	const scsi_res_inquiry *device_inquiry = NULL;
+	scsi_res_inquiry inquiryBuf;
 	size_t inquiryLength;
 
-	if (gDeviceManager->get_attr_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
-			(const void **)&device_inquiry, &inquiryLength, true) != B_OK)
+	if (gDeviceKeeper->get_property_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
+			&inquiryBuf, sizeof(inquiryBuf), &inquiryLength, true) != B_OK)
 		return B_ERROR;
 
 	if (IS_USER_ADDRESS(inquiry)) {
-		if (user_memcpy(&inquiry, device_inquiry,
+		if (user_memcpy(&inquiry, &inquiryBuf,
 			min_c(inquiryLength, sizeof(scsi_inquiry))) != B_OK) {
 			return B_BAD_ADDRESS;
 		}
 	} else if (is_called_via_syscall()) {
 		return B_BAD_ADDRESS;
 	} else {
-		memcpy(&inquiry, device_inquiry,
+		memcpy(&inquiry, &inquiryBuf,
 			min_c(inquiryLength, sizeof(scsi_inquiry)));
 	}
 	return B_OK;
@@ -428,15 +428,17 @@ periph_ioctl(scsi_periph_handle_info *handle, int op, void *buffer,
 			}
 
 			// If that fails, get SCSI vendor/product
-			const char* vendor;
-			if (gDeviceManager->get_attr_string(handle->device->node,
-					SCSI_DEVICE_VENDOR_ITEM, &vendor, true) == B_OK) {
+			char vendor[64];
+			if (gDeviceKeeper->get_property_string(handle->device->node,
+					SCSI_DEVICE_VENDOR_ITEM, vendor, sizeof(vendor),
+					NULL, true) == B_OK) {
 				char name[B_FILE_NAME_LENGTH];
 				strlcpy(name, vendor, sizeof(name));
 
-				const char* product;
-				if (gDeviceManager->get_attr_string(handle->device->node,
-						SCSI_DEVICE_PRODUCT_ITEM, &product, true) == B_OK) {
+				char product[64];
+				if (gDeviceKeeper->get_property_string(handle->device->node,
+						SCSI_DEVICE_PRODUCT_ITEM, product, sizeof(product),
+						NULL, true) == B_OK) {
 					strlcat(name, " ", sizeof(name));
 					strlcat(name, product, sizeof(name));
 				}

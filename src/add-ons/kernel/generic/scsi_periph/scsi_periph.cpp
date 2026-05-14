@@ -15,7 +15,7 @@
 #include <string.h>
 
 
-device_manager_info* gDeviceManager;
+dk_keeper_info* gDeviceKeeper;
 
 
 status_t
@@ -109,7 +109,7 @@ periph_safe_exec(scsi_periph_device_info *device, scsi_ccb *request)
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper},
 	{}
 };
 

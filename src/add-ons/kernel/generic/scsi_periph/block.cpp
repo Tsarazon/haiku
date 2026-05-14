@@ -65,19 +65,19 @@ struct UnmapSupport {
 static bool
 prefer_read_capacity_16(scsi_periph_device_info* device)
 {
-	const scsi_res_inquiry* inquiryData = NULL;
+	scsi_res_inquiry inquiryBuf;
 	size_t inquiryDataLength;
 
-	if (gDeviceManager->get_attr_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
-				(const void**)&inquiryData, &inquiryDataLength, true) != B_OK
-		|| inquiryDataLength != sizeof(*inquiryData)) {
+	if (gDeviceKeeper->get_property_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
+				&inquiryBuf, sizeof(inquiryBuf), &inquiryDataLength, true) != B_OK
+		|| inquiryDataLength != sizeof(inquiryBuf)) {
 		return false;
 	}
 
-	if (inquiryData->protect)
+	if (inquiryBuf.protect)
 		return true;
 
-	if (inquiryData->ansi_version > 0x04 /* SPC-2 */)
+	if (inquiryBuf.ansi_version > 0x04 /* SPC-2 */)
 		return true;
 
 	return false;
@@ -87,16 +87,16 @@ prefer_read_capacity_16(scsi_periph_device_info* device)
 static bool
 vpd_pages_supported(scsi_periph_device_info* device)
 {
-	const scsi_res_inquiry* inquiryData = NULL;
+	scsi_res_inquiry inquiryBuf;
 	size_t inquiryDataLength;
 
-	if (gDeviceManager->get_attr_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
-				(const void**)&inquiryData, &inquiryDataLength, true) != B_OK
-		|| inquiryDataLength != sizeof(*inquiryData)) {
+	if (gDeviceKeeper->get_property_raw(device->node, SCSI_DEVICE_INQUIRY_ITEM,
+				&inquiryBuf, sizeof(inquiryBuf), &inquiryDataLength, true) != B_OK
+		|| inquiryDataLength != sizeof(inquiryBuf)) {
 		return false;
 	}
 
-	if (inquiryData->ansi_version >= 0x04 /* SPC-2 */)
+	if (inquiryBuf.ansi_version >= 0x04 /* SPC-2 */)
 		return true;
 
 	return false;

@@ -10,7 +10,7 @@
 #include <stddef.h>
 
 #include <scsi_periph.h>
-#include <device_manager.h>
+#include <device_keeper.h>
 
 #include "IORequest.h"
 #include "wrapper.h"
@@ -30,7 +30,7 @@ typedef struct scsi_periph_device_info {
 	::scsi_device scsi_device;
 	scsi_device_interface *scsi;
 	periph_device_cookie periph_device;
-	device_node *node;
+	dk_node *node;
 
 	bool removal_requested;
 
@@ -62,7 +62,7 @@ typedef struct scsi_periph_handle_info {
 	periph_handle_cookie periph_handle;
 } scsi_periph_handle_info;
 
-extern device_manager_info *gDeviceManager;
+extern dk_keeper_info *gDeviceKeeper;
 
 
 // removable.c
@@ -98,10 +98,10 @@ status_t periph_trim_device(scsi_periph_device_info *device, scsi_ccb *request,
 
 status_t periph_register_device(periph_device_cookie periph_device,
 	scsi_periph_callbacks *callbacks, scsi_device scsi_device,
-	scsi_device_interface *scsi, device_node *node, bool removable,
+	scsi_device_interface *scsi, dk_node *node, bool removable,
 	int preferredCcbSize, scsi_periph_device *driver);
 status_t periph_unregister_device(scsi_periph_device_info *driver);
-char *periph_compose_device_name(device_node *device_node, const char *prefix);
+char *periph_compose_device_name(dk_node *device_node, const char *prefix);
 
 
 // io.c

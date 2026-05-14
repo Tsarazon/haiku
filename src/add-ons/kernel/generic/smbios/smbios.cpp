@@ -6,7 +6,7 @@
 
 #include "smbios.h"
 
-#include <device_manager.h>
+#include <device_keeper.h>
 #include <KernelExport.h>
 #include <module.h>
 
@@ -25,7 +25,7 @@
 #endif
 
 
-static device_manager_info* gDeviceManager;
+static dk_keeper_info* gDeviceKeeper;
 static char* sHardwareVendor = NULL;
 static char* sHardwareProduct = NULL;
 
@@ -245,7 +245,7 @@ std_ops(int32 op, ...)
 
 
 module_dependency module_dependencies[] = {
-	{B_DEVICE_MANAGER_MODULE_NAME, (module_info**)&gDeviceManager},
+	{KOSM_DEVICE_KEEPER_MODULE_NAME, (module_info**)&gDeviceKeeper},
 	{}
 };
 
