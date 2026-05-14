@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 '<driver>pty')",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 null dprintf console '<driver>kdl' '<driver>mem' '<driver>test' '<driver>pty')",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 hda intel_extreme radeon_hd vesa framebuffer ati pci '<driver>poke' '<driver>hpet' etherpci wb840 pc_serial)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 kernel_x86_64 acpi agp_gart broadcom570x)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 acpi broadcom570x listdev)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 usb_davicom usb_rndis usb_midi usb_hid usb_audio usb_raw usb_serial usb_modeswitch)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 usb)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 usb usb_davicom usb_hid usb_audio usb_raw)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 intel_extreme agp_gart '<busses>intel_gart')",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 intel22x rtl8125 atheros81xx iprowifi4965)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 null_audio ps2_hid)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 null_audio ps2_hid h2generic remote_disk nbd)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j1 remote_disk)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -q -j8 h2generic remote_disk nbd)",
+      "Bash(/home/ruslan/haiku/buildtools/jam/jam0 -a -q -j8 @nightly-anyboot)",
+      "Bash(tee /home/ruslan/haiku/build_log2.txt)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
