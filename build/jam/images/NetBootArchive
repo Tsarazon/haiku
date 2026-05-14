@@ -31,7 +31,6 @@ SYSTEM_ADD_ONS_BUS_MANAGERS = [ FFilterByBuildFeatures
 	<pci>x86@x86,x86_64
 	isa@x86
 	usb
-	ata
 	scsi
 	agp_gart
 	dpc
@@ -49,9 +48,6 @@ AddFilesToNetBootArchive system add-ons kernel bus_managers
 AddFilesToNetBootArchive system add-ons kernel busses agp_gart :
 	<agp_gart>intel@x86
 	;
-AddFilesToNetBootArchive system add-ons kernel busses ide :
-	generic_ide_pci
-	;
 AddFilesToNetBootArchive system add-ons kernel busses scsi :
 	ahci
 	;
@@ -61,7 +57,6 @@ AddFilesToNetBootArchive system add-ons kernel console :
 AddFilesToNetBootArchive system add-ons kernel file_systems
 	: $(SYSTEM_ADD_ONS_FILE_SYSTEMS) ;
 AddFilesToNetBootArchive system add-ons kernel generic :
-	ata_adapter
 	scsi_periph
 	;
 AddFilesToNetBootArchive system add-ons kernel partitioning_systems :
@@ -122,9 +117,7 @@ AddFilesToNetBootArchive
 AddBootModuleSymlinksToNetBootArchive
 	$(SYSTEM_ADD_ONS_BUS_MANAGERS)
 	ahci
-	generic_ide_pci
 	$(SYSTEM_ADD_ONS_FILE_SYSTEMS)
-	ata_adapter
 	scsi_periph
 	intel
 	session

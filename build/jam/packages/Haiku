@@ -27,11 +27,6 @@ AddFilesToPackage add-ons kernel busses agp_gart :
 	<agp_gart>intel@x86,x86_64
 	;
 
-AddFilesToPackage add-ons kernel busses ata :
-	generic_ide_pci
-	legacy_sata
-	;
-
 AddFilesToPackage add-ons kernel busses i2c :
 	pch_i2c@x86,x86_64
 	;
@@ -75,8 +70,10 @@ AddFilesToPackage add-ons kernel debugger :
 	;
 AddFilesToPackage add-ons kernel file_systems
 	: $(SYSTEM_ADD_ONS_FILE_SYSTEMS) ;
+AddFilesToPackage add-ons kernel file_cache :
+	launch_speedup
+	;
 AddFilesToPackage add-ons kernel generic :
-	ata_adapter
 	bios@x86,x86_64
 	dpc
 	scsi_periph
@@ -149,44 +146,64 @@ AddNewDriversToPackage hyperv :
 	hyperv_ic@x86,x86_64
 	;
 
-# legacy drivers
-AddDriversToPackage :
+# DK drivers installed at proper module paths. Legacy AddDriversToPackage
+# puts files in add-ons/kernel/drivers/bin/, which the module scanner
+# explicitly skips — so DK drivers installed that way would never be
+# discovered by DiscoverDrivers("drivers"). AddNewDriversToPackage places
+# them at add-ons/kernel/drivers/<subdir>/<name> so they're scanned.
+AddNewDriversToPackage :
+	<driver>pty
+	;
+AddNewDriversToPackage common :
 	console
 	dprintf
 	null
-	<driver>pty
 	usb_modeswitch
 	;
-AddDriversToPackage audio hmulti :
+# Subdir MUST match the module name path exactly. get_module()
+# walks the module name as a filesystem path under add-ons/kernel/
+# (see vfs_get_module_path) — mismatched install directories cause
+# "No such file or directory" on module load even though
+# DiscoverDrivers sees the file and reports its registered name.
+# Module names declared by drivers:
+#   drivers/audio/hda/... drivers/audio/usb_audio/... → audio
+#   drivers/bluetooth/h2generic/... → bluetooth
+#   drivers/midi/usb_midi/... → midi
+#   drivers/disk/nbd/... → disk  (NOT disk virtual)
+#   drivers/network/<name>/... → network  (NOT net)
+AddNewDriversToPackage audio :
 	$(SYSTEM_ADD_ONS_DRIVERS_AUDIO) ;
-AddDriversToPackage audio old :
-	$(SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD) ;
-AddDriversToPackage bluetooth h2 :
+AddNewDriversToPackage bluetooth :
 	$(SYSTEM_ADD_ONS_DRIVERS_BT_H2) ;
-AddDriversToPackage midi :
+AddNewDriversToPackage midi :
 	$(SYSTEM_ADD_ONS_DRIVERS_MIDI) ;
-AddDriversToPackage bus :
+AddNewDriversToPackage bus :
 	usb_raw
 	;
-AddDriversToPackage disk virtual :
+AddNewDriversToPackage disk virtual :
 	nbd
 	;
-AddDriversToPackage graphics
+AddNewDriversToPackage graphics
 	: $(SYSTEM_ADD_ONS_DRIVERS_GRAPHICS) ;
-AddDriversToPackage input :
+AddNewDriversToPackage input :
 	ps2_hid
 	usb_hid
 	;
-AddDriversToPackage misc :
+AddNewDriversToPackage misc :
 	<driver>poke
 	<driver>mem
 	;
-AddDriversToPackage net
+AddNewDriversToPackage network
 	: $(SYSTEM_ADD_ONS_DRIVERS_NET) ;
-AddDriversToPackage ports :
+AddNewDriversToPackage ports :
 	pc_serial
 	usb_serial
 	;
+
+# True legacy (non-DK) pre-device_manager drivers — still need the old
+# install mechanism (drivers/bin + drivers/dev symlink).
+AddDriversToPackage audio old :
+	$(SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD) ;
 
 # kernel
 AddFilesToPackage : <revisioned>kernel_$(TARGET_ARCH) ;
@@ -297,16 +314,12 @@ AddFilesToPackage data Terminal Themes : $(terminalThemes) ;
 AddBootModuleSymlinksToPackage
 	acpi@x86,x86_64,arm64
 	ahci
-	ata
-	ata_adapter
 	bfs
 	dpc
 	efi_gpt
-	generic_ide_pci
 	hyperv@x86,x86_64
 	isa@x86,x86_64
 	intel
-	legacy_sata
 	mmc
 	mmc_disk
 	nvme_disk

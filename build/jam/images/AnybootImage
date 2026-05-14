@@ -51,10 +51,13 @@ for platform in [ MultiBootSubDirSetup ] {
 	}
 }
 
-# TODO: this one seems to cause the build to fail each other run (caching?)
+# RmTemps disabled: jam's TEMPORARY optimization (make.c:220-226 T_BIND_PARENTS)
+# leaves the parent target's action invoking a deleted temp file when the parent
+# is being rebuilt for unrelated reasons. Keeping the intermediate files on disk
+# costs ~2GB but makes incremental builds reliable.
 #RmTemps $(HAIKU_ANYBOOT) : $(baseMBR) ;
-RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_CD_BOOT_IMAGE) ;
-RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_IMAGE_NAME) ;
+#RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_CD_BOOT_IMAGE) ;
+#RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_IMAGE_NAME) ;
 # RmTemps $(HAIKU_ANYBOOT) : $(HAIKU_BOOT_FLOPPY) ; # No longer depends on floppy
 
 NotFile haiku-anyboot-image ;

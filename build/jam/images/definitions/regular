@@ -102,7 +102,7 @@ SYSTEM_DEMOS += [ FFilterByBuildFeatures
 	Playground
 	Pulse
 	Sudoku
-	ThorVGDemo
+	2DRenderDemo
 	KosmInputTest
 	KosmTestSuite
 	BreakoutGame
@@ -140,7 +140,7 @@ rule HaikuImageGetSystemLibs
 			libsurface.so
 			libtextencoding.so
 			libkosmrandom.so
-			libkosmvg.so
+			libkosmcg.so
 			libplutovg.so
 			libthorvg.so
 			libtracker.so
@@ -185,7 +185,6 @@ SYSTEM_ADD_ONS_DRIVERS_BT_H2 +=
 
 SYSTEM_ADD_ONS_ACCELERANTS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
-		ati.accelerant
 		intel_extreme.accelerant
 		radeon_hd.accelerant
 	}@ # x86,x86_64
@@ -282,7 +281,6 @@ SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD +=
 
 SYSTEM_ADD_ONS_DRIVERS_GRAPHICS += [ FFilterByBuildFeatures
 	x86,x86_64 @{
-		ati
 		intel_extreme
 		radeon_hd
 	}@ # x86,x86_64

@@ -11,10 +11,6 @@ AddFilesToPackage add-ons kernel busses agp_gart :
 	<agp_gart>intel@x86,x86_64
 	;
 
-AddFilesToPackage add-ons kernel busses ata :
-	generic_ide_pci
-	legacy_sata
-	;
 AddFilesToPackage add-ons kernel busses pci :
 	<pci>designware@riscv64
 	<pci>ecam@riscv64,arm,arm64
@@ -45,7 +41,6 @@ AddFilesToPackage add-ons kernel debugger :
 	;
 AddFilesToPackage add-ons kernel file_systems : $(SYSTEM_ADD_ONS_FILE_SYSTEMS) ;
 AddFilesToPackage add-ons kernel generic :
-	ata_adapter
 	bios@x86,x86_64
 	dpc
 	scsi_periph
@@ -98,44 +93,53 @@ AddNewDriversToPackage hyperv :
 	hyperv_ic@x86,x86_64
 	;
 
-# legacy drivers
-AddDriversToPackage :
+# DK drivers installed at proper module paths (same rationale as in the
+# main Haiku package). Legacy AddDriversToPackage puts files into
+# add-ons/kernel/drivers/bin/ which the module scanner skips.
+AddNewDriversToPackage :
+	<driver>pty
+	;
+AddNewDriversToPackage common :
 	console
 	dprintf
 	null
-	random
-	<driver>pty
 	;
-AddDriversToPackage audio hmulti
+# Subdir must match the module name's path (see comment in Haiku).
+AddNewDriversToPackage audio
 	: $(SYSTEM_ADD_ONS_DRIVERS_AUDIO) ;
-AddDriversToPackage audio old
-	: $(SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD) ;
-AddDriversToPackage midi
+AddNewDriversToPackage midi
 	: $(SYSTEM_ADD_ONS_DRIVERS_MIDI) ;
-AddDriversToPackage bus :
+AddNewDriversToPackage bus :
 	usb_raw
 	;
-AddDriversToPackage disk virtual :
+AddNewDriversToPackage disk virtual :
 	nbd
 	;
-AddDriversToPackage graphics
+AddNewDriversToPackage graphics
 	: $(SYSTEM_ADD_ONS_DRIVERS_GRAPHICS) ;
-AddDriversToPackage input :
+AddNewDriversToPackage input :
 	ps2_hid
 	usb_hid
 	;
-AddDriversToPackage misc :
+AddNewDriversToPackage misc :
 	<driver>poke
 	<driver>mem
 	;
-AddDriversToPackage net
+AddNewDriversToPackage network
 	: $(SYSTEM_ADD_ONS_DRIVERS_NET) ;
-AddDriversToPackage ports :
+AddNewDriversToPackage ports :
 	pc_serial
 	usb_serial
 	;
-AddDriversToPackage power
+AddNewDriversToPackage power
 	: $(SYSTEM_ADD_ONS_DRIVERS_POWER) ;
+
+# True legacy (non-DK) pre-device_manager drivers.
+AddDriversToPackage audio old
+	: $(SYSTEM_ADD_ONS_DRIVERS_AUDIO_OLD) ;
+# Note: the 'random' bus_manager is installed via SYSTEM_ADD_ONS_BUS_MANAGERS
+# (as bus_managers/random), not here. Its module publishes /dev/random from
+# its own attach() — no legacy devfs symlink needed.
 
 # kernel
 AddFilesToPackage : <revisioned>kernel_$(TARGET_ARCH) ;
@@ -225,7 +229,6 @@ AddFilesToPackage data Terminal Themes : $(terminalThemes) ;
 # boot module links
 AddBootModuleSymlinksToPackage
 	acpi@x86,x86_64
-	ata
 	pci
 	<pci>designware@riscv64
 	<pci>ecam@riscv64,arm,arm64
@@ -235,11 +238,8 @@ AddBootModuleSymlinksToPackage
 	scsi
 	usb
 	openpic@ppc
-	ata_adapter
 	scsi_periph
 	ahci
-	generic_ide_pci
-	legacy_sata
 	<usb>uhci
 	<usb>ohci
 	<usb>ehci

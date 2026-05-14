@@ -60,6 +60,17 @@ target desktop {
 		}
 		launch /bin/ln -sf /boot/system/apps/Installer ~/Desktop/Installer
 	}
+
+	job mark-boot-complete {
+		# Tell the launch_speedup file_cache module that the boot session
+		# has finished. The kernel module records every file opened up to
+		# this point so that on the next boot it can prefetch them into
+		# the page cache. Triggered after Tracker + Deskbar are up so the
+		# captured set covers the full desktop bring-up, not just kernel
+		# init.
+		launch /system/bin/boot_process_done
+		requires x-vnd.Be-TSKB x-vnd.Be-TRAK
+	}
 }
 
 target first_boot {

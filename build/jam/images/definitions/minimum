@@ -7,6 +7,7 @@ SYSTEM_BIN = [ FFilterByBuildFeatures
 	autologin
 	beep
 	bfsinfo
+	boot_process_done
 	catattr
 	checkfs
 	checkitout
@@ -265,8 +266,6 @@ SYSTEM_ADD_ONS_ACCELERANTS = [ FFilterByBuildFeatures
 		vesa.accelerant
 	}@ # x86,x86_64
 	riscv64 @{
-		# ati for qemu, radeon_hd for unmatched
-		ati.accelerant
 		radeon_hd.accelerant
 	}@ # riscv64
 ] ;
@@ -299,8 +298,6 @@ SYSTEM_ADD_ONS_DRIVERS_GRAPHICS = [ FFilterByBuildFeatures
 		vesa
 	}@ # x86,x86_64
 	riscv64 @{
-		# ati for qemu, radeon_hd for unmatched
-		ati
 		radeon_hd
 	}@ # riscv64
 ] ;
@@ -355,7 +352,6 @@ SYSTEM_ADD_ONS_DRIVERS_SENSOR = [ FFilterByBuildFeatures
 SYSTEM_ADD_ONS_BUS_MANAGERS = [ FFilterByBuildFeatures
 	acpi@x86,x86_64,arm64
 	agp_gart@x86,x86_64
-	ata
 	hyperv@x86,x86_64
 	i2c@x86,x86_64
 	isa@x86,x86_64
