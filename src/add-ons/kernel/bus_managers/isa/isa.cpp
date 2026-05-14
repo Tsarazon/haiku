@@ -12,7 +12,6 @@
 */
 
 
-#include <ISA.h>
 #include <bus/ISA.h>
 #include <KernelExport.h>
 #include <device_keeper.h>
@@ -76,31 +75,11 @@ unlock_isa_dma_channel(long channel)
 //	#pragma mark - DeviceKeeper driver API
 
 
-// Bus interface published on the ISA root node via publish_interface.
-// Defined before isa_init_driver so the publish_interface call can
-// reference it without a forward declaration.
-static isa2_module_info sIsa2BusInterface = {
-	arch_isa_read_io_8, arch_isa_write_io_8,
-	arch_isa_read_io_16, arch_isa_write_io_16,
-	arch_isa_read_io_32, arch_isa_write_io_32,
-
-	arch_isa_ram_address,
-
-	arch_start_isa_dma,
-};
-
-
 static status_t
 isa_init_driver(dk_node *node, void **cookie)
 {
-	// Publish the ISA bus interface on this node so child drivers
-	// (universal ISA peripherals) can retrieve it via get_interface
-	// walk-up.
-	status_t status = pnp->publish_interface(node, ISA_INTERFACE_NAME,
-		&sIsa2BusInterface);
-	if (status != B_OK)
-		return status;
-
+	// ISA peripherals consume the bus via the classical
+	// get_module(B_ISA_MODULE_NAME, ...) singleton API exported below.
 	*cookie = node;
 	return B_OK;
 }

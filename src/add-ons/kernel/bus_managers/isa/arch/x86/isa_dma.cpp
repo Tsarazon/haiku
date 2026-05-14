@@ -9,7 +9,7 @@
  */
 
 #include <KernelExport.h>
-#include "ISA.h"
+#include <bus/ISA.h>
 #include "arch_cpu.h"
 #include "isa_arch.h"
 

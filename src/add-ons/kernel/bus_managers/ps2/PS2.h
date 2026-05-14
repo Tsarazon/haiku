@@ -10,7 +10,7 @@
 #ifndef _PS2_H_
 #define _PS2_H_
 
-#include <bus_manager.h>
+#include <module.h>
 
 #ifdef __cplusplus
 extern "C" {

@@ -15,7 +15,7 @@
 
 
 #include <device_keeper.h>
-#include <ISA.h>
+#include <bus/ISA.h>
 #include <Drivers.h>
 #include <KernelExport.h>
 #include <lock.h>
