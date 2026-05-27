@@ -20,28 +20,16 @@ SEARCH_SOURCE += [ FDirName $(SUBDIR) timers ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) 64 ] ;
 SEARCH_SOURCE += [ FDirName $(SUBDIR) paging 64bit ] ;
 
-local archSpecificSources =
 	arch.S
 	cpuid.cpp
 	descriptors.cpp
 	errata.cpp
 	interrupts.S
 	signals.cpp
+	stubs.S
 	syscalls.cpp
 	thread.cpp
 
-	# paging
-	x86_physical_page_mapper_mapped.cpp
-
-	# paging/64bit
-	X86PagingMethod64Bit.cpp
-	X86PagingStructures64Bit.cpp
-	X86VMTranslationMap64Bit.cpp
-;
-
-local archGenericSources =
-	arch_altcodepatch.cpp
-	arch_cpu.cpp
 	arch_commpage.cpp
 	arch_debug.cpp
 	arch_debug_console.cpp

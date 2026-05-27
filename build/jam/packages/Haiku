@@ -316,11 +316,7 @@ AddBootModuleSymlinksToPackage
 	ahci
 	bfs
 	dpc
-	efi_gpt
-	hyperv@x86,x86_64
 	isa@x86,x86_64
-	intel
-	mmc
 	mmc_disk
 	nvme_disk
 	packagefs
